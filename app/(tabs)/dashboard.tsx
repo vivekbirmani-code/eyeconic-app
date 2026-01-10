@@ -101,7 +101,7 @@ export default function Dashboard() {
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Dashboard</Text>
+        <Text style={styles.title}>Eyeconic Dashboard</Text>
         <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
           <LogOut color="#FFFFFF" size={20} />
         </TouchableOpacity>

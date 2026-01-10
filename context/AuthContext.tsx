@@ -23,6 +23,7 @@ interface User {
   role: string;
   isProfileComplete?: boolean;
   studentProfile?: StudentProfile;
+  groups?: string[];
 }
 
 interface AuthContextType {

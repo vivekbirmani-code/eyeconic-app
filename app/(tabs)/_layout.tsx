@@ -2,27 +2,13 @@ import { Tabs, Redirect } from 'expo-router';
 import { Users, MessageCircle, BookOpen, Home } from 'lucide-react-native';
 import { useAuth } from '@/context/AuthContext';
 import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
+import { useNotifications } from '@/context/NotificationContext';
 
-export default function TabLayout() {
-  const { user, isLoading } = useAuth();
-
-  // Show loading while checking auth
-  if (isLoading) {
-    return (
-      <View style={styles.loading}>
-        <ActivityIndicator size="large" color="#2563EB" />
-        <Text style={styles.loadingText}>Loading...</Text>
-      </View>
-    );
-  }
-
-  // Redirect to login if no user
-  if (!user) {
-    return <Redirect href="/login" />;
-  }
-
-  // Determine which tabs to show based on role
-  const isAdmin = user.role === 'admin';
+function TabInner() {
+  const { totalUnreadCount } = useNotifications();
+  const { user } = useAuth();
+  
+  const isAdmin = user?.role === 'admin';
   const showUsers = isAdmin;
 
   return (
@@ -65,6 +51,7 @@ export default function TabLayout() {
           tabBarIcon: ({ color, size }) => (
             <MessageCircle color={color} size={size} />
           ),
+          tabBarBadge: totalUnreadCount > 0 ? totalUnreadCount : undefined,
         }}
       />
       <Tabs.Screen
@@ -77,6 +64,29 @@ export default function TabLayout() {
         }}
       />
     </Tabs>
+  );
+}
+
+export default function TabLayout() {
+  const { user, isLoading } = useAuth();
+
+  // Show loading while checking auth
+  if (isLoading) {
+    return (
+      <View style={styles.loading}>
+        <ActivityIndicator size="large" color="#2563EB" />
+        <Text style={styles.loadingText}>Loading...</Text>
+      </View>
+    );
+  }
+
+  // Redirect to login if no user
+  if (!user) {
+    return <Redirect href="/login" />;
+  }
+
+  return (
+    <TabInner />
   );
 }
 

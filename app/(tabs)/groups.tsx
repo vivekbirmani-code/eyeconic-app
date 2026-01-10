@@ -16,6 +16,7 @@ import {
 import { useRouter } from 'expo-router';
 import { Plus, MessageCircle, Users, Search, X, Check } from 'lucide-react-native';
 import { useAuth } from '@/context/AuthContext';
+import { useNotifications } from '@/context/NotificationContext';
 import { api } from '@/services/api';
 
 interface User {
@@ -35,6 +36,7 @@ interface Group {
 
 export default function Groups() {
   const { user } = useAuth();
+  const { unreadCounts } = useNotifications();
   const router = useRouter();
   const [groups, setGroups] = useState<Group[]>([]);
   const [isModalVisible, setIsModalVisible] = useState(false);
@@ -150,22 +152,33 @@ export default function Groups() {
     router.push({ pathname: '/chat/[id]', params: { id: groupId } });
   };
 
-  const renderGroup = ({ item }: { item: Group }) => (
-    <TouchableOpacity
-      style={styles.groupCard}
-      onPress={() => openChat(item._id)}
-    >
-      <MessageCircle color="#2563EB" size={24} />
-      <View style={styles.groupInfo}>
-        <Text style={styles.groupName}>{item.name}</Text>
-        <Text style={styles.groupDescription}>{item.description}</Text>
-        <View style={styles.memberCount}>
-          <Users color="#6B7280" size={16} />
-          <Text style={styles.memberText}>{item.members.length} members</Text>
+  const renderGroup = ({ item }: { item: Group }) => {
+    const unreadCount = unreadCounts[item._id] || 0;
+    
+    return (
+      <TouchableOpacity
+        style={styles.groupCard}
+        onPress={() => openChat(item._id)}
+      >
+        <MessageCircle color="#2563EB" size={24} />
+        <View style={styles.groupInfo}>
+          <View style={styles.groupHeaderRow}>
+            <Text style={styles.groupName}>{item.name}</Text>
+            {unreadCount > 0 && (
+              <View style={styles.unreadBadge}>
+                <Text style={styles.unreadBadgeText}>{unreadCount}</Text>
+              </View>
+            )}
+          </View>
+          <Text style={styles.groupDescription}>{item.description}</Text>
+          <View style={styles.memberCount}>
+            <Users color="#6B7280" size={16} />
+            <Text style={styles.memberText}>{item.members.length} members</Text>
+          </View>
         </View>
-      </View>
-    </TouchableOpacity>
-  );
+      </TouchableOpacity>
+    );
+  };
 
   const renderSelectedUser = (userItem: User, onRemove: () => void) => (
     <View key={userItem._id} style={styles.selectedChip}>
@@ -364,6 +377,27 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#000000',
+    flex: 1,
+  },
+  groupHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  unreadBadge: {
+    backgroundColor: '#2563EB',
+    borderRadius: 10,
+    minWidth: 20,
+    height: 20,
+    paddingHorizontal: 6,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 10,
+  },
+  unreadBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: 'bold',
   },
   groupDescription: {
     fontSize: 14,

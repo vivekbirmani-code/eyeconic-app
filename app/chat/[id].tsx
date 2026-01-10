@@ -20,6 +20,8 @@ import { ArrowLeft, Send, Users, UserPlus, Trash2, X, MoreVertical, Search, Chec
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
 import { io, Socket } from 'socket.io-client';
+import Constants from 'expo-constants';
+import { useNotifications } from '@/context/NotificationContext';
 
 interface Message {
   _id: string;
@@ -47,6 +49,7 @@ interface Group {
 export default function ChatScreen() {
   const { id: groupId } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuth();
+  const { markAsRead } = useNotifications();
   const router = useRouter();
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
@@ -65,6 +68,7 @@ export default function ChatScreen() {
       fetchGroup();
       fetchMessages();
       setupSocket();
+      markAsRead(groupId);
     }
 
     return () => {
@@ -76,12 +80,17 @@ export default function ChatScreen() {
   }, [groupId]);
 
   const setupSocket = () => {
-    // Use the same base URL as the API but without /api
-    const baseUrl = Platform.OS === 'web' 
-      ? 'http://localhost:3000' 
-      : 'http://192.168.1.176:3000';
+    const getSocketURL = () => {
+      if (Platform.OS === 'web') return 'http://localhost:3000';
+      const hostUri = Constants.expoConfig?.hostUri;
+      if (hostUri) {
+        const ip = hostUri.split(':')[0];
+        return `http://${ip}:3000`;
+      }
+      return 'http://10.78.16.198:3000';
+    };
     
-    socketRef.current = io(baseUrl);
+    socketRef.current = io(getSocketURL());
     
     socketRef.current.on('connect', () => {
       console.log('Socket connected');
@@ -91,6 +100,10 @@ export default function ChatScreen() {
     socketRef.current.on('receive_message', (data: Message) => {
       setMessages(prev => [...prev, data]);
       scrollToBottom();
+      // Mark as read when receiving a message while in chat
+      if (groupId) {
+        markAsRead(groupId);
+      }
     });
   };
 

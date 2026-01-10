@@ -5,18 +5,19 @@ const { auth, authorize } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Get all groups (role-based access)
+const Message = require('../models/Message');
+const ReadStatus = require('../models/ReadStatus');
+
+// Get all groups with unread counts
 router.get('/', auth, async (req, res) => {
   try {
     let groups;
 
     if (req.user.role === 'admin') {
-      // Admin sees all groups
       groups = await Group.find()
         .populate('members', 'name email role')
         .populate('createdBy', 'name');
     } else {
-      // Mentors and students see only their groups
       groups = await Group.find({
         members: req.user._id
       })
@@ -24,7 +25,26 @@ router.get('/', auth, async (req, res) => {
         .populate('createdBy', 'name');
     }
 
-    res.json(groups);
+    // Calculate unread counts for each group
+    const groupsWithUnread = await Promise.all(groups.map(async (group) => {
+      const readStatus = await ReadStatus.findOne({
+        userId: req.user._id,
+        groupId: group._id
+      });
+
+      const unreadCount = await Message.countDocuments({
+        group: group._id,
+        sender: { $ne: req.user._id }, // Don't count own messages
+        createdAt: { $gt: readStatus ? readStatus.lastReadAt : new Date(0) }
+      });
+
+      return {
+        ...group.toObject(),
+        unreadCount
+      };
+    }));
+
+    res.json(groupsWithUnread);
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error' });
@@ -167,6 +187,21 @@ router.get('/:id', auth, async (req, res) => {
     }
 
     res.json(group);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Mark group as read
+router.post('/:id/read', auth, async (req, res) => {
+  try {
+    await ReadStatus.findOneAndUpdate(
+      { userId: req.user._id, groupId: req.params.id },
+      { lastReadAt: new Date() },
+      { upsert: true, new: true }
+    );
+    res.json({ message: 'Marked as read' });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error' });
