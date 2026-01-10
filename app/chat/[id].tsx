@@ -13,6 +13,7 @@ import {
   Modal,
   ScrollView,
   Image,
+  StatusBar,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowLeft, Send, Users, UserPlus, Trash2, X, MoreVertical, Search, Check } from 'lucide-react-native';
@@ -457,6 +458,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   header: {
     flexDirection: 'row',

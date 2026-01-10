@@ -10,6 +10,8 @@ import {
   Modal,
   Alert,
   ScrollView,
+  Platform,
+  StatusBar
 } from 'react-native';
 import { Plus, User as UserIcon, Search, X, Mail, Shield, Calendar, Phone, Lock, Key } from 'lucide-react-native';
 import { useAuth } from '@/context/AuthContext';
@@ -556,6 +558,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   header: {
     flexDirection: 'row',
@@ -803,7 +806,7 @@ const styles = StyleSheet.create({
     color: '#000000',
   },
   detailScroll: {
-    flex: 1,
+    flexGrow: 1,
   },
   detailContent: {
     padding: 20,

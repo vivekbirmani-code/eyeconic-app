@@ -9,6 +9,8 @@ import {
   TextInput,
   Modal,
   Alert,
+  Platform,
+  StatusBar
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Plus, BookOpen, Clock } from 'lucide-react-native';
@@ -180,6 +182,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   header: {
     flexDirection: 'row',

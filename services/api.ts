@@ -1,13 +1,22 @@
 import axios from 'axios';
 import { Platform } from 'react-native';
+import Constants from 'expo-constants';
 
 // Use localhost for web, your computer's IP for mobile devices
 const getBaseURL = () => {
   if (Platform.OS === 'web') {
     return 'http://localhost:3000/api';
   }
-  // For mobile devices, use your computer's local IP
-  // Update this IP if your network changes
+
+  // Dynamically get the IP address from Expo Go's host URI
+  // This works when running 'npx expo start' on your computer
+  const debuggerHost = Constants.expoConfig?.hostUri;
+  if (debuggerHost) {
+    const ip = debuggerHost.split(':')[0];
+    return `http://${ip}:3000/api`;
+  }
+
+  // Fallback IP (useful for production builds or if hostUri is missing)
   return 'http://10.78.16.198:3000/api';
 };
 

@@ -5,10 +5,12 @@ import {
   TouchableOpacity, 
   StyleSheet, 
   SafeAreaView, 
-  Modal, 
+  Modal,
   TextInput, 
   ScrollView,
-  Alert 
+  Alert,
+  Platform,
+  StatusBar
 } from 'react-native';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
@@ -271,6 +273,7 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   header: {
     flexDirection: 'row',
