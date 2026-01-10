@@ -1,0 +1,1005 @@
+import { useState, useEffect, useMemo } from 'react';
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  SafeAreaView,
+  FlatList,
+  TextInput,
+  Modal,
+  Alert,
+  ScrollView,
+} from 'react-native';
+import { Plus, User as UserIcon, Search, X, Mail, Shield, Calendar, Phone, Lock, Key } from 'lucide-react-native';
+import { useAuth } from '@/context/AuthContext';
+import { api } from '@/services/api';
+
+interface StudentProfile {
+  mbbsBatch?: string;
+  collegeName?: string;
+  attemptNo?: number;
+  batchType?: string;
+  grandTestsGiven?: string;
+  averageCorrects?: string;
+  averageScore?: number;
+  weakestSubjects?: string;
+  targetBranch?: string;
+  subscriptions?: string;
+}
+
+interface User {
+  _id: string;
+  name: string;
+  email: string;
+  role: string;
+  phone?: string;
+  isActive?: boolean;
+  isProfileComplete?: boolean;
+  studentProfile?: StudentProfile;
+  createdAt?: string;
+  groups?: { _id: string; name: string }[];
+}
+
+export default function Users() {
+  const { user } = useAuth();
+  const [users, setUsers] = useState<User[]>([]);
+  const [isCreateModalVisible, setIsCreateModalVisible] = useState(false);
+  const [isDetailModalVisible, setIsDetailModalVisible] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<User | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [roleFilter, setRoleFilter] = useState<'all' | 'student' | 'mentor' | 'admin'>('all');
+  const [profileStatusFilter, setProfileStatusFilter] = useState<'all' | 'complete' | 'incomplete'>('all');
+  const [newUser, setNewUser] = useState({
+    name: '',
+    email: '',
+    password: '',
+    phone: '',
+    role: 'student',
+  });
+  const [newPassword, setNewPassword] = useState('');
+  const [isResettingPassword, setIsResettingPassword] = useState(false);
+
+  // Only admin can access this screen
+  if (user?.role !== 'admin') {
+    return (
+      <SafeAreaView style={styles.container}>
+        <Text style={styles.errorText}>Access Denied</Text>
+      </SafeAreaView>
+    );
+  }
+
+  useEffect(() => {
+    fetchUsers();
+  }, []);
+
+  const fetchUsers = async () => {
+    try {
+      const response = await api.get('/users');
+      setUsers(response.data);
+    } catch (error) {
+      Alert.alert('Error', 'Failed to fetch users');
+    }
+  };
+
+  // Filter users based on search query and role filter
+  const filteredUsers = useMemo(() => {
+    return users.filter(u => {
+      // Search filter (name, email, or phone)
+      const matchesSearch = searchQuery === '' || 
+        u.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        u.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (u.phone && u.phone.includes(searchQuery));
+      
+      // Role filter
+      const matchesRole = roleFilter === 'all' || u.role === roleFilter;
+
+      // Profile Status Filter (only for students)
+      let matchesProfileStatus = true;
+      if (roleFilter === 'student' && profileStatusFilter !== 'all') {
+         if (profileStatusFilter === 'complete') {
+            matchesProfileStatus = u.isProfileComplete === true;
+         } else {
+            // Incomplete includes undefined or false
+            matchesProfileStatus = u.isProfileComplete !== true;
+         }
+      }
+      
+      return matchesSearch && matchesRole && matchesProfileStatus;
+    });
+  }, [users, searchQuery, roleFilter, profileStatusFilter]);
+
+  const createUser = async () => {
+    if (!newUser.name || !newUser.email || !newUser.password) {
+      Alert.alert('Error', 'Please fill in all fields');
+      return;
+    }
+
+    try {
+      await api.post('/users', newUser);
+      setNewUser({ name: '', email: '', password: '', phone: '', role: 'student' });
+      setIsCreateModalVisible(false);
+      fetchUsers();
+      Alert.alert('Success', 'User created successfully');
+    } catch (error: any) {
+      const message = error?.response?.data?.message || 'Failed to create user';
+      Alert.alert('Error', message);
+    }
+  };
+
+  const openUserDetails = (userItem: User) => {
+    const currentSearch = searchQuery; // Save current search
+    setSelectedUser(userItem);
+    setNewPassword('');
+    setIsDetailModalVisible(true);
+    // Restore search query after a tick to prevent autofill
+    setTimeout(() => setSearchQuery(currentSearch), 50);
+  };
+
+  const resetPassword = async () => {
+    if (!selectedUser) return;
+    
+    if (!newPassword || newPassword.length < 6) {
+      Alert.alert('Error', 'Password must be at least 6 characters');
+      return;
+    }
+
+    setIsResettingPassword(true);
+    try {
+      await api.post(`/users/${selectedUser._id}/reset-password`, { newPassword });
+      Alert.alert('Success', 'Password reset successfully');
+      setNewPassword('');
+    } catch (error: any) {
+      const message = error?.response?.data?.message || 'Failed to reset password';
+      Alert.alert('Error', message);
+    } finally {
+      setIsResettingPassword(false);
+    }
+  };
+
+  const getRoleColor = (role: string) => {
+    switch (role) {
+      case 'admin': return '#EF4444';
+      case 'mentor': return '#10B981';
+      case 'student': return '#2563EB';
+      default: return '#6B7280';
+    }
+  };
+
+  const getRoleBgColor = (role: string) => {
+    switch (role) {
+      case 'admin': return '#FEE2E2';
+      case 'mentor': return '#D1FAE5';
+      case 'student': return '#DBEAFE';
+      default: return '#F3F4F6';
+    }
+  };
+
+  const formatDate = (dateString?: string) => {
+    if (!dateString) return 'N/A';
+    return new Date(dateString).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    });
+  };
+
+  const renderUser = ({ item }: { item: User }) => (
+    <TouchableOpacity style={styles.userCard} onPress={() => openUserDetails(item)}>
+      <UserIcon color="#2563EB" size={24} />
+      <View style={styles.userInfo}>
+        <Text style={styles.userName}>{item.name}</Text>
+        <Text style={styles.userEmail}>{item.email}</Text>
+        <View style={styles.badgeRow}>
+          <View style={[styles.roleBadge, { backgroundColor: getRoleBgColor(item.role) }]}>
+            <Text style={[styles.userRole, { color: getRoleColor(item.role) }]}>
+              {item.role.toUpperCase()}
+            </Text>
+          </View>
+          {item.role === 'student' && item.isProfileComplete === false && (
+            <View style={styles.incompleteProfileBadge}>
+              <Text style={styles.incompleteProfileText}>Profile Incomplete</Text>
+            </View>
+          )}
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.title}>User Management</Text>
+        <TouchableOpacity
+          style={styles.addButton}
+          onPress={() => setIsCreateModalVisible(true)}
+        >
+          <Plus color="#FFFFFF" size={20} />
+        </TouchableOpacity>
+      </View>
+
+      {/* Search Bar */}
+      <View style={styles.searchContainer}>
+        <Search color="#6B7280" size={20} />
+        <TextInput
+          key="search-users-input"
+          style={styles.searchInput}
+          placeholder="Search by name, email or phone..."
+          placeholderTextColor="#9CA3AF"
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          autoComplete="off"
+          autoCorrect={false}
+          autoCapitalize="none"
+          textContentType="none"
+          inputMode="search"
+        />
+        {searchQuery !== '' && (
+          <TouchableOpacity onPress={() => setSearchQuery('')}>
+            <X color="#6B7280" size={20} />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Role Filter */}
+      <View style={styles.filterContainer}>
+        {(['all', 'student', 'mentor', 'admin'] as const).map((role) => (
+          <TouchableOpacity
+            key={role}
+            style={[
+              styles.filterButton,
+              roleFilter === role && styles.filterButtonActive
+            ]}
+            onPress={() => {
+                setRoleFilter(role);
+                if (role !== 'student') setProfileStatusFilter('all');
+            }}
+          >
+            <Text style={[
+              styles.filterButtonText,
+              roleFilter === role && styles.filterButtonTextActive
+            ]}>
+              {role === 'all' ? 'All' : role.charAt(0).toUpperCase() + role.slice(1)}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+      
+      {/* Profile Status Filter - visible only when Student is selected */}
+      {roleFilter === 'student' && (
+        <View style={styles.subFilterContainer}>
+            <Text style={styles.subFilterLabel}>Profile Status:</Text>
+            {(['all', 'complete', 'incomplete'] as const).map((status) => (
+            <TouchableOpacity
+                key={status}
+                style={[
+                styles.subFilterButton,
+                profileStatusFilter === status && styles.subFilterButtonActive
+                ]}
+                onPress={() => setProfileStatusFilter(status)}
+            >
+                <Text style={[
+                styles.subFilterButtonText,
+                profileStatusFilter === status && styles.subFilterButtonTextActive
+                ]}>
+                {status === 'all' ? 'All' : status.charAt(0).toUpperCase() + status.slice(1)}
+                </Text>
+            </TouchableOpacity>
+            ))}
+        </View>
+      )}
+
+      {/* Results Count */}
+      <Text style={styles.resultCount}>
+        {filteredUsers.length} user{filteredUsers.length !== 1 ? 's' : ''} found
+      </Text>
+
+      <FlatList
+        data={filteredUsers}
+        renderItem={renderUser}
+        keyExtractor={(item) => item._id}
+        contentContainerStyle={styles.list}
+        ListEmptyComponent={
+          <Text style={styles.emptyText}>No users found</Text>
+        }
+      />
+
+      {/* Create User Modal */}
+      <Modal visible={isCreateModalVisible} animationType="slide">
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Create New User</Text>
+            <TouchableOpacity onPress={() => setIsCreateModalVisible(false)}>
+              <Text style={styles.cancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.modalContent}>
+            <TextInput
+              style={styles.input}
+              placeholder="Full Name"
+              placeholderTextColor="#9CA3AF"
+              value={newUser.name}
+              onChangeText={(text) => setNewUser({ ...newUser, name: text })}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Email"
+              placeholderTextColor="#9CA3AF"
+              value={newUser.email}
+              onChangeText={(text) => setNewUser({ ...newUser, email: text })}
+              keyboardType="email-address"
+              autoCapitalize="none"
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Password"
+              placeholderTextColor="#9CA3AF"
+              value={newUser.password}
+              onChangeText={(text) => setNewUser({ ...newUser, password: text })}
+              secureTextEntry
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Phone Number "
+              placeholderTextColor="#9CA3AF"
+              value={newUser.phone}
+              onChangeText={(text) => setNewUser({ ...newUser, phone: text })}
+              keyboardType="phone-pad"
+            />
+
+            <View style={styles.roleSelector}>
+              <Text style={styles.roleLabel}>Role:</Text>
+              <View style={styles.roleButtons}>
+                <TouchableOpacity
+                  style={[
+                    styles.roleButton,
+                    newUser.role === 'student' && styles.roleButtonActive,
+                  ]}
+                  onPress={() => setNewUser({ ...newUser, role: 'student' })}
+                >
+                  <Text style={[
+                    styles.roleButtonText,
+                    newUser.role === 'student' && styles.roleButtonTextActive
+                  ]}>Student</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.roleButton,
+                    newUser.role === 'mentor' && styles.roleButtonActive,
+                  ]}
+                  onPress={() => setNewUser({ ...newUser, role: 'mentor' })}
+                >
+                  <Text style={[
+                    styles.roleButtonText,
+                    newUser.role === 'mentor' && styles.roleButtonTextActive
+                  ]}>Mentor</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
+            <TouchableOpacity style={styles.createButton} onPress={createUser}>
+              <Text style={styles.createButtonText}>Create User</Text>
+            </TouchableOpacity>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* User Details Modal */}
+      <Modal visible={isDetailModalVisible} animationType="slide" transparent>
+        <View style={styles.detailOverlay}>
+          <View style={styles.detailModal}>
+            <View style={styles.detailHeader}>
+              <Text style={styles.detailTitle}>User Details</Text>
+              <TouchableOpacity onPress={() => setIsDetailModalVisible(false)}>
+                <X color="#6B7280" size={24} />
+              </TouchableOpacity>
+            </View>
+
+            {selectedUser && (
+              <ScrollView style={styles.detailScroll} showsVerticalScrollIndicator={false}>
+                <View style={styles.detailContent}>
+                {/* Avatar */}
+                <View style={styles.avatarContainer}>
+                  <View style={[styles.avatar, { backgroundColor: getRoleBgColor(selectedUser.role) }]}>
+                    <UserIcon color={getRoleColor(selectedUser.role)} size={40} />
+                  </View>
+                  <Text style={styles.detailName}>{selectedUser.name}</Text>
+                  <View style={[styles.roleBadgeLarge, { backgroundColor: getRoleBgColor(selectedUser.role) }]}>
+                    <Text style={[styles.roleBadgeText, { color: getRoleColor(selectedUser.role) }]}>
+                      {selectedUser.role.toUpperCase()}
+                    </Text>
+                  </View>
+                </View>
+
+                {/* Info Rows */}
+                <View style={styles.infoSection}>
+                  <View style={styles.infoRow}>
+                    <Mail color="#6B7280" size={20} />
+                    <View style={styles.infoContent}>
+                      <Text style={styles.infoLabel}>Email</Text>
+                      <Text style={styles.infoValue}>{selectedUser.email}</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.infoRow}>
+                    <Phone color="#6B7280" size={20} />
+                    <View style={styles.infoContent}>
+                      <Text style={styles.infoLabel}>Phone</Text>
+                      <Text style={styles.infoValue}>
+                        {selectedUser.phone || 'Not provided'}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.infoRow}>
+                    <Shield color="#6B7280" size={20} />
+                    <View style={styles.infoContent}>
+                      <Text style={styles.infoLabel}>Account Status</Text>
+                      <Text style={[styles.infoValue, { color: '#10B981' }]}>Active</Text>
+                    </View>
+                  </View>
+
+                  <View style={styles.infoRow}>
+                    <Calendar color="#6B7280" size={20} />
+                    <View style={styles.infoContent}>
+                      <Text style={styles.infoLabel}>Created</Text>
+                      <Text style={styles.infoValue}>{formatDate(selectedUser.createdAt)}</Text>
+                    </View>
+                  </View>
+                </View>
+
+                {/* Student Profile Details - Only shown for students */}
+                {selectedUser.role === 'student' && (
+                  <View style={styles.studentProfileSection}>
+                    <Text style={styles.studentProfileTitle}>
+                      Student Profile {selectedUser.isProfileComplete === false && '(Incomplete)'}
+                    </Text>
+                    
+                    {selectedUser.isProfileComplete ? (
+                      <View style={styles.profileGrid}>
+                        <View style={styles.profileRow}>
+                          <Text style={styles.profileLabel}>MBBS Batch:</Text>
+                          <Text style={styles.profileValue}>{selectedUser.studentProfile?.mbbsBatch || 'N/A'}</Text>
+                        </View>
+                        <View style={styles.profileRow}>
+                          <Text style={styles.profileLabel}>College:</Text>
+                          <Text style={styles.profileValue}>{selectedUser.studentProfile?.collegeName || 'N/A'}</Text>
+                        </View>
+                        <View style={styles.profileRow}>
+                          <Text style={styles.profileLabel}>Batch Type:</Text>
+                          <Text style={styles.profileValue}>{selectedUser.studentProfile?.batchType || 'N/A'}</Text>
+                        </View>
+                        <View style={styles.profileRow}>
+                          <Text style={styles.profileLabel}>Attempt No:</Text>
+                          <Text style={styles.profileValue}>{selectedUser.studentProfile?.attemptNo || 'N/A'}</Text>
+                        </View>
+                        <View style={styles.profileRow}>
+                          <Text style={styles.profileLabel}>Grand Tests Given:</Text>
+                          <Text style={styles.profileValue}>{selectedUser.studentProfile?.grandTestsGiven || 'N/A'}</Text>
+                        </View>
+                        <View style={styles.profileRow}>
+                          <Text style={styles.profileLabel}>Avg Corrects:</Text>
+                          <Text style={styles.profileValue}>{selectedUser.studentProfile?.averageCorrects || 'N/A'}</Text>
+                        </View>
+                        <View style={styles.profileRow}>
+                          <Text style={styles.profileLabel}>Avg Score:</Text>
+                          <Text style={styles.profileValue}>{selectedUser.studentProfile?.averageScore || 'N/A'}</Text>
+                        </View>
+                        <View style={styles.profileRow}>
+                          <Text style={styles.profileLabel}>Weakest Subjects:</Text>
+                          <Text style={styles.profileValue}>{selectedUser.studentProfile?.weakestSubjects || 'N/A'}</Text>
+                        </View>
+                        <View style={styles.profileRow}>
+                          <Text style={styles.profileLabel}>Target Branch:</Text>
+                          <Text style={styles.profileValue}>{selectedUser.studentProfile?.targetBranch || 'N/A'}</Text>
+                        </View>
+                        <View style={styles.profileRow}>
+                          <Text style={styles.profileLabel}>Subscriptions:</Text>
+                          <Text style={styles.profileValue}>{selectedUser.studentProfile?.subscriptions || 'N/A'}</Text>
+                        </View>
+                      </View>
+                    ) : (
+                      <View style={styles.profileIncompleteMessage}>
+                        <Text style={styles.profileIncompleteText}>
+                          This student has not completed their profile yet.
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                )}
+
+                {/* Reset Password Section */}
+                <View style={styles.resetSection}>
+                  <Text style={styles.resetTitle}>Reset Password</Text>
+                  <View style={styles.resetInputRow}>
+                    <Key color="#6B7280" size={20} />
+                    <TextInput
+                      style={styles.resetInput}
+                      placeholder="New password (min 6 chars)"
+                      placeholderTextColor="#9CA3AF"
+                      value={newPassword}
+                      onChangeText={setNewPassword}
+                      secureTextEntry
+                      autoComplete="new-password"
+                    />
+                  </View>
+                  <TouchableOpacity 
+                    style={[styles.resetButton, isResettingPassword && styles.resetButtonDisabled]}
+                    onPress={resetPassword}
+                    disabled={isResettingPassword}
+                  >
+                    <Lock color="#FFFFFF" size={16} />
+                    <Text style={styles.resetButtonText}>
+                      {isResettingPassword ? 'Resetting...' : 'Reset Password'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                <TouchableOpacity 
+                  style={styles.closeButton} 
+                  onPress={() => setIsDetailModalVisible(false)}
+                >
+                  <Text style={styles.closeButtonText}>Close</Text>
+                </TouchableOpacity>
+                </View>
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  header: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#000000',
+  },
+  addButton: {
+    backgroundColor: '#2563EB',
+    borderRadius: 8,
+    padding: 10,
+  },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 20,
+    marginTop: 15,
+    paddingHorizontal: 15,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  searchInput: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 10,
+    fontSize: 16,
+    color: '#000000',
+  },
+  filterContainer: {
+    flexDirection: 'row',
+    paddingHorizontal: 20,
+    marginTop: 15,
+    gap: 10,
+  },
+  filterButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  filterButtonActive: {
+    backgroundColor: '#2563EB',
+    borderColor: '#2563EB',
+  },
+  filterButtonText: {
+    fontSize: 14,
+    color: '#6B7280',
+    fontWeight: '500',
+  },
+  filterButtonTextActive: {
+    color: '#FFFFFF',
+  },
+  resultCount: {
+    paddingHorizontal: 20,
+    paddingTop: 15,
+    fontSize: 14,
+    color: '#6B7280',
+  },
+  list: {
+    padding: 20,
+    gap: 10,
+  },
+  emptyText: {
+    textAlign: 'center',
+    color: '#6B7280',
+    fontSize: 16,
+    marginTop: 40,
+  },
+  userCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    padding: 15,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    marginBottom: 10,
+  },
+  userInfo: {
+    marginLeft: 15,
+    flex: 1,
+  },
+  userName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  userEmail: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  roleBadge: {
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 6,
+    flexWrap: 'wrap',
+  },
+  incompleteProfileBadge: {
+    backgroundColor: '#FEF3C7',
+    paddingVertical: 3,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+  },
+  incompleteProfileText: {
+    fontSize: 10,
+    fontWeight: 'bold',
+    color: '#92400E',
+  },
+  userRole: {
+    fontSize: 11,
+    fontWeight: 'bold',
+  },
+  modalContainer: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#000000',
+  },
+  cancelText: {
+    color: '#EF4444',
+    fontSize: 16,
+  },
+  modalContent: {
+    flex: 1,
+    padding: 20,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    padding: 15,
+    fontSize: 16,
+    backgroundColor: '#F9FAFB',
+    color: '#000000',
+    marginBottom: 15,
+  },
+  roleSelector: {
+    marginTop: 10,
+  },
+  roleLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#000000',
+    marginBottom: 10,
+  },
+  roleButtons: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  roleButton: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    padding: 12,
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+  },
+  roleButtonActive: {
+    backgroundColor: '#2563EB',
+    borderColor: '#2563EB',
+  },
+  roleButtonText: {
+    fontSize: 14,
+    color: '#374151',
+  },
+  roleButtonTextActive: {
+    color: '#FFFFFF',
+  },
+  createButton: {
+    backgroundColor: '#2563EB',
+    borderRadius: 8,
+    padding: 15,
+    alignItems: 'center',
+    marginTop: 25,
+  },
+  createButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  errorText: {
+    fontSize: 18,
+    color: '#EF4444',
+    textAlign: 'center',
+    marginTop: 50,
+  },
+  // Detail Modal Styles
+  detailOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  detailModal: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    width: '100%',
+    maxWidth: 400,
+    maxHeight: '90%',
+  },
+  detailHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  detailTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#000000',
+  },
+  detailScroll: {
+    flex: 1,
+  },
+  detailContent: {
+    padding: 20,
+  },
+  avatarContainer: {
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  avatar: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  detailName: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#000000',
+    marginBottom: 8,
+  },
+  roleBadgeLarge: {
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+  },
+  roleBadgeText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  infoSection: {
+    marginTop: 10,
+    gap: 15,
+  },
+  infoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+    padding: 15,
+    borderRadius: 12,
+    gap: 15,
+  },
+  infoContent: {
+    flex: 1,
+  },
+  infoLabel: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginBottom: 2,
+  },
+  infoValue: {
+    fontSize: 16,
+    color: '#000000',
+    fontWeight: '500',
+  },
+  closeButton: {
+    backgroundColor: '#F3F4F6',
+    borderRadius: 8,
+    padding: 15,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  closeButtonText: {
+    color: '#374151',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  resetSection: {
+    marginTop: 20,
+    padding: 15,
+    backgroundColor: '#FEF3C7',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+  },
+  resetTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#92400E',
+    marginBottom: 10,
+  },
+  resetInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    padding: 12,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  resetInput: {
+    flex: 1,
+    fontSize: 14,
+    color: '#000000',
+  },
+  resetButton: {
+    flexDirection: 'row',
+    backgroundColor: '#F59E0B',
+    borderRadius: 8,
+    padding: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: 10,
+    gap: 8,
+  },
+  resetButtonDisabled: {
+    opacity: 0.6,
+  },
+  resetButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  // Student Profile Styles
+  studentProfileSection: {
+    marginTop: 20,
+    padding: 15,
+    backgroundColor: '#F0F9FF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#0EA5E9',
+  },
+  studentProfileTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#0369A1',
+    marginBottom: 15,
+  },
+  profileGrid: {
+    gap: 10,
+  },
+  profileRow: {
+    flexDirection: 'row',
+    backgroundColor: '#FFFFFF',
+    padding: 10,
+    borderRadius: 8,
+  },
+  profileLabel: {
+    fontSize: 13,
+    color: '#6B7280',
+    width: 120,
+    fontWeight: '500',
+  },
+  profileValue: {
+    fontSize: 13,
+    color: '#000000',
+    flex: 1,
+    fontWeight: '600',
+  },
+  profileIncompleteMessage: {
+    padding: 15,
+    backgroundColor: '#FEF3C7',
+    borderRadius: 8,
+  },
+  profileIncompleteText: {
+    fontSize: 14,
+    color: '#92400E',
+    textAlign: 'center',
+    fontStyle: 'italic',
+  },
+  subFilterContainer: {
+    flexDirection: 'row',
+    paddingHorizontal: 20,
+    marginTop: 12,
+    gap: 8,
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    marginBottom: 5,
+  },
+  subFilterLabel: {
+    fontSize: 13,
+    color: '#6B7280',
+    marginRight: 4,
+    fontWeight: '500',
+  },
+  subFilterButton: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+  },
+  subFilterButtonActive: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#3B82F6',
+  },
+  subFilterButtonText: {
+    fontSize: 12,
+    fontWeight: '500',
+    color: '#6B7280',
+  },
+  subFilterButtonTextActive: {
+    color: '#2563EB',
+    fontWeight: '600',
+  },
+});
