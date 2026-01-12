@@ -13,7 +13,7 @@ import {
   Platform,
   StatusBar
 } from 'react-native';
-import { Plus, User as UserIcon, Search, X, Mail, Shield, Calendar, Phone, Lock, Key } from 'lucide-react-native';
+import { Plus, User as UserIcon, Search, X, Mail, Shield, Calendar, Phone, Lock, Key, Users as UsersIcon, Check, Square, CheckSquare } from 'lucide-react-native';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
 
@@ -43,6 +43,13 @@ interface User {
   groups?: { _id: string; name: string }[];
 }
 
+interface GroupAssignment {
+  _id: string;
+  name: string;
+  description?: string;
+  isAssigned: boolean;
+}
+
 export default function Users() {
   const { user } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
@@ -61,6 +68,14 @@ export default function Users() {
   });
   const [newPassword, setNewPassword] = useState('');
   const [isResettingPassword, setIsResettingPassword] = useState(false);
+  
+  // Mentor group management state
+  const [isGroupModalVisible, setIsGroupModalVisible] = useState(false);
+  const [mentorGroups, setMentorGroups] = useState<GroupAssignment[]>([]);
+  const [originalAssignments, setOriginalAssignments] = useState<Set<string>>(new Set());
+  const [isLoadingGroups, setIsLoadingGroups] = useState(false);
+  const [isSavingGroups, setIsSavingGroups] = useState(false);
+  const [groupSearchQuery, setGroupSearchQuery] = useState('');
 
   // Only admin can access this screen
   if (user?.role !== 'admin') {
@@ -158,6 +173,76 @@ export default function Users() {
       setIsResettingPassword(false);
     }
   };
+
+  const fetchMentorGroups = async (mentorId: string) => {
+    setIsLoadingGroups(true);
+    try {
+      const response = await api.get(`/groups/mentor/${mentorId}/assignments`);
+      setMentorGroups(response.data);
+      // Store original assignments to track changes
+      const assigned = new Set<string>(response.data.filter((g: GroupAssignment) => g.isAssigned).map((g: GroupAssignment) => g._id));
+      setOriginalAssignments(assigned);
+    } catch (error: any) {
+      Alert.alert('Error', 'Failed to fetch group assignments');
+    } finally {
+      setIsLoadingGroups(false);
+    }
+  };
+
+  const toggleGroupAssignment = (groupId: string) => {
+    setMentorGroups(prev => prev.map(g => 
+      g._id === groupId ? { ...g, isAssigned: !g.isAssigned } : g
+    ));
+  };
+
+  const saveMentorGroups = async () => {
+    if (!selectedUser) return;
+    
+    setIsSavingGroups(true);
+    try {
+      const currentAssignments = new Set(mentorGroups.filter(g => g.isAssigned).map(g => g._id));
+      
+      // Find groups to add (in current but not in original)
+      const addToGroups = [...currentAssignments].filter(id => !originalAssignments.has(id));
+      
+      // Find groups to remove (in original but not in current)
+      const removeFromGroups = [...originalAssignments].filter(id => !currentAssignments.has(id));
+      
+      if (addToGroups.length === 0 && removeFromGroups.length === 0) {
+        setIsGroupModalVisible(false);
+        return;
+      }
+
+      await api.post('/groups/bulk-mentor-assignment', {
+        mentorId: selectedUser._id,
+        addToGroups,
+        removeFromGroups
+      });
+      
+      Alert.alert('Success', 'Group assignments updated successfully');
+      setOriginalAssignments(currentAssignments);
+      setIsGroupModalVisible(false);
+    } catch (error: any) {
+      const message = error?.response?.data?.message || 'Failed to update group assignments';
+      Alert.alert('Error', message);
+    } finally {
+      setIsSavingGroups(false);
+    }
+  };
+
+  const openGroupManagement = () => {
+    if (!selectedUser) return;
+    setGroupSearchQuery('');
+    fetchMentorGroups(selectedUser._id);
+    setIsGroupModalVisible(true);
+  };
+
+  const filteredMentorGroups = useMemo(() => {
+    if (!groupSearchQuery) return mentorGroups;
+    return mentorGroups.filter(g => 
+      g.name.toLowerCase().includes(groupSearchQuery.toLowerCase())
+    );
+  }, [mentorGroups, groupSearchQuery]);
 
   const getRoleColor = (role: string) => {
     switch (role) {
@@ -511,6 +596,20 @@ export default function Users() {
                   </View>
                 )}
 
+                {/* Mentor Group Management Section */}
+                {selectedUser.role === 'mentor' && (
+                  <View style={styles.mentorGroupSection}>
+                    <Text style={styles.mentorGroupTitle}>Group Assignments</Text>
+                    <TouchableOpacity 
+                      style={styles.manageGroupsButton}
+                      onPress={openGroupManagement}
+                    >
+                      <UsersIcon color="#FFFFFF" size={18} />
+                      <Text style={styles.manageGroupsButtonText}>Manage Groups</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
                 {/* Reset Password Section */}
                 <View style={styles.resetSection}>
                   <Text style={styles.resetTitle}>Reset Password</Text>
@@ -547,6 +646,110 @@ export default function Users() {
                 </View>
               </ScrollView>
             )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Mentor Group Management Modal */}
+      <Modal visible={isGroupModalVisible} animationType="slide" transparent>
+        <View style={styles.detailOverlay}>
+          <View style={styles.groupModal}>
+            <View style={styles.detailHeader}>
+              <Text style={styles.detailTitle}>Manage Groups</Text>
+              <TouchableOpacity onPress={() => setIsGroupModalVisible(false)}>
+                <X color="#6B7280" size={24} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Group Search */}
+            <View style={styles.groupSearchContainer}>
+              <Search color="#6B7280" size={18} />
+              <TextInput
+                style={styles.groupSearchInput}
+                placeholder="Search groups..."
+                placeholderTextColor="#9CA3AF"
+                value={groupSearchQuery}
+                onChangeText={setGroupSearchQuery}
+              />
+              {groupSearchQuery !== '' && (
+                <TouchableOpacity onPress={() => setGroupSearchQuery('')}>
+                  <X color="#6B7280" size={18} />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {isLoadingGroups ? (
+              <View style={styles.loadingContainer}>
+                <Text style={styles.loadingText}>Loading groups...</Text>
+              </View>
+            ) : (
+              <View style={styles.groupListContainer}>
+                <ScrollView 
+                  style={styles.groupList} 
+                  contentContainerStyle={styles.groupListContent}
+                  showsVerticalScrollIndicator={true}
+                  nestedScrollEnabled={true}
+                >
+                  {filteredMentorGroups.length === 0 ? (
+                    <Text style={styles.emptyText}>No groups found</Text>
+                  ) : (
+                    filteredMentorGroups.map(group => (
+                      <TouchableOpacity
+                        key={group._id}
+                        style={[
+                          styles.groupItem,
+                          group.isAssigned && styles.groupItemSelected
+                        ]}
+                        onPress={() => toggleGroupAssignment(group._id)}
+                      >
+                        {group.isAssigned ? (
+                          <CheckSquare color="#10B981" size={22} />
+                        ) : (
+                          <Square color="#9CA3AF" size={22} />
+                        )}
+                        <View style={styles.groupItemInfo}>
+                          <Text style={[
+                            styles.groupItemName,
+                            group.isAssigned && styles.groupItemNameSelected
+                          ]}>
+                            {group.name}
+                          </Text>
+                          {group.description && (
+                            <Text style={styles.groupItemDesc} numberOfLines={1}>
+                              {group.description}
+                            </Text>
+                          )}
+                        </View>
+                      </TouchableOpacity>
+                    ))
+                  )}
+                </ScrollView>
+              </View>
+            )}
+
+            {/* Summary and Save */}
+            <View style={styles.groupModalFooter}>
+              <Text style={styles.groupSummary}>
+                {mentorGroups.filter(g => g.isAssigned).length} group(s) selected
+              </Text>
+              <View style={styles.groupModalButtons}>
+                <TouchableOpacity
+                  style={styles.groupCancelButton}
+                  onPress={() => setIsGroupModalVisible(false)}
+                >
+                  <Text style={styles.groupCancelButtonText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.groupSaveButton, isSavingGroups && styles.groupSaveButtonDisabled]}
+                  onPress={saveMentorGroups}
+                  disabled={isSavingGroups}
+                >
+                  <Text style={styles.groupSaveButtonText}>
+                    {isSavingGroups ? 'Saving...' : 'Save Changes'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
           </View>
         </View>
       </Modal>
@@ -1004,5 +1207,158 @@ const styles = StyleSheet.create({
   subFilterButtonTextActive: {
     color: '#2563EB',
     fontWeight: '600',
+  },
+  // Mentor Group Management Styles
+  mentorGroupSection: {
+    marginTop: 20,
+    padding: 15,
+    backgroundColor: '#F0FDF4',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#10B981',
+  },
+  mentorGroupTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#047857',
+    marginBottom: 12,
+  },
+  manageGroupsButton: {
+    flexDirection: 'row',
+    backgroundColor: '#10B981',
+    borderRadius: 8,
+    padding: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  manageGroupsButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  // Group Modal Styles
+  groupModal: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    width: '100%',
+    maxWidth: 400,
+    maxHeight: 450,
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  groupSearchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 15,
+    marginVertical: 10,
+    paddingHorizontal: 12,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  groupSearchInput: {
+    flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    fontSize: 14,
+    color: '#000000',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+  loadingText: {
+    fontSize: 14,
+    color: '#6B7280',
+  },
+  groupListContainer: {
+    flex: 1,
+    minHeight: 100,
+  },
+  groupList: {
+    flex: 1,
+  },
+  groupListContent: {
+    paddingHorizontal: 15,
+    paddingBottom: 10,
+  },
+  groupItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    marginBottom: 8,
+    borderRadius: 10,
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    gap: 12,
+  },
+  groupItemSelected: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#10B981',
+  },
+  groupItemInfo: {
+    flex: 1,
+  },
+  groupItemName: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#374151',
+  },
+  groupItemNameSelected: {
+    color: '#047857',
+    fontWeight: '600',
+  },
+  groupItemDesc: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  groupModalFooter: {
+    padding: 15,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+    backgroundColor: '#F9FAFB',
+  },
+  groupSummary: {
+    fontSize: 13,
+    color: '#6B7280',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  groupModalButtons: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  groupCancelButton: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+    alignItems: 'center',
+  },
+  groupCancelButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  groupSaveButton: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#10B981',
+    alignItems: 'center',
+  },
+  groupSaveButtonDisabled: {
+    opacity: 0.6,
+  },
+  groupSaveButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
 });

@@ -208,4 +208,129 @@ router.post('/:id/read', auth, async (req, res) => {
   }
 });
 
+// Get all groups with mentor's assignment status (Admin only)
+router.get('/mentor/:mentorId/assignments', auth, authorize('admin'), async (req, res) => {
+  try {
+    const { mentorId } = req.params;
+
+    // Verify the user is a mentor
+    const mentor = await User.findById(mentorId);
+    if (!mentor) {
+      return res.status(404).json({ message: 'Mentor not found' });
+    }
+    if (mentor.role !== 'mentor') {
+      return res.status(400).json({ message: 'User is not a mentor' });
+    }
+
+    // Get all groups
+    const groups = await Group.find()
+      .select('_id name description members mentors')
+      .lean();
+
+    // Map groups with assignment status
+    const groupsWithStatus = groups.map(group => {
+      // Check if mentor is in members array or mentors array
+      const isInMembers = group.members?.some(m => m.toString() === mentorId);
+      const isInMentors = group.mentors?.some(m => m.toString() === mentorId);
+
+      return {
+        _id: group._id,
+        name: group.name,
+        description: group.description,
+        isAssigned: isInMembers || isInMentors
+      };
+    });
+
+    res.json(groupsWithStatus);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Bulk update mentor group assignments (Admin only)
+router.post('/bulk-mentor-assignment', auth, authorize('admin'), async (req, res) => {
+  try {
+    const { mentorId, addToGroups, removeFromGroups } = req.body;
+
+    if (!mentorId) {
+      return res.status(400).json({ message: 'Mentor ID is required' });
+    }
+
+    // Verify the user is a mentor
+    const mentor = await User.findById(mentorId);
+    if (!mentor) {
+      return res.status(404).json({ message: 'Mentor not found' });
+    }
+    if (mentor.role !== 'mentor') {
+      return res.status(400).json({ message: 'User is not a mentor' });
+    }
+
+    // Add mentor to groups
+    if (addToGroups && addToGroups.length > 0) {
+      // Update Group documents - add to both members and mentors arrays
+      await Group.updateMany(
+        { _id: { $in: addToGroups } },
+        {
+          $addToSet: {
+            members: mentorId,
+            mentors: mentorId
+          }
+        }
+      );
+
+      // Update User's groups array
+      await User.findByIdAndUpdate(
+        mentorId,
+        { $addToSet: { groups: { $each: addToGroups } } }
+      );
+    }
+
+    // Remove mentor from groups
+    if (removeFromGroups && removeFromGroups.length > 0) {
+      // Update Group documents - remove from both members and mentors arrays
+      await Group.updateMany(
+        { _id: { $in: removeFromGroups } },
+        {
+          $pull: {
+            members: mentorId,
+            mentors: mentorId
+          }
+        }
+      );
+
+      // Update User's groups array
+      await User.findByIdAndUpdate(
+        mentorId,
+        { $pull: { groups: { $in: removeFromGroups } } }
+      );
+    }
+
+    // Fetch updated assignments
+    const groups = await Group.find()
+      .select('_id name description members mentors')
+      .lean();
+
+    const groupsWithStatus = groups.map(group => {
+      const isInMembers = group.members?.some(m => m.toString() === mentorId);
+      const isInMentors = group.mentors?.some(m => m.toString() === mentorId);
+
+      return {
+        _id: group._id,
+        name: group.name,
+        description: group.description,
+        isAssigned: isInMembers || isInMentors
+      };
+    });
+
+    res.json({
+      message: 'Mentor assignments updated successfully',
+      groups: groupsWithStatus
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 module.exports = router;
