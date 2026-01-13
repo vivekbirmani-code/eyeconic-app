@@ -5,7 +5,11 @@ require('dotenv').config();
 const seedUsers = async () => {
     try {
         // Connect to MongoDB
-        await mongoose.connect(process.env.MONGODB_URI || 'mongodb+srv://REDACTED:REDACTED@neet.com' });
+        await mongoose.connect(process.env.MONGODB_URI || 'mongodb+srv://REDACTED:REDACTED@cluster0.g7l8wx5.mongodb.net/?appName=Cluster0');
+        console.log('Connected to MongoDB');
+
+        // Seed Admin
+        const existingAdmin = await User.findOne({ email: 'admin@neet.com' });
         if (!existingAdmin) {
             const admin = new User({
                 name: 'Admin',

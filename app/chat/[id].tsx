@@ -12,11 +12,13 @@ import {
   Alert,
   Modal,
   ScrollView,
-  Image,
+  Pressable,
+  Keyboard,
   StatusBar,
+  Dimensions,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ArrowLeft, Send, Users, UserPlus, Trash2, X, MoreVertical, Search, Check } from 'lucide-react-native';
+import { ArrowLeft, Send, Users, UserPlus, X, Search, Check, CheckCheck, Edit2, Trash2, Info, Phone } from 'lucide-react-native';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
 import { io, Socket } from 'socket.io-client';
@@ -28,6 +30,10 @@ interface Message {
   content: string;
   sender: { _id: string; name: string };
   createdAt: string;
+  status?: 'sent' | 'delivered' | 'read';
+  isEdited?: boolean;
+  editedAt?: string;
+  deletedForEveryone?: boolean;
 }
 
 interface User {
@@ -46,6 +52,11 @@ interface Group {
   createdAt: string;
 }
 
+interface ReadByUser {
+  user: { _id: string; name: string };
+  readAt: string;
+}
+
 export default function ChatScreen() {
   const { id: groupId } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuth();
@@ -62,6 +73,15 @@ export default function ChatScreen() {
   const [selectedNewMembers, setSelectedNewMembers] = useState<string[]>([]);
   const flatListRef = useRef<FlatList>(null);
   const socketRef = useRef<Socket | null>(null);
+  
+  // Message action states
+  const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
+  const [isMessageMenuVisible, setIsMessageMenuVisible] = useState(false);
+  const [isMessageInfoVisible, setIsMessageInfoVisible] = useState(false);
+  const [isEditModalVisible, setIsEditModalVisible] = useState(false);
+  const [editContent, setEditContent] = useState('');
+  const [readByUsers, setReadByUsers] = useState<ReadByUser[]>([]);
+  const [isLoadingReadBy, setIsLoadingReadBy] = useState(false);
 
   useEffect(() => {
     if (groupId) {
@@ -100,9 +120,27 @@ export default function ChatScreen() {
     socketRef.current.on('receive_message', (data: Message) => {
       setMessages(prev => [...prev, data]);
       scrollToBottom();
-      // Mark as read when receiving a message while in chat
+      // Mark messages as read when chat is open
       if (groupId) {
         markAsRead(groupId);
+        // Mark the received message as read
+        api.post(`/messages/${data._id}/read`).catch(() => {});
+      }
+    });
+
+    // Listen for message updates (edit, delete)
+    socketRef.current.on('message_updated', (data: Message) => {
+      setMessages(prev => prev.map(msg => 
+        msg._id === data._id ? { ...msg, ...data } : msg
+      ));
+    });
+
+    // Listen for message deletion
+    socketRef.current.on('message_deleted', (data: { messageId: string, deletedForEveryone: boolean }) => {
+      if (data.deletedForEveryone) {
+        setMessages(prev => prev.map(msg => 
+          msg._id === data.messageId ? { ...msg, deletedForEveryone: true } : msg
+        ));
       }
     });
   };
@@ -140,7 +178,7 @@ export default function ChatScreen() {
        await api.post(`/groups/${groupId}/members`, { userIds: selectedNewMembers });
        Alert.alert('Success', 'Members added successfully');
        setIsAddMemberVisible(false);
-       fetchGroup(); // Refresh group data
+       fetchGroup();
      } catch (error: any) {
        Alert.alert('Error', error?.response?.data?.message || 'Failed to add members');
      }
@@ -158,7 +196,7 @@ export default function ChatScreen() {
           onPress: async () => {
             try {
               await api.delete(`/groups/${groupId}/members/${userId}`);
-              fetchGroup(); // Refresh group data
+              fetchGroup();
             } catch (error: any) {
               Alert.alert('Error', error?.response?.data?.message || 'Failed to remove member');
             }
@@ -194,6 +232,14 @@ export default function ChatScreen() {
       setMessages(response.data);
       setIsLoading(false);
       setTimeout(scrollToBottom, 100);
+      
+      // Mark all messages as read
+      const messageIds = response.data
+        .filter((m: Message) => m.sender._id !== user?._id)
+        .map((m: Message) => m._id);
+      if (messageIds.length > 0) {
+        api.post('/messages/read-batch', { messageIds }).catch(() => {});
+      }
     } catch (error) {
       Alert.alert('Error', 'Failed to load messages');
       setIsLoading(false);
@@ -218,10 +264,8 @@ export default function ChatScreen() {
         groupId,
       });
 
-      // Add message locally
       setMessages(prev => [...prev, response.data]);
       
-      // Emit to socket for real-time
       socketRef.current?.emit('send_message', {
         ...response.data,
         groupId,
@@ -239,14 +283,190 @@ export default function ChatScreen() {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  // Message action handlers
+  const handleMessageLongPress = (message: Message) => {
+    setSelectedMessage(message);
+    setIsMessageMenuVisible(true);
+  };
+
+  const fetchReadByUsers = async (messageId: string) => {
+    setIsLoadingReadBy(true);
+    try {
+      const response = await api.get(`/messages/${messageId}/read-status`);
+      setReadByUsers(response.data.readBy);
+    } catch (error) {
+      console.log('Error fetching read status', error);
+    } finally {
+      setIsLoadingReadBy(false);
+    }
+  };
+
+  const openMessageInfo = () => {
+    if (!selectedMessage) return;
+    setIsMessageMenuVisible(false);
+    fetchReadByUsers(selectedMessage._id);
+    setIsMessageInfoVisible(true);
+  };
+
+  const openEditModal = () => {
+    if (!selectedMessage) return;
+    setEditContent(selectedMessage.content);
+    setIsMessageMenuVisible(false);
+    setIsEditModalVisible(true);
+  };
+
+  const saveEditedMessage = async () => {
+    if (!selectedMessage || !editContent.trim()) return;
+    
+    try {
+      const response = await api.put(`/messages/${selectedMessage._id}`, {
+        content: editContent.trim()
+      });
+      
+      setMessages(prev => prev.map(msg => 
+        msg._id === selectedMessage._id ? response.data : msg
+      ));
+      
+      // Emit socket event for real-time update
+      socketRef.current?.emit('message_updated', {
+        ...response.data,
+        groupId,
+      });
+      
+      setIsEditModalVisible(false);
+      setSelectedMessage(null);
+    } catch (error: any) {
+      Alert.alert('Error', error?.response?.data?.message || 'Failed to edit message');
+    }
+  };
+
+  const deleteForMe = async () => {
+    if (!selectedMessage) return;
+    
+    try {
+      await api.delete(`/messages/${selectedMessage._id}/me`);
+      setMessages(prev => prev.filter(msg => msg._id !== selectedMessage._id));
+      setIsMessageMenuVisible(false);
+      setSelectedMessage(null);
+    } catch (error: any) {
+      Alert.alert('Error', error?.response?.data?.message || 'Failed to delete message');
+    }
+  };
+
+  const deleteForEveryone = async () => {
+    if (!selectedMessage) return;
+    
+    Alert.alert(
+      'Delete for Everyone',
+      'This message will be deleted for all members. This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const response = await api.delete(`/messages/${selectedMessage._id}/everyone`);
+              
+              setMessages(prev => prev.map(msg => 
+                msg._id === selectedMessage._id 
+                  ? { ...msg, deletedForEveryone: true }
+                  : msg
+              ));
+              
+              // Emit socket event
+              socketRef.current?.emit('message_deleted', {
+                messageId: selectedMessage._id,
+                deletedForEveryone: true,
+                groupId,
+              });
+              
+              setIsMessageMenuVisible(false);
+              setSelectedMessage(null);
+            } catch (error: any) {
+              Alert.alert('Error', error?.response?.data?.message || 'Failed to delete message');
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const renderTickIcon = (message: Message) => {
+    if (message.sender._id !== user?._id) return null;
+    
+    const status = message.status || 'sent';
+    
+    if (status === 'read') {
+      return <CheckCheck color="#34B7F1" size={14} />;
+    } else if (status === 'delivered') {
+      return <CheckCheck color="rgba(255,255,255,0.7)" size={14} />;
+    } else {
+      return <Check color="rgba(255,255,255,0.7)" size={14} />;
+    }
+  };
+
   const renderMessage = ({ item }: { item: Message }) => {
     const isOwnMessage = item.sender._id === user?._id;
     
+    // Deleted message placeholder
+    if (item.deletedForEveryone) {
+      const isAdmin = user?.role === 'admin';
+      
+      // Admin sees the original content in a red box
+      if (isAdmin && item.content) {
+        return (
+          <Pressable 
+            onLongPress={() => handleMessageLongPress(item)}
+            delayLongPress={300}
+            style={[
+              styles.messageContainer,
+              isOwnMessage ? styles.ownMessage : styles.otherMessage,
+              styles.adminDeletedMessage
+            ]}
+          >
+            <View style={styles.deletedBadge}>
+              <Text style={styles.deletedBadgeText}>Deleted Message</Text>
+            </View>
+            {!isOwnMessage && (
+              <Text style={styles.senderName}>{item.sender.name}</Text>
+            )}
+            <Text style={[
+              styles.messageText,
+              styles.adminDeletedMessageText
+            ]}>
+              {item.content}
+            </Text>
+            <Text style={styles.adminDeletedTime}>
+              {formatTime(item.createdAt)}
+            </Text>
+          </Pressable>
+        );
+      }
+      
+      // Students/Mentors see "This message was deleted"
+      return (
+        <View style={[
+          styles.messageContainer,
+          isOwnMessage ? styles.ownMessage : styles.otherMessage,
+          styles.deletedMessage
+        ]}>
+          <Text style={styles.deletedMessageText}>
+            🚫 This message was deleted
+          </Text>
+        </View>
+      );
+    }
+    
     return (
-      <View style={[
-        styles.messageContainer,
-        isOwnMessage ? styles.ownMessage : styles.otherMessage
-      ]}>
+      <Pressable 
+        onLongPress={() => handleMessageLongPress(item)}
+        delayLongPress={300}
+        style={[
+          styles.messageContainer,
+          isOwnMessage ? styles.ownMessage : styles.otherMessage
+        ]}
+      >
         {!isOwnMessage && (
           <Text style={styles.senderName}>{item.sender.name}</Text>
         )}
@@ -256,13 +476,24 @@ export default function ChatScreen() {
         ]}>
           {item.content}
         </Text>
-        <Text style={[
-          styles.messageTime,
-          isOwnMessage ? styles.ownMessageTime : styles.otherMessageTime
-        ]}>
-          {formatTime(item.createdAt)}
-        </Text>
-      </View>
+        <View style={styles.messageFooter}>
+          {item.isEdited && (
+            <Text style={[
+              styles.editedLabel,
+              isOwnMessage ? styles.ownEditedLabel : styles.otherEditedLabel
+            ]}>
+              edited
+            </Text>
+          )}
+          <Text style={[
+            styles.messageTime,
+            isOwnMessage ? styles.ownMessageTime : styles.otherMessageTime
+          ]}>
+            {formatTime(item.createdAt)}
+          </Text>
+          {renderTickIcon(item)}
+        </View>
+      </Pressable>
     );
   };
 
@@ -283,11 +514,17 @@ export default function ChatScreen() {
             </Text>
           )}
         </TouchableOpacity>
+        <TouchableOpacity 
+          style={styles.callButton}
+          onPress={() => router.push(`/call/${groupId}` as any)}
+        >
+          <Phone color="#10B981" size={22} />
+        </TouchableOpacity>
       </View>
 
       <KeyboardAvoidingView
         style={styles.chatContainer}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
         {isLoading ? (
@@ -303,6 +540,7 @@ export default function ChatScreen() {
             contentContainerStyle={styles.messagesList}
             showsVerticalScrollIndicator={false}
             onContentSizeChange={scrollToBottom}
+            keyboardShouldPersistTaps="handled"
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
                 <Text style={styles.emptyText}>No messages yet</Text>
@@ -331,6 +569,129 @@ export default function ChatScreen() {
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+
+      {/* Message Action Menu */}
+      <Modal visible={isMessageMenuVisible} transparent animationType="fade">
+        <Pressable 
+          style={styles.menuOverlay} 
+          onPress={() => setIsMessageMenuVisible(false)}
+        >
+          <View style={styles.menuContainer}>
+            {/* Info - Admin can see on any message, others only on own messages */}
+            {(user?.role === 'admin' || selectedMessage?.sender._id === user?._id) && (
+              <TouchableOpacity style={styles.menuItem} onPress={openMessageInfo}>
+                <Info color="#374151" size={20} />
+                <Text style={styles.menuItemText}>Info</Text>
+              </TouchableOpacity>
+            )}
+            
+            {/* Edit - Only sender can edit their own non-deleted messages */}
+            {selectedMessage?.sender._id === user?._id && !selectedMessage?.deletedForEveryone && (
+              <TouchableOpacity style={styles.menuItem} onPress={openEditModal}>
+                <Edit2 color="#374151" size={20} />
+                <Text style={styles.menuItemText}>Edit</Text>
+              </TouchableOpacity>
+            )}
+            
+            {/* Delete for me - Available to everyone */}
+            <TouchableOpacity style={styles.menuItem} onPress={deleteForMe}>
+              <Trash2 color="#374151" size={20} />
+              <Text style={styles.menuItemText}>Delete for me</Text>
+            </TouchableOpacity>
+            
+            {/* Delete for everyone - Sender OR Admin can delete, not if already deleted */}
+            {(selectedMessage?.sender._id === user?._id || user?.role === 'admin') && !selectedMessage?.deletedForEveryone && (
+              <TouchableOpacity style={[styles.menuItem, styles.menuItemDanger]} onPress={deleteForEveryone}>
+                <Trash2 color="#EF4444" size={20} />
+                <Text style={styles.menuItemTextDanger}>Delete for everyone</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </Pressable>
+      </Modal>
+
+      {/* Message Info Modal */}
+      <Modal visible={isMessageInfoVisible} animationType="slide" transparent>
+        <View style={styles.infoOverlay}>
+          <View style={styles.infoContainer}>
+            <View style={styles.infoHeader}>
+              <Text style={styles.infoTitle}>Message Info</Text>
+              <TouchableOpacity onPress={() => setIsMessageInfoVisible(false)}>
+                <X color="#6B7280" size={24} />
+              </TouchableOpacity>
+            </View>
+            
+            <View style={styles.infoSection}>
+              <Text style={styles.infoSectionTitle}>Read by</Text>
+              {isLoadingReadBy ? (
+                <Text style={styles.loadingText}>Loading...</Text>
+              ) : readByUsers.length === 0 ? (
+                <Text style={styles.noReadsText}>Not read yet</Text>
+              ) : (
+                <ScrollView style={styles.readByList}>
+                  {readByUsers.map((rb, index) => (
+                    <View key={index} style={styles.readByItem}>
+                      <View style={styles.readByAvatar}>
+                        <Text style={styles.readByAvatarText}>
+                          {rb.user.name.charAt(0).toUpperCase()}
+                        </Text>
+                      </View>
+                      <View style={styles.readByInfo}>
+                        <Text style={styles.readByName}>{rb.user.name}</Text>
+                        <Text style={styles.readByTime}>
+                          {new Date(rb.readAt).toLocaleString()}
+                        </Text>
+                      </View>
+                      <CheckCheck color="#34B7F1" size={18} />
+                    </View>
+                  ))}
+                </ScrollView>
+              )}
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Edit Message Modal */}
+      <Modal visible={isEditModalVisible} animationType="slide" transparent>
+        <KeyboardAvoidingView 
+          style={styles.editOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          <View style={styles.editContainer}>
+            <View style={styles.editHeader}>
+              <Text style={styles.editTitle}>Edit Message</Text>
+              <TouchableOpacity onPress={() => setIsEditModalVisible(false)}>
+                <X color="#6B7280" size={24} />
+              </TouchableOpacity>
+            </View>
+            
+            <TextInput
+              style={styles.editInput}
+              value={editContent}
+              onChangeText={setEditContent}
+              multiline
+              autoFocus
+            />
+            
+            <View style={styles.editActions}>
+              <TouchableOpacity 
+                style={styles.editCancelButton}
+                onPress={() => setIsEditModalVisible(false)}
+              >
+                <Text style={styles.editCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[styles.editSaveButton, !editContent.trim() && styles.editSaveButtonDisabled]}
+                onPress={saveEditedMessage}
+                disabled={!editContent.trim()}
+              >
+                <Text style={styles.editSaveText}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
 
       <>
       {/* Group Info Modal */}
@@ -498,6 +859,10 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     marginTop: 2,
   },
+  callButton: {
+    padding: 8,
+    marginLeft: 5,
+  },
   chatContainer: {
     flex: 1,
   },
@@ -530,6 +895,43 @@ const styles = StyleSheet.create({
     backgroundColor: '#F3F4F6',
     borderBottomLeftRadius: 4,
   },
+  deletedMessage: {
+    backgroundColor: '#F3F4F6',
+    opacity: 0.7,
+  },
+  deletedMessageText: {
+    color: '#6B7280',
+    fontStyle: 'italic',
+    fontSize: 14,
+  },
+  // Admin deleted message styles
+  adminDeletedMessage: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 2,
+    borderColor: '#EF4444',
+  },
+  deletedBadge: {
+    backgroundColor: '#EF4444',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 4,
+    alignSelf: 'flex-start',
+    marginBottom: 6,
+  },
+  deletedBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '600',
+  },
+  adminDeletedMessageText: {
+    color: '#991B1B',
+  },
+  adminDeletedTime: {
+    fontSize: 10,
+    color: '#EF4444',
+    marginTop: 4,
+    textAlign: 'right',
+  },
   senderName: {
     fontSize: 12,
     fontWeight: '600',
@@ -546,13 +948,29 @@ const styles = StyleSheet.create({
   otherMessageText: {
     color: '#000000',
   },
+  messageFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    marginTop: 4,
+    gap: 4,
+  },
+  editedLabel: {
+    fontSize: 10,
+    fontStyle: 'italic',
+    marginRight: 4,
+  },
+  ownEditedLabel: {
+    color: 'rgba(255, 255, 255, 0.7)',
+  },
+  otherEditedLabel: {
+    color: '#9CA3AF',
+  },
   messageTime: {
     fontSize: 10,
-    marginTop: 4,
   },
   ownMessageTime: {
     color: 'rgba(255, 255, 255, 0.7)',
-    textAlign: 'right',
   },
   otherMessageTime: {
     color: '#9CA3AF',
@@ -605,6 +1023,181 @@ const styles = StyleSheet.create({
   sendButtonDisabled: {
     backgroundColor: '#93C5FD',
   },
+  // Message action menu styles
+  menuOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  menuContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 8,
+    minWidth: 200,
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+  },
+  menuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    gap: 12,
+  },
+  menuItemText: {
+    fontSize: 16,
+    color: '#374151',
+  },
+  menuItemDanger: {
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+    marginTop: 4,
+    paddingTop: 16,
+  },
+  menuItemTextDanger: {
+    fontSize: 16,
+    color: '#EF4444',
+  },
+  // Message info modal styles
+  infoOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  infoContainer: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '60%',
+  },
+  infoHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+  },
+  infoTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  infoSection: {
+    padding: 16,
+  },
+  infoSectionTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#6B7280',
+    marginBottom: 12,
+  },
+  noReadsText: {
+    fontSize: 14,
+    color: '#9CA3AF',
+    fontStyle: 'italic',
+  },
+  readByList: {
+    maxHeight: 250,
+  },
+  readByItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  readByAvatar: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#E5E7EB',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  readByAvatarText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  readByInfo: {
+    flex: 1,
+  },
+  readByName: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#000000',
+  },
+  readByTime: {
+    fontSize: 12,
+    color: '#9CA3AF',
+  },
+  // Edit modal styles
+  editOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  editContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+  },
+  editHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  editTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#000000',
+  },
+  editInput: {
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    color: '#000000',
+    minHeight: 80,
+    textAlignVertical: 'top',
+  },
+  editActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    marginTop: 16,
+    gap: 12,
+  },
+  editCancelButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+  },
+  editCancelText: {
+    fontSize: 16,
+    color: '#6B7280',
+  },
+  editSaveButton: {
+    backgroundColor: '#2563EB',
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+  },
+  editSaveButtonDisabled: {
+    backgroundColor: '#93C5FD',
+  },
+  editSaveText: {
+    fontSize: 16,
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  // Existing modal styles
   modalContainer: {
     flex: 1,
     backgroundColor: '#FFFFFF',
