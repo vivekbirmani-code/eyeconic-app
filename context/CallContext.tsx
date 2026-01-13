@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useRef, useEffect, ReactNode } from 'react';
 import { Platform, Alert } from 'react-native';
 import { io, Socket } from 'socket.io-client';
-import Constants from 'expo-constants';
+import { getSocketURL } from '@/services/config';
 import { useAuth } from './AuthContext';
 
 // WebRTC imports - these will fail in Expo Go
@@ -88,16 +88,6 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const socketRef = useRef<Socket | null>(null);
   const peerConnectionsRef = useRef<Map<string, any>>(new Map());
   const callTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  const getSocketURL = () => {
-    if (Platform.OS === 'web') return 'http://localhost:3000';
-    const hostUri = Constants.expoConfig?.hostUri;
-    if (hostUri) {
-      const ip = hostUri.split(':')[0];
-      return `http://${ip}:3000`;
-    }
-    return 'http://10.78.16.198:3000';
-  };
 
   useEffect(() => {
     if (user?._id && isWebRTCAvailable) {

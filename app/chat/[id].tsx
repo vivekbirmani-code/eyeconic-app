@@ -21,8 +21,8 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowLeft, Send, Users, UserPlus, X, Search, Check, CheckCheck, Edit2, Trash2, Info, Phone } from 'lucide-react-native';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
+import { getSocketURL } from '@/services/config';
 import { io, Socket } from 'socket.io-client';
-import Constants from 'expo-constants';
 import { useNotifications } from '@/context/NotificationContext';
 
 interface Message {
@@ -100,16 +100,6 @@ export default function ChatScreen() {
   }, [groupId]);
 
   const setupSocket = () => {
-    const getSocketURL = () => {
-      if (Platform.OS === 'web') return 'http://localhost:3000';
-      const hostUri = Constants.expoConfig?.hostUri;
-      if (hostUri) {
-        const ip = hostUri.split(':')[0];
-        return `http://${ip}:3000`;
-      }
-      return 'http://10.78.16.198:3000';
-    };
-    
     socketRef.current = io(getSocketURL());
     
     socketRef.current.on('connect', () => {

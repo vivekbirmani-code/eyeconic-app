@@ -7,7 +7,7 @@
     "icon": "./assets/images/icon.png",
     "scheme": "mentorship",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
+    "newArchEnabled": false,
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
@@ -44,8 +44,7 @@
     "plugins": [
       "expo-router",
       "expo-font",
-      "expo-av",
-      "@config-plugins/react-native-webrtc"
+      "expo-av"
     ],
     "experiments": {
       "typedRoutes": true

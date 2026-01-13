@@ -1,9 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useAuth } from './AuthContext';
 import { api } from '@/services/api';
+import { getSocketURL } from '@/services/config';
 import { io, Socket } from 'socket.io-client';
-import { Platform } from 'react-native';
-import Constants from 'expo-constants';
 
 interface NotificationContextType {
   unreadCounts: { [groupId: string]: number };
@@ -49,16 +48,6 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   useEffect(() => {
     if (user) {
       refreshUnreadCounts();
-
-      const getSocketURL = () => {
-        if (Platform.OS === 'web') return 'http://localhost:3000';
-        const hostUri = Constants.expoConfig?.hostUri;
-        if (hostUri) {
-          const ip = hostUri.split(':')[0];
-          return `http://${ip}:3000`;
-        }
-        return 'http://10.78.16.198:3000'; // Fallback to the one in api.ts
-      };
 
       const newSocket = io(getSocketURL());
       setSocket(newSocket);
