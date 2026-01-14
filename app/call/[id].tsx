@@ -46,7 +46,6 @@ export default function CallScreen() {
     toggleSpeaker,
     minimizeCall,
     addParticipant,
-    addParticipant,
     remoteStreams,
     debugStats
   } = useCall();
