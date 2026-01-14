@@ -600,7 +600,9 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const endCall = () => {
     console.log('Ending call for everyone');
     socketRef.current?.emit('call_end', {
-      callId: callState.callId
+      callId: callState.callId,
+      endedBy: user?._id,
+      endedByName: user?.name
     });
 
     cleanup();

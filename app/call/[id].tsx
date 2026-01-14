@@ -187,17 +187,25 @@ export default function CallScreen() {
   }
 
   // Active call screen
-  // Render hidden audio elements for each remote stream
+  // Render audio elements for each remote stream - must have size for audio to work on Android
   const renderAudioStreams = () => {
     if (!RTCView) return null;
     
     const streams: React.ReactNode[] = [];
     remoteStreams.forEach((stream, odId) => {
+      console.log('Rendering RTCView for remote stream:', odId);
       streams.push(
         <RTCView
           key={odId}
           streamURL={stream.toURL()}
-          style={{ width: 1, height: 1, position: 'absolute', top: -100 }}
+          style={{ 
+            position: 'absolute', 
+            top: -100, 
+            left: -100, 
+            width: 50, 
+            height: 50,
+            opacity: 0
+          }}
           objectFit="cover"
           zOrder={0}
         />
@@ -208,10 +216,8 @@ export default function CallScreen() {
 
   return (
     <SafeAreaView style={styles.callContainer}>
-      {/* Hidden audio players for remote streams */}
-      <View style={{ position: 'absolute', width: 0, height: 0, overflow: 'hidden' }}>
-        {renderAudioStreams()}
-      </View>
+      {/* RTCView components for remote audio - positioned off-screen but NOT hidden */}
+      {renderAudioStreams()}
       
       <View style={styles.callHeader}>
         <TouchableOpacity onPress={handleBack} style={styles.backButton}>

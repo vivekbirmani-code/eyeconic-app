@@ -70,16 +70,30 @@ app.use('/api/quizzes', quizRoutes);
 
 // Track socket to user mapping
 const socketUserMap = new Map();
+const Group = require('./models/Group');
+const Message = require('./models/Message');
 
 // Socket.IO for real-time chat and calls
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
-  // Register user with socket
-  socket.on('register_user', (userId) => {
+  // Register user with socket and auto-join all their group rooms
+  socket.on('register_user', async (userId) => {
     socketUserMap.set(socket.id, userId);
     socket.userId = userId;
     console.log(`User ${userId} registered with socket ${socket.id}`);
+
+    // Auto-join all groups user belongs to (for receiving calls globally)
+    try {
+      const groups = await Group.find({ members: userId }).select('_id');
+      groups.forEach(group => {
+        socket.join(group._id.toString());
+        console.log(`User ${userId} auto-joined group room: ${group._id}`);
+      });
+      console.log(`User ${userId} joined ${groups.length} group rooms`);
+    } catch (error) {
+      console.error('Error auto-joining groups:', error);
+    }
   });
 
   socket.on('join_room', (roomId) => {
@@ -128,6 +142,31 @@ io.on('connection', (socket) => {
         initiatorName,
         targetUserIds
       });
+
+      // Save call started message to chat history
+      try {
+        const callMessage = new Message({
+          group: groupId,
+          sender: initiatorId,
+          content: `📞 ${initiatorName} started a call`,
+          messageType: 'call_start',
+          callId: call._id
+        });
+        await callMessage.save();
+
+        // Emit the call message to the group
+        io.to(groupId).emit('receive_message', {
+          _id: callMessage._id,
+          group: groupId,
+          sender: { _id: initiatorId, name: initiatorName },
+          content: callMessage.content,
+          messageType: 'call_start',
+          callId: call._id,
+          createdAt: callMessage.createdAt
+        });
+      } catch (msgError) {
+        console.error('Error saving call message:', msgError);
+      }
 
       // Send push notifications to all target users (for when app is closed)
       if (targetUserIds && targetUserIds.length > 0) {
@@ -309,7 +348,7 @@ io.on('connection', (socket) => {
 
   // End call for everyone
   socket.on('call_end', async (data) => {
-    const { callId } = data;
+    const { callId, endedBy, endedByName } = data;
 
     try {
       const call = await Call.findById(callId);
@@ -321,10 +360,43 @@ io.on('connection', (socket) => {
         });
         await call.save();
 
+        // Calculate call duration
+        const durationMs = call.endTime - call.startTime;
+        const durationSec = Math.floor(durationMs / 1000);
+        const minutes = Math.floor(durationSec / 60);
+        const seconds = durationSec % 60;
+        const durationStr = minutes > 0
+          ? `${minutes}m ${seconds}s`
+          : `${seconds}s`;
+
+        // Save call ended message
+        try {
+          const callEndMessage = new Message({
+            group: call.groupId,
+            sender: endedBy || call.initiator,
+            content: `📞 Call ended • Duration: ${durationStr}`,
+            messageType: 'call_end',
+            callId: call._id
+          });
+          await callEndMessage.save();
+
+          io.to(call.groupId.toString()).emit('receive_message', {
+            _id: callEndMessage._id,
+            group: call.groupId,
+            sender: { _id: endedBy || call.initiator, name: endedByName || 'Unknown' },
+            content: callEndMessage.content,
+            messageType: 'call_end',
+            callId: call._id,
+            createdAt: callEndMessage.createdAt
+          });
+        } catch (msgError) {
+          console.error('Error saving call end message:', msgError);
+        }
+
         socket.to(call.groupId.toString()).emit('call_ended', { callId });
         socket.emit('call_ended', { callId });
 
-        console.log(`Call ${callId} ended`);
+        console.log(`Call ${callId} ended, duration: ${durationStr}`);
       }
     } catch (error) {
       console.error('Error ending call:', error);

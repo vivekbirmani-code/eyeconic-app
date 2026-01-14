@@ -52,7 +52,7 @@ function AppContent() {
     }
   };
 
-  // Render hidden audio elements for remote streams
+  // Render audio elements for remote streams - must have actual size for audio on Android
   const renderAudioStreams = () => {
     const streams: React.ReactNode[] = [];
     
@@ -60,11 +60,19 @@ function AppContent() {
     try {
       const { RTCView } = require('react-native-webrtc');
       remoteStreams.forEach((stream, odId) => {
+        console.log('Layout rendering RTCView for stream:', odId);
         streams.push(
           <RTCView
             key={odId}
             streamURL={stream.toURL()}
-            style={{ width: 1, height: 1, position: 'absolute', top: -1000 }}
+            style={{ 
+              position: 'absolute', 
+              top: -200, 
+              left: -200, 
+              width: 50, 
+              height: 50,
+              opacity: 0
+            }}
             objectFit="cover"
             zOrder={0}
           />
@@ -89,10 +97,8 @@ function AppContent() {
 
   return (
     <View style={{ flex: 1 }}>
-      {/* Hidden audio players for remote streams */}
-      <View style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden' }}>
-        {renderAudioStreams()}
-      </View>
+      {/* RTCView audio streams - positioned off-screen but NOT in hidden container */}
+      {renderAudioStreams()}
       
       {/* Floating call bar when minimized */}
       <FloatingCallBar />

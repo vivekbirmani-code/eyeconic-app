@@ -18,8 +18,12 @@ const messageSchema = new mongoose.Schema({
   },
   messageType: {
     type: String,
-    enum: ['text', 'image', 'file'],
+    enum: ['text', 'image', 'file', 'call_start', 'call_end'],
     default: 'text'
+  },
+  callId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Call'
   },
   // Message status tracking
   status: {
