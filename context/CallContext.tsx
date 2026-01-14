@@ -170,7 +170,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
     socketRef.current.on('connect', () => {
       console.log('Call socket connected');
       setDebugStats(prev => ({ ...prev, socketConnected: true }));
-      socketRef.current?.emit('register_user', user?._id);
+      // Use ref to get current user (fixes stale closure)
+      socketRef.current?.emit('register_user', userRef.current?._id);
     });
 
     socketRef.current.on('disconnect', () => {
@@ -298,11 +299,17 @@ export function CallProvider({ children }: { children: ReactNode }) {
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
 
+      // Use refs to get current state values (fixes stale closure)
+      const currentCallState = callStateRef.current;
+      const currentUser = userRef.current;
+      
+      console.log('Sending answer with callId:', callId || currentCallState.callId, 'groupId:', currentCallState.groupId);
+
       socketRef.current?.emit('call_answer', {
-        callId: callId || callState.callId,
-        groupId: callState.groupId,
+        callId: callId || currentCallState.callId,
+        groupId: currentCallState.groupId,
         answer: pc.localDescription,
-        fromUserId: user?._id,
+        fromUserId: currentUser?._id,
         toUserId: fromUserId
       });
       
@@ -318,8 +325,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
     
     console.log('Received call answer from:', fromUserId);
     
-    // Skip if this is from ourselves
-    if (fromUserId === user?._id) return;
+    // Skip if this is from ourselves (use ref to avoid stale closure)
+    if (fromUserId === userRef.current?._id) return;
 
     try {
       const pc = peerConnectionsRef.current.get(fromUserId);
@@ -343,8 +350,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
     if (!isWebRTCAvailable) return;
     const { callId, candidate, fromUserId } = data;
     
-    // Skip if this is from ourselves
-    if (fromUserId === user?._id) return;
+    // Skip if this is from ourselves (use ref to avoid stale closure)
+    if (fromUserId === userRef.current?._id) return;
 
     try {
       setDebugStats(prev => ({ ...prev, iceCandidatesReceived: prev.iceCandidatesReceived + 1 }));
@@ -538,11 +545,17 @@ export function CallProvider({ children }: { children: ReactNode }) {
       });
       await pc.setLocalDescription(offer);
 
+      // Use refs to get current state values (fixes stale closure)
+      const currentCallState = callStateRef.current;
+      const currentUser = userRef.current;
+      
+      console.log('Sending offer with callId:', currentCallState.callId, 'groupId:', currentCallState.groupId);
+      
       socketRef.current?.emit('call_offer', {
-        callId: callState.callId,
-        groupId: callState.groupId,
+        callId: currentCallState.callId,
+        groupId: currentCallState.groupId,
         offer: pc.localDescription,
-        fromUserId: user?._id,
+        fromUserId: currentUser?._id,
         targetUserId: userId
       });
       
