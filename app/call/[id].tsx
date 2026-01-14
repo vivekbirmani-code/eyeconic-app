@@ -298,27 +298,6 @@ export default function CallScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Debug Panel - For troubleshooting audio issues */}
-      <View style={{
-        position: 'absolute',
-        top: 60,
-        left: 20,
-        backgroundColor: 'rgba(0,0,0,0.7)',
-        padding: 8,
-        borderRadius: 8,
-        zIndex: 999
-      }}>
-        <Text style={{ color: '#00FF00', fontSize: 10, fontWeight: 'bold' }}>DEBUG STATS</Text>
-        <Text style={{ color: 'white', fontSize: 10 }}>Socket: {debugStats.socketConnected ? 'Connected ✅' : 'Disconnected ❌'}</Text>
-        <Text style={{ color: 'white', fontSize: 10 }}>Signaling: {debugStats.signalingStatus}</Text>
-        <Text style={{ color: 'white', fontSize: 10 }}>ICE: {debugStats.iceStatus}</Text>
-        <Text style={{ color: 'white', fontSize: 10 }}>Local Tracks: {debugStats.localTrackCount}</Text>
-        <Text style={{ color: 'white', fontSize: 10 }}>Remote Tracks: {debugStats.remoteTrackCount}</Text>
-        <Text style={{ color: 'white', fontSize: 10 }}>Cand Sent: {debugStats.iceCandidatesSent}</Text>
-        <Text style={{ color: 'white', fontSize: 10 }}>Cand Recv: {debugStats.iceCandidatesReceived}</Text>
-        <Text style={{ color: 'white', fontSize: 10 }}>Remote Streams: {remoteStreams.size}</Text>
-      </View>
-
       {/* Add Member Modal */}
       <Modal visible={isAddMemberVisible} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
