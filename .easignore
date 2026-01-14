@@ -1,0 +1,15 @@
+# Ignore backend folder (Node.js API)
+backend/
+
+# Ignore dependencies (bootstrapped on server)
+node_modules/
+.expo/
+.git/
+
+# Ignore artifacts & build files
+*.apk
+*.aab
+android/
+ios/
+dist/
+web-build/
