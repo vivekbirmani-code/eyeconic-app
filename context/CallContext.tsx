@@ -63,6 +63,15 @@ interface CallState {
   isInitiator: boolean;
 }
 
+// Debug statistics for troubleshooting
+interface DebugStats {
+  iceStatus: string;
+  signalingStatus: string;
+  localTrackCount: number;
+  remoteTrackCount: number;
+  socketConnected: boolean;
+}
+
 interface CallContextType {
   callState: CallState;
   incomingCall: IncomingCallData | null;
@@ -80,6 +89,7 @@ interface CallContextType {
   localStream: any;
   remoteStreams: Map<string, any>;
   isWebRTCSupported: boolean;
+  debugStats: DebugStats; // Added debug stats
 }
 
 const initialCallState: CallState = {
@@ -93,6 +103,14 @@ const initialCallState: CallState = {
   participants: [],
   callDuration: 0,
   isInitiator: false,
+};
+
+const initialDebugStats: DebugStats = {
+  iceStatus: 'new',
+  signalingStatus: 'stable',
+  localTrackCount: 0,
+  remoteTrackCount: 0,
+  socketConnected: false,
 };
 
 const CallContext = createContext<CallContextType | undefined>(undefined);
@@ -129,6 +147,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const [incomingCall, setIncomingCall] = useState<IncomingCallData | null>(null);
   const [localStream, setLocalStream] = useState<any>(null);
   const [remoteStreams, setRemoteStreams] = useState<Map<string, any>>(new Map());
+  const [debugStats, setDebugStats] = useState<DebugStats>(initialDebugStats); // Added debug state
   
   const socketRef = useRef<Socket | null>(null);
   const peerConnectionsRef = useRef<Map<string, any>>(new Map());
@@ -151,7 +170,13 @@ export function CallProvider({ children }: { children: ReactNode }) {
 
     socketRef.current.on('connect', () => {
       console.log('Call socket connected');
+      setDebugStats(prev => ({ ...prev, socketConnected: true }));
       socketRef.current?.emit('register_user', user?._id);
+    });
+
+    socketRef.current.on('disconnect', () => {
+      console.log('Call socket disconnected');
+      setDebugStats(prev => ({ ...prev, socketConnected: false }));
     });
 
     // Listen for incoming calls
@@ -425,9 +450,20 @@ export function CallProvider({ children }: { children: ReactNode }) {
       }
     };
 
+    // Update debug stats on ICE state change
+    (pc as any).oniceconnectionstatechange = () => {
+      setDebugStats(prev => ({ ...prev, iceStatus: pc.iceConnectionState }));
+      console.log('ICE state:', pc.iceConnectionState);
+    };
+
+    (pc as any).onsignalingstatechange = () => {
+      setDebugStats(prev => ({ ...prev, signalingStatus: pc.signalingState }));
+    };
+
     // Handle incoming audio tracks
     (pc as any).ontrack = (event: any) => {
       console.log('Received remote track from:', userId, event.track.kind);
+      setDebugStats(prev => ({ ...prev, remoteTrackCount: prev.remoteTrackCount + 1 }));
       if (event.streams && event.streams[0]) {
         setRemoteStreams(prev => {
           const newMap = new Map(prev);
@@ -449,6 +485,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
         console.log('Adding local track:', track.kind);
         pc.addTrack(track, stream);
       });
+      setDebugStats(prev => ({ ...prev, localTrackCount: stream.getTracks().length }));
     }
 
     return pc;
@@ -505,13 +542,12 @@ export function CallProvider({ children }: { children: ReactNode }) {
     }
     
     try {
-      // Configure audio session
+      // Simply ensure recording is allowed - let InCallManager handle routing to prevent conflicts
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         staysActiveInBackground: true,
         playsInSilentModeIOS: true,
-        shouldDuckAndroid: false,
-        playThroughEarpieceAndroid: false,
+        // Removed Android earpiece settings to avoid conflict with InCallManager
       });
 
       const stream = await mediaDevices.getUserMedia({
@@ -526,6 +562,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
       console.log('Local stream started with tracks:', stream.getTracks().length);
       setLocalStream(stream);
       localStreamRef.current = stream;
+      setDebugStats(prev => ({ ...prev, localTrackCount: stream.getTracks().length }));
       return stream;
     } catch (error) {
       console.error('Error getting user media:', error);
@@ -810,6 +847,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
         localStream,
         remoteStreams,
         isWebRTCSupported: isWebRTCAvailable,
+        debugStats, // Added
       }}
     >
       {children}
