@@ -217,4 +217,22 @@ router.post('/:id/reset-password', auth, authorize('admin'), async (req, res) =>
   }
 });
 
+// Save push token for user
+router.post('/push-token', auth, async (req, res) => {
+  try {
+    const { pushToken } = req.body;
+
+    if (!pushToken) {
+      return res.status(400).json({ message: 'Push token is required' });
+    }
+
+    await User.findByIdAndUpdate(req.user._id, { pushToken });
+
+    res.json({ message: 'Push token saved successfully' });
+  } catch (error) {
+    console.error('Error saving push token:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 module.exports = router;

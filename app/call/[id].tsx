@@ -12,7 +12,7 @@ import {
   ScrollView,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ArrowLeft, Phone, PhoneOff, Mic, MicOff, UserPlus, X, Check } from 'lucide-react-native';
+import { ArrowLeft, Phone, PhoneOff, Mic, MicOff, UserPlus, X, Check, Volume2, VolumeX } from 'lucide-react-native';
 import { useCall } from '@/context/CallContext';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
@@ -42,7 +42,8 @@ export default function CallScreen() {
     joinCall, 
     leaveCall, 
     endCall, 
-    toggleMute, 
+    toggleMute,
+    toggleSpeaker,
     minimizeCall,
     addParticipant,
     remoteStreams
@@ -266,6 +267,17 @@ export default function CallScreen() {
             <MicOff color="#FFFFFF" size={28} />
           ) : (
             <Mic color="#FFFFFF" size={28} />
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.controlButton, callState.isSpeakerOn && styles.controlButtonActive]}
+          onPress={toggleSpeaker}
+        >
+          {callState.isSpeakerOn ? (
+            <Volume2 color="#FFFFFF" size={28} />
+          ) : (
+            <VolumeX color="#FFFFFF" size={28} />
           )}
         </TouchableOpacity>
 

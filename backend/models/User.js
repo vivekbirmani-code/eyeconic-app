@@ -51,6 +51,10 @@ const userSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Group'
   }],
+  pushToken: {
+    type: String,
+    default: null
+  },
   isActive: {
     type: Boolean,
     default: true

@@ -11,6 +11,37 @@ const groupRoutes = require('./routes/groups');
 const messageRoutes = require('./routes/messages');
 const quizRoutes = require('./routes/quizzes');
 const Call = require('./models/Call');
+const User = require('./models/User');
+
+// Send push notification using Expo's push service
+async function sendPushNotification(expoPushToken, title, body, data = {}) {
+  if (!expoPushToken) return;
+
+  const message = {
+    to: expoPushToken,
+    sound: 'default',
+    title,
+    body,
+    data,
+    priority: 'high',
+    channelId: 'calls',
+  };
+
+  try {
+    const response = await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(message),
+    });
+    const result = await response.json();
+    console.log('Push notification sent:', result);
+  } catch (error) {
+    console.error('Error sending push notification:', error);
+  }
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -88,7 +119,7 @@ io.on('connection', (socket) => {
       });
       await call.save();
 
-      // Notify group about incoming call
+      // Notify group about incoming call via socket
       socket.to(groupId).emit('incoming_call', {
         callId: call._id,
         groupId,
@@ -97,6 +128,32 @@ io.on('connection', (socket) => {
         initiatorName,
         targetUserIds
       });
+
+      // Send push notifications to all target users (for when app is closed)
+      if (targetUserIds && targetUserIds.length > 0) {
+        const users = await User.find({
+          _id: { $in: targetUserIds },
+          pushToken: { $ne: null }
+        });
+
+        for (const user of users) {
+          if (user.pushToken && user._id.toString() !== initiatorId) {
+            sendPushNotification(
+              user.pushToken,
+              'Incoming Call',
+              `${initiatorName} is calling...`,
+              {
+                type: 'incoming_call',
+                callId: call._id.toString(),
+                groupId,
+                groupName,
+                initiatorId,
+                initiatorName
+              }
+            );
+          }
+        }
+      }
 
       // Send call ID back to initiator
       socket.emit('call_initiated', { callId: call._id });

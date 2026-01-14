@@ -12,6 +12,7 @@ let RTCIceCandidate: any;
 let mediaDevices: any;
 let MediaStream: any;
 let RTCView: any;
+let InCallManager: any;
 let isWebRTCAvailable = false;
 
 try {
@@ -23,6 +24,13 @@ try {
   MediaStream = webrtc.MediaStream;
   RTCView = webrtc.RTCView;
   isWebRTCAvailable = true;
+  
+  // Try to import InCallManager for audio routing
+  try {
+    InCallManager = require('react-native-incall-manager').default;
+  } catch (e) {
+    console.log('InCallManager not available');
+  }
 } catch (e) {
   console.log('WebRTC not available - calls will be disabled');
 }
@@ -48,6 +56,7 @@ interface CallState {
   isInCall: boolean;
   isMinimized: boolean;
   isMuted: boolean;
+  isSpeakerOn: boolean;
   participants: Participant[];
   callDuration: number;
   isInitiator: boolean;
@@ -63,6 +72,7 @@ interface CallContextType {
   leaveCall: () => void;
   endCall: () => void;
   toggleMute: () => void;
+  toggleSpeaker: () => void;
   minimizeCall: () => void;
   maximizeCall: () => void;
   addParticipant: (userId: string) => void;
@@ -78,6 +88,7 @@ const initialCallState: CallState = {
   isInCall: false,
   isMinimized: false,
   isMuted: false,
+  isSpeakerOn: true,
   participants: [],
   callDuration: 0,
   isInitiator: false,
@@ -502,6 +513,13 @@ export function CallProvider({ children }: { children: ReactNode }) {
       participants: [{ _id: user?._id || '', name: user?.name || 'You', isMuted: false }]
     });
 
+    // Start InCallManager for audio routing (speaker mode)
+    if (InCallManager) {
+      InCallManager.start({ media: 'audio', auto: true, ringback: '' });
+      InCallManager.setForceSpeakerphoneOn(true);
+      console.log('InCallManager started for call');
+    }
+
     socketRef.current?.emit('join_room', groupId);
     socketRef.current?.emit('call_initiate', {
       groupId,
@@ -534,6 +552,13 @@ export function CallProvider({ children }: { children: ReactNode }) {
       isInitiator: false,
       participants: [{ _id: user?._id || '', name: user?.name || 'You', isMuted: false }]
     });
+
+    // Start InCallManager for audio routing (speaker mode)
+    if (InCallManager) {
+      InCallManager.start({ media: 'audio', auto: true, ringback: '' });
+      InCallManager.setForceSpeakerphoneOn(true);
+      console.log('InCallManager started for joining call');
+    }
 
     socketRef.current?.emit('join_room', groupId);
     socketRef.current?.emit('call_join', {
@@ -610,6 +635,15 @@ export function CallProvider({ children }: { children: ReactNode }) {
     setCallState(prev => ({ ...prev, isMinimized: false }));
   };
 
+  const toggleSpeaker = () => {
+    if (InCallManager) {
+      const newSpeakerState = !callState.isSpeakerOn;
+      InCallManager.setForceSpeakerphoneOn(newSpeakerState);
+      setCallState(prev => ({ ...prev, isSpeakerOn: newSpeakerState }));
+      console.log('Speaker toggled:', newSpeakerState ? 'ON' : 'OFF');
+    }
+  };
+
   const addParticipant = (userId: string) => {
     if (isWebRTCAvailable) {
       createOfferForUser(userId);
@@ -619,6 +653,12 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const cleanup = () => {
     console.log('Cleaning up call resources');
     stopCallTimer();
+    
+    // Stop InCallManager
+    if (InCallManager) {
+      InCallManager.stop();
+      console.log('InCallManager stopped');
+    }
     
     // Close all peer connections
     peerConnectionsRef.current.forEach((pc, id) => {
@@ -656,6 +696,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
         leaveCall,
         endCall,
         toggleMute,
+        toggleSpeaker,
         minimizeCall,
         maximizeCall,
         addParticipant,
