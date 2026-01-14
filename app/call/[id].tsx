@@ -314,6 +314,8 @@ export default function CallScreen() {
         <Text style={{ color: 'white', fontSize: 10 }}>ICE: {debugStats.iceStatus}</Text>
         <Text style={{ color: 'white', fontSize: 10 }}>Local Tracks: {debugStats.localTrackCount}</Text>
         <Text style={{ color: 'white', fontSize: 10 }}>Remote Tracks: {debugStats.remoteTrackCount}</Text>
+        <Text style={{ color: 'white', fontSize: 10 }}>Cand Sent: {debugStats.iceCandidatesSent}</Text>
+        <Text style={{ color: 'white', fontSize: 10 }}>Cand Recv: {debugStats.iceCandidatesReceived}</Text>
         <Text style={{ color: 'white', fontSize: 10 }}>Remote Streams: {remoteStreams.size}</Text>
       </View>
 

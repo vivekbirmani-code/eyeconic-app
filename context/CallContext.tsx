@@ -70,6 +70,8 @@ interface DebugStats {
   localTrackCount: number;
   remoteTrackCount: number;
   socketConnected: boolean;
+  iceCandidatesSent: number;
+  iceCandidatesReceived: number;
 }
 
 interface CallContextType {
@@ -111,6 +113,8 @@ const initialDebugStats: DebugStats = {
   localTrackCount: 0,
   remoteTrackCount: 0,
   socketConnected: false,
+  iceCandidatesSent: 0,
+  iceCandidatesReceived: 0,
 };
 
 const CallContext = createContext<CallContextType | undefined>(undefined);
@@ -348,6 +352,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
     if (fromUserId === user?._id) return;
 
     try {
+      setDebugStats(prev => ({ ...prev, iceCandidatesReceived: prev.iceCandidatesReceived + 1 }));
       const pc = peerConnectionsRef.current.get(fromUserId);
       if (pc && candidate) {
         if (pc.remoteDescription) {
@@ -441,6 +446,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
     // Handle ICE candidates
     (pc as any).onicecandidate = (event: any) => {
       if (event.candidate) {
+        setDebugStats(prev => ({ ...prev, iceCandidatesSent: prev.iceCandidatesSent + 1 }));
         socketRef.current?.emit('call_ice_candidate', {
           callId: callState.callId,
           groupId: callState.groupId,
