@@ -245,7 +245,8 @@ export default function CallScreen() {
             <View style={styles.participantCard}>
               <View style={[
                 styles.participantAvatar,
-                item.isMuted && styles.participantAvatarMuted
+                item.isMuted && styles.participantAvatarMuted,
+                item.isSpeaking && styles.participantAvatarSpeaking
               ]}>
                 <Text style={styles.participantAvatarText}>
                   {item.name.charAt(0).toUpperCase()}
@@ -255,6 +256,7 @@ export default function CallScreen() {
                     <MicOff color="#EF4444" size={12} />
                   </View>
                 )}
+                {/* Speaking indicator icon/badge could go here too, but border is clearer */}
               </View>
               <Text style={styles.participantName}>
                 {item._id === user?._id ? 'You' : item.name}
@@ -496,6 +498,10 @@ const styles = StyleSheet.create({
   },
   participantAvatarMuted: {
     backgroundColor: '#6B7280',
+  },
+  participantAvatarSpeaking: {
+    borderWidth: 3,
+    borderColor: '#10B981', // Green border when speaking
   },
   participantAvatarText: {
     fontSize: 32,

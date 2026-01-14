@@ -273,7 +273,8 @@ io.on('connection', (socket) => {
         socket.emit('call_joined', {
           callId,
           participants: activeParticipants,
-          groupId: call.groupId.toString()
+          groupId: call.groupId.toString(),
+          startTime: call.startTime
         });
 
         console.log(`User ${userName} joined call ${callId}`);

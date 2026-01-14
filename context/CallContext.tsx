@@ -39,6 +39,7 @@ interface Participant {
   _id: string;
   name: string;
   isMuted: boolean;
+  isSpeaking?: boolean;
 }
 
 interface IncomingCallData {
@@ -98,12 +99,28 @@ const CallContext = createContext<CallContextType | undefined>(undefined);
 
 const ICE_SERVERS = {
   iceServers: [
+    // STUN servers
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
-    { urls: 'stun:stun3.l.google.com:19302' },
-    { urls: 'stun:stun4.l.google.com:19302' },
+    // Free TURN servers for NAT traversal on mobile networks
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelayproject',
+      credential: 'openrelayproject'
+    }
   ],
+  iceCandidatePoolSize: 10,
 };
 
 export function CallProvider({ children }: { children: ReactNode }) {
@@ -192,9 +209,18 @@ export function CallProvider({ children }: { children: ReactNode }) {
           isMuted: p.isMuted || false,
         }));
       
+      // Calculate synced call duration from server startTime
+      let syncedDuration = 0;
+      if (data.startTime) {
+        const startTime = new Date(data.startTime).getTime();
+        const now = Date.now();
+        syncedDuration = Math.floor((now - startTime) / 1000);
+      }
+      
       setCallState(prev => ({
         ...prev,
-        participants: participantsList
+        participants: participantsList,
+        callDuration: syncedDuration > 0 ? syncedDuration : prev.callDuration
       }));
     }
   };
@@ -507,7 +533,52 @@ export function CallProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const audioLevelIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  const startAudioLevelMonitor = () => {
+    if (audioLevelIntervalRef.current) clearInterval(audioLevelIntervalRef.current);
+    
+    audioLevelIntervalRef.current = setInterval(async () => {
+      if (!callState.isInCall) return;
+
+      // check local audio level
+      // Note: Getting local audio level from getUserMedia stream directly is hard in RN-WebRTC
+      // We'll rely on the fact that if not muted, we are "speaking" if there's input
+      // Ideally we'd check stats on the sender track
+      
+      // Check remote audio levels
+      peerConnectionsRef.current.forEach(async (pc, userId) => {
+        try {
+          const stats = await pc.getStats();
+          let audioLevel = 0;
+          
+          stats.forEach((report: any) => {
+            if (report.type === 'inbound-rtp' && report.kind === 'audio') {
+              // audioLevel is 0..1
+              if (report.audioLevel) audioLevel = report.audioLevel;
+            }
+          });
+
+          // Threshold for "speaking"
+          const isSpeaking = audioLevel > 0.05; // 5% volume threshold
+          
+          setCallState(prev => ({
+            ...prev,
+            participants: prev.participants.map(p => 
+              p._id === userId && p.isSpeaking !== isSpeaking 
+                ? { ...p, isSpeaking } 
+                : p
+            )
+          }));
+        } catch (e) {
+          // ignore stats error
+        }
+      });
+    }, 200); // Check every 200ms
+  };
+
   const startCallTimer = () => {
+    startAudioLevelMonitor(); // Start audio monitoring when call starts
     callTimerRef.current = setInterval(() => {
       setCallState(prev => ({
         ...prev,
@@ -520,6 +591,10 @@ export function CallProvider({ children }: { children: ReactNode }) {
     if (callTimerRef.current) {
       clearInterval(callTimerRef.current);
       callTimerRef.current = null;
+    }
+    if (audioLevelIntervalRef.current) {
+      clearInterval(audioLevelIntervalRef.current);
+      audioLevelIntervalRef.current = null;
     }
   };
 
