@@ -140,6 +140,19 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const callTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const localStreamRef = useRef<any>(null);
   const pendingCandidatesRef = useRef<Map<string, any[]>>(new Map());
+  
+  // Refs to access current state in socket callbacks (fixes stale closure issue)
+  const callStateRef = useRef(callState);
+  const userRef = useRef(user);
+  
+  // Keep refs in sync with state
+  useEffect(() => {
+    callStateRef.current = callState;
+  }, [callState]);
+  
+  useEffect(() => {
+    userRef.current = user;
+  }, [user]);
 
   useEffect(() => {
     if (user?._id) {
@@ -242,8 +255,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
     
     console.log('Received call offer from:', fromUserId);
     
-    // Skip if this offer is from ourselves
-    if (fromUserId === user?._id) return;
+    // Skip if this offer is from ourselves (use ref to avoid stale closure)
+    if (fromUserId === userRef.current?._id) return;
 
     try {
       // CRITICAL: Ensure local stream exists BEFORE creating peer connection
@@ -367,7 +380,19 @@ export function CallProvider({ children }: { children: ReactNode }) {
     });
 
     // If we're the initiator or already in call, create offer for new participant
-    if (callState.isInCall && isWebRTCAvailable && userId !== user?._id) {
+    // Use refs to get current state values (fixes stale closure issue)
+    const currentCallState = callStateRef.current;
+    const currentUser = userRef.current;
+    
+    console.log('handleUserJoined check:', {
+      isInCall: currentCallState.isInCall,
+      isWebRTCAvailable,
+      userId,
+      currentUserId: currentUser?._id
+    });
+    
+    if (currentCallState.isInCall && isWebRTCAvailable && userId !== currentUser?._id) {
+      console.log('Creating offer for new participant:', userId);
       // Small delay to ensure local stream is ready
       setTimeout(() => {
         createOfferForUser(userId);
@@ -429,11 +454,15 @@ export function CallProvider({ children }: { children: ReactNode }) {
     (pc as any).onicecandidate = (event: any) => {
       if (event.candidate) {
         setDebugStats(prev => ({ ...prev, iceCandidatesSent: prev.iceCandidatesSent + 1 }));
+        // Use refs to get current state values (fixes stale closure)
+        const currentCallState = callStateRef.current;
+        const currentUser = userRef.current;
+        console.log('Sending ICE candidate, callId:', currentCallState.callId, 'groupId:', currentCallState.groupId);
         socketRef.current?.emit('call_ice_candidate', {
-          callId: callState.callId,
-          groupId: callState.groupId,
+          callId: currentCallState.callId,
+          groupId: currentCallState.groupId,
           candidate: event.candidate,
-          fromUserId: user?._id
+          fromUserId: currentUser?._id
         });
       }
     };
