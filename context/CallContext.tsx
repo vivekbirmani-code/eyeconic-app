@@ -209,7 +209,25 @@ export function CallProvider({ children }: { children: ReactNode }) {
     if (fromUserId === user?._id) return;
 
     try {
-      // Get or create peer connection
+      // CRITICAL: Ensure local stream exists BEFORE creating peer connection
+      // Otherwise our audio tracks won't be added to the connection
+      if (!localStreamRef.current) {
+        console.log('Starting local stream for incoming offer...');
+        const stream = await startLocalStream();
+        if (!stream) {
+          console.error('Failed to start local stream for call');
+          return;
+        }
+      }
+
+      // Start InCallManager for audio routing (receiver side)
+      if (InCallManager) {
+        InCallManager.start({ media: 'audio', auto: true, ringback: '' });
+        InCallManager.setForceSpeakerphoneOn(true);
+        console.log('InCallManager started for receiver');
+      }
+
+      // Get or create peer connection (now local stream exists)
       let pc = peerConnectionsRef.current.get(fromUserId);
       if (!pc) {
         pc = await createPeerConnection(fromUserId);
@@ -238,7 +256,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
         toUserId: fromUserId
       });
       
-      console.log('Sent call answer to:', fromUserId);
+      console.log('Sent call answer to:', fromUserId, 'with local tracks:', localStreamRef.current?.getTracks().length);
     } catch (error) {
       console.error('Error handling call offer:', error);
     }
@@ -416,6 +434,18 @@ export function CallProvider({ children }: { children: ReactNode }) {
     console.log('Creating offer for user:', userId);
     
     try {
+      // Ensure local stream exists
+      if (!localStreamRef.current) {
+        console.log('Starting local stream before creating offer...');
+        await startLocalStream();
+      }
+
+      // Ensure InCallManager is started for audio routing
+      if (InCallManager) {
+        InCallManager.start({ media: 'audio', auto: true, ringback: '' });
+        InCallManager.setForceSpeakerphoneOn(true);
+      }
+
       let pc = peerConnectionsRef.current.get(userId);
       if (!pc) {
         pc = await createPeerConnection(userId);
@@ -436,7 +466,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
         targetUserId: userId
       });
       
-      console.log('Sent offer to:', userId);
+      console.log('Sent offer to:', userId, 'with local tracks:', localStreamRef.current?.getTracks().length);
     } catch (error) {
       console.error('Error creating offer:', error);
     }
