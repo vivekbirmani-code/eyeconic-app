@@ -17,6 +17,15 @@ import { useCall } from '@/context/CallContext';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
 
+// Try to import RTCView for audio playback
+let RTCView: any = null;
+try {
+  const webrtc = require('react-native-webrtc');
+  RTCView = webrtc.RTCView;
+} catch (e) {
+  console.log('RTCView not available');
+}
+
 interface Member {
   _id: string;
   name: string;
@@ -35,7 +44,8 @@ export default function CallScreen() {
     endCall, 
     toggleMute, 
     minimizeCall,
-    addParticipant 
+    addParticipant,
+    remoteStreams
   } = useCall();
   
   const [groupMembers, setGroupMembers] = useState<Member[]>([]);
@@ -47,6 +57,7 @@ export default function CallScreen() {
   useEffect(() => {
     fetchGroupDetails();
   }, [groupId]);
+
 
   useEffect(() => {
     // If we have a callId parameter, join the existing call
@@ -175,8 +186,32 @@ export default function CallScreen() {
   }
 
   // Active call screen
+  // Render hidden audio elements for each remote stream
+  const renderAudioStreams = () => {
+    if (!RTCView) return null;
+    
+    const streams: React.ReactNode[] = [];
+    remoteStreams.forEach((stream, odId) => {
+      streams.push(
+        <RTCView
+          key={odId}
+          streamURL={stream.toURL()}
+          style={{ width: 1, height: 1, position: 'absolute', top: -100 }}
+          objectFit="cover"
+          zOrder={0}
+        />
+      );
+    });
+    return streams;
+  };
+
   return (
     <SafeAreaView style={styles.callContainer}>
+      {/* Hidden audio players for remote streams */}
+      <View style={{ position: 'absolute', width: 0, height: 0, overflow: 'hidden' }}>
+        {renderAudioStreams()}
+      </View>
+      
       <View style={styles.callHeader}>
         <TouchableOpacity onPress={handleBack} style={styles.backButton}>
           <ArrowLeft color="#FFFFFF" size={24} />

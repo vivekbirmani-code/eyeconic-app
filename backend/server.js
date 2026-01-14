@@ -77,14 +77,14 @@ io.on('connection', (socket) => {
 
   // Initiate a call
   socket.on('call_initiate', async (data) => {
-    const { groupId, initiatorId, initiatorName, targetUserIds } = data;
+    const { groupId, groupName, initiatorId, initiatorName, targetUserIds } = data;
 
     try {
       // Create call record
       const call = new Call({
         groupId,
         initiator: initiatorId,
-        participants: [{ userId: initiatorId, joinedAt: new Date() }]
+        participants: [{ userId: initiatorId, userName: initiatorName, joinedAt: new Date() }]
       });
       await call.save();
 
@@ -92,6 +92,7 @@ io.on('connection', (socket) => {
       socket.to(groupId).emit('incoming_call', {
         callId: call._id,
         groupId,
+        groupName,
         initiatorId,
         initiatorName,
         targetUserIds
@@ -150,9 +151,12 @@ io.on('connection', (socket) => {
         );
 
         if (!existingParticipant) {
-          call.participants.push({ userId, joinedAt: new Date() });
+          call.participants.push({ userId, userName, joinedAt: new Date() });
           await call.save();
         }
+
+        // Join the socket room for this group
+        socket.join(call.groupId.toString());
 
         // Notify others in the call
         socket.to(call.groupId.toString()).emit('call_user_joined', {
@@ -161,7 +165,22 @@ io.on('connection', (socket) => {
           userName
         });
 
-        socket.emit('call_joined', { callId, participants: call.participants });
+        // Send current participants list back to joiner
+        const activeParticipants = call.participants
+          .filter(p => !p.leftAt)
+          .map(p => ({
+            userId: p.userId.toString(),
+            userName: p.userName || 'Unknown',
+            isMuted: p.isMuted || false
+          }));
+
+        socket.emit('call_joined', {
+          callId,
+          participants: activeParticipants,
+          groupId: call.groupId.toString()
+        });
+
+        console.log(`User ${userName} joined call ${callId}`);
       }
     } catch (error) {
       console.error('Error joining call:', error);

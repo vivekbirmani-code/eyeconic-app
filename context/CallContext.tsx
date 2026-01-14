@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useState, useRef, useEffect, ReactNode } from 'react';
-import { Platform, Alert } from 'react-native';
+import { Platform, Vibration } from 'react-native';
 import { io, Socket } from 'socket.io-client';
 import { getSocketURL } from '@/services/config';
 import { useAuth } from './AuthContext';
+import { Audio } from 'expo-av';
 
 // WebRTC imports - these will fail in Expo Go
 let RTCPeerConnection: any;
@@ -10,6 +11,7 @@ let RTCSessionDescription: any;
 let RTCIceCandidate: any;
 let mediaDevices: any;
 let MediaStream: any;
+let RTCView: any;
 let isWebRTCAvailable = false;
 
 try {
@@ -19,6 +21,7 @@ try {
   RTCIceCandidate = webrtc.RTCIceCandidate;
   mediaDevices = webrtc.mediaDevices;
   MediaStream = webrtc.MediaStream;
+  RTCView = webrtc.RTCView;
   isWebRTCAvailable = true;
 } catch (e) {
   console.log('WebRTC not available - calls will be disabled');
@@ -28,6 +31,14 @@ interface Participant {
   _id: string;
   name: string;
   isMuted: boolean;
+}
+
+interface IncomingCallData {
+  callId: string;
+  groupId: string;
+  groupName: string;
+  callerName: string;
+  callerId: string;
 }
 
 interface CallState {
@@ -44,8 +55,11 @@ interface CallState {
 
 interface CallContextType {
   callState: CallState;
+  incomingCall: IncomingCallData | null;
   initiateCall: (groupId: string, groupName: string, targetUserIds: string[]) => void;
   joinCall: (callId: string, groupId: string, groupName: string) => void;
+  acceptIncomingCall: () => void;
+  declineIncomingCall: () => void;
   leaveCall: () => void;
   endCall: () => void;
   toggleMute: () => void;
@@ -76,21 +90,26 @@ const ICE_SERVERS = {
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun2.l.google.com:19302' },
+    { urls: 'stun:stun3.l.google.com:19302' },
+    { urls: 'stun:stun4.l.google.com:19302' },
   ],
 };
 
 export function CallProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const [callState, setCallState] = useState<CallState>(initialCallState);
+  const [incomingCall, setIncomingCall] = useState<IncomingCallData | null>(null);
   const [localStream, setLocalStream] = useState<any>(null);
   const [remoteStreams, setRemoteStreams] = useState<Map<string, any>>(new Map());
   
   const socketRef = useRef<Socket | null>(null);
   const peerConnectionsRef = useRef<Map<string, any>>(new Map());
   const callTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const localStreamRef = useRef<any>(null);
+  const pendingCandidatesRef = useRef<Map<string, any[]>>(new Map());
 
   useEffect(() => {
-    if (user?._id && isWebRTCAvailable) {
+    if (user?._id) {
       setupSocket();
     }
 
@@ -121,56 +140,94 @@ export function CallProvider({ children }: { children: ReactNode }) {
     socketRef.current.on('call_user_muted', handleUserMuted);
     socketRef.current.on('call_ended', handleCallEnded);
     socketRef.current.on('call_initiated', handleCallInitiated);
+    socketRef.current.on('call_joined', handleCallJoined);
   };
 
   const handleIncomingCall = (data: any) => {
-    const { callId, groupId, initiatorName } = data;
+    const { callId, groupId, initiatorId, initiatorName, groupName } = data;
     
-    Alert.alert(
-      'Incoming Call',
-      `${initiatorName} is calling...`,
-      [
-        { text: 'Decline', style: 'cancel' },
-        { 
-          text: 'Accept', 
-          onPress: () => joinCall(callId, groupId, 'Call')
-        }
-      ]
-    );
+    // Don't show incoming call if already in a call
+    if (callState.isInCall) return;
+    
+    console.log('Incoming call from:', initiatorName);
+    
+    // Set incoming call state to show full-screen UI
+    setIncomingCall({
+      callId,
+      groupId,
+      groupName: groupName || 'Group Call',
+      callerName: initiatorName,
+      callerId: initiatorId,
+    });
   };
 
   const handleCallInitiated = (data: any) => {
+    console.log('Call initiated:', data.callId);
     setCallState(prev => ({
       ...prev,
       callId: data.callId
     }));
   };
 
+  const handleCallJoined = (data: any) => {
+    console.log('Successfully joined call:', data);
+    // Update participants from server
+    if (data.participants) {
+      const participantsList = data.participants
+        .filter((p: any) => !p.leftAt)
+        .map((p: any) => ({
+          _id: p.userId.toString(),
+          name: p.userName || 'Unknown',
+          isMuted: p.isMuted || false,
+        }));
+      
+      setCallState(prev => ({
+        ...prev,
+        participants: participantsList
+      }));
+    }
+  };
+
   const handleCallOffer = async (data: any) => {
     if (!isWebRTCAvailable) return;
     const { callId, offer, fromUserId } = data;
     
-    if (!callState.isInCall || callState.callId !== callId) return;
+    console.log('Received call offer from:', fromUserId);
+    
+    // Skip if this offer is from ourselves
+    if (fromUserId === user?._id) return;
 
     try {
+      // Get or create peer connection
       let pc = peerConnectionsRef.current.get(fromUserId);
       if (!pc) {
-        pc = createPeerConnection(fromUserId);
+        pc = await createPeerConnection(fromUserId);
         peerConnectionsRef.current.set(fromUserId, pc);
       }
 
+      // Set remote description
       await pc.setRemoteDescription(new RTCSessionDescription(offer));
       
+      // Add any pending ICE candidates
+      const pendingCandidates = pendingCandidatesRef.current.get(fromUserId) || [];
+      for (const candidate of pendingCandidates) {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      }
+      pendingCandidatesRef.current.delete(fromUserId);
+      
+      // Create and send answer
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
 
       socketRef.current?.emit('call_answer', {
-        callId,
+        callId: callId || callState.callId,
         groupId: callState.groupId,
         answer: pc.localDescription,
         fromUserId: user?._id,
         toUserId: fromUserId
       });
+      
+      console.log('Sent call answer to:', fromUserId);
     } catch (error) {
       console.error('Error handling call offer:', error);
     }
@@ -180,12 +237,23 @@ export function CallProvider({ children }: { children: ReactNode }) {
     if (!isWebRTCAvailable) return;
     const { callId, answer, fromUserId } = data;
     
-    if (callState.callId !== callId) return;
+    console.log('Received call answer from:', fromUserId);
+    
+    // Skip if this is from ourselves
+    if (fromUserId === user?._id) return;
 
     try {
       const pc = peerConnectionsRef.current.get(fromUserId);
-      if (pc) {
+      if (pc && pc.signalingState !== 'stable') {
         await pc.setRemoteDescription(new RTCSessionDescription(answer));
+        console.log('Set remote description from:', fromUserId);
+        
+        // Add any pending ICE candidates
+        const pendingCandidates = pendingCandidatesRef.current.get(fromUserId) || [];
+        for (const candidate of pendingCandidates) {
+          await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        }
+        pendingCandidatesRef.current.delete(fromUserId);
       }
     } catch (error) {
       console.error('Error handling call answer:', error);
@@ -196,34 +264,54 @@ export function CallProvider({ children }: { children: ReactNode }) {
     if (!isWebRTCAvailable) return;
     const { callId, candidate, fromUserId } = data;
     
-    if (callState.callId !== callId) return;
+    // Skip if this is from ourselves
+    if (fromUserId === user?._id) return;
 
     try {
       const pc = peerConnectionsRef.current.get(fromUserId);
       if (pc && candidate) {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        if (pc.remoteDescription) {
+          await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        } else {
+          // Queue candidate for later
+          const pending = pendingCandidatesRef.current.get(fromUserId) || [];
+          pending.push(candidate);
+          pendingCandidatesRef.current.set(fromUserId, pending);
+        }
       }
     } catch (error) {
       console.error('Error handling ICE candidate:', error);
     }
   };
 
-  const handleUserJoined = (data: any) => {
-    const { userId, userName } = data;
+  const handleUserJoined = async (data: any) => {
+    const { userId, userName, callId } = data;
     
-    setCallState(prev => ({
-      ...prev,
-      participants: [...prev.participants, { _id: userId, name: userName, isMuted: false }]
-    }));
+    console.log('User joined call:', userName, userId);
+    
+    // Add to participants if not already there
+    setCallState(prev => {
+      const exists = prev.participants.some(p => p._id === userId);
+      if (exists) return prev;
+      return {
+        ...prev,
+        participants: [...prev.participants, { _id: userId, name: userName, isMuted: false }]
+      };
+    });
 
-    // Create offer for new participant
-    if (callState.isInitiator && isWebRTCAvailable) {
-      createOfferForUser(userId);
+    // If we're the initiator or already in call, create offer for new participant
+    if (callState.isInCall && isWebRTCAvailable && userId !== user?._id) {
+      // Small delay to ensure local stream is ready
+      setTimeout(() => {
+        createOfferForUser(userId);
+      }, 500);
     }
   };
 
   const handleUserLeft = (data: any) => {
     const { userId } = data;
+    
+    console.log('User left call:', userId);
     
     setCallState(prev => ({
       ...prev,
@@ -257,16 +345,20 @@ export function CallProvider({ children }: { children: ReactNode }) {
   };
 
   const handleCallEnded = (data: any) => {
+    console.log('Call ended');
     cleanup();
     setCallState(initialCallState);
+    setIncomingCall(null);
   };
 
-  const createPeerConnection = (userId: string): any => {
+  const createPeerConnection = async (userId: string): Promise<any> => {
     if (!isWebRTCAvailable) return null;
+    
+    console.log('Creating peer connection for:', userId);
     
     const pc = new RTCPeerConnection(ICE_SERVERS);
 
-    // Type assertion needed for react-native-webrtc
+    // Handle ICE candidates
     (pc as any).onicecandidate = (event: any) => {
       if (event.candidate) {
         socketRef.current?.emit('call_ice_candidate', {
@@ -278,7 +370,9 @@ export function CallProvider({ children }: { children: ReactNode }) {
       }
     };
 
+    // Handle incoming audio tracks
     (pc as any).ontrack = (event: any) => {
+      console.log('Received remote track from:', userId, event.track.kind);
       if (event.streams && event.streams[0]) {
         setRemoteStreams(prev => {
           const newMap = new Map(prev);
@@ -287,11 +381,18 @@ export function CallProvider({ children }: { children: ReactNode }) {
         });
       }
     };
+    
+    // Handle connection state changes
+    (pc as any).onconnectionstatechange = () => {
+      console.log('Connection state:', pc.connectionState, 'for user:', userId);
+    };
 
-    // Add local stream tracks
-    if (localStream) {
-      localStream.getTracks().forEach((track: any) => {
-        pc.addTrack(track, localStream);
+    // Add local stream tracks if available
+    const stream = localStreamRef.current;
+    if (stream) {
+      stream.getTracks().forEach((track: any) => {
+        console.log('Adding local track:', track.kind);
+        pc.addTrack(track, stream);
       });
     }
 
@@ -301,10 +402,12 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const createOfferForUser = async (userId: string) => {
     if (!isWebRTCAvailable) return;
     
+    console.log('Creating offer for user:', userId);
+    
     try {
       let pc = peerConnectionsRef.current.get(userId);
       if (!pc) {
-        pc = createPeerConnection(userId);
+        pc = await createPeerConnection(userId);
         peerConnectionsRef.current.set(userId, pc);
       }
 
@@ -321,6 +424,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
         fromUserId: user?._id,
         targetUserId: userId
       });
+      
+      console.log('Sent offer to:', userId);
     } catch (error) {
       console.error('Error creating offer:', error);
     }
@@ -328,20 +433,35 @@ export function CallProvider({ children }: { children: ReactNode }) {
 
   const startLocalStream = async () => {
     if (!isWebRTCAvailable) {
-      Alert.alert('Not Available', 'Calling requires a development build. Please run "npx expo prebuild && npx expo run:android"');
+      console.log('WebRTC not available');
       return null;
     }
     
     try {
+      // Configure audio session
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        staysActiveInBackground: true,
+        playsInSilentModeIOS: true,
+        shouldDuckAndroid: false,
+        playThroughEarpieceAndroid: false,
+      });
+
       const stream = await mediaDevices.getUserMedia({
-        audio: true,
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
         video: false
       });
+      
+      console.log('Local stream started with tracks:', stream.getTracks().length);
       setLocalStream(stream);
+      localStreamRef.current = stream;
       return stream;
     } catch (error) {
       console.error('Error getting user media:', error);
-      Alert.alert('Error', 'Failed to access microphone');
       return null;
     }
   };
@@ -364,9 +484,11 @@ export function CallProvider({ children }: { children: ReactNode }) {
 
   const initiateCall = async (groupId: string, groupName: string, targetUserIds: string[]) => {
     if (!isWebRTCAvailable) {
-      Alert.alert('Not Available', 'Calling requires a development build. Please run "npx expo prebuild && npx expo run:android"');
+      console.log('WebRTC not available');
       return;
     }
+    
+    console.log('Initiating call to group:', groupId);
     
     const stream = await startLocalStream();
     if (!stream) return;
@@ -383,6 +505,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
     socketRef.current?.emit('join_room', groupId);
     socketRef.current?.emit('call_initiate', {
       groupId,
+      groupName,
       initiatorId: user?._id,
       initiatorName: user?.name,
       targetUserIds
@@ -393,9 +516,11 @@ export function CallProvider({ children }: { children: ReactNode }) {
 
   const joinCall = async (callId: string, groupId: string, groupName: string) => {
     if (!isWebRTCAvailable) {
-      Alert.alert('Not Available', 'Calling requires a development build. Please run "npx expo prebuild && npx expo run:android"');
+      console.log('WebRTC not available');
       return;
     }
+    
+    console.log('Joining call:', callId);
     
     const stream = await startLocalStream();
     if (!stream) return;
@@ -420,7 +545,24 @@ export function CallProvider({ children }: { children: ReactNode }) {
     startCallTimer();
   };
 
+  const acceptIncomingCall = async () => {
+    if (!incomingCall) return;
+    
+    console.log('Accepting incoming call');
+    
+    const { callId, groupId, groupName } = incomingCall;
+    setIncomingCall(null);
+    
+    await joinCall(callId, groupId, groupName);
+  };
+
+  const declineIncomingCall = () => {
+    console.log('Declining incoming call');
+    setIncomingCall(null);
+  };
+
   const leaveCall = () => {
+    console.log('Leaving call');
     socketRef.current?.emit('call_leave', {
       callId: callState.callId,
       userId: user?._id
@@ -431,6 +573,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
   };
 
   const endCall = () => {
+    console.log('Ending call for everyone');
     socketRef.current?.emit('call_end', {
       callId: callState.callId
     });
@@ -440,12 +583,14 @@ export function CallProvider({ children }: { children: ReactNode }) {
   };
 
   const toggleMute = () => {
-    if (localStream) {
-      const audioTrack = localStream.getAudioTracks()[0];
+    const stream = localStreamRef.current;
+    if (stream) {
+      const audioTrack = stream.getAudioTracks()[0];
       if (audioTrack) {
         audioTrack.enabled = !audioTrack.enabled;
         const isMuted = !audioTrack.enabled;
         
+        console.log('Mute toggled:', isMuted);
         setCallState(prev => ({ ...prev, isMuted }));
         
         socketRef.current?.emit('call_mute', {
@@ -472,16 +617,28 @@ export function CallProvider({ children }: { children: ReactNode }) {
   };
 
   const cleanup = () => {
+    console.log('Cleaning up call resources');
     stopCallTimer();
     
     // Close all peer connections
-    peerConnectionsRef.current.forEach(pc => pc?.close?.());
+    peerConnectionsRef.current.forEach((pc, id) => {
+      try {
+        pc.close();
+      } catch (e) {
+        console.log('Error closing peer connection:', e);
+      }
+    });
     peerConnectionsRef.current.clear();
+    pendingCandidatesRef.current.clear();
 
     // Stop local stream
-    if (localStream) {
-      localStream.getTracks().forEach((track: any) => track.stop());
+    const stream = localStreamRef.current;
+    if (stream) {
+      stream.getTracks().forEach((track: any) => {
+        track.stop();
+      });
       setLocalStream(null);
+      localStreamRef.current = null;
     }
 
     setRemoteStreams(new Map());
@@ -491,8 +648,11 @@ export function CallProvider({ children }: { children: ReactNode }) {
     <CallContext.Provider
       value={{
         callState,
+        incomingCall,
         initiateCall,
         joinCall,
+        acceptIncomingCall,
+        declineIncomingCall,
         leaveCall,
         endCall,
         toggleMute,
