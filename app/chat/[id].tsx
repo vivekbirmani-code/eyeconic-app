@@ -695,7 +695,7 @@ export default function ChatScreen() {
             <View style={{ width: 24 }} />
           </View>
           
-          <ScrollView style={styles.modalScroll}>
+          <ScrollView style={styles.modalScroll} nestedScrollEnabled={true}>
             <View style={styles.groupProfileSection}>
               <View style={styles.largeGroupIcon}>
                 <Users color="#FFFFFF" size={40} />

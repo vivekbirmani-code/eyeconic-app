@@ -1,21 +1,27 @@
 import { useEffect } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useRootNavigationState } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
 
 export default function Index() {
   const router = useRouter();
   const { user, isLoading } = useAuth();
+  const rootNavigationState = useRootNavigationState();
 
   useEffect(() => {
-    if (!isLoading) {
-      if (user) {
-        router.replace('/(tabs)/dashboard');
-      } else {
-        router.replace('/login');
-      }
+    // Wait for both auth loading to complete AND navigation to be ready
+    if (!isLoading && rootNavigationState?.key) {
+      // Use setTimeout to ensure the layout is fully mounted
+      const timer = setTimeout(() => {
+        if (user) {
+          router.replace('/(tabs)/dashboard');
+        } else {
+          router.replace('/login');
+        }
+      }, 100);
+      return () => clearTimeout(timer);
     }
-  }, [user, isLoading]);
+  }, [user, isLoading, rootNavigationState?.key]);
 
   return (
     <View style={styles.container}>

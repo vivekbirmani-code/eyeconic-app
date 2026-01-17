@@ -247,6 +247,12 @@ export function CallProvider({ children }: { children: ReactNode }) {
         participants: participantsList,
         callDuration: syncedDuration > 0 ? syncedDuration : prev.callDuration
       }));
+      
+      // Start timer for joiners after syncing with server time
+      // This ensures all participants' timers are synchronized
+      if (!callTimerRef.current) {
+        startCallTimer();
+      }
     }
   };
 
@@ -645,6 +651,9 @@ export function CallProvider({ children }: { children: ReactNode }) {
   };
 
   const startCallTimer = () => {
+    // Clear any existing timer first to prevent multiple intervals
+    stopCallTimer();
+    
     startAudioLevelMonitor(); // Start audio monitoring when call starts
     callTimerRef.current = setInterval(() => {
       setCallState(prev => ({
@@ -739,7 +748,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
       userName: user?.name
     });
 
-    startCallTimer();
+    // Don't start timer here for joiners - wait for server sync in handleCallJoined
+    // This prevents timer de-sync between sender and receiver
   };
 
   const acceptIncomingCall = async () => {
