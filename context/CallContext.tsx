@@ -138,6 +138,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const socketRef = useRef<Socket | null>(null);
   const peerConnectionsRef = useRef<Map<string, any>>(new Map());
   const callTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timerStartedRef = useRef<boolean>(false); // Track if timer was started for this call session
   const localStreamRef = useRef<any>(null);
   const pendingCandidatesRef = useRef<Map<string, any[]>>(new Map());
   
@@ -249,8 +250,9 @@ export function CallProvider({ children }: { children: ReactNode }) {
       }));
       
       // Start timer for joiners after syncing with server time
-      // This ensures all participants' timers are synchronized
-      if (!callTimerRef.current) {
+      // Only start if this call session hasn't started a timer yet
+      if (!timerStartedRef.current) {
+        timerStartedRef.current = true;
         startCallTimer();
       }
     }
@@ -672,6 +674,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
       clearInterval(audioLevelIntervalRef.current);
       audioLevelIntervalRef.current = null;
     }
+    timerStartedRef.current = false; // Reset for next call session
   };
 
   const initiateCall = async (groupId: string, groupName: string, targetUserIds: string[]) => {
@@ -710,6 +713,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
       targetUserIds
     });
 
+    timerStartedRef.current = true;
     startCallTimer();
   };
 
