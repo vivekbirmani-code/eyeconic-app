@@ -695,69 +695,74 @@ export default function ChatScreen() {
             <View style={{ width: 24 }} />
           </View>
           
-          <FlatList
-            data={group?.members || []}
-            keyExtractor={(item) => item._id}
-            style={styles.modalScroll}
-            contentContainerStyle={{ flexGrow: 1, paddingBottom: 40 }}
-            showsVerticalScrollIndicator={true}
-            bounces={true}
-            ListHeaderComponent={() => (
-              <>
-                <View style={styles.groupProfileSection}>
-                  <View style={styles.largeGroupIcon}>
-                    <Users color="#FFFFFF" size={40} />
-                  </View>
-                  <Text style={styles.largeGroupName}>{group?.name}</Text>
-                  {group?.description ? (
-                    <Text style={styles.groupDescription}>{group.description}</Text>
-                  ) : null}
-                  <Text style={styles.groupMeta}>
-                    Created by {group?.createdBy?.name} • {new Date(group?.createdAt || '').toLocaleDateString()}
-                  </Text>
-                </View>
-
-                <View style={styles.sectionHeader}>
-                  <Text style={styles.sectionTitle}>{group?.members?.length || 0} participants</Text>
-                </View>
-
-                {user?.role === 'admin' && (
-                  <TouchableOpacity style={styles.addMemberRow} onPress={openAddMemberModal}>
-                    <View style={styles.addMemberIcon}>
-                      <UserPlus color="#2563EB" size={20} />
+          <View style={{ flex: 1 }}>
+            <FlatList
+              key={isGroupInfoVisible ? 'visible' : 'hidden'}
+              data={group?.members || []}
+              keyExtractor={(item) => item._id}
+              style={{ flex: 1 }}
+              contentContainerStyle={{ paddingBottom: 40 }}
+              showsVerticalScrollIndicator={true}
+              removeClippedSubviews={false}
+              nestedScrollEnabled={true}
+              scrollEnabled={true}
+              ListHeaderComponent={() => (
+                <>
+                  <View style={styles.groupProfileSection}>
+                    <View style={styles.largeGroupIcon}>
+                      <Users color="#FFFFFF" size={40} />
                     </View>
-                    <Text style={styles.addMemberText}>Add Participants</Text>
-                  </TouchableOpacity>
-                )}
-              </>
-            )}
-            renderItem={({ item: member }) => (
-              <View key={member._id} style={styles.memberRow}>
-                <View style={styles.memberAvatar}>
-                  <Text style={styles.memberAvatarText}>{member.name.charAt(0).toUpperCase()}</Text>
+                    <Text style={styles.largeGroupName}>{group?.name}</Text>
+                    {group?.description ? (
+                      <Text style={styles.groupDescription}>{group.description}</Text>
+                    ) : null}
+                    <Text style={styles.groupMeta}>
+                      Created by {group?.createdBy?.name} • {new Date(group?.createdAt || '').toLocaleDateString()}
+                    </Text>
+                  </View>
+
+                  <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionTitle}>{group?.members?.length || 0} participants</Text>
+                  </View>
+
+                  {user?.role === 'admin' && (
+                    <TouchableOpacity style={styles.addMemberRow} onPress={openAddMemberModal}>
+                      <View style={styles.addMemberIcon}>
+                        <UserPlus color="#2563EB" size={20} />
+                      </View>
+                      <Text style={styles.addMemberText}>Add Participants</Text>
+                    </TouchableOpacity>
+                  )}
+                </>
+              )}
+              renderItem={({ item: member }) => (
+                <View key={member._id} style={styles.memberRow}>
+                  <View style={styles.memberAvatar}>
+                    <Text style={styles.memberAvatarText}>{member.name.charAt(0).toUpperCase()}</Text>
+                  </View>
+                  <View style={styles.memberInfo}>
+                    <Text style={styles.memberName}>
+                      {member._id === user?._id ? 'You' : member.name}
+                    </Text>
+                    <Text style={styles.memberEmail}>{member.role}</Text>
+                  </View>
+                  <View style={{ alignItems: 'flex-end' }}>
+                      {group?.createdBy?._id === member._id && (
+                          <Text style={styles.adminBadge}>Group Admin</Text>
+                      )}
+                      {user?.role === 'admin' && member._id !== group?.createdBy?._id && (
+                          <TouchableOpacity 
+                              style={styles.removeButton}
+                              onPress={() => removeMember(member._id)}
+                          >
+                              <Text style={styles.removeText}>Remove</Text>
+                          </TouchableOpacity>
+                      )}
+                  </View>
                 </View>
-                <View style={styles.memberInfo}>
-                  <Text style={styles.memberName}>
-                    {member._id === user?._id ? 'You' : member.name}
-                  </Text>
-                  <Text style={styles.memberEmail}>{member.role}</Text>
-                </View>
-                <View style={{ alignItems: 'flex-end' }}>
-                    {group?.createdBy?._id === member._id && (
-                        <Text style={styles.adminBadge}>Group Admin</Text>
-                    )}
-                    {user?.role === 'admin' && member._id !== group?.createdBy?._id && (
-                        <TouchableOpacity 
-                            style={styles.removeButton}
-                            onPress={() => removeMember(member._id)}
-                        >
-                            <Text style={styles.removeText}>Remove</Text>
-                        </TouchableOpacity>
-                    )}
-                </View>
-              </View>
-            )}
-          />
+              )}
+            />
+          </View>
         </SafeAreaView>
       </Modal>
 
