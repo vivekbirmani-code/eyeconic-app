@@ -1,13 +1,13 @@
 import { Tabs, Redirect } from 'expo-router';
 import { Users, MessageCircle, BookOpen, Home } from 'lucide-react-native';
 import { useAuth } from '@/context/AuthContext';
-import { View, Text, ActivityIndicator, StyleSheet } from 'react-native';
+import { View, Text, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import { useNotifications } from '@/context/NotificationContext';
 
 function TabInner() {
   const { totalUnreadCount } = useNotifications();
   const { user } = useAuth();
-  
+
   const isAdmin = user?.role === 'admin';
   const showUsers = isAdmin;
 
@@ -15,12 +15,32 @@ function TabInner() {
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: '#2563EB',
-        tabBarInactiveTintColor: '#6B7280',
+        tabBarActiveTintColor: '#01b4ae',
+        tabBarInactiveTintColor: '#9CA3AF',
         tabBarStyle: {
           backgroundColor: '#FFFFFF',
-          borderTopWidth: 1,
-          borderTopColor: '#E5E7EB',
+          borderTopWidth: 0,
+          elevation: 8,
+          shadowColor: '#000',
+          shadowOffset: {
+            width: 0,
+            height: -2,
+          },
+          shadowOpacity: 0.1,
+          shadowRadius: 8,
+          height: Platform.OS === 'ios' ? 80 : 75,
+          paddingBottom: Platform.OS === 'ios' ? 15 : 12,
+          paddingTop: 12,
+          paddingHorizontal: 4,
+        },
+        tabBarLabelStyle: {
+          fontSize: 10,
+          fontWeight: '600',
+          marginTop: 3,
+          marginBottom: 0,
+        },
+        tabBarIconStyle: {
+          marginBottom: -2,
         },
       }}
     >
@@ -29,7 +49,7 @@ function TabInner() {
         options={{
           title: 'Dashboard',
           tabBarIcon: ({ color, size }) => (
-            <Home color={color} size={size} />
+            <Home color={color} size={22} />
           ),
         }}
       />
@@ -38,7 +58,7 @@ function TabInner() {
         options={{
           title: 'Users',
           tabBarIcon: ({ color, size }) => (
-            <Users color={color} size={size} />
+            <Users color={color} size={22} />
           ),
           // Hide this tab for non-admin users
           href: showUsers ? '/users' : null,
@@ -49,7 +69,7 @@ function TabInner() {
         options={{
           title: 'Groups',
           tabBarIcon: ({ color, size }) => (
-            <MessageCircle color={color} size={size} />
+            <MessageCircle color={color} size={22} />
           ),
           tabBarBadge: totalUnreadCount > 0 ? totalUnreadCount : undefined,
         }}
@@ -59,7 +79,7 @@ function TabInner() {
         options={{
           title: 'Quizzes',
           tabBarIcon: ({ color, size }) => (
-            <BookOpen color={color} size={size} />
+            <BookOpen color={color} size={22} />
           ),
         }}
       />
