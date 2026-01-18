@@ -16,9 +16,13 @@ import {
   Keyboard,
   StatusBar,
   Dimensions,
+  Animated,
+  Easing,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowLeft, Send, Users, UserPlus, X, Search, Check, CheckCheck, Edit2, Trash2, Info, Phone } from 'lucide-react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
 import { getSocketURL } from '@/services/config';
@@ -73,7 +77,7 @@ export default function ChatScreen() {
   const [selectedNewMembers, setSelectedNewMembers] = useState<string[]>([]);
   const flatListRef = useRef<FlatList>(null);
   const socketRef = useRef<Socket | null>(null);
-  
+
   // Message action states
   const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
   const [isMessageMenuVisible, setIsMessageMenuVisible] = useState(false);
@@ -101,7 +105,7 @@ export default function ChatScreen() {
 
   const setupSocket = () => {
     socketRef.current = io(getSocketURL());
-    
+
     socketRef.current.on('connect', () => {
       console.log('Socket connected');
       socketRef.current?.emit('join_room', groupId);
@@ -114,13 +118,13 @@ export default function ChatScreen() {
       if (groupId) {
         markAsRead(groupId);
         // Mark the received message as read
-        api.post(`/messages/${data._id}/read`).catch(() => {});
+        api.post(`/messages/${data._id}/read`).catch(() => { });
       }
     });
 
     // Listen for message updates (edit, delete)
     socketRef.current.on('message_updated', (data: Message) => {
-      setMessages(prev => prev.map(msg => 
+      setMessages(prev => prev.map(msg =>
         msg._id === data._id ? { ...msg, ...data } : msg
       ));
     });
@@ -128,7 +132,7 @@ export default function ChatScreen() {
     // Listen for message deletion
     socketRef.current.on('message_deleted', (data: { messageId: string, deletedForEveryone: boolean }) => {
       if (data.deletedForEveryone) {
-        setMessages(prev => prev.map(msg => 
+        setMessages(prev => prev.map(msg =>
           msg._id === data.messageId ? { ...msg, deletedForEveryone: true } : msg
         ));
       }
@@ -150,7 +154,7 @@ export default function ChatScreen() {
       const response = await api.get('/users');
       setAllUsers(response.data);
     } catch (error) {
-       console.log('Error fetching users', error);
+      console.log('Error fetching users', error);
     }
   };
 
@@ -162,16 +166,16 @@ export default function ChatScreen() {
   };
 
   const addMembers = async () => {
-     if (selectedNewMembers.length === 0) return;
-     
-     try {
-       await api.post(`/groups/${groupId}/members`, { userIds: selectedNewMembers });
-       Alert.alert('Success', 'Members added successfully');
-       setIsAddMemberVisible(false);
-       fetchGroup();
-     } catch (error: any) {
-       Alert.alert('Error', error?.response?.data?.message || 'Failed to add members');
-     }
+    if (selectedNewMembers.length === 0) return;
+
+    try {
+      await api.post(`/groups/${groupId}/members`, { userIds: selectedNewMembers });
+      Alert.alert('Success', 'Members added successfully');
+      setIsAddMemberVisible(false);
+      fetchGroup();
+    } catch (error: any) {
+      Alert.alert('Error', error?.response?.data?.message || 'Failed to add members');
+    }
   };
 
   const removeMember = async (userId: string) => {
@@ -180,8 +184,8 @@ export default function ChatScreen() {
       'Are you sure you want to remove this member from the group?',
       [
         { text: 'Cancel', style: 'cancel' },
-        { 
-          text: 'Remove', 
+        {
+          text: 'Remove',
           style: 'destructive',
           onPress: async () => {
             try {
@@ -198,20 +202,20 @@ export default function ChatScreen() {
 
   const filteredUsersToAdd = useMemo(() => {
     if (!group) return [];
-    
+
     const currentMemberIds = group.members.map(m => m._id);
-    
-    return allUsers.filter(u => 
-      !currentMemberIds.includes(u._id) && 
-      (u.name.toLowerCase().includes(memberSearchQuery.toLowerCase()) || 
-       u.email.toLowerCase().includes(memberSearchQuery.toLowerCase()))
+
+    return allUsers.filter(u =>
+      !currentMemberIds.includes(u._id) &&
+      (u.name.toLowerCase().includes(memberSearchQuery.toLowerCase()) ||
+        u.email.toLowerCase().includes(memberSearchQuery.toLowerCase()))
     );
   }, [allUsers, group, memberSearchQuery]);
 
   const toggleUserSelection = (userId: string) => {
-    setSelectedNewMembers(prev => 
-      prev.includes(userId) 
-        ? prev.filter(id => id !== userId) 
+    setSelectedNewMembers(prev =>
+      prev.includes(userId)
+        ? prev.filter(id => id !== userId)
         : [...prev, userId]
     );
   };
@@ -222,13 +226,13 @@ export default function ChatScreen() {
       setMessages(response.data);
       setIsLoading(false);
       setTimeout(scrollToBottom, 100);
-      
+
       // Mark all messages as read
       const messageIds = response.data
         .filter((m: Message) => m.sender._id !== user?._id)
         .map((m: Message) => m._id);
       if (messageIds.length > 0) {
-        api.post('/messages/read-batch', { messageIds }).catch(() => {});
+        api.post('/messages/read-batch', { messageIds }).catch(() => { });
       }
     } catch (error) {
       Alert.alert('Error', 'Failed to load messages');
@@ -255,12 +259,12 @@ export default function ChatScreen() {
       });
 
       setMessages(prev => [...prev, response.data]);
-      
+
       socketRef.current?.emit('send_message', {
         ...response.data,
         groupId,
       });
-      
+
       scrollToBottom();
     } catch (error) {
       Alert.alert('Error', 'Failed to send message');
@@ -307,22 +311,22 @@ export default function ChatScreen() {
 
   const saveEditedMessage = async () => {
     if (!selectedMessage || !editContent.trim()) return;
-    
+
     try {
       const response = await api.put(`/messages/${selectedMessage._id}`, {
         content: editContent.trim()
       });
-      
-      setMessages(prev => prev.map(msg => 
+
+      setMessages(prev => prev.map(msg =>
         msg._id === selectedMessage._id ? response.data : msg
       ));
-      
+
       // Emit socket event for real-time update
       socketRef.current?.emit('message_updated', {
         ...response.data,
         groupId,
       });
-      
+
       setIsEditModalVisible(false);
       setSelectedMessage(null);
     } catch (error: any) {
@@ -332,7 +336,7 @@ export default function ChatScreen() {
 
   const deleteForMe = async () => {
     if (!selectedMessage) return;
-    
+
     try {
       await api.delete(`/messages/${selectedMessage._id}/me`);
       setMessages(prev => prev.filter(msg => msg._id !== selectedMessage._id));
@@ -345,7 +349,7 @@ export default function ChatScreen() {
 
   const deleteForEveryone = async () => {
     if (!selectedMessage) return;
-    
+
     Alert.alert(
       'Delete for Everyone',
       'This message will be deleted for all members. This action cannot be undone.',
@@ -357,20 +361,20 @@ export default function ChatScreen() {
           onPress: async () => {
             try {
               const response = await api.delete(`/messages/${selectedMessage._id}/everyone`);
-              
-              setMessages(prev => prev.map(msg => 
-                msg._id === selectedMessage._id 
+
+              setMessages(prev => prev.map(msg =>
+                msg._id === selectedMessage._id
                   ? { ...msg, deletedForEveryone: true }
                   : msg
               ));
-              
+
               // Emit socket event
               socketRef.current?.emit('message_deleted', {
                 messageId: selectedMessage._id,
                 deletedForEveryone: true,
                 groupId,
               });
-              
+
               setIsMessageMenuVisible(false);
               setSelectedMessage(null);
             } catch (error: any) {
@@ -384,9 +388,9 @@ export default function ChatScreen() {
 
   const renderTickIcon = (message: Message) => {
     if (message.sender._id !== user?._id) return null;
-    
+
     const status = message.status || 'sent';
-    
+
     if (status === 'read') {
       return <CheckCheck color="#34B7F1" size={14} />;
     } else if (status === 'delivered') {
@@ -398,15 +402,15 @@ export default function ChatScreen() {
 
   const renderMessage = ({ item }: { item: Message }) => {
     const isOwnMessage = item.sender._id === user?._id;
-    
+
     // Deleted message placeholder
     if (item.deletedForEveryone) {
       const isAdmin = user?.role === 'admin';
-      
+
       // Admin sees the original content in a red box
       if (isAdmin && item.content) {
         return (
-          <Pressable 
+          <Pressable
             onLongPress={() => handleMessageLongPress(item)}
             delayLongPress={300}
             style={[
@@ -433,7 +437,7 @@ export default function ChatScreen() {
           </Pressable>
         );
       }
-      
+
       // Students/Mentors see "This message was deleted"
       return (
         <View style={[
@@ -447,9 +451,9 @@ export default function ChatScreen() {
         </View>
       );
     }
-    
+
     return (
-      <Pressable 
+      <Pressable
         onLongPress={() => handleMessageLongPress(item)}
         delayLongPress={300}
         style={[
@@ -493,8 +497,8 @@ export default function ChatScreen() {
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <ArrowLeft color="#000000" size={24} />
         </TouchableOpacity>
-        <TouchableOpacity 
-          style={styles.headerInfo} 
+        <TouchableOpacity
+          style={styles.headerInfo}
           onPress={() => setIsGroupInfoVisible(true)}
         >
           <Text style={styles.headerTitle}>{group?.name || 'Chat'}</Text>
@@ -504,7 +508,7 @@ export default function ChatScreen() {
             </Text>
           )}
         </TouchableOpacity>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.callButton}
           onPress={() => router.push(`/call/${groupId}` as any)}
         >
@@ -550,7 +554,7 @@ export default function ChatScreen() {
             multiline
             maxLength={500}
           />
-          <TouchableOpacity 
+          <TouchableOpacity
             style={[styles.sendButton, !newMessage.trim() && styles.sendButtonDisabled]}
             onPress={sendMessage}
             disabled={!newMessage.trim()}
@@ -562,8 +566,8 @@ export default function ChatScreen() {
 
       {/* Message Action Menu */}
       <Modal visible={isMessageMenuVisible} transparent animationType="fade">
-        <Pressable 
-          style={styles.menuOverlay} 
+        <Pressable
+          style={styles.menuOverlay}
           onPress={() => setIsMessageMenuVisible(false)}
         >
           <View style={styles.menuContainer}>
@@ -574,7 +578,7 @@ export default function ChatScreen() {
                 <Text style={styles.menuItemText}>Info</Text>
               </TouchableOpacity>
             )}
-            
+
             {/* Edit - Only sender can edit their own non-deleted messages */}
             {selectedMessage?.sender._id === user?._id && !selectedMessage?.deletedForEveryone && (
               <TouchableOpacity style={styles.menuItem} onPress={openEditModal}>
@@ -582,13 +586,13 @@ export default function ChatScreen() {
                 <Text style={styles.menuItemText}>Edit</Text>
               </TouchableOpacity>
             )}
-            
+
             {/* Delete for me - Available to everyone */}
             <TouchableOpacity style={styles.menuItem} onPress={deleteForMe}>
               <Trash2 color="#374151" size={20} />
               <Text style={styles.menuItemText}>Delete for me</Text>
             </TouchableOpacity>
-            
+
             {/* Delete for everyone - Sender OR Admin can delete, not if already deleted */}
             {(selectedMessage?.sender._id === user?._id || user?.role === 'admin') && !selectedMessage?.deletedForEveryone && (
               <TouchableOpacity style={[styles.menuItem, styles.menuItemDanger]} onPress={deleteForEveryone}>
@@ -610,7 +614,7 @@ export default function ChatScreen() {
                 <X color="#6B7280" size={24} />
               </TouchableOpacity>
             </View>
-            
+
             <View style={styles.infoSection}>
               <Text style={styles.infoSectionTitle}>Read by</Text>
               {isLoadingReadBy ? (
@@ -644,7 +648,7 @@ export default function ChatScreen() {
 
       {/* Edit Message Modal */}
       <Modal visible={isEditModalVisible} animationType="slide" transparent>
-        <KeyboardAvoidingView 
+        <KeyboardAvoidingView
           style={styles.editOverlay}
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         >
@@ -655,7 +659,7 @@ export default function ChatScreen() {
                 <X color="#6B7280" size={24} />
               </TouchableOpacity>
             </View>
-            
+
             <TextInput
               style={styles.editInput}
               value={editContent}
@@ -663,15 +667,15 @@ export default function ChatScreen() {
               multiline
               autoFocus
             />
-            
+
             <View style={styles.editActions}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.editCancelButton}
                 onPress={() => setIsEditModalVisible(false)}
               >
                 <Text style={styles.editCancelText}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={[styles.editSaveButton, !editContent.trim() && styles.editSaveButtonDisabled]}
                 onPress={saveEditedMessage}
                 disabled={!editContent.trim()}
@@ -684,148 +688,148 @@ export default function ChatScreen() {
       </Modal>
 
       <>
-      {/* Group Info Modal */}
-      <Modal visible={isGroupInfoVisible} animationType="slide">
-        <SafeAreaView style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setIsGroupInfoVisible(false)} style={styles.backButton}>
-              <ArrowLeft color="#000000" size={24} />
-            </TouchableOpacity>
-            <Text style={styles.modalTitle}>Group Info</Text>
-            <View style={{ width: 24 }} />
-          </View>
-          
-          <View style={{ flex: 1 }}>
-            <FlatList
-              key={isGroupInfoVisible ? 'visible' : 'hidden'}
-              data={group?.members || []}
-              keyExtractor={(item) => item._id}
-              style={{ flex: 1 }}
-              contentContainerStyle={{ paddingBottom: 40 }}
-              showsVerticalScrollIndicator={true}
-              removeClippedSubviews={false}
-              nestedScrollEnabled={true}
-              scrollEnabled={true}
-              ListHeaderComponent={() => (
-                <>
-                  <View style={styles.groupProfileSection}>
-                    <View style={styles.largeGroupIcon}>
-                      <Users color="#FFFFFF" size={40} />
-                    </View>
-                    <Text style={styles.largeGroupName}>{group?.name}</Text>
-                    {group?.description ? (
-                      <Text style={styles.groupDescription}>{group.description}</Text>
-                    ) : null}
-                    <Text style={styles.groupMeta}>
-                      Created by {group?.createdBy?.name} • {new Date(group?.createdAt || '').toLocaleDateString()}
-                    </Text>
-                  </View>
+        {/* Group Info Modal */}
+        <Modal visible={isGroupInfoVisible} animationType="slide">
+          <SafeAreaView style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <TouchableOpacity onPress={() => setIsGroupInfoVisible(false)} style={styles.backButton}>
+                <ArrowLeft color="#000000" size={24} />
+              </TouchableOpacity>
+              <Text style={styles.modalTitle}>Group Info</Text>
+              <View style={{ width: 24 }} />
+            </View>
 
-                  <View style={styles.sectionHeader}>
-                    <Text style={styles.sectionTitle}>{group?.members?.length || 0} participants</Text>
-                  </View>
-
-                  {user?.role === 'admin' && (
-                    <TouchableOpacity style={styles.addMemberRow} onPress={openAddMemberModal}>
-                      <View style={styles.addMemberIcon}>
-                        <UserPlus color="#2563EB" size={20} />
+            <View style={{ flex: 1 }}>
+              <FlatList
+                key={isGroupInfoVisible ? 'visible' : 'hidden'}
+                data={group?.members || []}
+                keyExtractor={(item) => item._id}
+                style={{ flex: 1 }}
+                contentContainerStyle={{ paddingBottom: 40 }}
+                showsVerticalScrollIndicator={true}
+                removeClippedSubviews={false}
+                nestedScrollEnabled={true}
+                scrollEnabled={true}
+                ListHeaderComponent={() => (
+                  <>
+                    <View style={styles.groupProfileSection}>
+                      <View style={styles.largeGroupIcon}>
+                        <Users color="#FFFFFF" size={40} />
                       </View>
-                      <Text style={styles.addMemberText}>Add Participants</Text>
-                    </TouchableOpacity>
-                  )}
-                </>
-              )}
-              renderItem={({ item: member }) => (
-                <View key={member._id} style={styles.memberRow}>
-                  <View style={styles.memberAvatar}>
-                    <Text style={styles.memberAvatarText}>{member.name.charAt(0).toUpperCase()}</Text>
-                  </View>
-                  <View style={styles.memberInfo}>
-                    <Text style={styles.memberName}>
-                      {member._id === user?._id ? 'You' : member.name}
-                    </Text>
-                    <Text style={styles.memberEmail}>{member.role}</Text>
-                  </View>
-                  <View style={{ alignItems: 'flex-end' }}>
+                      <Text style={styles.largeGroupName}>{group?.name}</Text>
+                      {group?.description ? (
+                        <Text style={styles.groupDescription}>{group.description}</Text>
+                      ) : null}
+                      <Text style={styles.groupMeta}>
+                        Created by {group?.createdBy?.name} • {new Date(group?.createdAt || '').toLocaleDateString()}
+                      </Text>
+                    </View>
+
+                    <View style={styles.sectionHeader}>
+                      <Text style={styles.sectionTitle}>{group?.members?.length || 0} participants</Text>
+                    </View>
+
+                    {user?.role === 'admin' && (
+                      <TouchableOpacity style={styles.addMemberRow} onPress={openAddMemberModal}>
+                        <View style={styles.addMemberIcon}>
+                          <UserPlus color="#2563EB" size={20} />
+                        </View>
+                        <Text style={styles.addMemberText}>Add Participants</Text>
+                      </TouchableOpacity>
+                    )}
+                  </>
+                )}
+                renderItem={({ item: member }) => (
+                  <View key={member._id} style={styles.memberRow}>
+                    <View style={styles.memberAvatar}>
+                      <Text style={styles.memberAvatarText}>{member.name.charAt(0).toUpperCase()}</Text>
+                    </View>
+                    <View style={styles.memberInfo}>
+                      <Text style={styles.memberName}>
+                        {member._id === user?._id ? 'You' : member.name}
+                      </Text>
+                      <Text style={styles.memberEmail}>{member.role}</Text>
+                    </View>
+                    <View style={{ alignItems: 'flex-end' }}>
                       {group?.createdBy?._id === member._id && (
-                          <Text style={styles.adminBadge}>Group Admin</Text>
+                        <Text style={styles.adminBadge}>Group Admin</Text>
                       )}
                       {user?.role === 'admin' && member._id !== group?.createdBy?._id && (
-                          <TouchableOpacity 
-                              style={styles.removeButton}
-                              onPress={() => removeMember(member._id)}
-                          >
-                              <Text style={styles.removeText}>Remove</Text>
-                          </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.removeButton}
+                          onPress={() => removeMember(member._id)}
+                        >
+                          <Text style={styles.removeText}>Remove</Text>
+                        </TouchableOpacity>
                       )}
+                    </View>
                   </View>
-                </View>
-              )}
-            />
-          </View>
-        </SafeAreaView>
-      </Modal>
+                )}
+              />
+            </View>
+          </SafeAreaView>
+        </Modal>
 
-      {/* Add Members Modal */}
-      <Modal visible={isAddMemberVisible} animationType="slide">
-        <SafeAreaView style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <TouchableOpacity onPress={() => setIsAddMemberVisible(false)} style={styles.backButton}>
-              <X color="#000000" size={24} />
-            </TouchableOpacity>
-            <Text style={styles.modalTitle}>Add Participants</Text>
-            {selectedNewMembers.length > 0 ? (
-                <TouchableOpacity onPress={addMembers}>
-                    <Text style={styles.doneButtonText}>Add ({selectedNewMembers.length})</Text>
-                </TouchableOpacity>
-            ) : (
-                <View style={{ width: 24 }} />
-            )}
-          </View>
-
-          <View style={styles.searchContainer}>
-            <Search color="#6B7280" size={20} />
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search users..."
-              placeholderTextColor="#9CA3AF"
-              value={memberSearchQuery}
-              onChangeText={setMemberSearchQuery}
-            />
-          </View>
-
-          <FlatList
-            data={filteredUsersToAdd}
-            keyExtractor={(item) => item._id}
-            contentContainerStyle={styles.userList}
-            renderItem={({ item }) => (
-              <TouchableOpacity 
-                style={styles.userSelectRow} 
-                onPress={() => toggleUserSelection(item._id)}
-              >
-                <View style={styles.memberAvatar}>
-                  <Text style={styles.memberAvatarText}>{item.name.charAt(0).toUpperCase()}</Text>
-                </View>
-                <View style={styles.memberInfo}>
-                  <Text style={styles.memberName}>{item.name}</Text>
-                  <Text style={styles.memberEmail}>{item.email} • {item.role}</Text>
-                </View>
-                <View style={[
-                  styles.checkbox,
-                  selectedNewMembers.includes(item._id) && styles.checkboxSelected
-                ]}>
-                  {selectedNewMembers.includes(item._id) && (
-                    <Check color="#FFFFFF" size={16} />
-                  )}
-                </View>
+        {/* Add Members Modal */}
+        <Modal visible={isAddMemberVisible} animationType="slide">
+          <SafeAreaView style={styles.modalContainer}>
+            <View style={styles.modalHeader}>
+              <TouchableOpacity onPress={() => setIsAddMemberVisible(false)} style={styles.backButton}>
+                <X color="#000000" size={24} />
               </TouchableOpacity>
-            )}
-            ListEmptyComponent={
-              <Text style={styles.emptyText}>No users found</Text>
-            }
-          />
-        </SafeAreaView>
-      </Modal>
+              <Text style={styles.modalTitle}>Add Participants</Text>
+              {selectedNewMembers.length > 0 ? (
+                <TouchableOpacity onPress={addMembers}>
+                  <Text style={styles.doneButtonText}>Add ({selectedNewMembers.length})</Text>
+                </TouchableOpacity>
+              ) : (
+                <View style={{ width: 24 }} />
+              )}
+            </View>
+
+            <View style={styles.searchContainer}>
+              <Search color="#6B7280" size={20} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search users..."
+                placeholderTextColor="#9CA3AF"
+                value={memberSearchQuery}
+                onChangeText={setMemberSearchQuery}
+              />
+            </View>
+
+            <FlatList
+              data={filteredUsersToAdd}
+              keyExtractor={(item) => item._id}
+              contentContainerStyle={styles.userList}
+              renderItem={({ item }) => (
+                <TouchableOpacity
+                  style={styles.userSelectRow}
+                  onPress={() => toggleUserSelection(item._id)}
+                >
+                  <View style={styles.memberAvatar}>
+                    <Text style={styles.memberAvatarText}>{item.name.charAt(0).toUpperCase()}</Text>
+                  </View>
+                  <View style={styles.memberInfo}>
+                    <Text style={styles.memberName}>{item.name}</Text>
+                    <Text style={styles.memberEmail}>{item.email} • {item.role}</Text>
+                  </View>
+                  <View style={[
+                    styles.checkbox,
+                    selectedNewMembers.includes(item._id) && styles.checkboxSelected
+                  ]}>
+                    {selectedNewMembers.includes(item._id) && (
+                      <Check color="#FFFFFF" size={16} />
+                    )}
+                  </View>
+                </TouchableOpacity>
+              )}
+              ListEmptyComponent={
+                <Text style={styles.emptyText}>No users found</Text>
+              }
+            />
+          </SafeAreaView>
+        </Modal>
       </>
     </SafeAreaView>
   );
@@ -1006,25 +1010,31 @@ const styles = StyleSheet.create({
     flex: 1,
     borderWidth: 1,
     borderColor: '#E5E7EB',
-    borderRadius: 20,
-    paddingHorizontal: 15,
-    paddingVertical: 10,
+    borderRadius: 24,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
     fontSize: 16,
     backgroundColor: '#F9FAFB',
-    color: '#000000',
+    color: '#1F2937',
     maxHeight: 100,
-    marginRight: 10,
+    marginRight: 12,
   },
   sendButton: {
-    backgroundColor: '#2563EB',
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    backgroundColor: '#01b4ae',
+    width: 46,
+    height: 46,
+    borderRadius: 23,
     justifyContent: 'center',
     alignItems: 'center',
+    shadowColor: '#01b4ae',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 4,
   },
   sendButtonDisabled: {
-    backgroundColor: '#93C5FD',
+    backgroundColor: '#A0D8D6',
+    opacity: 0.6,
   },
   // Message action menu styles
   menuOverlay: {
@@ -1187,13 +1197,14 @@ const styles = StyleSheet.create({
     color: '#6B7280',
   },
   editSaveButton: {
-    backgroundColor: '#2563EB',
+    backgroundColor: '#01b4ae',
     paddingVertical: 10,
     paddingHorizontal: 20,
     borderRadius: 8,
   },
   editSaveButtonDisabled: {
-    backgroundColor: '#93C5FD',
+    backgroundColor: '#A0D8D6',
+    opacity: 0.6,
   },
   editSaveText: {
     fontSize: 16,
@@ -1228,13 +1239,18 @@ const styles = StyleSheet.create({
     borderBottomColor: '#E5E7EB',
   },
   largeGroupIcon: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: '#2563EB',
+    width: 84,
+    height: 84,
+    borderRadius: 42,
+    backgroundColor: '#01b4ae',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 15,
+    marginBottom: 16,
+    shadowColor: '#01b4ae',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
   },
   largeGroupName: {
     fontSize: 22,
@@ -1270,18 +1286,18 @@ const styles = StyleSheet.create({
     borderBottomColor: '#E5E7EB',
   },
   addMemberIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#DBEAFE',
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: '#E0F7F6',
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
   },
   addMemberText: {
     fontSize: 16,
-    color: '#2563EB',
-    fontWeight: '500',
+    color: '#01b4ae',
+    fontWeight: '600',
   },
   memberRow: {
     flexDirection: 'row',
@@ -1318,13 +1334,14 @@ const styles = StyleSheet.create({
   },
   adminBadge: {
     fontSize: 11,
-    color: '#2563EB',
-    backgroundColor: '#DBEAFE',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
+    color: '#01b4ae',
+    backgroundColor: '#E0F7F6',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
     overflow: 'hidden',
     marginTop: 2,
+    fontWeight: '700',
   },
   removeButton: {
     marginTop: 4,
@@ -1335,9 +1352,9 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   doneButtonText: {
-    color: '#2563EB',
+    color: '#01b4ae',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
   },
   searchContainer: {
     flexDirection: 'row',
@@ -1373,7 +1390,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   checkboxSelected: {
-    backgroundColor: '#2563EB',
-    borderColor: '#2563EB',
+    backgroundColor: '#01b4ae',
+    borderColor: '#01b4ae',
   },
 });

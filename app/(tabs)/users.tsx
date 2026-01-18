@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -13,9 +13,20 @@ import {
   Platform,
   StatusBar,
   Animated,
-  Easing
+  Easing,
+  LayoutAnimation,
+  UIManager,
+  Pressable
 } from 'react-native';
-import { Plus, User as UserIcon, Search, X, Mail, Shield, Calendar, Phone, Lock, Key, Users as UsersIcon, Check, Square, CheckSquare } from 'lucide-react-native';
+import { Plus, User as UserIcon, Search, X, Mail, Shield, Calendar, Phone, Lock, Key, Users as UsersIcon, Check, Square, CheckSquare, ChevronRight } from 'lucide-react-native';
+import { BlurView } from 'expo-blur';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
+
+// Enable LayoutAnimation on Android
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
 
@@ -55,6 +66,7 @@ interface GroupAssignment {
 export default function Users() {
   const { user } = useAuth();
   const [users, setUsers] = useState<User[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [isCreateModalVisible, setIsCreateModalVisible] = useState(false);
   const [isDetailModalVisible, setIsDetailModalVisible] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
@@ -84,6 +96,28 @@ export default function Users() {
   const filterSlideY = useRef(new Animated.Value(20)).current;
   const searchFocusAnim = useRef(new Animated.Value(0)).current;
   const [isSearchFocused, setIsSearchFocused] = useState(false);
+
+  // Modal animation values
+  const modalOpacity = useRef(new Animated.Value(0)).current;
+  const modalTranslateY = useRef(new Animated.Value(30)).current;
+  const modalScale = useRef(new Animated.Value(0.95)).current;
+
+  // Role selector animation for segmented control
+  const roleIndicatorPosition = useRef(new Animated.Value(0)).current;
+
+  // Card list animations
+  const cardAnimations = useRef<Animated.Value[]>([]).current;
+
+  // User counts by role
+  const userCounts = useMemo(() => {
+    const counts = { all: users.length, student: 0, mentor: 0, admin: 0 };
+    users.forEach(u => {
+      if (u.role === 'student') counts.student++;
+      else if (u.role === 'mentor') counts.mentor++;
+      else if (u.role === 'admin') counts.admin++;
+    });
+    return counts;
+  }, [users]);
 
   // Only admin can access this screen
   if (user?.role !== 'admin') {
@@ -118,13 +152,27 @@ export default function Users() {
   }, []);
 
   const fetchUsers = async () => {
+    setIsLoading(true);
     try {
       const response = await api.get('/users');
       setUsers(response.data);
+      // Trigger staggered animation for cards
+      animateCardList(response.data.length);
     } catch (error) {
       Alert.alert('Error', 'Failed to fetch users');
+    } finally {
+      setIsLoading(false);
     }
   };
+
+  // Staggered card animation function
+  const animateCardList = useCallback((count: number) => {
+    LayoutAnimation.configureNext({
+      duration: 300,
+      update: { type: LayoutAnimation.Types.easeInEaseOut },
+      create: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
+    });
+  }, []);
 
   // Filter users based on search query and role filter
   const filteredUsers = useMemo(() => {
@@ -175,9 +223,78 @@ export default function Users() {
     const currentSearch = searchQuery; // Save current search
     setSelectedUser(userItem);
     setNewPassword('');
+
+    // Haptic feedback
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    // Reset animation values
+    modalOpacity.setValue(0);
+    modalTranslateY.setValue(30);
+    modalScale.setValue(0.95);
+
     setIsDetailModalVisible(true);
+
+    // Animate modal in
+    Animated.parallel([
+      Animated.timing(modalOpacity, {
+        toValue: 1,
+        duration: 300,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(modalTranslateY, {
+        toValue: 0,
+        duration: 300,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(modalScale, {
+        toValue: 1,
+        duration: 300,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+
     // Restore search query after a tick to prevent autofill
     setTimeout(() => setSearchQuery(currentSearch), 50);
+  };
+
+  const closeDetailModal = () => {
+    // Animate modal out
+    Animated.parallel([
+      Animated.timing(modalOpacity, {
+        toValue: 0,
+        duration: 200,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(modalTranslateY, {
+        toValue: 30,
+        duration: 200,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(modalScale, {
+        toValue: 0.95,
+        duration: 200,
+        easing: Easing.in(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start(() => {
+      setIsDetailModalVisible(false);
+    });
+  };
+
+  // Handle filter change with animation
+  const handleFilterChange = (newFilter: 'all' | 'student' | 'mentor' | 'admin') => {
+    Haptics.selectionAsync();
+    LayoutAnimation.configureNext({
+      duration: 250,
+      update: { type: LayoutAnimation.Types.easeInEaseOut },
+    });
+    setRoleFilter(newFilter);
+    if (newFilter !== 'student') setProfileStatusFilter('all');
   };
 
   const resetPassword = async () => {
@@ -319,33 +436,159 @@ export default function Users() {
     });
   };
 
-  const renderUser = ({ item }: { item: User }) => (
-    <TouchableOpacity
-      style={styles.userCard}
-      onPress={() => openUserDetails(item)}
-      activeOpacity={0.7}
-    >
-      <View style={styles.userAvatar}>
-        <UserIcon color="#01b4ae" size={24} />
-      </View>
-      <View style={styles.userInfo}>
-        <Text style={styles.userName}>{item.name}</Text>
-        <Text style={styles.userEmail}>{item.email}</Text>
-        <View style={styles.badgeRow}>
-          <View style={[styles.roleBadge, { backgroundColor: getRoleBgColor(item.role) }]}>
-            <Text style={[styles.userRole, { color: getRoleColor(item.role) }]}>
-              {item.role.toUpperCase()}
-            </Text>
+  // Skeleton loading card component
+  const SkeletonCard = () => {
+    const shimmerAnim = useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+      const shimmer = Animated.loop(
+        Animated.timing(shimmerAnim, {
+          toValue: 1,
+          duration: 1200,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        })
+      );
+      shimmer.start();
+      return () => shimmer.stop();
+    }, []);
+
+    const translateX = shimmerAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [-200, 200],
+    });
+
+    return (
+      <View style={styles.skeletonCard}>
+        <View style={styles.skeletonAvatar}>
+          <Animated.View style={[styles.shimmer, { transform: [{ translateX }] }]}>
+            <LinearGradient
+              colors={['transparent', 'rgba(255,255,255,0.4)', 'transparent']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={StyleSheet.absoluteFill}
+            />
+          </Animated.View>
+        </View>
+        <View style={styles.skeletonContent}>
+          <View style={styles.skeletonName}>
+            <Animated.View style={[styles.shimmer, { transform: [{ translateX }] }]}>
+              <LinearGradient
+                colors={['transparent', 'rgba(255,255,255,0.4)', 'transparent']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={StyleSheet.absoluteFill}
+              />
+            </Animated.View>
           </View>
-          {item.role === 'student' && item.isProfileComplete === false && (
-            <View style={styles.incompleteProfileBadge}>
-              <Text style={styles.incompleteProfileText}>Profile Incomplete</Text>
-            </View>
-          )}
+          <View style={styles.skeletonEmail}>
+            <Animated.View style={[styles.shimmer, { transform: [{ translateX }] }]}>
+              <LinearGradient
+                colors={['transparent', 'rgba(255,255,255,0.4)', 'transparent']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={StyleSheet.absoluteFill}
+              />
+            </Animated.View>
+          </View>
+          <View style={styles.skeletonBadge}>
+            <Animated.View style={[styles.shimmer, { transform: [{ translateX }] }]}>
+              <LinearGradient
+                colors={['transparent', 'rgba(255,255,255,0.4)', 'transparent']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={StyleSheet.absoluteFill}
+              />
+            </Animated.View>
+          </View>
         </View>
       </View>
-    </TouchableOpacity>
-  );
+    );
+  };
+
+  // Enhanced user card with micro-interactions
+  const UserCard = ({ item }: { item: User }) => {
+    const scaleAnim = useRef(new Animated.Value(1)).current;
+    const shadowAnim = useRef(new Animated.Value(1)).current;
+
+    const handlePressIn = () => {
+      Animated.parallel([
+        Animated.spring(scaleAnim, {
+          toValue: 0.98,
+          friction: 8,
+          tension: 100,
+          useNativeDriver: true,
+        }),
+        Animated.timing(shadowAnim, {
+          toValue: 0.5,
+          duration: 100,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    };
+
+    const handlePressOut = () => {
+      Animated.parallel([
+        Animated.spring(scaleAnim, {
+          toValue: 1,
+          friction: 8,
+          tension: 40,
+          useNativeDriver: true,
+        }),
+        Animated.timing(shadowAnim, {
+          toValue: 1,
+          duration: 150,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    };
+
+    return (
+      <Pressable
+        onPress={() => openUserDetails(item)}
+        onPressIn={handlePressIn}
+        onPressOut={handlePressOut}
+      >
+        <Animated.View
+          style={[
+            styles.userCard,
+            {
+              transform: [{ scale: scaleAnim }],
+              opacity: shadowAnim.interpolate({
+                inputRange: [0.5, 1],
+                outputRange: [0.95, 1],
+              }),
+            }
+          ]}
+        >
+          <View style={styles.userAvatar}>
+            <UserIcon color="#01b4ae" size={24} />
+          </View>
+          <View style={styles.userInfo}>
+            <Text style={styles.userName}>{item.name}</Text>
+            <Text style={styles.userEmail}>{item.email}</Text>
+            <View style={styles.badgeRow}>
+              <View style={[styles.roleBadge, { backgroundColor: getRoleBgColor(item.role) }]}>
+                <Text style={[styles.userRole, { color: getRoleColor(item.role) }]}>
+                  {item.role.toUpperCase()}
+                </Text>
+              </View>
+              {item.role === 'student' && item.isProfileComplete === false && (
+                <View style={styles.incompleteProfileBadge}>
+                  <Text style={styles.incompleteProfileText}>Profile Incomplete</Text>
+                </View>
+              )}
+            </View>
+          </View>
+          <View style={styles.chevronContainer}>
+            <ChevronRight color="#9CA3AF" size={20} />
+          </View>
+        </Animated.View>
+      </Pressable>
+    );
+  };
+
+  const renderUser = ({ item }: { item: User }) => <UserCard item={item} />;
 
   return (
     <SafeAreaView style={styles.container}>
@@ -397,7 +640,7 @@ export default function Users() {
         )}
       </Animated.View>
 
-      {/* Role Filter */}
+      {/* Role Filter with counts */}
       <Animated.View style={[
         styles.filterContainer,
         {
@@ -415,10 +658,7 @@ export default function Users() {
               styles.filterButton,
               roleFilter === role && styles.filterButtonActive
             ]}
-            onPress={() => {
-              setRoleFilter(role);
-              if (role !== 'student') setProfileStatusFilter('all');
-            }}
+            onPress={() => handleFilterChange(role)}
             activeOpacity={0.7}
           >
             <Text style={[
@@ -426,6 +666,10 @@ export default function Users() {
               roleFilter === role && styles.filterButtonTextActive
             ]}>
               {role === 'all' ? 'All' : role.charAt(0).toUpperCase() + role.slice(1)}
+              <Text style={[
+                styles.filterCountText,
+                roleFilter === role && styles.filterCountTextActive
+              ]}> ({userCounts[role]})</Text>
             </Text>
           </TouchableOpacity>
         ))}
@@ -433,7 +677,7 @@ export default function Users() {
 
       {/* Profile Status Filter - visible only when Student is selected */}
       {roleFilter === 'student' && (
-        <View style={styles.subFilterContainer}>
+        <Animated.View style={styles.subFilterContainer}>
           <Text style={styles.subFilterLabel}>Profile Status:</Text>
           {(['all', 'complete', 'incomplete'] as const).map((status) => (
             <TouchableOpacity
@@ -442,7 +686,14 @@ export default function Users() {
                 styles.subFilterButton,
                 profileStatusFilter === status && styles.subFilterButtonActive
               ]}
-              onPress={() => setProfileStatusFilter(status)}
+              onPress={() => {
+                Haptics.selectionAsync();
+                LayoutAnimation.configureNext({
+                  duration: 200,
+                  update: { type: LayoutAnimation.Types.easeInEaseOut },
+                });
+                setProfileStatusFilter(status);
+              }}
               activeOpacity={0.7}
             >
               <Text style={[
@@ -453,7 +704,7 @@ export default function Users() {
               </Text>
             </TouchableOpacity>
           ))}
-        </View>
+        </Animated.View>
       )}
 
       {/* Results Count */}
@@ -461,15 +712,24 @@ export default function Users() {
         {filteredUsers.length} user{filteredUsers.length !== 1 ? 's' : ''} found
       </Text>
 
-      <FlatList
-        data={filteredUsers}
-        renderItem={renderUser}
-        keyExtractor={(item) => item._id}
-        contentContainerStyle={styles.list}
-        ListEmptyComponent={
-          <Text style={styles.emptyText}>No users found</Text>
-        }
-      />
+      {/* User List with skeleton loading */}
+      {isLoading ? (
+        <View style={styles.list}>
+          {[1, 2, 3, 4, 5].map((key) => (
+            <SkeletonCard key={key} />
+          ))}
+        </View>
+      ) : (
+        <FlatList
+          data={filteredUsers}
+          renderItem={renderUser}
+          keyExtractor={(item) => item._id}
+          contentContainerStyle={styles.list}
+          ListEmptyComponent={
+            <Text style={styles.emptyText}>No users found</Text>
+          }
+        />
+      )}
 
       {/* Create User Modal */}
       <Modal visible={isCreateModalVisible} animationType="slide">
@@ -517,29 +777,57 @@ export default function Users() {
 
             <View style={styles.roleSelector}>
               <Text style={styles.roleLabel}>Role:</Text>
-              <View style={styles.roleButtons}>
-                <TouchableOpacity
+              <View style={styles.segmentedControl}>
+                {/* Animated sliding indicator */}
+                <Animated.View
                   style={[
-                    styles.roleButton,
-                    newUser.role === 'student' && styles.roleButtonActive,
+                    styles.segmentIndicator,
+                    {
+                      transform: [{
+                        translateX: roleIndicatorPosition.interpolate({
+                          inputRange: [0, 1],
+                          outputRange: [0, 150], // Adjust based on button width
+                        })
+                      }]
+                    }
                   ]}
-                  onPress={() => setNewUser({ ...newUser, role: 'student' })}
+                />
+                <TouchableOpacity
+                  style={styles.segmentButton}
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    Animated.spring(roleIndicatorPosition, {
+                      toValue: 0,
+                      friction: 8,
+                      tension: 50,
+                      useNativeDriver: true,
+                    }).start();
+                    setNewUser({ ...newUser, role: 'student' });
+                  }}
+                  activeOpacity={0.7}
                 >
                   <Text style={[
-                    styles.roleButtonText,
-                    newUser.role === 'student' && styles.roleButtonTextActive
+                    styles.segmentButtonText,
+                    newUser.role === 'student' && styles.segmentButtonTextActive
                   ]}>Student</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={[
-                    styles.roleButton,
-                    newUser.role === 'mentor' && styles.roleButtonActive,
-                  ]}
-                  onPress={() => setNewUser({ ...newUser, role: 'mentor' })}
+                  style={styles.segmentButton}
+                  onPress={() => {
+                    Haptics.selectionAsync();
+                    Animated.spring(roleIndicatorPosition, {
+                      toValue: 1,
+                      friction: 8,
+                      tension: 50,
+                      useNativeDriver: true,
+                    }).start();
+                    setNewUser({ ...newUser, role: 'mentor' });
+                  }}
+                  activeOpacity={0.7}
                 >
                   <Text style={[
-                    styles.roleButtonText,
-                    newUser.role === 'mentor' && styles.roleButtonTextActive
+                    styles.segmentButtonText,
+                    newUser.role === 'mentor' && styles.segmentButtonTextActive
                   ]}>Mentor</Text>
                 </TouchableOpacity>
               </View>
@@ -552,13 +840,24 @@ export default function Users() {
         </SafeAreaView>
       </Modal>
 
-      {/* User Details Modal */}
-      <Modal visible={isDetailModalVisible} animationType="slide" transparent>
-        <View style={styles.detailOverlay}>
-          <View style={styles.detailModal}>
+      {/* User Details Modal with premium animations */}
+      <Modal visible={isDetailModalVisible} animationType="none" transparent>
+        <Animated.View style={[styles.detailOverlay, { opacity: modalOpacity }]}>
+          <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
+          <Animated.View
+            style={[
+              styles.detailModal,
+              {
+                transform: [
+                  { translateY: modalTranslateY },
+                  { scale: modalScale }
+                ],
+              }
+            ]}
+          >
             <View style={styles.detailHeader}>
               <Text style={styles.detailTitle}>User Details</Text>
-              <TouchableOpacity onPress={() => setIsDetailModalVisible(false)}>
+              <TouchableOpacity onPress={closeDetailModal}>
                 <X color="#6B7280" size={24} />
               </TouchableOpacity>
             </View>
@@ -719,15 +1018,15 @@ export default function Users() {
 
                   <TouchableOpacity
                     style={styles.closeButton}
-                    onPress={() => setIsDetailModalVisible(false)}
+                    onPress={closeDetailModal}
                   >
                     <Text style={styles.closeButtonText}>Close</Text>
                   </TouchableOpacity>
                 </View>
               </ScrollView>
             )}
-          </View>
-        </View>
+          </Animated.View>
+        </Animated.View>
       </Modal>
 
       {/* Mentor Group Management Modal */}
@@ -1216,15 +1515,15 @@ const styles = StyleSheet.create({
   resetSection: {
     marginTop: 20,
     padding: 15,
-    backgroundColor: '#FEF3C7',
+    backgroundColor: '#E0F7F6',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#F59E0B',
+    borderColor: '#01b4ae',
   },
   resetTitle: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#92400E',
+    color: '#01b4ae',
     marginBottom: 10,
   },
   resetInputRow: {
@@ -1244,13 +1543,18 @@ const styles = StyleSheet.create({
   },
   resetButton: {
     flexDirection: 'row',
-    backgroundColor: '#F59E0B',
+    backgroundColor: '#01b4ae',
     borderRadius: 8,
     padding: 12,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 10,
     gap: 8,
+    shadowColor: '#01b4ae',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
   },
   resetButtonDisabled: {
     opacity: 0.6,
@@ -1495,5 +1799,106 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#FFFFFF',
+  },
+  // Skeleton loading styles
+  skeletonCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    marginBottom: 12,
+  },
+  skeletonAvatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#E5E7EB',
+    overflow: 'hidden',
+  },
+  shimmer: {
+    width: '100%',
+    height: '100%',
+  },
+  skeletonContent: {
+    flex: 1,
+    marginLeft: 15,
+  },
+  skeletonName: {
+    height: 16,
+    width: '60%',
+    backgroundColor: '#E5E7EB',
+    borderRadius: 8,
+    marginBottom: 8,
+    overflow: 'hidden',
+  },
+  skeletonEmail: {
+    height: 14,
+    width: '80%',
+    backgroundColor: '#E5E7EB',
+    borderRadius: 6,
+    marginBottom: 8,
+    overflow: 'hidden',
+  },
+  skeletonBadge: {
+    height: 22,
+    width: 60,
+    backgroundColor: '#E5E7EB',
+    borderRadius: 11,
+    overflow: 'hidden',
+  },
+  // Chevron container
+  chevronContainer: {
+    padding: 4,
+    marginLeft: 8,
+  },
+  // Filter count text styles
+  filterCountText: {
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  filterCountTextActive: {
+    fontWeight: '600',
+  },
+  // Segmented control styles for role selector
+  segmentedControl: {
+    flexDirection: 'row',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 12,
+    padding: 4,
+    position: 'relative',
+  },
+  segmentIndicator: {
+    position: 'absolute',
+    top: 4,
+    left: 4,
+    width: 150,
+    height: '100%',
+    backgroundColor: '#01b4ae',
+    borderRadius: 10,
+    shadowColor: '#01b4ae',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  segmentButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1,
+  },
+  segmentButtonText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  segmentButtonTextActive: {
+    color: '#FFFFFF',
+    fontWeight: '700',
   },
 });

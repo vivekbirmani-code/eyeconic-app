@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
   View,
   Text,
@@ -11,10 +11,15 @@ import {
   Alert,
   ScrollView,
   Platform,
-  StatusBar
+  StatusBar,
+  Animated,
+  Easing,
+  Pressable,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Plus, MessageCircle, Users, Search, X, Check } from 'lucide-react-native';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
 import { useAuth } from '@/context/AuthContext';
 import { useNotifications } from '@/context/NotificationContext';
 import { api } from '@/services/api';
@@ -44,7 +49,7 @@ export default function Groups() {
     name: '',
     description: '',
   });
-  
+
   // Member selection state
   const [searchQuery, setSearchQuery] = useState('');
   const [searchRole, setSearchRole] = useState<'mentor' | 'student'>('student');
@@ -52,17 +57,59 @@ export default function Groups() {
   const [selectedMentors, setSelectedMentors] = useState<User[]>([]);
   const [selectedStudents, setSelectedStudents] = useState<User[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  // Animation values for premium UI
+  const headerOpacity = useRef(new Animated.Value(0)).current;
+  const headerScale = useRef(new Animated.Value(0.95)).current;
+  const cardsOpacity = useRef(new Animated.Value(0)).current;
+  const cardsSlideY = useRef(new Animated.Value(20)).current;
+
+  // Premium page entry animation
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(headerOpacity, {
+        toValue: 1,
+        duration: 400,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.spring(headerScale, {
+        toValue: 1,
+        friction: 8,
+        tension: 40,
+        useNativeDriver: true,
+      }),
+      Animated.timing(cardsOpacity, {
+        toValue: 1,
+        duration: 500,
+        delay: 200,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+      Animated.timing(cardsSlideY, {
+        toValue: 0,
+        duration: 500,
+        delay: 200,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+  }, []);
 
   useEffect(() => {
     fetchGroups();
   }, []);
 
   const fetchGroups = async () => {
+    setIsLoading(true);
     try {
       const response = await api.get('/groups');
       setGroups(response.data);
     } catch (error) {
       Alert.alert('Error', 'Failed to fetch groups');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -71,7 +118,7 @@ export default function Groups() {
       setSearchResults([]);
       return;
     }
-    
+
     setIsSearching(true);
     try {
       const response = await api.get(`/users/search?q=${query}&role=${role}`);
@@ -131,14 +178,14 @@ export default function Groups() {
     try {
       // Collect all member IDs
       const memberIds = [...selectedMentors, ...selectedStudents].map(u => u._id);
-      
+
       // Create the group with members in one request
       await api.post('/groups', {
         name: newGroup.name,
         description: newGroup.description,
         memberIds: memberIds
       });
-      
+
       resetModal();
       fetchGroups();
       Alert.alert('Success', 'Group created successfully with ' + (memberIds.length + 1) + ' members');
@@ -152,9 +199,79 @@ export default function Groups() {
     router.push({ pathname: '/chat/[id]', params: { id: groupId } });
   };
 
+  // Skeleton loading card component
+  const SkeletonGroupCard = () => {
+    const shimmerAnim = useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+      const shimmer = Animated.loop(
+        Animated.timing(shimmerAnim, {
+          toValue: 1,
+          duration: 1200,
+          easing: Easing.linear,
+          useNativeDriver: true,
+        })
+      );
+      shimmer.start();
+      return () => shimmer.stop();
+    }, []);
+
+    const translateX = shimmerAnim.interpolate({
+      inputRange: [0, 1],
+      outputRange: [-200, 200],
+    });
+
+    return (
+      <View style={styles.skeletonCard}>
+        <View style={styles.skeletonAvatar}>
+          <Animated.View style={[styles.shimmer, { transform: [{ translateX }] }]}>
+            <LinearGradient
+              colors={['transparent', 'rgba(1,180,174,0.1)', 'transparent']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={StyleSheet.absoluteFill}
+            />
+          </Animated.View>
+        </View>
+        <View style={styles.skeletonContent}>
+          <View style={styles.skeletonTitle}>
+            <Animated.View style={[styles.shimmer, { transform: [{ translateX }] }]}>
+              <LinearGradient
+                colors={['transparent', 'rgba(1,180,174,0.1)', 'transparent']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={StyleSheet.absoluteFill}
+              />
+            </Animated.View>
+          </View>
+          <View style={styles.skeletonDescription}>
+            <Animated.View style={[styles.shimmer, { transform: [{ translateX }] }]}>
+              <LinearGradient
+                colors={['transparent', 'rgba(1,180,174,0.1)', 'transparent']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={StyleSheet.absoluteFill}
+              />
+            </Animated.View>
+          </View>
+          <View style={styles.skeletonMemberCount}>
+            <Animated.View style={[styles.shimmer, { transform: [{ translateX }] }]}>
+              <LinearGradient
+                colors={['transparent', 'rgba(1,180,174,0.1)', 'transparent']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={StyleSheet.absoluteFill}
+              />
+            </Animated.View>
+          </View>
+        </View>
+      </View>
+    );
+  };
+
   const renderGroup = ({ item }: { item: Group }) => {
     const unreadCount = unreadCounts[item._id] || 0;
-    
+
     return (
       <TouchableOpacity
         style={styles.groupCard}
@@ -191,28 +308,103 @@ export default function Groups() {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <Text style={styles.title}>Groups</Text>
-        {user?.role === 'admin' && (
-          <TouchableOpacity
-            style={styles.addButton}
-            onPress={() => setIsModalVisible(true)}
-          >
-            <Plus color="#FFFFFF" size={20} />
-          </TouchableOpacity>
-        )}
-      </View>
+      {/* Premium Teal Gradient Header */}
+      <Animated.View
+        style={[
+          styles.headerContainer,
+          {
+            opacity: headerOpacity,
+            transform: [{ scale: headerScale }],
+          }
+        ]}
+      >
+        <LinearGradient
+          colors={['#01b4ae', '#009c96']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.headerGradient}
+        >
+          <Text style={styles.title}>Groups</Text>
+          {user?.role === 'admin' && (
+            <Pressable
+              style={styles.addButton}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                setIsModalVisible(true);
+              }}
+              onPressIn={() => {
+                Animated.spring(headerScale, {
+                  toValue: 0.95,
+                  friction: 8,
+                  useNativeDriver: true,
+                }).start();
+              }}
+              onPressOut={() => {
+                Animated.spring(headerScale, {
+                  toValue: 1,
+                  friction: 8,
+                  useNativeDriver: true,
+                }).start();
+              }}
+            >
+              <Plus color="#FFFFFF" size={22} />
+            </Pressable>
+          )}
+        </LinearGradient>
+      </Animated.View>
 
-      <FlatList
-        data={groups}
-        renderItem={renderGroup}
-        keyExtractor={(item) => item._id}
-        contentContainerStyle={styles.list}
-        showsVerticalScrollIndicator={false}
-        ListEmptyComponent={
-          <Text style={styles.emptyText}>No groups yet</Text>
-        }
-      />
+      {/* Groups List with Skeleton Loading */}
+      {isLoading ? (
+        <Animated.View
+          style={[
+            styles.list,
+            {
+              opacity: cardsOpacity,
+              transform: [{ translateY: cardsSlideY }],
+            }
+          ]}
+        >
+          {[1, 2, 3, 4, 5].map((key) => (
+            <SkeletonGroupCard key={key} />
+          ))}
+        </Animated.View>
+      ) : (
+        <Animated.View
+          style={{
+            flex: 1,
+            opacity: cardsOpacity,
+            transform: [{ translateY: cardsSlideY }],
+          }}
+        >
+          <FlatList
+            data={groups}
+            renderItem={renderGroup}
+            keyExtractor={(item) => item._id}
+            contentContainerStyle={styles.list}
+            showsVerticalScrollIndicator={false}
+            ListEmptyComponent={
+              <View style={styles.emptyContainer}>
+                <View style={styles.emptyIconContainer}>
+                  <MessageCircle color="#01b4ae" size={48} />
+                </View>
+                <Text style={styles.emptyTitle}>No groups yet</Text>
+                <Text style={styles.emptySubtext}>
+                  Create your first group to get started
+                </Text>
+                {user?.role === 'admin' && (
+                  <TouchableOpacity
+                    style={styles.emptyCreateButton}
+                    onPress={() => setIsModalVisible(true)}
+                  >
+                    <Plus color="#FFFFFF" size={20} />
+                    <Text style={styles.emptyCreateButtonText}>Create Group</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            }
+          />
+        </Animated.View>
+      )}
 
       {user?.role === 'admin' && (
         <Modal visible={isModalVisible} animationType="slide">
@@ -331,89 +523,212 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
-  header: {
+  // Premium header with gradient
+  headerContainer: {
+    shadowColor: '#01b4ae',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  headerGradient: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    paddingTop: 24,
+    paddingBottom: 24,
   },
   title: {
-    fontSize: 24,
+    fontSize: 26,
     fontWeight: 'bold',
-    color: '#000000',
+    color: '#FFFFFF',
   },
   addButton: {
-    backgroundColor: '#2563EB',
-    borderRadius: 8,
-    padding: 10,
+    backgroundColor: 'rgba(255,255,255,0.25)',
+    borderRadius: 50,
+    width: 48,
+    height: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 4,
   },
   list: {
     padding: 20,
-    gap: 15,
+    gap: 12,
   },
-  emptyText: {
-    textAlign: 'center',
-    color: '#6B7280',
-    fontSize: 16,
-    marginTop: 40,
+  // Skeleton loading styles
+  skeletonCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    marginBottom: 12,
   },
+  skeletonAvatar: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#E0F7F6',
+    overflow: 'hidden',
+  },
+  shimmer: {
+    width: '100%',
+    height: '100%',
+  },
+  skeletonContent: {
+    flex: 1,
+    marginLeft: 16,
+  },
+  skeletonTitle: {
+    height: 18,
+    width: '60%',
+    backgroundColor: '#E5E7EB',
+    borderRadius: 8,
+    marginBottom: 8,
+    overflow: 'hidden',
+  },
+  skeletonDescription: {
+    height: 14,
+    width: '80%',
+    backgroundColor: '#E5E7EB',
+    borderRadius: 6,
+    marginBottom: 10,
+    overflow: 'hidden',
+  },
+  skeletonMemberCount: {
+    height: 12,
+    width: 80,
+    backgroundColor: '#E5E7EB',
+    borderRadius: 6,
+    overflow: 'hidden',
+  },
+  // Premium group card
   groupCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F9FAFB',
-    borderRadius: 8,
-    padding: 15,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 16,
     borderWidth: 1,
     borderColor: '#E5E7EB',
-    marginBottom: 10,
+    marginBottom: 12,
+    shadowColor: '#01b4ae',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+  },
+  groupIconContainer: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#E0F7F6',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   groupInfo: {
-    marginLeft: 15,
+    marginLeft: 16,
     flex: 1,
   },
   groupName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#1F2937',
     flex: 1,
   },
   groupHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 4,
   },
   unreadBadge: {
-    backgroundColor: '#2563EB',
-    borderRadius: 10,
-    minWidth: 20,
-    height: 20,
-    paddingHorizontal: 6,
+    backgroundColor: '#01b4ae',
+    borderRadius: 12,
+    minWidth: 24,
+    height: 24,
+    paddingHorizontal: 8,
     justifyContent: 'center',
     alignItems: 'center',
-    marginLeft: 10,
+    marginLeft: 8,
   },
   unreadBadgeText: {
     color: '#FFFFFF',
-    fontSize: 11,
+    fontSize: 12,
     fontWeight: 'bold',
   },
   groupDescription: {
     fontSize: 14,
     color: '#6B7280',
-    marginTop: 2,
+    marginBottom: 8,
   },
   memberCount: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 8,
-    gap: 5,
+    gap: 6,
   },
   memberText: {
-    fontSize: 12,
-    color: '#6B7280',
+    fontSize: 13,
+    color: '#9CA3AF',
+    fontWeight: '500',
   },
+  // Premium empty state
+  emptyContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 80,
+    paddingHorizontal: 40,
+  },
+  emptyIconContainer: {
+    width: 96,
+    height: 96,
+    borderRadius: 48,
+    backgroundColor: '#E0F7F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  emptyTitle: {
+    fontSize: 22,
+    fontWeight: 'bold',
+    color: '#1F2937',
+    marginBottom: 8,
+  },
+  emptySubtext: {
+    fontSize: 15,
+    color: '#6B7280',
+    textAlign: 'center',
+    marginBottom: 32,
+  },
+  emptyCreateButton: {
+    flexDirection: 'row',
+    backgroundColor: '#01b4ae',
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    gap: 8,
+    shadowColor: '#01b4ae',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
+  },
+  emptyCreateButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  // Modal styles
   modalContainer: {
     flex: 1,
     backgroundColor: '#FFFFFF',
@@ -427,13 +742,14 @@ const styles = StyleSheet.create({
     borderBottomColor: '#E5E7EB',
   },
   modalTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
-    color: '#000000',
+    color: '#1F2937',
   },
   cancelText: {
     color: '#EF4444',
     fontSize: 16,
+    fontWeight: '600',
   },
   modalContent: {
     flex: 1,
@@ -442,98 +758,102 @@ const styles = StyleSheet.create({
   input: {
     borderWidth: 1,
     borderColor: '#E5E7EB',
-    borderRadius: 8,
-    padding: 15,
+    borderRadius: 12,
+    padding: 16,
     fontSize: 16,
     backgroundColor: '#F9FAFB',
-    color: '#000000',
-    marginBottom: 15,
+    color: '#1F2937',
+    marginBottom: 16,
   },
   textArea: {
     borderWidth: 1,
     borderColor: '#E5E7EB',
-    borderRadius: 8,
-    padding: 15,
+    borderRadius: 12,
+    padding: 16,
     fontSize: 16,
     backgroundColor: '#F9FAFB',
-    color: '#000000',
+    color: '#1F2937',
     textAlignVertical: 'top',
-    height: 80,
+    height: 100,
     marginBottom: 20,
   },
   roleToggle: {
     flexDirection: 'row',
-    marginBottom: 15,
-    gap: 10,
+    marginBottom: 16,
+    gap: 12,
   },
   roleButton: {
     flex: 1,
-    paddingVertical: 12,
-    borderRadius: 8,
-    borderWidth: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 2,
     borderColor: '#E5E7EB',
     alignItems: 'center',
+    backgroundColor: '#FFFFFF',
   },
   roleButtonActive: {
-    backgroundColor: '#2563EB',
-    borderColor: '#2563EB',
+    backgroundColor: '#01b4ae',
+    borderColor: '#01b4ae',
   },
   roleButtonText: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '600',
     color: '#6B7280',
   },
   roleButtonTextActive: {
     color: '#FFFFFF',
+    fontWeight: '700',
   },
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
     borderColor: '#E5E7EB',
-    borderRadius: 8,
-    paddingHorizontal: 12,
+    borderRadius: 12,
+    paddingHorizontal: 14,
     backgroundColor: '#F9FAFB',
-    marginBottom: 10,
+    marginBottom: 12,
   },
   searchInput: {
     flex: 1,
-    padding: 12,
+    padding: 14,
     fontSize: 16,
-    color: '#000000',
+    color: '#1F2937',
   },
   searchResults: {
-    backgroundColor: '#F9FAFB',
-    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#E5E7EB',
-    marginBottom: 15,
+    marginBottom: 16,
+    overflow: 'hidden',
   },
   searchResultItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 12,
+    padding: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: '#F3F4F6',
   },
   resultName: {
-    fontSize: 14,
+    fontSize: 15,
     fontWeight: '600',
-    color: '#000000',
+    color: '#1F2937',
   },
   resultEmail: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#6B7280',
+    marginTop: 2,
   },
   selectedSection: {
-    marginBottom: 15,
+    marginBottom: 16,
   },
   sectionLabel: {
-    fontSize: 14,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '700',
     color: '#374151',
-    marginBottom: 10,
+    marginBottom: 12,
   },
   chipsContainer: {
     flexDirection: 'row',
@@ -543,27 +863,35 @@ const styles = StyleSheet.create({
   selectedChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#E0E7FF',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
+    backgroundColor: '#E0F7F6',
+    paddingVertical: 8,
+    paddingHorizontal: 14,
     borderRadius: 20,
-    gap: 6,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: '#01b4ae',
   },
   chipText: {
     fontSize: 14,
-    color: '#3730A3',
+    color: '#01b4ae',
+    fontWeight: '600',
   },
   createButton: {
-    backgroundColor: '#2563EB',
-    borderRadius: 8,
-    padding: 15,
+    backgroundColor: '#01b4ae',
+    borderRadius: 12,
+    padding: 16,
     alignItems: 'center',
-    marginTop: 20,
+    marginTop: 24,
     marginBottom: 40,
+    shadowColor: '#01b4ae',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
   },
   createButtonText: {
     color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 17,
+    fontWeight: '700',
   },
 });
