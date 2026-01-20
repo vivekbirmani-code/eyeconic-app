@@ -1,5 +1,5 @@
 import { Tabs, Redirect } from 'expo-router';
-import { Users, MessageCircle, BookOpen, Home, UserCheck, ClipboardList } from 'lucide-react-native';
+import { Users, MessageCircle, BookOpen, Home, UserCheck, ClipboardList, TrendingUp } from 'lucide-react-native';
 import { useAuth } from '@/context/AuthContext';
 import { View, Text, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import { useNotifications } from '@/context/NotificationContext';
@@ -64,6 +64,17 @@ function TabInner() {
           ),
           // Hide this tab for non-admin users
           href: showUsers ? '/users' : null,
+        }}
+      />
+      <Tabs.Screen
+        name="admin-overview"
+        options={{
+          title: 'Overview',
+          tabBarIcon: ({ color, size }) => (
+            <TrendingUp color={color} size={22} />
+          ),
+          // Hide this tab for non-admin users
+          href: isAdmin ? '/admin-overview' : null,
         }}
       />
       <Tabs.Screen
