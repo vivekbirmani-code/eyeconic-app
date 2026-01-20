@@ -4,6 +4,7 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
+  TouchableWithoutFeedback,
   StyleSheet,
   Alert,
   KeyboardAvoidingView,
@@ -166,9 +167,9 @@ export default function Login() {
         >
           <View style={styles.logoBadge}>
             <Image
-              source={require('@/assets/images/logo.png')}
+              source={require('@/assets/images/Logo.png')}
               style={styles.logo}
-              resizeMode="contain"
+              resizeMode="cover"
             />
           </View>
         </Animated.View>
@@ -216,12 +217,13 @@ export default function Login() {
             {/* Password Input */}
             <View>
               <Text style={styles.label}>Password</Text>
-              <View style={[
-                styles.passwordContainer,
-                passwordFocused && styles.inputFocused
-              ]}>
+              <View style={styles.passwordWrapper}>
                 <TextInput
-                  style={styles.passwordInput}
+                  style={[
+                    styles.input,
+                    styles.passwordInputField,
+                    passwordFocused && styles.inputFocused
+                  ]}
                   placeholder="Enter your password"
                   placeholderTextColor="#9CA3AF"
                   value={password}
@@ -233,9 +235,10 @@ export default function Login() {
                   autoCorrect={false}
                   editable={!isLoading}
                 />
-                <Pressable
+                <TouchableOpacity
                   onPress={togglePasswordVisibility}
-                  style={styles.eyeIcon}
+                  style={styles.eyeIconAbsolute}
+                  activeOpacity={0.7}
                   disabled={isLoading}
                 >
                   <Animated.View style={{ opacity: eyeIconOpacity }}>
@@ -245,7 +248,7 @@ export default function Login() {
                       <Eye color="#9CA3AF" size={22} />
                     )}
                   </Animated.View>
-                </Pressable>
+                </TouchableOpacity>
               </View>
             </View>
 
@@ -319,10 +322,12 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 8,
     elevation: 5,
+    overflow: 'hidden',
   },
   logo: {
-    width: 90,
-    height: 90,
+    width: 100,
+    height: 100,
+    borderRadius: 50,
   },
   titleSection: {
     alignItems: 'center',
@@ -391,23 +396,18 @@ const styles = StyleSheet.create({
     shadowRadius: 8,
     elevation: 3,
   },
-  passwordContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: '#E5E7EB',
-    borderRadius: 12,
-    backgroundColor: '#F9FAFB',
-    paddingRight: 4,
+  passwordWrapper: {
+    position: 'relative',
   },
-  passwordInput: {
-    flex: 1,
-    padding: 16,
-    fontSize: 16,
-    color: '#111827',
+  passwordInputField: {
+    paddingRight: 50, // Make room for the eye icon
   },
-  eyeIcon: {
+  eyeIconAbsolute: {
+    position: 'absolute',
+    right: 4,
+    top: 8,
     padding: 12,
+    zIndex: 10,
   },
   button: {
     backgroundColor: '#01b4ae',

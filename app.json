@@ -4,7 +4,7 @@
     "slug": "neet-mentorship-app",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/Logo.png",
+    "icon": "./assets/images/icon.png",
     "scheme": "mentorship",
     "userInterfaceStyle": "light",
     "newArchEnabled": false,
@@ -22,7 +22,7 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/Logo.png",
+        "foregroundImage": "./assets/images/icon.png",
         "backgroundColor": "#FFFFFF"
       },
       "permissions": [

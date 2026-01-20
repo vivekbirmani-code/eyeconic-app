@@ -1,5 +1,5 @@
 import { Tabs, Redirect } from 'expo-router';
-import { Users, MessageCircle, BookOpen, Home } from 'lucide-react-native';
+import { Users, MessageCircle, BookOpen, Home, UserCheck, ClipboardList } from 'lucide-react-native';
 import { useAuth } from '@/context/AuthContext';
 import { View, Text, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import { useNotifications } from '@/context/NotificationContext';
@@ -9,6 +9,8 @@ function TabInner() {
   const { user } = useAuth();
 
   const isAdmin = user?.role === 'admin';
+  const isMentor = user?.role === 'mentor';
+  const isStudent = user?.role === 'student';
   const showUsers = isAdmin;
 
   return (
@@ -72,6 +74,28 @@ function TabInner() {
             <MessageCircle color={color} size={22} />
           ),
           tabBarBadge: totalUnreadCount > 0 ? totalUnreadCount : undefined,
+        }}
+      />
+      <Tabs.Screen
+        name="mentor-dashboard"
+        options={{
+          title: 'My Students',
+          tabBarIcon: ({ color, size }) => (
+            <UserCheck color={color} size={22} />
+          ),
+          // Hide this tab for non-mentor users
+          href: isMentor ? '/mentor-dashboard' : null,
+        }}
+      />
+      <Tabs.Screen
+        name="student-assignments"
+        options={{
+          title: 'My Tasks',
+          tabBarIcon: ({ color, size }) => (
+            <ClipboardList color={color} size={22} />
+          ),
+          // Hide this tab for non-student users
+          href: isStudent ? '/student-assignments' : null,
         }}
       />
       <Tabs.Screen

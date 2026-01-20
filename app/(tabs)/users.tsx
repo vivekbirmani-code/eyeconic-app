@@ -29,6 +29,8 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 }
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
+import SubjectSelectionModal from '@/components/SubjectSelectionModal';
+import MentorSelectionModal from '@/components/MentorSelectionModal';
 
 interface StudentProfile {
   mbbsBatch?: string;
@@ -90,6 +92,10 @@ export default function Users() {
   const [isLoadingGroups, setIsLoadingGroups] = useState(false);
   const [isSavingGroups, setIsSavingGroups] = useState(false);
   const [groupSearchQuery, setGroupSearchQuery] = useState('');
+
+  // Subject and Mentor assignment state
+  const [isSubjectModalVisible, setIsSubjectModalVisible] = useState(false);
+  const [isMentorModalVisible, setIsMentorModalVisible] = useState(false);
 
   // Animation values for premium UI
   const headerOpacity = useRef(new Animated.Value(0)).current;
@@ -975,6 +981,43 @@ export default function Users() {
                     </View>
                   )}
 
+                  {/* Subject and Mentor Assignment - Only shown for students */}
+                  {selectedUser.role === 'student' && (
+                    <>
+                      {/* Subject Assignment Section */}
+                      <View style={styles.assignmentSection}>
+                        <View style={styles.assignmentHeader}>
+                          <Text style={styles.assignmentTitle}>Assigned Subjects</Text>
+                          <TouchableOpacity
+                            style={styles.assignButton}
+                            onPress={() => setIsSubjectModalVisible(true)}
+                          >
+                            <Text style={styles.assignButtonText}>Manage Subjects</Text>
+                          </TouchableOpacity>
+                        </View>
+                        <Text style={styles.assignmentHint}>
+                          Subjects assigned to this student for learning
+                        </Text>
+                      </View>
+
+                      {/* Mentor Assignment Section */}
+                      <View style={styles.assignmentSection}>
+                        <View style={styles.assignmentHeader}>
+                          <Text style={styles.assignmentTitle}>Assigned Mentor</Text>
+                          <TouchableOpacity
+                            style={styles.assignButton}
+                            onPress={() => setIsMentorModalVisible(true)}
+                          >
+                            <Text style={styles.assignButtonText}>Assign Mentor</Text>
+                          </TouchableOpacity>
+                        </View>
+                        <Text style={styles.assignmentHint}>
+                          Mentor responsible for this student's assignments
+                        </Text>
+                      </View>
+                    </>
+                  )}
+
                   {/* Mentor Group Management Section */}
                   {selectedUser.role === 'mentor' && (
                     <View style={styles.mentorGroupSection}>
@@ -1132,6 +1175,34 @@ export default function Users() {
           </View>
         </View>
       </Modal>
+
+      {/* Subject Selection Modal */}
+      {selectedUser && selectedUser.role === 'student' && (
+        <SubjectSelectionModal
+          visible={isSubjectModalVisible}
+          onClose={() => setIsSubjectModalVisible(false)}
+          studentId={selectedUser._id}
+          studentName={selectedUser.name}
+          onSave={() => {
+            // Optionally refresh user details or show success message
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          }}
+        />
+      )}
+
+      {/* Mentor Selection Modal */}
+      {selectedUser && selectedUser.role === 'student' && (
+        <MentorSelectionModal
+          visible={isMentorModalVisible}
+          onClose={() => setIsMentorModalVisible(false)}
+          studentId={selectedUser._id}
+          studentName={selectedUser.name}
+          onSave={() => {
+            // Optionally refresh user details or show success message
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          }}
+        />
+      )}
     </SafeAreaView>
   );
 }
@@ -1900,5 +1971,41 @@ const styles = StyleSheet.create({
   segmentButtonTextActive: {
     color: '#FFFFFF',
     fontWeight: '700',
+  },
+  // Assignment Section Styles
+  assignmentSection: {
+    marginTop: 20,
+    padding: 15,
+    backgroundColor: '#FEF3C7',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+  },
+  assignmentHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  assignmentTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#92400E',
+  },
+  assignButton: {
+    backgroundColor: '#01b4ae',
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  assignButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  assignmentHint: {
+    fontSize: 12,
+    color: '#78350F',
+    fontStyle: 'italic',
   },
 });
