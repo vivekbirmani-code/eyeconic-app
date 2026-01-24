@@ -13,6 +13,7 @@ import {
   ActivityIndicator,
   Animated,
   Pressable,
+  ScrollView,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
@@ -154,138 +155,144 @@ export default function Login() {
         style={StyleSheet.absoluteFillObject}
       />
 
-      <View style={styles.content}>
-        {/* Logo with entry animation */}
-        <Animated.View
-          style={[
-            styles.logoContainer,
-            {
-              opacity: logoOpacity,
-              transform: [{ scale: logoScale }],
-            },
-          ]}
-        >
-          <View style={styles.logoBadge}>
-            <Image
-              source={require('@/assets/images/Logo.png')}
-              style={styles.logo}
-              resizeMode="cover"
-            />
-          </View>
-        </Animated.View>
-
-        {/* Title Section */}
-        <View style={styles.titleSection}>
-          <Text style={styles.title}>EYECONIC</Text>
-          <Text style={styles.tagline}>Your path to medical excellence</Text>
-        </View>
-
-        {/* Login Card with entry animation */}
-        <Animated.View
-          style={[
-            styles.card,
-            {
-              opacity: cardOpacity,
-              transform: [{ translateY: cardTranslateY }],
-            },
-          ]}
-        >
-          <Text style={styles.welcomeText}>Welcome Back</Text>
-
-          <View style={styles.form}>
-            {/* Email Input */}
-            <View>
-              <Text style={styles.label}>Email Address</Text>
-              <TextInput
-                style={[
-                  styles.input,
-                  emailFocused && styles.inputFocused
-                ]}
-                placeholder="Enter your email"
-                placeholderTextColor="#9CA3AF"
-                value={email}
-                onChangeText={setEmail}
-                onFocus={() => setEmailFocused(true)}
-                onBlur={() => setEmailFocused(false)}
-                keyboardType="email-address"
-                autoCapitalize="none"
-                autoCorrect={false}
-                editable={!isLoading}
+      <ScrollView 
+        contentContainerStyle={styles.scrollContentContainer}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.content}>
+          {/* Logo with entry animation */}
+          <Animated.View
+            style={[
+              styles.logoContainer,
+              {
+                opacity: logoOpacity,
+                transform: [{ scale: logoScale }],
+              },
+            ]}
+          >
+            <View style={styles.logoBadge}>
+              <Image
+                source={require('@/assets/images/Logo.png')}
+                style={styles.logo}
+                resizeMode="cover"
               />
             </View>
+          </Animated.View>
 
-            {/* Password Input */}
-            <View>
-              <Text style={styles.label}>Password</Text>
-              <View style={styles.passwordWrapper}>
+          {/* Title Section */}
+          <View style={styles.titleSection}>
+            <Text style={styles.title}>EYECONIC</Text>
+            <Text style={styles.tagline}>Your path to medical excellence</Text>
+          </View>
+
+          {/* Login Card with entry animation */}
+          <Animated.View
+            style={[
+              styles.card,
+              {
+                opacity: cardOpacity,
+                transform: [{ translateY: cardTranslateY }],
+              },
+            ]}
+          >
+            <Text style={styles.welcomeText}>Welcome Back</Text>
+
+            <View style={styles.form}>
+              {/* Email Input */}
+              <View>
+                <Text style={styles.label}>Email Address</Text>
                 <TextInput
                   style={[
                     styles.input,
-                    styles.passwordInputField,
-                    passwordFocused && styles.inputFocused
+                    emailFocused && styles.inputFocused
                   ]}
-                  placeholder="Enter your password"
+                  placeholder="Enter your email"
                   placeholderTextColor="#9CA3AF"
-                  value={password}
-                  onChangeText={setPassword}
-                  onFocus={() => setPasswordFocused(true)}
-                  onBlur={() => setPasswordFocused(false)}
-                  secureTextEntry={!isPasswordVisible}
+                  value={email}
+                  onChangeText={setEmail}
+                  onFocus={() => setEmailFocused(true)}
+                  onBlur={() => setEmailFocused(false)}
+                  keyboardType="email-address"
                   autoCapitalize="none"
                   autoCorrect={false}
                   editable={!isLoading}
                 />
-                <TouchableOpacity
-                  onPress={togglePasswordVisibility}
-                  style={styles.eyeIconAbsolute}
-                  activeOpacity={0.7}
-                  disabled={isLoading}
-                >
-                  <Animated.View style={{ opacity: eyeIconOpacity }}>
-                    {isPasswordVisible ? (
-                      <EyeOff color="#9CA3AF" size={22} />
-                    ) : (
-                      <Eye color="#9CA3AF" size={22} />
-                    )}
-                  </Animated.View>
-                </TouchableOpacity>
               </View>
+
+              {/* Password Input */}
+              <View>
+                <Text style={styles.label}>Password</Text>
+                <View style={styles.passwordWrapper}>
+                  <TextInput
+                    style={[
+                      styles.input,
+                      styles.passwordInputField,
+                      passwordFocused && styles.inputFocused
+                    ]}
+                    placeholder="Enter your password"
+                    placeholderTextColor="#9CA3AF"
+                    value={password}
+                    onChangeText={setPassword}
+                    onFocus={() => setPasswordFocused(true)}
+                    onBlur={() => setPasswordFocused(false)}
+                    secureTextEntry={!isPasswordVisible}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    editable={!isLoading}
+                  />
+                  <TouchableOpacity
+                    onPress={togglePasswordVisibility}
+                    style={styles.eyeIconAbsolute}
+                    activeOpacity={0.7}
+                    disabled={isLoading}
+                  >
+                    <Animated.View style={{ opacity: eyeIconOpacity }}>
+                      {isPasswordVisible ? (
+                        <EyeOff color="#9CA3AF" size={22} />
+                      ) : (
+                        <Eye color="#9CA3AF" size={22} />
+                      )}
+                    </Animated.View>
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Sign In Button with press animation */}
+              <Pressable
+                onPressIn={handleButtonPressIn}
+                onPressOut={handleButtonPressOut}
+                onPress={handleLogin}
+                disabled={isLoading}
+              >
+                <Animated.View
+                  style={[
+                    styles.button,
+                    isLoading && styles.buttonDisabled,
+                    {
+                      transform: [{ scale: buttonScale }],
+                    },
+                  ]}
+                >
+                  {isLoading ? (
+                    <View style={styles.loadingContainer}>
+                      <ActivityIndicator color="#FFFFFF" size="small" />
+                      <Text style={styles.buttonText}>Signing in...</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.buttonText}>Sign In</Text>
+                  )}
+                </Animated.View>
+              </Pressable>
             </View>
 
-            {/* Sign In Button with press animation */}
-            <Pressable
-              onPressIn={handleButtonPressIn}
-              onPressOut={handleButtonPressOut}
-              onPress={handleLogin}
-              disabled={isLoading}
-            >
-              <Animated.View
-                style={[
-                  styles.button,
-                  isLoading && styles.buttonDisabled,
-                  {
-                    transform: [{ scale: buttonScale }],
-                  },
-                ]}
-              >
-                {isLoading ? (
-                  <View style={styles.loadingContainer}>
-                    <ActivityIndicator color="#FFFFFF" size="small" />
-                    <Text style={styles.buttonText}>Signing in...</Text>
-                  </View>
-                ) : (
-                  <Text style={styles.buttonText}>Sign In</Text>
-                )}
-              </Animated.View>
-            </Pressable>
-          </View>
-
-          {/* Footer */}
-          <Text style={styles.footer}>
-            Contact your administrator if you need login credentials
-          </Text>
-        </Animated.View>
-      </View>
+            {/* Footer */}
+            <Text style={styles.footer}>
+              Contact your administrator if you need login credentials
+            </Text>
+          </Animated.View>
+        </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
@@ -296,10 +303,15 @@ const styles = StyleSheet.create({
     backgroundColor: '#01b4ae',
   },
   content: {
-    flex: 1,
     paddingHorizontal: 20,
-    paddingTop: 60,
-    paddingBottom: 40,
+    width: '100%',
+    maxWidth: 500,
+    alignSelf: 'center',
+  },
+  scrollContentContainer: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingVertical: 40,
   },
   logoContainer: {
     alignItems: 'center',

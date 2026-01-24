@@ -1,0 +1,892 @@
+import React, { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  SafeAreaView,
+  ScrollView,
+  TouchableOpacity,
+  TextInput,
+  Alert,
+  ActivityIndicator,
+  Platform,
+  StatusBar
+} from 'react-native';
+import { useRouter } from 'expo-router';
+import { 
+  ChevronDown, 
+  ChevronLeft,
+  Check,
+  Clock,
+  BookOpen,
+  Users,
+  Search,
+  X
+} from 'lucide-react-native';
+import { api } from '@/services/api';
+import { useAuth } from '@/context/AuthContext';
+
+interface Subject {
+  _id: string;
+  name: string;
+}
+
+interface Student {
+  _id: string;
+  name: string;
+  email: string;
+  subjects?: Subject[];
+}
+
+type TestType = 'daily' | 'weekly' | 'grand';
+
+export default function CreateQuiz() {
+  const { user } = useAuth();
+  const router = useRouter();
+
+  const [step, setStep] = useState(1);
+  const [loading, setLoading] = useState(false);
+  const [creating, setCreating] = useState(false);
+
+  // Step 1: Test Type & Subjects (now supports multiple)
+  const [testType, setTestType] = useState<TestType>('daily');
+  const [subjects, setSubjects] = useState<Subject[]>([]);
+  const [selectedSubjects, setSelectedSubjects] = useState<string[]>([]);
+  const [showSubjectDropdown, setShowSubjectDropdown] = useState(false);
+
+  // Step 2: Quiz Settings
+  const [title, setTitle] = useState('');
+  const [numberOfQuestions, setNumberOfQuestions] = useState('10');
+  const [duration, setDuration] = useState('30');
+  const [availableQuestions, setAvailableQuestions] = useState(0);
+
+  // Step 3: Student Selection
+  const [students, setStudents] = useState<Student[]>([]);
+  const [filteredStudents, setFilteredStudents] = useState<Student[]>([]);
+  const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
+  const [studentSearch, setStudentSearch] = useState('');
+  const [subjectFilter, setSubjectFilter] = useState('');
+
+  // Instructions
+  const defaultInstructions = [
+    'Read each question carefully before answering.',
+    'You cannot go back to previous questions once answered.',
+    'Do not switch tabs during the test.',
+    'Your answers are auto-saved.',
+    'Submit before the timer expires.'
+  ];
+  const [instructions, setInstructions] = useState(defaultInstructions.join('\n'));
+
+  useEffect(() => {
+    fetchSubjects();
+    fetchStudents();
+  }, []);
+
+  useEffect(() => {
+    if (selectedSubjects.length > 0) {
+      fetchQuestionCount();
+      generateTitle();
+    }
+  }, [selectedSubjects, testType]);
+
+  useEffect(() => {
+    // Filter students by search query and subject
+    let filtered = students;
+    
+    const query = studentSearch.toLowerCase();
+    if (query) {
+      filtered = filtered.filter(s => 
+        s.name.toLowerCase().includes(query) || 
+        s.email.toLowerCase().includes(query)
+      );
+    }
+    
+    // Filter by subject if selected
+    if (subjectFilter) {
+      filtered = filtered.filter(s => 
+        s.subjects?.some(sub => sub._id === subjectFilter)
+      );
+    }
+    
+    setFilteredStudents(filtered);
+  }, [studentSearch, students, subjectFilter]);
+
+  const fetchSubjects = async () => {
+    try {
+      const response = await api.get('/subjects/list');
+      setSubjects(Array.isArray(response.data) ? response.data : []);
+    } catch (error) {
+      console.error('Error fetching subjects:', error);
+      setSubjects([]);
+    }
+  };
+
+  const fetchStudents = async () => {
+    try {
+      const response = await api.get('/users?role=student');
+      const data = Array.isArray(response.data) ? response.data : [];
+      setStudents(data);
+      setFilteredStudents(data);
+    } catch (error) {
+      console.error('Error fetching students:', error);
+      setStudents([]);
+      setFilteredStudents([]);
+    }
+  };
+
+  const fetchQuestionCount = async () => {
+    try {
+      const response = await api.get('/question-bank/stats/summary');
+      const bySubject = Array.isArray(response.data?.bySubject) ? response.data.bySubject : [];
+      
+      // Sum up questions from all selected subjects
+      let totalAvailable = 0;
+      selectedSubjects.forEach(subId => {
+        const stat = bySubject.find((s: any) => s._id === subId);
+        totalAvailable += stat?.count || 0;
+      });
+      
+      setAvailableQuestions(totalAvailable);
+    } catch (error) {
+      console.error('Error fetching question count:', error);
+      setAvailableQuestions(0);
+    }
+  };
+
+  const toggleSubject = (subjectId: string) => {
+    if (selectedSubjects.includes(subjectId)) {
+      setSelectedSubjects(selectedSubjects.filter(id => id !== subjectId));
+    } else {
+      setSelectedSubjects([...selectedSubjects, subjectId]);
+    }
+  };
+
+  const generateTitle = () => {
+    const subjectsArray = Array.isArray(subjects) ? subjects : [];
+    const selectedNames = selectedSubjects
+      .map(id => subjectsArray.find(s => s._id === id)?.name)
+      .filter(Boolean)
+      .join(', ');
+    const typeLabel = testType === 'daily' ? 'Daily' : testType === 'weekly' ? 'Weekly' : 'Grand';
+    const date = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    setTitle(`${selectedNames || ''} ${typeLabel} Test - ${date}`);
+  };
+
+  const handleSelectAll = () => {
+    if (selectedStudents.length === filteredStudents.length) {
+      setSelectedStudents([]);
+    } else {
+      setSelectedStudents(filteredStudents.map(s => s._id));
+    }
+  };
+
+  const toggleStudent = (studentId: string) => {
+    if (selectedStudents.includes(studentId)) {
+      setSelectedStudents(selectedStudents.filter(id => id !== studentId));
+    } else {
+      setSelectedStudents([...selectedStudents, studentId]);
+    }
+  };
+
+  const handleCreateQuiz = async () => {
+    if (selectedSubjects.length === 0) {
+      Alert.alert('Error', 'Please select at least one subject');
+      return;
+    }
+    if (!title.trim()) {
+      Alert.alert('Error', 'Please enter a title');
+      return;
+    }
+    if (parseInt(numberOfQuestions) > availableQuestions) {
+      Alert.alert('Error', `Only ${availableQuestions} questions available for selected subjects`);
+      return;
+    }
+    if (selectedStudents.length === 0) {
+      Alert.alert('Error', 'Please select at least one student');
+      return;
+    }
+
+    setCreating(true);
+    try {
+      const response = await api.post('/quizzes/create-from-bank', {
+        title: title.trim(),
+        subjects: selectedSubjects,
+        testType,
+        numberOfQuestions: parseInt(numberOfQuestions),
+        duration: parseInt(duration),
+        instructions: instructions.split('\n').filter(i => i.trim()),
+        assignedStudents: selectedStudents
+      });
+
+      Alert.alert(
+        'Success',
+        `Quiz created and assigned to ${selectedStudents.length} students!`,
+        [{ text: 'OK', onPress: () => router.back() }]
+      );
+    } catch (error: any) {
+      console.error('Create quiz error:', error);
+      Alert.alert('Error', error.response?.data?.message || 'Failed to create quiz');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const getSelectedSubjectNames = () => {
+    const subjectsArray = Array.isArray(subjects) ? subjects : [];
+    const names = selectedSubjects
+      .map(id => subjectsArray.find(s => s._id === id)?.name)
+      .filter(Boolean);
+    if (names.length === 0) return 'Select subjects';
+    if (names.length <= 2) return names.join(', ');
+    return `${names.slice(0, 2).join(', ')} +${names.length - 2} more`;
+  };
+
+  const renderStep1 = () => (
+    <View style={styles.stepContent}>
+      <Text style={styles.stepTitle}>Select Test Type</Text>
+      
+      <View style={styles.testTypeContainer}>
+        {(['daily', 'weekly', 'grand'] as TestType[]).map(type => (
+          <TouchableOpacity
+            key={type}
+            style={[
+              styles.testTypeCard,
+              testType === type && styles.testTypeCardActive
+            ]}
+            onPress={() => setTestType(type)}
+          >
+            <View style={[
+              styles.testTypeIcon,
+              testType === type && styles.testTypeIconActive
+            ]}>
+              {type === 'daily' && <Clock color={testType === type ? '#FFF' : '#6B7280'} size={24} />}
+              {type === 'weekly' && <BookOpen color={testType === type ? '#FFF' : '#6B7280'} size={24} />}
+              {type === 'grand' && <Users color={testType === type ? '#FFF' : '#6B7280'} size={24} />}
+            </View>
+            <Text style={[
+              styles.testTypeName,
+              testType === type && styles.testTypeNameActive
+            ]}>
+              {type.charAt(0).toUpperCase() + type.slice(1)} Test
+            </Text>
+            <Text style={styles.testTypeDesc}>
+              {type === 'daily' && '10-20 questions\n15-30 mins'}
+              {type === 'weekly' && '30-50 questions\n45-60 mins'}
+              {type === 'grand' && '100+ questions\n2-3 hours'}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      <Text style={styles.inputLabel}>Select Subject(s)</Text>
+      <TouchableOpacity
+        style={styles.dropdown}
+        onPress={() => setShowSubjectDropdown(!showSubjectDropdown)}
+      >
+        <Text style={selectedSubjects.length > 0 ? styles.dropdownText : styles.dropdownPlaceholder}>
+          {getSelectedSubjectNames()}
+        </Text>
+        <ChevronDown color="#6B7280" size={20} />
+      </TouchableOpacity>
+
+      {showSubjectDropdown && (
+        <View style={styles.dropdownList}>
+          <ScrollView style={{ maxHeight: 250 }} nestedScrollEnabled={true}>
+            {(Array.isArray(subjects) ? subjects : []).map(subject => (
+              <TouchableOpacity
+                key={subject._id}
+                style={[
+                  styles.dropdownItem,
+                  selectedSubjects.includes(subject._id) && styles.dropdownItemSelected
+                ]}
+                onPress={() => toggleSubject(subject._id)}
+              >
+                <View style={[
+                  styles.checkbox,
+                  selectedSubjects.includes(subject._id) && styles.checkboxSelected
+                ]}>
+                  {selectedSubjects.includes(subject._id) && <Check color="#FFF" size={14} />}
+                </View>
+                <Text style={styles.dropdownItemText}>{subject.name}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
+      {selectedSubjects.length > 0 && (
+        <View style={styles.infoBox}>
+          <Text style={styles.infoText}>
+            📚 {availableQuestions} questions available ({selectedSubjects.length} subjects)
+          </Text>
+        </View>
+      )}
+    </View>
+  );
+
+  const renderStep2 = () => (
+    <View style={styles.stepContent}>
+      <Text style={styles.stepTitle}>Quiz Settings</Text>
+
+      <Text style={styles.inputLabel}>Quiz Title</Text>
+      <TextInput
+        style={styles.input}
+        value={title}
+        onChangeText={setTitle}
+        placeholder="Enter quiz title"
+      />
+
+      <View style={styles.row}>
+        <View style={styles.halfInput}>
+          <Text style={styles.inputLabel}>Questions</Text>
+          <TextInput
+            style={styles.input}
+            value={numberOfQuestions}
+            onChangeText={setNumberOfQuestions}
+            keyboardType="numeric"
+            placeholder="10"
+          />
+          <Text style={styles.helperText}>Max: {availableQuestions}</Text>
+        </View>
+        <View style={styles.halfInput}>
+          <Text style={styles.inputLabel}>Duration (min)</Text>
+          <TextInput
+            style={styles.input}
+            value={duration}
+            onChangeText={setDuration}
+            keyboardType="numeric"
+            placeholder="30"
+          />
+        </View>
+      </View>
+
+      <Text style={styles.inputLabel}>Instructions</Text>
+      <TextInput
+        style={[styles.input, styles.textArea]}
+        value={instructions}
+        onChangeText={setInstructions}
+        multiline
+        placeholder="Enter instructions (one per line)"
+      />
+    </View>
+  );
+
+  // Step 3 - No FlatList, use map with ScrollView handled by parent
+  const renderStep3 = () => (
+    <View style={styles.stepContent}>
+      <Text style={styles.stepTitle}>Assign Students</Text>
+      
+      <View style={styles.selectionHeader}>
+        <Text style={styles.selectionCount}>
+          {selectedStudents.length} of {filteredStudents.length} selected
+        </Text>
+        <TouchableOpacity onPress={handleSelectAll}>
+          <Text style={styles.selectAllText}>
+            {selectedStudents.length === filteredStudents.length ? 'Deselect All' : 'Select All'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.searchInput}>
+        <Search color="#6B7280" size={20} />
+        <TextInput
+          style={styles.searchTextInput}
+          placeholder="Search students..."
+          value={studentSearch}
+          onChangeText={setStudentSearch}
+        />
+      </View>
+
+      {/* Subject filter for students */}
+      <View style={styles.filterRow}>
+        <Text style={styles.filterLabel}>Filter by subject:</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <TouchableOpacity
+            style={[styles.filterChip, !subjectFilter && styles.filterChipActive]}
+            onPress={() => setSubjectFilter('')}
+          >
+            <Text style={[styles.filterChipText, !subjectFilter && styles.filterChipTextActive]}>All</Text>
+          </TouchableOpacity>
+          {subjects.map(sub => (
+            <TouchableOpacity
+              key={sub._id}
+              style={[styles.filterChip, subjectFilter === sub._id && styles.filterChipActive]}
+              onPress={() => setSubjectFilter(sub._id)}
+            >
+              <Text style={[styles.filterChipText, subjectFilter === sub._id && styles.filterChipTextActive]}>
+                {sub.name}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
+      {/* Student list using map instead of FlatList */}
+      <View style={styles.studentList}>
+        {filteredStudents.length === 0 ? (
+          <Text style={styles.emptyText}>No students found</Text>
+        ) : (
+          filteredStudents.map(item => (
+            <TouchableOpacity
+              key={item._id}
+              style={[
+                styles.studentItem,
+                selectedStudents.includes(item._id) && styles.studentItemSelected
+              ]}
+              onPress={() => toggleStudent(item._id)}
+            >
+              <View style={[
+                styles.checkbox,
+                selectedStudents.includes(item._id) && styles.checkboxSelected
+              ]}>
+                {selectedStudents.includes(item._id) && <Check color="#FFF" size={14} />}
+              </View>
+              <View style={styles.studentInfo}>
+                <Text style={styles.studentName}>{item.name}</Text>
+                <Text style={styles.studentEmail}>{item.email}</Text>
+              </View>
+            </TouchableOpacity>
+          ))
+        )}
+      </View>
+    </View>
+  );
+
+  if (user?.role !== 'admin') {
+    return (
+      <SafeAreaView style={styles.container}>
+        <Text style={styles.errorText}>Admin access required</Text>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.container}>
+      {/* Header */}
+      <View style={styles.header}>
+        <TouchableOpacity onPress={() => router.back()}>
+          <ChevronLeft color="#FFF" size={24} />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Create Quiz</Text>
+        <View style={{ width: 24 }} />
+      </View>
+
+      {/* Progress Steps */}
+      <View style={styles.progressContainer}>
+        {[1, 2, 3].map(s => (
+          <View key={s} style={styles.progressStep}>
+            <View style={[
+              styles.progressCircle,
+              step >= s && styles.progressCircleActive
+            ]}>
+              <Text style={[
+                styles.progressNumber,
+                step >= s && styles.progressNumberActive
+              ]}>
+                {s}
+              </Text>
+            </View>
+            <Text style={styles.progressLabel}>
+              {s === 1 ? 'Type' : s === 2 ? 'Settings' : 'Students'}
+            </Text>
+          </View>
+        ))}
+      </View>
+
+      {/* Step Content */}
+      <ScrollView 
+        style={styles.content} 
+        showsVerticalScrollIndicator={false}
+        nestedScrollEnabled={true}
+      >
+        {step === 1 && renderStep1()}
+        {step === 2 && renderStep2()}
+        {step === 3 && renderStep3()}
+      </ScrollView>
+
+      {/* Bottom Navigation */}
+      <View style={styles.bottomNav}>
+        {step > 1 && (
+          <TouchableOpacity
+            style={styles.backButton}
+            onPress={() => setStep(step - 1)}
+          >
+            <Text style={styles.backButtonText}>Back</Text>
+          </TouchableOpacity>
+        )}
+        
+        {step < 3 ? (
+          <TouchableOpacity
+            style={[styles.nextButton, selectedSubjects.length === 0 && styles.buttonDisabled]}
+            onPress={() => selectedSubjects.length > 0 && setStep(step + 1)}
+            disabled={selectedSubjects.length === 0}
+          >
+            <Text style={styles.nextButtonText}>Next</Text>
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={[styles.createButton, creating && styles.buttonDisabled]}
+            onPress={handleCreateQuiz}
+            disabled={creating}
+          >
+            {creating ? (
+              <ActivityIndicator color="#FFF" />
+            ) : (
+              <Text style={styles.createButtonText}>Create & Assign Quiz</Text>
+            )}
+          </TouchableOpacity>
+        )}
+      </View>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#F3F4F6',
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: 16,
+    backgroundColor: '#2563EB',
+  },
+  headerTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#FFF',
+  },
+  progressContainer: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#FFF',
+    gap: 40,
+  },
+  progressStep: {
+    alignItems: 'center',
+  },
+  progressCircle: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#E5E7EB',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  progressCircleActive: {
+    backgroundColor: '#2563EB',
+  },
+  progressNumber: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#6B7280',
+  },
+  progressNumberActive: {
+    color: '#FFF',
+  },
+  progressLabel: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 4,
+  },
+  content: {
+    flex: 1,
+  },
+  stepContent: {
+    padding: 20,
+  },
+  stepTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#1F2937',
+    marginBottom: 20,
+  },
+  testTypeContainer: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 24,
+  },
+  testTypeCard: {
+    flex: 1,
+    backgroundColor: '#FFF',
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  testTypeCardActive: {
+    borderColor: '#2563EB',
+    backgroundColor: '#EBF5FF',
+  },
+  testTypeIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  testTypeIconActive: {
+    backgroundColor: '#2563EB',
+  },
+  testTypeName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 4,
+  },
+  testTypeNameActive: {
+    color: '#2563EB',
+  },
+  testTypeDesc: {
+    fontSize: 11,
+    color: '#9CA3AF',
+    textAlign: 'center',
+  },
+  inputLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 8,
+    marginTop: 16,
+  },
+  input: {
+    backgroundColor: '#FFF',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  textArea: {
+    minHeight: 120,
+    textAlignVertical: 'top',
+  },
+  dropdown: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#FFF',
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  dropdownText: {
+    fontSize: 16,
+    color: '#1F2937',
+  },
+  dropdownPlaceholder: {
+    fontSize: 16,
+    color: '#9CA3AF',
+  },
+  dropdownList: {
+    backgroundColor: '#FFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    marginTop: 4,
+    maxHeight: 260,
+    overflow: 'hidden',
+  },
+  dropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+    gap: 12,
+  },
+  dropdownItemSelected: {
+    backgroundColor: '#EBF5FF',
+  },
+  dropdownItemText: {
+    fontSize: 16,
+    color: '#1F2937',
+  },
+  infoBox: {
+    backgroundColor: '#EBF5FF',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 16,
+  },
+  infoText: {
+    fontSize: 14,
+    color: '#2563EB',
+  },
+  row: {
+    flexDirection: 'row',
+    gap: 16,
+  },
+  halfInput: {
+    flex: 1,
+  },
+  helperText: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 4,
+  },
+  selectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  selectionCount: {
+    fontSize: 14,
+    color: '#6B7280',
+  },
+  selectAllText: {
+    fontSize: 14,
+    color: '#2563EB',
+    fontWeight: '600',
+  },
+  searchInput: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    gap: 8,
+    marginBottom: 12,
+  },
+  searchTextInput: {
+    flex: 1,
+    paddingVertical: 12,
+    fontSize: 16,
+  },
+  filterRow: {
+    marginBottom: 12,
+  },
+  filterLabel: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginBottom: 8,
+  },
+  filterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#F3F4F6',
+    marginRight: 8,
+  },
+  filterChipActive: {
+    backgroundColor: '#2563EB',
+  },
+  filterChipText: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  filterChipTextActive: {
+    color: '#FFF',
+  },
+  studentList: {
+    minHeight: 200,
+  },
+  studentItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFF',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 8,
+    gap: 12,
+  },
+  studentItemSelected: {
+    backgroundColor: '#EBF5FF',
+    borderWidth: 1,
+    borderColor: '#2563EB',
+  },
+  checkbox: {
+    width: 24,
+    height: 24,
+    borderRadius: 4,
+    borderWidth: 2,
+    borderColor: '#D1D5DB',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  checkboxSelected: {
+    backgroundColor: '#2563EB',
+    borderColor: '#2563EB',
+  },
+  studentInfo: {
+    flex: 1,
+  },
+  studentName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1F2937',
+  },
+  studentEmail: {
+    fontSize: 13,
+    color: '#6B7280',
+  },
+  emptyText: {
+    fontSize: 14,
+    color: '#6B7280',
+    textAlign: 'center',
+    padding: 20,
+  },
+  errorText: {
+    fontSize: 16,
+    color: '#EF4444',
+    textAlign: 'center',
+    marginTop: 50,
+  },
+  bottomNav: {
+    flexDirection: 'row',
+    padding: 16,
+    backgroundColor: '#FFF',
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+    gap: 12,
+  },
+  backButton: {
+    flex: 1,
+    padding: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#2563EB',
+    alignItems: 'center',
+  },
+  backButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#2563EB',
+  },
+  nextButton: {
+    flex: 2,
+    padding: 16,
+    borderRadius: 8,
+    backgroundColor: '#2563EB',
+    alignItems: 'center',
+  },
+  nextButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFF',
+  },
+  createButton: {
+    flex: 2,
+    padding: 16,
+    borderRadius: 8,
+    backgroundColor: '#10B981',
+    alignItems: 'center',
+  },
+  createButtonText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFF',
+  },
+  buttonDisabled: {
+    opacity: 0.5,
+  },
+});

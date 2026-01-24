@@ -1,307 +1,544 @@
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View,
   Text,
-  TouchableOpacity,
   StyleSheet,
   SafeAreaView,
+  TouchableOpacity,
   FlatList,
-  TextInput,
-  Modal,
+  ActivityIndicator,
   Alert,
   Platform,
-  StatusBar
+  StatusBar,
+  RefreshControl,
+  Animated
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Plus, BookOpen, Clock } from 'lucide-react-native';
-import { useAuth } from '@/context/AuthContext';
+import { BookOpen, Clock, CheckCircle, AlertCircle, RotateCcw, ChevronRight } from 'lucide-react-native';
 import { api } from '@/services/api';
+import { useAuth } from '@/context/AuthContext';
+import { QuizCardSkeleton } from '@/components/Skeleton';
+import { ErrorBoundary } from '@/components/ErrorBoundary';
 
 interface Quiz {
   _id: string;
   title: string;
-  subject: string;
-  questions: any[];
-  createdBy: string;
-  createdAt: string;
+  subject: { _id: string; name: string };
+  testType: 'daily' | 'weekly' | 'grand';
+  duration: number;
+  totalMarks: number;
+  questions: string[];
+  attemptStatus?: {
+    hasAttempted: boolean;
+    status?: string;
+    score?: number;
+    marksObtained?: number;
+    canRetake?: boolean;
+    retestRequested?: boolean;
+  };
 }
 
-export default function Quizzes() {
+function QuizzesContent() {
   const { user } = useAuth();
   const router = useRouter();
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
-  const [isModalVisible, setIsModalVisible] = useState(false);
-  const [newQuiz, setNewQuiz] = useState({
-    title: '',
-    subject: '',
-    questions: [{ question: '', options: ['', '', '', ''], correctAnswer: 0 }],
-  });
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'available' | 'completed'>('available');
+
+  const fadeAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     fetchQuizzes();
+    
+    Animated.timing(fadeAnim, {
+      toValue: 1,
+      duration: 300,
+      useNativeDriver: true,
+    }).start();
   }, []);
 
   const fetchQuizzes = async () => {
     try {
+      setError(null);
       const response = await api.get('/quizzes');
       setQuizzes(response.data);
-    } catch (error) {
-      Alert.alert('Error', 'Failed to fetch quizzes');
+    } catch (err: any) {
+      setError(err.response?.data?.message || 'Failed to load quizzes');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  const createQuiz = async () => {
-    if (!newQuiz.title || !newQuiz.subject) {
-      Alert.alert('Error', 'Please fill in title and subject');
-      return;
-    }
+  const onRefresh = useCallback(() => {
+    setRefreshing(true);
+    fetchQuizzes();
+  }, []);
 
-    try {
-      await api.post('/quizzes', newQuiz);
-      setNewQuiz({
-        title: '',
-        subject: '',
-        questions: [{ question: '', options: ['', '', '', ''], correctAnswer: 0 }],
-      });
-      setIsModalVisible(false);
-      fetchQuizzes();
-      Alert.alert('Success', 'Quiz created successfully');
-    } catch (error) {
-      Alert.alert('Error', 'Failed to create quiz');
-    }
-  };
-
-  const openQuiz = (quizId: string) => {
-    router.push(`/quiz/${quizId}`);
-  };
-
-  const renderQuiz = ({ item }: { item: Quiz }) => (
-    <TouchableOpacity
-      style={styles.quizCard}
-      onPress={() => openQuiz(item._id)}
-    >
-      <BookOpen color="#2563EB" size={24} />
-      <View style={styles.quizInfo}>
-        <Text style={styles.quizTitle}>{item.title}</Text>
-        <Text style={styles.quizSubject}>{item.subject}</Text>
-        <View style={styles.quizMeta}>
-          <Clock color="#6B7280" size={16} />
-          <Text style={styles.quizDate}>
-            {new Date(item.createdAt).toLocaleDateString()}
-          </Text>
-          <Text style={styles.questionCount}>
-            {item.questions.length} questions
-          </Text>
-        </View>
-      </View>
-    </TouchableOpacity>
-  );
-
-  const addQuestion = () => {
-    setNewQuiz({
-      ...newQuiz,
-      questions: [
-        ...newQuiz.questions,
-        { question: '', options: ['', '', '', ''], correctAnswer: 0 },
-      ],
-    });
-  };
-
-  const updateQuestion = (index: number, field: string, value: any) => {
-    const updatedQuestions = [...newQuiz.questions];
-    if (field === 'options') {
-      updatedQuestions[index].options = value;
+  const handleQuizPress = (quiz: Quiz) => {
+    if (quiz.attemptStatus?.hasAttempted && !quiz.attemptStatus?.canRetake) {
+      // Already completed - go to results
+      Alert.alert(
+        'Quiz Completed',
+        'Would you like to view your results?',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'View Results',
+            onPress: () => {
+              // We need to fetch the attempt ID first
+              api.get(`/quizzes/${quiz._id}`)
+                .then(response => {
+                  // Navigate to results - the backend will handle getting the attempt
+                  router.push(`/quiz/${quiz._id}/instructions`);
+                })
+                .catch(() => router.push(`/quiz/${quiz._id}/instructions`));
+            }
+          }
+        ]
+      );
     } else {
-      updatedQuestions[index][field] = value;
+      router.push(`/quiz/${quiz._id}/instructions`);
     }
-    setNewQuiz({ ...newQuiz, questions: updatedQuestions });
   };
 
+  const getStatusBadge = (quiz: Quiz) => {
+    if (!quiz.attemptStatus?.hasAttempted) {
+      return { label: 'New', color: '#2563EB', bgColor: '#EBF5FF' };
+    }
+    if (quiz.attemptStatus?.canRetake) {
+      return { label: 'Retest Available', color: '#10B981', bgColor: '#D1FAE5' };
+    }
+    if (quiz.attemptStatus?.retestRequested) {
+      return { label: 'Retest Pending', color: '#F59E0B', bgColor: '#FEF3C7' };
+    }
+    return { label: 'Completed', color: '#6B7280', bgColor: '#F3F4F6' };
+  };
+
+  const getTestTypeColor = (type: string) => {
+    switch (type) {
+      case 'daily': return { bg: '#DBEAFE', text: '#1E40AF' };
+      case 'weekly': return { bg: '#D1FAE5', text: '#065F46' };
+      case 'grand': return { bg: '#FEF3C7', text: '#92400E' };
+      default: return { bg: '#F3F4F6', text: '#374151' };
+    }
+  };
+
+  // Filter quizzes based on active tab
+  const availableQuizzes = quizzes.filter(q => !q.attemptStatus?.hasAttempted || q.attemptStatus?.canRetake);
+  const completedQuizzes = quizzes.filter(q => q.attemptStatus?.hasAttempted && !q.attemptStatus?.canRetake);
+
+  const displayQuizzes = activeTab === 'available' ? availableQuizzes : completedQuizzes;
+
+  const renderQuizCard = ({ item, index }: { item: Quiz; index: number }) => {
+    const status = getStatusBadge(item);
+    const typeColor = getTestTypeColor(item.testType);
+
+    return (
+      <Animated.View
+        style={[
+          styles.cardWrapper,
+          {
+            opacity: fadeAnim,
+            transform: [{
+              translateY: fadeAnim.interpolate({
+                inputRange: [0, 1],
+                outputRange: [20, 0]
+              })
+            }]
+          }
+        ]}
+      >
+        <TouchableOpacity
+          style={styles.quizCard}
+          onPress={() => handleQuizPress(item)}
+          activeOpacity={0.7}
+          accessible={true}
+          accessibilityLabel={`${item.title}, ${item.testType} test, ${item.questions?.length || 0} questions`}
+          accessibilityRole="button"
+        >
+          <View style={styles.cardHeader}>
+            <View style={[styles.testTypeBadge, { backgroundColor: typeColor.bg }]}>
+              <Text style={[styles.testTypeText, { color: typeColor.text }]}>
+                {item.testType.charAt(0).toUpperCase() + item.testType.slice(1)}
+              </Text>
+            </View>
+            <View style={[styles.statusBadge, { backgroundColor: status.bgColor }]}>
+              <Text style={[styles.statusText, { color: status.color }]}>{status.label}</Text>
+            </View>
+          </View>
+
+          <Text style={styles.quizTitle} numberOfLines={2}>{item.title}</Text>
+
+          <View style={styles.quizMeta}>
+            <View style={styles.metaItem}>
+              <BookOpen color="#6B7280" size={14} />
+              <Text style={styles.metaText}>{item.subject?.name}</Text>
+            </View>
+            <View style={styles.metaItem}>
+              <Text style={styles.metaText}>{item.questions?.length || 0} Questions</Text>
+            </View>
+            <View style={styles.metaItem}>
+              <Clock color="#6B7280" size={14} />
+              <Text style={styles.metaText}>{item.duration} min</Text>
+            </View>
+          </View>
+
+          {item.attemptStatus?.hasAttempted && (
+            <View style={styles.scoreContainer}>
+              <Text style={styles.scoreLabel}>Your Score:</Text>
+              <Text style={styles.scoreValue}>
+                {item.attemptStatus.marksObtained}/{item.totalMarks} 
+                ({item.totalMarks ? Math.round((item.attemptStatus.marksObtained! / item.totalMarks) * 100) : 0}%)
+              </Text>
+            </View>
+          )}
+
+          <View style={styles.cardFooter}>
+            <Text style={styles.startText}>
+              {item.attemptStatus?.hasAttempted 
+                ? (item.attemptStatus.canRetake ? 'Retake Test' : 'View Results')
+                : 'Start Test'}
+            </Text>
+            <ChevronRight color="#2563EB" size={20} />
+          </View>
+        </TouchableOpacity>
+      </Animated.View>
+    );
+  };
+
+  // Admin view
+  if (user?.role === 'admin') {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.adminHeader}>
+          <Text style={styles.adminTitle}>Quiz Management</Text>
+          <Text style={styles.adminSubtitle}>Manage your quiz system</Text>
+        </View>
+        
+        <TouchableOpacity
+          style={styles.adminButton}
+          onPress={() => router.push('/admin/quiz-hub' as any)}
+        >
+          <View style={styles.adminButtonContent}>
+            <BookOpen color="#2563EB" size={24} />
+            <View style={styles.adminButtonText}>
+              <Text style={styles.adminButtonTitle}>Open Quiz Hub</Text>
+              <Text style={styles.adminButtonSubtitle}>Manage questions, create tests, view analytics</Text>
+            </View>
+            <ChevronRight color="#2563EB" size={24} />
+          </View>
+        </TouchableOpacity>
+      </SafeAreaView>
+    );
+  }
+
+  // Student view
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.title}>Quizzes</Text>
-        {user?.role === 'admin' && (
-          <TouchableOpacity
-            style={styles.addButton}
-            onPress={() => setIsModalVisible(true)}
-          >
-            <Plus color="#FFFFFF" size={20} />
-          </TouchableOpacity>
-        )}
+        <Text style={styles.headerTitle}>My Quizzes</Text>
+        <Text style={styles.headerSubtitle}>
+          {availableQuizzes.length} available, {completedQuizzes.length} completed
+        </Text>
       </View>
 
-      <FlatList
-        data={quizzes}
-        renderItem={renderQuiz}
-        keyExtractor={(item) => item._id}
-        contentContainerStyle={styles.list}
-        showsVerticalScrollIndicator={false}
-      />
+      {/* Tabs */}
+      <View style={styles.tabsContainer}>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'available' && styles.activeTab]}
+          onPress={() => setActiveTab('available')}
+        >
+          <Text style={[styles.tabText, activeTab === 'available' && styles.activeTabText]}>
+            Available ({availableQuizzes.length})
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'completed' && styles.activeTab]}
+          onPress={() => setActiveTab('completed')}
+        >
+          <Text style={[styles.tabText, activeTab === 'completed' && styles.activeTabText]}>
+            Completed ({completedQuizzes.length})
+          </Text>
+        </TouchableOpacity>
+      </View>
 
-      {user?.role === 'admin' && (
-        <Modal visible={isModalVisible} animationType="slide">
-          <SafeAreaView style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Create New Quiz</Text>
-              <TouchableOpacity onPress={() => setIsModalVisible(false)}>
-                <Text style={styles.cancelText}>Cancel</Text>
-              </TouchableOpacity>
+      {loading ? (
+        <View style={styles.skeletonContainer}>
+          {[1, 2, 3].map(i => (
+            <QuizCardSkeleton key={i} />
+          ))}
+        </View>
+      ) : error ? (
+        <View style={styles.errorContainer}>
+          <AlertCircle color="#EF4444" size={48} />
+          <Text style={styles.errorText}>{error}</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={fetchQuizzes}>
+            <RotateCcw color="#FFF" size={16} />
+            <Text style={styles.retryText}>Retry</Text>
+          </TouchableOpacity>
+        </View>
+      ) : (
+        <FlatList
+          data={displayQuizzes}
+          renderItem={renderQuizCard}
+          keyExtractor={item => item._id}
+          contentContainerStyle={styles.listContent}
+          refreshControl={
+            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+          }
+          ListEmptyComponent={
+            <View style={styles.emptyContainer}>
+              <BookOpen color="#9CA3AF" size={64} />
+              <Text style={styles.emptyTitle}>
+                {activeTab === 'available' ? 'No Quizzes Available' : 'No Completed Quizzes'}
+              </Text>
+              <Text style={styles.emptySubtext}>
+                {activeTab === 'available' 
+                  ? 'New quizzes assigned to you will appear here'
+                  : 'Quizzes you complete will appear here'}
+              </Text>
             </View>
-
-            <View style={styles.modalContent}>
-              <TextInput
-                style={styles.input}
-                placeholder="Quiz Title"
-                value={newQuiz.title}
-                onChangeText={(text) => setNewQuiz({ ...newQuiz, title: text })}
-              />
-              <TextInput
-                style={styles.input}
-                placeholder="Subject"
-                value={newQuiz.subject}
-                onChangeText={(text) => setNewQuiz({ ...newQuiz, subject: text })}
-              />
-
-              <TouchableOpacity style={styles.addQuestionButton} onPress={addQuestion}>
-                <Text style={styles.addQuestionText}>+ Add Question</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity style={styles.createButton} onPress={createQuiz}>
-                <Text style={styles.createButtonText}>Create Quiz</Text>
-              </TouchableOpacity>
-            </View>
-          </SafeAreaView>
-        </Modal>
+          }
+        />
       )}
     </SafeAreaView>
+  );
+}
+
+export default function Quizzes() {
+  return (
+    <ErrorBoundary>
+      <QuizzesContent />
+    </ErrorBoundary>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: '#F3F4F6',
     paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
     padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    backgroundColor: '#2563EB',
   },
-  title: {
+  headerTitle: {
     fontSize: 24,
     fontWeight: 'bold',
-    color: '#000000',
+    color: '#FFF',
   },
-  addButton: {
-    backgroundColor: '#2563EB',
+  headerSubtitle: {
+    fontSize: 14,
+    color: '#BFDBFE',
+    marginTop: 4,
+  },
+  tabsContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#FFF',
+    padding: 8,
+    gap: 8,
+  },
+  tab: {
+    flex: 1,
+    padding: 12,
+    alignItems: 'center',
     borderRadius: 8,
-    padding: 10,
+    backgroundColor: '#F3F4F6',
   },
-  list: {
-    padding: 20,
-    gap: 15,
+  activeTab: {
+    backgroundColor: '#2563EB',
+  },
+  tabText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#6B7280',
+  },
+  activeTabText: {
+    color: '#FFF',
+  },
+  listContent: {
+    padding: 16,
+    paddingBottom: 100,
+  },
+  cardWrapper: {
+    marginBottom: 16,
   },
   quizCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F9FAFB',
-    borderRadius: 8,
-    padding: 15,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    backgroundColor: '#FFF',
+    borderRadius: 16,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
   },
-  quizInfo: {
-    marginLeft: 15,
-    flex: 1,
+  cardHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  testTypeBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  testTypeText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  statusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  statusText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
   quizTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#000000',
-  },
-  quizSubject: {
-    fontSize: 14,
-    color: '#2563EB',
-    marginTop: 2,
-    fontWeight: '500',
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1F2937',
+    marginBottom: 12,
   },
   quizMeta: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 16,
+    marginBottom: 12,
+  },
+  metaItem: {
+    flexDirection: 'row',
     alignItems: 'center',
-    marginTop: 8,
-    gap: 10,
+    gap: 4,
   },
-  quizDate: {
-    fontSize: 12,
+  metaText: {
+    fontSize: 13,
     color: '#6B7280',
   },
-  questionCount: {
-    fontSize: 12,
-    color: '#6B7280',
-  },
-  modalContainer: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
-  modalHeader: {
+  scoreContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#000000',
-  },
-  cancelText: {
-    color: '#EF4444',
-    fontSize: 16,
-  },
-  modalContent: {
-    flex: 1,
-    padding: 20,
-    gap: 15,
-  },
-  input: {
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    backgroundColor: '#F3F4F6',
+    padding: 12,
     borderRadius: 8,
-    padding: 15,
-    fontSize: 16,
-    backgroundColor: '#F9FAFB',
-    color: '#000000',
+    marginBottom: 12,
   },
-  addQuestionButton: {
-    borderWidth: 1,
-    borderColor: '#2563EB',
-    borderRadius: 8,
-    padding: 15,
+  scoreLabel: {
+    fontSize: 14,
+    color: '#6B7280',
+  },
+  scoreValue: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1F2937',
+  },
+  cardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#F8FAFC',
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
   },
-  addQuestionText: {
+  startText: {
+    fontSize: 14,
+    fontWeight: '600',
     color: '#2563EB',
-    fontSize: 16,
-    fontWeight: '600',
   },
-  createButton: {
-    backgroundColor: '#2563EB',
-    borderRadius: 8,
-    padding: 15,
+  skeletonContainer: {
+    padding: 16,
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 20,
+    padding: 20,
   },
-  createButtonText: {
-    color: '#FFFFFF',
+  errorText: {
     fontSize: 16,
+    color: '#EF4444',
+    textAlign: 'center',
+    marginTop: 16,
+    marginBottom: 16,
+  },
+  retryButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#2563EB',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  retryText: {
+    fontSize: 14,
     fontWeight: '600',
+    color: '#FFF',
+  },
+  emptyContainer: {
+    alignItems: 'center',
+    paddingVertical: 60,
+  },
+  emptyTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#6B7280',
+    marginTop: 16,
+  },
+  emptySubtext: {
+    fontSize: 14,
+    color: '#9CA3AF',
+    textAlign: 'center',
+    marginTop: 8,
+  },
+  adminHeader: {
+    padding: 20,
+    backgroundColor: '#2563EB',
+  },
+  adminTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#FFF',
+  },
+  adminSubtitle: {
+    fontSize: 14,
+    color: '#BFDBFE',
+    marginTop: 4,
+  },
+  adminButton: {
+    margin: 16,
+    backgroundColor: '#FFF',
+    borderRadius: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  adminButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 20,
+    gap: 16,
+  },
+  adminButtonText: {
+    flex: 1,
+  },
+  adminButtonTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1F2937',
+  },
+  adminButtonSubtitle: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginTop: 4,
   },
 });

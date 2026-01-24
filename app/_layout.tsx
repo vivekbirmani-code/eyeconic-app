@@ -7,6 +7,7 @@ import { useFrameworkReady } from '@/hooks/useFrameworkReady';
 import { AuthProvider } from '@/context/AuthContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { CallProvider, useCall } from '@/context/CallContext';
+import { QuizProvider } from '@/context/QuizContext';
 import FloatingCallBar from '@/components/FloatingCallBar';
 import IncomingCallScreen from '@/components/IncomingCallScreen';
 import PermissionsScreen from '@/components/PermissionsScreen';
@@ -119,6 +120,15 @@ function AppContent() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="chat/[id]" />
         <Stack.Screen name="call/[id]" />
+        <Stack.Screen name="quiz/[id]/instructions" />
+        <Stack.Screen name="quiz/[id]/taking" />
+        <Stack.Screen name="quiz/[id]/result/[attemptId]" />
+        <Stack.Screen name="quiz/[id]/review/[attemptId]" />
+        <Stack.Screen name="quiz/retest-requests" />
+        <Stack.Screen name="admin/quiz-hub" />
+        <Stack.Screen name="admin/question-bank" />
+        <Stack.Screen name="admin/create-quiz" />
+        <Stack.Screen name="admin/student-analytics" />
         <Stack.Screen name="+not-found" />
       </Stack>
     </View>
@@ -132,8 +142,10 @@ export default function RootLayout() {
     <AuthProvider>
       <NotificationProvider>
         <CallProvider>
-          <AppContent />
-          <StatusBar style="dark" backgroundColor="#FFFFFF" />
+          <QuizProvider>
+            <AppContent />
+            <StatusBar style="dark" backgroundColor="#FFFFFF" />
+          </QuizProvider>
         </CallProvider>
       </NotificationProvider>
     </AuthProvider>
