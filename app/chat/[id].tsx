@@ -27,7 +27,12 @@ import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
 import { getSocketURL } from '@/services/config';
 import { io, Socket } from 'socket.io-client';
+
 import { useNotifications } from '@/context/NotificationContext';
+import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
+import { Paperclip, FileText, Image as ImageIcon } from 'lucide-react-native';
+import { AttachmentViewer, AttachmentThumbnail } from '@/components/AttachmentViewer';
 
 interface Message {
   _id: string;
@@ -37,7 +42,16 @@ interface Message {
   status?: 'sent' | 'delivered' | 'read';
   isEdited?: boolean;
   editedAt?: string;
+
   deletedForEveryone?: boolean;
+  attachments?: Array<{
+    type: 'image' | 'video' | 'document';
+    url: string;
+    name: string;
+    size: number;
+    mimeType: string;
+    publicId: string;
+  }>;
 }
 
 interface User {
@@ -85,7 +99,14 @@ export default function ChatScreen() {
   const [isEditModalVisible, setIsEditModalVisible] = useState(false);
   const [editContent, setEditContent] = useState('');
   const [readByUsers, setReadByUsers] = useState<ReadByUser[]>([]);
+
   const [isLoadingReadBy, setIsLoadingReadBy] = useState(false);
+
+  // Attachment states
+  const [isAttachmentMenuVisible, setIsAttachmentMenuVisible] = useState(false);
+  const [isUploading, setIsUploading] = useState(false);
+  const [viewingAttachment, setViewingAttachment] = useState<any>(null);
+  const [isViewerVisible, setIsViewerVisible] = useState(false);
 
   useEffect(() => {
     if (groupId) {
@@ -269,6 +290,122 @@ export default function ChatScreen() {
     } catch (error) {
       Alert.alert('Error', 'Failed to send message');
       setNewMessage(messageContent);
+    }
+  };
+
+  const handlePickImage = async () => {
+    try {
+      setIsAttachmentMenuVisible(false);
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        quality: 0.8,
+      });
+
+      if (!result.canceled && result.assets[0]) {
+        uploadFile(result.assets[0], 'image');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to pick image');
+    }
+  };
+
+  const handlePickDocument = async () => {
+    try {
+      setIsAttachmentMenuVisible(false);
+      const result = await DocumentPicker.getDocumentAsync({
+        type: ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+        copyToCacheDirectory: true
+      });
+
+      if (!result.canceled && result.assets && result.assets[0]) {
+        // Read file as base64 (needed for our upload implementation)
+        // Note: Expo DocumentPicker doesn't return base64 by default.
+        // We might need to use FileSystem if uri is file://
+        // But for web/expo-go, let's try to fetch the blob or rely on our backend accepting multipart if we switch logic.
+        // Wait, my backend implementation expects 'req.file' which usually comes from Multipart form data.
+        // But in `question-bank` I used `import { api } from '@/services/api'`. 
+        // If `api` is axios instance, passing FormData works.
+        // I should switch upload logic to FormData for Documents to avoid base64 complexity with large files.
+        // My upload endpoint `upload.js` uses `multer`. It handles multipart perfectly.
+        
+        uploadFile(result.assets[0], 'document');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to pick document');
+    }
+  };
+
+  const uploadFile = async (file: any, type: 'image' | 'document') => {
+    setIsUploading(true);
+    try {
+      console.log('Preparing upload:', type, file.uri, file.mimeType);
+      
+      const formData = new FormData();
+      
+      const fileName = file.name || file.fileName || (type === 'image' ? 'image.jpg' : 'document.pdf');
+      
+      // Infer valid mimetype if missing
+      let mimeType = file.mimeType;
+      if (!mimeType) {
+        const ext = fileName.split('.').pop()?.toLowerCase();
+        if (ext === 'jpg' || ext === 'jpeg') mimeType = 'image/jpeg';
+        else if (ext === 'png') mimeType = 'image/png';
+        else if (ext === 'pdf') mimeType = 'application/pdf';
+        else if (ext === 'doc') mimeType = 'application/msword';
+        else if (ext === 'docx') mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+        else if (ext === 'xls') mimeType = 'application/vnd.ms-excel';
+        else if (ext === 'xlsx') mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+        else mimeType = type === 'image' ? 'image/jpeg' : 'application/octet-stream';
+      }
+
+      // Append file
+      formData.append('file', {
+        uri: Platform.OS === 'android' ? file.uri : file.uri.replace('file://', ''),
+        name: fileName,
+        type: mimeType
+      } as any);
+
+      console.log('FormData created with type:', mimeType);
+
+      // Use specific content-type header for multipart
+      const response = await api.post('/upload/chat', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        transformRequest: (data, headers) => {
+           // Axios on React Native needs this to not stringify FormData
+           return data; 
+        }
+      });
+
+      if (response.data.success) {
+        // Send message with attachment
+        const attachmentData = {
+          type: type,
+          url: response.data.url,
+          name: response.data.name,
+          size: response.data.size,
+          mimeType: response.data.mimeType,
+          publicId: response.data.public_id
+        };
+
+        await api.post('/messages', {
+          content: '', 
+          groupId,
+          attachments: [attachmentData]
+        });
+      }
+    } catch (error: any) {
+      console.error('Upload failed details:', error);
+      if (error.response) {
+         console.error('Response data:', error.response.data);
+         console.error('Response status:', error.response.status);
+      }
+      Alert.alert('Upload Failed', error?.response?.data?.message || 'Failed to upload file');
+    } finally {
+      setIsUploading(false);
+      // Refresh messages
+      fetchMessages(); 
     }
   };
 
@@ -470,6 +607,22 @@ export default function ChatScreen() {
         ]}>
           {item.content}
         </Text>
+        
+        {item.attachments && item.attachments.length > 0 && (
+          <View style={styles.attachmentsContainer}>
+            {item.attachments.map((att, index) => (
+              <AttachmentThumbnail 
+                key={index}
+                attachment={att as any}
+                onPress={() => {
+                  setViewingAttachment(att);
+                  setIsViewerVisible(true);
+                }}
+              />
+            ))}
+          </View>
+        )}
+        
         <View style={styles.messageFooter}>
           {item.isEdited && (
             <Text style={[
@@ -544,7 +697,20 @@ export default function ChatScreen() {
           />
         )}
 
+
+
         <View style={styles.inputContainer}>
+          <TouchableOpacity 
+            style={styles.attachButton} 
+            onPress={() => setIsAttachmentMenuVisible(true)}
+            disabled={isUploading}
+          >
+             {isUploading ? (
+               <View style={{ width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: '#6B7280', borderTopColor: 'transparent', opacity: 0.5 }} />
+             ) : (
+               <Paperclip color="#6B7280" size={20} />
+             )}
+          </TouchableOpacity>
           <TextInput
             style={styles.input}
             placeholder="Type a message..."
@@ -586,6 +752,8 @@ export default function ChatScreen() {
                 <Text style={styles.menuItemText}>Edit</Text>
               </TouchableOpacity>
             )}
+
+
 
             {/* Delete for me - Available to everyone */}
             <TouchableOpacity style={styles.menuItem} onPress={deleteForMe}>
@@ -685,7 +853,39 @@ export default function ChatScreen() {
             </View>
           </View>
         </KeyboardAvoidingView>
+
       </Modal>
+
+      {/* Attachment Menu Modal */}
+      <Modal visible={isAttachmentMenuVisible} transparent animationType="fade">
+        <Pressable 
+          style={styles.menuOverlay} 
+          onPress={() => setIsAttachmentMenuVisible(false)}
+        >
+          <View style={[styles.menuContainer, { bottom: 100, left: 20, width: 200 }]}>
+             <TouchableOpacity style={styles.menuItem} onPress={handlePickDocument}>
+                <FileText color="#374151" size={20} />
+                <Text style={styles.menuItemText}>Document</Text>
+             </TouchableOpacity>
+             <TouchableOpacity style={styles.menuItem} onPress={handlePickImage}>
+                <ImageIcon color="#374151" size={20} />
+                <Text style={styles.menuItemText}>Gallery</Text>
+             </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
+
+      {/* Attachment Viewer */}
+      {viewingAttachment && (
+        <AttachmentViewer 
+          attachment={viewingAttachment}
+          isVisible={isViewerVisible}
+          onClose={() => {
+            setIsViewerVisible(false);
+            setViewingAttachment(null);
+          }}
+        />
+      )}
 
       <>
         {/* Group Info Modal */}
@@ -1393,4 +1593,16 @@ const styles = StyleSheet.create({
     backgroundColor: '#01b4ae',
     borderColor: '#01b4ae',
   },
+  attachButton: {
+    padding: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  attachmentsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 4,
+  },
+
 });

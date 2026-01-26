@@ -49,9 +49,10 @@ router.get('/group/:groupId', auth, async (req, res) => {
 // Send message
 router.post('/', auth, async (req, res) => {
   try {
-    const { content, groupId } = req.body;
+    const { content, groupId, attachments } = req.body;
 
-    if (!content || !content.trim()) {
+    // Allow empty content ONLY if attachments are present
+    if ((!content || !content.trim()) && (!attachments || attachments.length === 0)) {
       return res.status(400).json({ message: 'Message content is required' });
     }
 
@@ -66,10 +67,11 @@ router.post('/', auth, async (req, res) => {
     }
 
     const message = new Message({
-      content,
+      content: content || '', // Ensure valid string if empty
       sender: req.user._id,
       group: groupId,
-      status: 'sent'
+      status: 'sent',
+      attachments: attachments || [] // Save attachments
     });
 
     await message.save();

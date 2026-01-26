@@ -17,8 +17,13 @@ const mentorStudentRoutes = require('./routes/mentor-students');
 const assignmentRoutes = require('./routes/assignments');
 const adminOverviewRoutes = require('./routes/admin-overview');
 const uploadRoutes = require('./routes/upload');
+const { cleanupExpiredMedia } = require('./utils/media-cleanup');
 const Call = require('./models/Call');
 const User = require('./models/User');
+
+// Schedule media cleanup (run once on start, then daily)
+cleanupExpiredMedia(); // Run immediately on startup
+setInterval(cleanupExpiredMedia, 24 * 60 * 60 * 1000); // Run every 24 hours
 
 // Send push notification using Expo's push service
 async function sendPushNotification(expoPushToken, title, body, data = {}) {

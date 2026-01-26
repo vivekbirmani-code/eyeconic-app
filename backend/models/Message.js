@@ -25,6 +25,18 @@ const messageSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Call'
   },
+  attachments: [{
+    type: {
+      type: String,
+      enum: ['image', 'video', 'document'],
+      required: true
+    },
+    url: { type: String, required: true },
+    publicId: { type: String, required: true },
+    name: String,
+    size: Number,
+    mimeType: String
+  }],
   // Message status tracking
   status: {
     type: String,
