@@ -7,8 +7,11 @@ const PRODUCTION_URL = 'https://eyeconic-app.onrender.com';
 // Get the base URL for API calls
 export const getApiBaseURL = () => {
     // For production builds (APK), use the production URL
+    // TEMPORARY: Using local IP to test new Admin Overview features in APK
     if (!__DEV__) {
-        return `${PRODUCTION_URL}/api`;
+        return 'http://192.168.0.194:3000/api';
+        // return `${PRODUCTION_URL}/api`;
+        // return `${PRODUCTION_URL}/api`;
     }
 
     // Development mode
@@ -30,8 +33,11 @@ export const getApiBaseURL = () => {
 // Get the socket URL for real-time connections
 export const getSocketURL = () => {
     // For production builds (APK), use the production URL
+    // TEMPORARY: Using local IP to test new Admin Overview features in APK
     if (!__DEV__) {
-        return PRODUCTION_URL;
+        return 'http://192.168.0.194:3000';
+        // return PRODUCTION_URL;
+        // return PRODUCTION_URL;
     }
 
     // Development mode
