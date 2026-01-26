@@ -12,6 +12,24 @@ const router = express.Router();
 // Configure multer for file upload
 const upload = multer({ storage: multer.memoryStorage() });
 
+// Helper to convert Google Drive share links to direct download links
+const convertDriveToDirectLink = (url) => {
+    if (!url) return undefined;
+    const strUrl = url.toString().trim();
+    if (!strUrl) return undefined;
+
+    // Check if it's a Google Drive link
+    if (strUrl.includes('drive.google.com')) {
+        // Try to find the file ID
+        // Patterns: /file/d/FILE_ID/view, /open?id=FILE_ID, /uc?id=FILE_ID
+        const idMatch = strUrl.match(/[-\w]{25,}/);
+        if (idMatch) {
+            return `https://drive.google.com/uc?export=view&id=${idMatch[0]}`;
+        }
+    }
+    return strUrl;
+};
+
 // Get all questions (with filters)
 router.get('/', auth, async (req, res) => {
     try {
@@ -166,16 +184,25 @@ router.post('/bulk-import', auth, authorize('admin'), upload.single('file'), asy
                     correctAnswer = 0; // Default to first option
                 }
 
+                // Get option images
+                const oImage1 = convertDriveToDirectLink(row.O_IMAGE_1 || row.o_image_1 || row.OPTION1_IMAGE || row['OPTION 1 IMAGE']);
+                const oImage2 = convertDriveToDirectLink(row.O_IMAGE_2 || row.o_image_2 || row.OPTION2_IMAGE || row['OPTION 2 IMAGE']);
+                const oImage3 = convertDriveToDirectLink(row.O_IMAGE_3 || row.o_image_3 || row.OPTION3_IMAGE || row['OPTION 3 IMAGE']);
+                const oImage4 = convertDriveToDirectLink(row.O_IMAGE_4 || row.o_image_4 || row.OPTION4_IMAGE || row['OPTION 4 IMAGE']);
+
                 const questionData = {
                     qid: (row.QID || row.qid || '').toString().trim() || undefined,
                     subject: subjectId,
                     topicName: (row.TOPIC || row.topic || row.TAG || '').toString().trim(),
                     question: questionText,
-                    questionImage: (row.Q_IMAGE || row.q_image || '').toString().trim() || undefined,
+                    questionImage: convertDriveToDirectLink(row.Q_IMAGE || row.q_image || ''),
                     options: [option1, option2, option3 || '', option4 || ''].filter(o => o),
+                    optionImages: [oImage1, oImage2, oImage3, oImage4].filter(o => o).length > 0
+                        ? [oImage1 || '', oImage2 || '', oImage3 || '', oImage4 || '']
+                        : [],
                     correctAnswer: correctAnswer,
                     explanation: (row.EXPLANATION || row.explanation || row.EXPLAINATION || '').toString().trim(),
-                    explanationImage: (row.EX_IMAGE || row.ex_image || '').toString().trim() || undefined,
+                    explanationImage: convertDriveToDirectLink(row.EX_IMAGE || row.ex_image || ''),
                     marks: parseInt(row.MARKS || row.marks || '1') || 1,
                     marrowCode: (row.MARROW_CODE || row['MARROW CODE'] || '').toString().trim() || undefined,
                     source: (row.SOURCE || row.source || '').toString().trim() || undefined,
@@ -330,15 +357,25 @@ router.post('/bulk-import-base64', auth, authorize('admin'), async (req, res) =>
                     if (numVal >= 1 && numVal <= 4) correctAnswer = numVal - 1;
                 }
 
+                // Get option images
+                const oImage1 = convertDriveToDirectLink(row.O_IMAGE_1 || row.o_image_1 || row.OPTION1_IMAGE || row['OPTION 1 IMAGE']);
+                const oImage2 = convertDriveToDirectLink(row.O_IMAGE_2 || row.o_image_2 || row.OPTION2_IMAGE || row['OPTION 2 IMAGE']);
+                const oImage3 = convertDriveToDirectLink(row.O_IMAGE_3 || row.o_image_3 || row.OPTION3_IMAGE || row['OPTION 3 IMAGE']);
+                const oImage4 = convertDriveToDirectLink(row.O_IMAGE_4 || row.o_image_4 || row.OPTION4_IMAGE || row['OPTION 4 IMAGE']);
+
                 const questionData = {
                     qid: (row.QID || row.qid || row.ID || '').toString().trim() || undefined,
                     subject: subjectId,
                     topicName: (row.TOPIC || row.topic || row.TAG || row.CHAPTER || '').toString().trim(),
                     question: questionText,
-                    questionImage: (row.Q_IMAGE || row.q_image || row.IMAGE || '').toString().trim() || undefined,
+                    questionImage: convertDriveToDirectLink(row.Q_IMAGE || row.q_image || row.IMAGE || ''),
                     options: [option1, option2, option3, option4].filter(o => o),
+                    optionImages: [oImage1, oImage2, oImage3, oImage4].filter(o => o).length > 0
+                        ? [oImage1 || '', oImage2 || '', oImage3 || '', oImage4 || '']
+                        : [],
                     correctAnswer: correctAnswer,
                     explanation: (row.EXPLANATION || row.explanation || row.EXPLAINATION || row.REASON || '').toString().trim(),
+                    explanationImage: convertDriveToDirectLink(row.EX_IMAGE || row.ex_image || ''),
                     marks: parseInt(row.MARKS || row.marks || '1') || 1,
                     marrowCode: (row.MARROW_CODE || row['MARROW CODE'] || row.MARROW || '').toString().trim() || undefined,
                     source: (row.SOURCE || row.source || '').toString().trim() || undefined,
