@@ -394,6 +394,47 @@ router.post('/bulk-import-base64', auth, authorize('admin'), async (req, res) =>
     }
 });
 
+// Get questions by multiple subjects (for quiz creation - manual selection)
+router.get('/by-subjects', auth, authorize('admin'), async (req, res) => {
+    try {
+        let { subjects, search } = req.query;
+
+        if (!subjects) {
+            return res.status(400).json({ message: 'Subjects parameter is required' });
+        }
+
+        // Convert to array if single value
+        const subjectIds = Array.isArray(subjects) ? subjects : [subjects];
+
+        const mongoose = require('mongoose');
+        const objectIdSubjects = subjectIds.map(id => new mongoose.Types.ObjectId(id));
+
+        const filter = {
+            isActive: true,
+            subject: { $in: objectIdSubjects }
+        };
+
+        if (search) {
+            filter.$or = [
+                { question: { $regex: search, $options: 'i' } },
+                { qid: { $regex: search, $options: 'i' } },
+                { topicName: { $regex: search, $options: 'i' } }
+            ];
+        }
+
+        const questions = await QuestionBank.find(filter)
+            .populate('subject', 'name')
+            .select('_id qid question subject topicName options marks')
+            .sort({ subject: 1, createdAt: -1 })
+            .limit(500);
+
+        res.json(questions);
+    } catch (error) {
+        console.error('Error fetching questions by subjects:', error);
+        res.status(500).json({ message: 'Server error', error: error.message });
+    }
+});
+
 // Get statistics - MUST be before /:id routes
 router.get('/stats/summary', auth, async (req, res) => {
     try {

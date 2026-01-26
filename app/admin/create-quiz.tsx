@@ -38,6 +38,16 @@ interface Student {
   subjects?: Subject[];
 }
 
+interface Question {
+  _id: string;
+  qid?: string;
+  question: string;
+  subject: { _id: string; name: string };
+  topicName?: string;
+  options: string[];
+  marks?: number;
+}
+
 type TestType = 'daily' | 'weekly' | 'grand';
 
 export default function CreateQuiz() {
@@ -60,7 +70,15 @@ export default function CreateQuiz() {
   const [duration, setDuration] = useState('30');
   const [availableQuestions, setAvailableQuestions] = useState(0);
 
-  // Step 3: Student Selection
+  // Step 3: Question Selection (NEW)
+  const [availableQuestionsList, setAvailableQuestionsList] = useState<Question[]>([]);
+  const [filteredQuestions, setFilteredQuestions] = useState<Question[]>([]);
+  const [selectedQuestions, setSelectedQuestions] = useState<string[]>([]);
+  const [questionSearch, setQuestionSearch] = useState('');
+  const [questionSubjectFilter, setQuestionSubjectFilter] = useState('');
+  const [loadingQuestions, setLoadingQuestions] = useState(false);
+
+  // Step 4: Student Selection
   const [students, setStudents] = useState<Student[]>([]);
   const [filteredStudents, setFilteredStudents] = useState<Student[]>([]);
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
@@ -88,6 +106,33 @@ export default function CreateQuiz() {
       generateTitle();
     }
   }, [selectedSubjects, testType]);
+
+  // Fetch questions when entering step 3
+  useEffect(() => {
+    if (step === 3 && selectedSubjects.length > 0 && availableQuestionsList.length === 0) {
+      fetchQuestions();
+    }
+  }, [step, selectedSubjects]);
+
+  // Filter questions by search and subject filter
+  useEffect(() => {
+    let filtered = availableQuestionsList;
+    
+    const query = questionSearch.toLowerCase();
+    if (query) {
+      filtered = filtered.filter(q => 
+        q.question.toLowerCase().includes(query) || 
+        q.qid?.toLowerCase().includes(query) ||
+        q.topicName?.toLowerCase().includes(query)
+      );
+    }
+    
+    if (questionSubjectFilter) {
+      filtered = filtered.filter(q => q.subject._id === questionSubjectFilter);
+    }
+    
+    setFilteredQuestions(filtered);
+  }, [questionSearch, availableQuestionsList, questionSubjectFilter]);
 
   useEffect(() => {
     // Filter students by search query and subject
@@ -153,6 +198,28 @@ export default function CreateQuiz() {
     }
   };
 
+  const fetchQuestions = async () => {
+    if (selectedSubjects.length === 0) return;
+    
+    setLoadingQuestions(true);
+    try {
+      const params = new URLSearchParams();
+      selectedSubjects.forEach(id => params.append('subjects', id));
+      
+      const response = await api.get(`/question-bank/by-subjects?${params}`);
+      const questions = Array.isArray(response.data) ? response.data : [];
+      setAvailableQuestionsList(questions);
+      setFilteredQuestions(questions);
+    } catch (error) {
+      console.error('Error fetching questions:', error);
+      setAvailableQuestionsList([]);
+      setFilteredQuestions([]);
+    } finally {
+      setLoadingQuestions(false);
+    }
+  };
+
+
   const toggleSubject = (subjectId: string) => {
     if (selectedSubjects.includes(subjectId)) {
       setSelectedSubjects(selectedSubjects.filter(id => id !== subjectId));
@@ -188,6 +255,22 @@ export default function CreateQuiz() {
     }
   };
 
+  const toggleQuestion = (questionId: string) => {
+    if (selectedQuestions.includes(questionId)) {
+      setSelectedQuestions(selectedQuestions.filter(id => id !== questionId));
+    } else {
+      setSelectedQuestions([...selectedQuestions, questionId]);
+    }
+  };
+
+  const handleSelectAllQuestions = () => {
+    if (selectedQuestions.length === filteredQuestions.length) {
+      setSelectedQuestions([]);
+    } else {
+      setSelectedQuestions(filteredQuestions.map(q => q._id));
+    }
+  };
+
   const handleCreateQuiz = async () => {
     if (selectedSubjects.length === 0) {
       Alert.alert('Error', 'Please select at least one subject');
@@ -197,8 +280,8 @@ export default function CreateQuiz() {
       Alert.alert('Error', 'Please enter a title');
       return;
     }
-    if (parseInt(numberOfQuestions) > availableQuestions) {
-      Alert.alert('Error', `Only ${availableQuestions} questions available for selected subjects`);
+    if (selectedQuestions.length === 0) {
+      Alert.alert('Error', 'Please select at least one question');
       return;
     }
     if (selectedStudents.length === 0) {
@@ -212,7 +295,8 @@ export default function CreateQuiz() {
         title: title.trim(),
         subjects: selectedSubjects,
         testType,
-        numberOfQuestions: parseInt(numberOfQuestions),
+        numberOfQuestions: selectedQuestions.length,
+        selectedQuestionIds: selectedQuestions,
         duration: parseInt(duration),
         instructions: instructions.split('\n').filter(i => i.trim()),
         assignedStudents: selectedStudents
@@ -336,29 +420,14 @@ export default function CreateQuiz() {
         placeholder="Enter quiz title"
       />
 
-      <View style={styles.row}>
-        <View style={styles.halfInput}>
-          <Text style={styles.inputLabel}>Questions</Text>
-          <TextInput
-            style={styles.input}
-            value={numberOfQuestions}
-            onChangeText={setNumberOfQuestions}
-            keyboardType="numeric"
-            placeholder="10"
-          />
-          <Text style={styles.helperText}>Max: {availableQuestions}</Text>
-        </View>
-        <View style={styles.halfInput}>
-          <Text style={styles.inputLabel}>Duration (min)</Text>
-          <TextInput
-            style={styles.input}
-            value={duration}
-            onChangeText={setDuration}
-            keyboardType="numeric"
-            placeholder="30"
-          />
-        </View>
-      </View>
+      <Text style={styles.inputLabel}>Duration (minutes)</Text>
+      <TextInput
+        style={styles.input}
+        value={duration}
+        onChangeText={setDuration}
+        keyboardType="numeric"
+        placeholder="30"
+      />
 
       <Text style={styles.inputLabel}>Instructions</Text>
       <TextInput
@@ -368,11 +437,108 @@ export default function CreateQuiz() {
         multiline
         placeholder="Enter instructions (one per line)"
       />
+
+      <View style={styles.infoBox}>
+        <Text style={styles.infoText}>
+          📚 {availableQuestions} questions available from {selectedSubjects.length} subject(s)
+        </Text>
+      </View>
     </View>
   );
 
-  // Step 3 - No FlatList, use map with ScrollView handled by parent
+  // Step 3 - Question Selection
   const renderStep3 = () => (
+    <View style={styles.stepContent}>
+      <Text style={styles.stepTitle}>Select Questions</Text>
+      
+      <View style={styles.selectionHeader}>
+        <Text style={styles.selectionCount}>
+          {selectedQuestions.length} questions selected
+        </Text>
+        <TouchableOpacity onPress={handleSelectAllQuestions}>
+          <Text style={styles.selectAllText}>
+            {selectedQuestions.length === filteredQuestions.length ? 'Deselect All' : 'Select All'}
+          </Text>
+        </TouchableOpacity>
+      </View>
+
+      <View style={styles.searchInput}>
+        <Search color="#6B7280" size={20} />
+        <TextInput
+          style={styles.searchTextInput}
+          placeholder="Search questions..."
+          value={questionSearch}
+          onChangeText={setQuestionSearch}
+        />
+        {questionSearch.length > 0 && (
+          <TouchableOpacity onPress={() => setQuestionSearch('')}>
+            <X color="#6B7280" size={18} />
+          </TouchableOpacity>
+        )}
+      </View>
+
+      {/* Subject filter for questions - only show selected subjects */}
+      <View style={styles.filterRow}>
+        <Text style={styles.filterLabel}>Filter by subject:</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <TouchableOpacity
+            style={[styles.filterChip, !questionSubjectFilter && styles.filterChipActive]}
+            onPress={() => setQuestionSubjectFilter('')}
+          >
+            <Text style={[styles.filterChipText, !questionSubjectFilter && styles.filterChipTextActive]}>All</Text>
+          </TouchableOpacity>
+          {subjects.filter(sub => selectedSubjects.includes(sub._id)).map(sub => (
+            <TouchableOpacity
+              key={sub._id}
+              style={[styles.filterChip, questionSubjectFilter === sub._id && styles.filterChipActive]}
+              onPress={() => setQuestionSubjectFilter(sub._id)}
+            >
+              <Text style={[styles.filterChipText, questionSubjectFilter === sub._id && styles.filterChipTextActive]}>
+                {sub.name}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
+      {/* Question list */}
+      <View style={styles.studentList}>
+        {loadingQuestions ? (
+          <ActivityIndicator color="#2563EB" style={{ marginTop: 20 }} />
+        ) : filteredQuestions.length === 0 ? (
+          <Text style={styles.emptyText}>No questions found</Text>
+        ) : (
+          filteredQuestions.map(item => (
+            <TouchableOpacity
+              key={item._id}
+              style={[
+                styles.questionItem,
+                selectedQuestions.includes(item._id) && styles.questionItemSelected
+              ]}
+              onPress={() => toggleQuestion(item._id)}
+            >
+              <View style={[
+                styles.checkbox,
+                selectedQuestions.includes(item._id) && styles.checkboxSelected
+              ]}>
+                {selectedQuestions.includes(item._id) && <Check color="#FFF" size={14} />}
+              </View>
+              <View style={styles.questionInfo}>
+                <Text style={styles.questionText} numberOfLines={2}>{item.question}</Text>
+                <View style={styles.questionMeta}>
+                  <Text style={styles.questionSubject}>{item.subject?.name}</Text>
+                  {item.topicName && <Text style={styles.questionTopic}> • {item.topicName}</Text>}
+                </View>
+              </View>
+            </TouchableOpacity>
+          ))
+        )}
+      </View>
+    </View>
+  );
+
+  // Step 4 - Student Selection
+  const renderStep4 = () => (
     <View style={styles.stepContent}>
       <Text style={styles.stepTitle}>Assign Students</Text>
       
@@ -473,7 +639,7 @@ export default function CreateQuiz() {
 
       {/* Progress Steps */}
       <View style={styles.progressContainer}>
-        {[1, 2, 3].map(s => (
+        {[1, 2, 3, 4].map(s => (
           <View key={s} style={styles.progressStep}>
             <View style={[
               styles.progressCircle,
@@ -487,7 +653,7 @@ export default function CreateQuiz() {
               </Text>
             </View>
             <Text style={styles.progressLabel}>
-              {s === 1 ? 'Type' : s === 2 ? 'Settings' : 'Students'}
+              {s === 1 ? 'Type' : s === 2 ? 'Settings' : s === 3 ? 'Questions' : 'Students'}
             </Text>
           </View>
         ))}
@@ -502,6 +668,7 @@ export default function CreateQuiz() {
         {step === 1 && renderStep1()}
         {step === 2 && renderStep2()}
         {step === 3 && renderStep3()}
+        {step === 4 && renderStep4()}
       </ScrollView>
 
       {/* Bottom Navigation */}
@@ -515,11 +682,18 @@ export default function CreateQuiz() {
           </TouchableOpacity>
         )}
         
-        {step < 3 ? (
+        {step < 4 ? (
           <TouchableOpacity
-            style={[styles.nextButton, selectedSubjects.length === 0 && styles.buttonDisabled]}
-            onPress={() => selectedSubjects.length > 0 && setStep(step + 1)}
-            disabled={selectedSubjects.length === 0}
+            style={[styles.nextButton, 
+              (step === 1 && selectedSubjects.length === 0) && styles.buttonDisabled,
+              (step === 3 && selectedQuestions.length === 0) && styles.buttonDisabled
+            ]}
+            onPress={() => {
+              if (step === 1 && selectedSubjects.length === 0) return;
+              if (step === 3 && selectedQuestions.length === 0) return;
+              setStep(step + 1);
+            }}
+            disabled={(step === 1 && selectedSubjects.length === 0) || (step === 3 && selectedQuestions.length === 0)}
           >
             <Text style={styles.nextButtonText}>Next</Text>
           </TouchableOpacity>
@@ -888,5 +1062,42 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: {
     opacity: 0.5,
+  },
+  questionItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: '#FFF',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 8,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  questionItemSelected: {
+    backgroundColor: '#EBF5FF',
+    borderColor: '#2563EB',
+  },
+  questionInfo: {
+    flex: 1,
+  },
+  questionText: {
+    fontSize: 14,
+    color: '#1F2937',
+    lineHeight: 20,
+  },
+  questionMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 6,
+  },
+  questionSubject: {
+    fontSize: 12,
+    color: '#2563EB',
+    fontWeight: '500',
+  },
+  questionTopic: {
+    fontSize: 12,
+    color: '#6B7280',
   },
 });

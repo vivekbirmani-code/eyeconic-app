@@ -9,12 +9,16 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
-  StatusBar
+  StatusBar,
+  Dimensions
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { CheckCircle, XCircle, ChevronLeft, ChevronRight } from 'lucide-react-native';
+import { CheckCircle, XCircle, ChevronLeft, ChevronRight, Clock, Award, BarChart2 } from 'lucide-react-native';
+import Svg, { Circle, G, Text as SvgText, Rect } from 'react-native-svg';
 import { api } from '@/services/api';
 import { SectionTabs } from '@/components/SectionTabs';
+
+const SCREEN_WIDTH = Dimensions.get('window').width;
 
 interface QuestionResult {
   questionIndex: number;
@@ -50,7 +54,7 @@ export default function QuizReview() {
   const [reviewData, setReviewData] = useState<ReviewData | null>(null);
   const [loading, setLoading] = useState(true);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [currentSection, setCurrentSection] = useState<string>('All');
+  const [currentSection, setCurrentSection] = useState<string>('Overview');
 
   useEffect(() => {
     fetchReviewData();
@@ -59,8 +63,23 @@ export default function QuizReview() {
   const fetchReviewData = async () => {
     try {
       const response = await api.get(`/quizzes/${id}/attempt/${attemptId}/results`);
-      setReviewData(response.data);
+      const data = response.data;
+      
+      // Map backend response to frontend interface
+      if (data.questions) {
+        data.detailedResults = data.questions.map((q: any) => ({
+          ...q,
+          questionIndex: data.questions.indexOf(q),
+          section: q.topicName || 'General',
+          selectedAnswer: q.userAnswer,
+          // Ensure options is an array
+          options: Array.isArray(q.options) ? q.options : []
+        }));
+      }
+      
+      setReviewData(data);
     } catch (error: any) {
+      console.error('Fetch review error:', error);
       Alert.alert('Error', 'Failed to load review data');
       router.back();
     } finally {
@@ -84,17 +103,40 @@ export default function QuizReview() {
     );
   }
 
-  const sections = Array.from(new Set(reviewData.detailedResults.map(q => q.section)));
-  const filteredQuestions = currentSection === 'All'
-    ? reviewData.detailedResults
+  // Add Overview to sections
+  const sections = ['Overview', ...Array.from(new Set(reviewData.detailedResults.map(q => q.section)))];
+  
+  // Filter questions logic (only used when not in Overview)
+  const filteredQuestions = currentSection === 'Overview' 
+    ? reviewData.detailedResults 
     : reviewData.detailedResults.filter(q => q.section === currentSection);
 
   const currentQuestion = filteredQuestions[currentQuestionIndex];
   
   const questionCounts = sections.reduce((acc, section) => {
+    if (section === 'Overview') return acc;
     acc[section] = reviewData.detailedResults.filter(q => q.section === section).length;
     return acc;
   }, {} as { [key: string]: number });
+
+  // Analytics Calculations
+  const totalQuestions = reviewData.quiz.totalQuestions || reviewData.detailedResults.length || 0;
+  const correctCount = reviewData.detailedResults.filter(q => q.isCorrect).length;
+  const wrongCount = reviewData.detailedResults.filter(q => !q.isCorrect && q.selectedAnswer !== -1).length;
+  const skippedCount = Math.max(0, totalQuestions - correctCount - wrongCount);
+  const accuracy = totalQuestions > 0 ? Math.round((correctCount / totalQuestions) * 100) : 0;
+  
+  // Section performance for graph
+  const sectionPerformance = Array.from(new Set(reviewData.detailedResults.map(q => q.section))).map(section => {
+    const sectionQs = reviewData.detailedResults.filter(q => q.section === section);
+    const correct = sectionQs.filter(q => q.isCorrect).length;
+    return {
+      name: section,
+      total: sectionQs.length,
+      correct,
+      percentage: (correct / sectionQs.length) * 100
+    };
+  });
 
   const handleNext = () => {
     if (currentQuestionIndex < filteredQuestions.length - 1) {
@@ -113,29 +155,145 @@ export default function QuizReview() {
     setCurrentQuestionIndex(0);
   };
 
-  return (
-    <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <View style={styles.headerLeft}>
-          <Text style={styles.title}>{reviewData.quiz.title}</Text>
-          <Text style={styles.subtitle}>Solutions & Explanations</Text>
-        </View>
-        <View style={styles.scoreContainer}>
-          <Text style={styles.scoreText}>{reviewData.score}/{reviewData.quiz.totalQuestions}</Text>
-          <Text style={styles.scoreLabel}>Score</Text>
-        </View>
-      </View>
+  const renderOverview = () => {
+    const pieData = [
+      { key: 'correct', count: correctCount, color: '#10B981', label: 'Correct' },
+      { key: 'wrong', count: wrongCount, color: '#EF4444', label: 'Wrong' },
+      { key: 'skipped', count: skippedCount, color: '#F59E0B', label: 'Skipped' }
+    ];
 
-      {/* Section Tabs */}
-      <SectionTabs
-        sections={sections}
-        currentSection={currentSection}
-        onSectionChange={handleSectionChange}
-        questionCounts={questionCounts}
-      />
+    const total = pieData.reduce((acc, item) => acc + item.count, 0);
+    let startAngle = 0;
 
-      {/* Question Review */}
+    return (
+      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
+        <View style={styles.overviewContainer}>
+          {/* Score Summary Card */}
+          <View style={styles.summaryCard}>
+            <View style={styles.summaryRow}>
+              <View style={styles.summaryItem}>
+                <Award color="#2563EB" size={24} />
+                <View>
+                  <Text style={styles.summaryLabel}>Score</Text>
+                  <Text style={styles.summaryValue}>{reviewData.score}/{reviewData.quiz.totalMarks}</Text>
+                </View>
+              </View>
+              <View style={styles.divider} />
+              <View style={styles.summaryItem}>
+                <BarChart2 color="#10B981" size={24} />
+                <View>
+                  <Text style={styles.summaryLabel}>Accuracy</Text>
+                  <Text style={styles.summaryValue}>{accuracy}%</Text>
+                </View>
+              </View>
+            </View>
+          </View>
+
+          {/* Performance Pie Chart */}
+          <View style={styles.chartCard}>
+            <Text style={styles.chartTitle}>Overall Performance</Text>
+            <View style={styles.pieContainer}>
+              <Svg height="200" width="200" viewBox="0 0 200 200">
+                <G rotation="-90" origin="100, 100">
+                  {pieData.map((slice, index) => {
+                    const percentage = total === 0 ? 0 : slice.count / total;
+                    const strokeDasharray = 2 * Math.PI * 90; // Radius 90
+                    const strokeDashoffset = strokeDasharray * (1 - percentage);
+                    const angle = startAngle;
+                    startAngle += percentage * 360;
+
+                    if (percentage === 0) return null;
+
+                    return (
+                      <Circle
+                        key={slice.key}
+                        cx="100"
+                        cy="100"
+                        r="90"
+                        stroke={slice.color}
+                        strokeWidth="20"
+                        fill="transparent"
+                        strokeDasharray={strokeDasharray}
+                        strokeDashoffset={strokeDashoffset}
+                        rotation={angle}
+                        origin="100, 100"
+                      />
+                    );
+                  })}
+                  {/* Fallback circle if no data */}
+                  {total === 0 && (
+                    <Circle cx="100" cy="100" r="90" stroke="#E5E7EB" strokeWidth="20" fill="transparent" />
+                  )}
+                  <Circle cx="100" cy="100" r="70" fill="white" />
+                </G>
+                <SvgText
+                  x="100"
+                  y="95"
+                  fill="#1F2937"
+                  textAnchor="middle"
+                  fontWeight="bold"
+                  fontSize="24"
+                >
+                  {reviewData.score}
+                </SvgText>
+                <SvgText
+                  x="100"
+                  y="120"
+                  fill="#6B7280"
+                  textAnchor="middle"
+                  fontSize="14"
+                >
+                  Marks
+                </SvgText>
+              </Svg>
+              
+              {/* Legend */}
+              <View style={styles.legendContainer}>
+                {pieData.map(item => (
+                  <View key={item.key} style={styles.legendItem}>
+                    <View style={[styles.legendDot, { backgroundColor: item.color }]} />
+                    <Text style={styles.legendText}>{item.label} ({item.count})</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          </View>
+
+          {/* Section Performance Bar Chart */}
+          <View style={styles.chartCard}>
+            <Text style={styles.chartTitle}>Section Analysis</Text>
+            <View style={styles.barChartContainer}>
+              {sectionPerformance.map((section, index) => (
+                <View key={index} style={styles.barRow}>
+                  <View style={styles.barLabelContainer}>
+                    <Text style={styles.barLabel} numberOfLines={1}>{section.name}</Text>
+                    <Text style={styles.barSubLabel}>{section.correct}/{section.total}</Text>
+                  </View>
+                  <View style={styles.barTrack}>
+                    <View 
+                      style={[
+                        styles.barFill, 
+                        { 
+                          width: `${section.percentage}%`,
+                          backgroundColor: section.percentage > 70 ? '#10B981' : section.percentage > 40 ? '#F59E0B' : '#EF4444'
+                        }
+                      ]} 
+                    />
+                  </View>
+                  <Text style={styles.barValue}>{Math.round(section.percentage)}%</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+          
+          <View style={{ height: 20 }} />
+        </View>
+      </ScrollView>
+    );
+  };
+
+  const renderQuestionReview = () => (
+    <>
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         <View style={styles.questionContainer}>
           {/* Question Header */}
@@ -304,6 +462,33 @@ export default function QuizReview() {
           />
         </TouchableOpacity>
       </View>
+    </>
+  );
+
+  return (
+    <SafeAreaView style={styles.container}>
+      {/* Header */}
+      <View style={styles.header}>
+        <View style={styles.headerLeft}>
+          <Text style={styles.title}>{reviewData.quiz.title}</Text>
+          <Text style={styles.subtitle}>Solutions & Explanations</Text>
+        </View>
+        <View style={styles.scoreContainer}>
+          <Text style={styles.scoreText}>{reviewData.score}/{reviewData.quiz.totalQuestions}</Text>
+          <Text style={styles.scoreLabel}>Score</Text>
+        </View>
+      </View>
+
+      {/* Section Tabs */}
+      <SectionTabs
+        sections={sections}
+        currentSection={currentSection}
+        onSectionChange={handleSectionChange}
+        questionCounts={questionCounts}
+      />
+
+      {/* Conditional Rendering */}
+      {currentSection === 'Overview' ? renderOverview() : renderQuestionReview()}
     </SafeAreaView>
   );
 }
@@ -354,6 +539,123 @@ const styles = StyleSheet.create({
   },
   scrollView: {
     flex: 1,
+  },
+  overviewContainer: {
+    padding: 16,
+    gap: 16,
+  },
+  summaryCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+  },
+  summaryItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  summaryLabel: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  summaryValue: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#1F2937',
+  },
+  divider: {
+    width: 1,
+    height: 40,
+    backgroundColor: '#E5E7EB',
+  },
+  chartCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  chartTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#1F2937',
+    marginBottom: 16,
+  },
+  pieContainer: {
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  legendContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 16,
+    marginTop: 20,
+  },
+  legendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  legendDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  legendText: {
+    fontSize: 14,
+    color: '#4B5563',
+  },
+  barChartContainer: {
+    gap: 12,
+  },
+  barRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  barLabelContainer: {
+    width: 80,
+  },
+  barLabel: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#374151',
+  },
+  barSubLabel: {
+    fontSize: 11,
+    color: '#6B7280',
+  },
+  barTrack: {
+    flex: 1,
+    height: 8,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  barFill: {
+    height: '100%',
+    borderRadius: 4,
+  },
+  barValue: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#374151',
+    width: 40,
+    textAlign: 'right',
   },
   questionContainer: {
     padding: 20,

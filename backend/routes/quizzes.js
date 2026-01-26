@@ -78,34 +78,48 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
       numberOfQuestions,
       duration,
       instructions,
-      assignedStudents
+      assignedStudents,
+      selectedQuestionIds  // NEW: optional array of specific question IDs for manual selection
     } = req.body;
 
-    console.log('Creating quiz from bank:', { title, subject, subjects, testType, numberOfQuestions });
+    console.log('Creating quiz from bank:', { title, subject, subjects, testType, numberOfQuestions, selectedQuestionIds: selectedQuestionIds?.length });
 
     const mongoose = require('mongoose');
 
     // Support both single subject and multiple subjects
     const subjectIds = subjects || (Array.isArray(subject) ? subject : [subject]);
-    const questionsPerSubject = Math.ceil(parseInt(numberOfQuestions) / subjectIds.length);
 
-    let allQuestions = [];
+    let questions;
 
-    // Get questions from each subject
-    for (const subjectId of subjectIds) {
-      try {
-        const subjectQuestions = await QuestionBank.aggregate([
-          { $match: { subject: new mongoose.Types.ObjectId(subjectId), isActive: true } },
-          { $sample: { size: questionsPerSubject } }
-        ]);
-        allQuestions = allQuestions.concat(subjectQuestions);
-      } catch (err) {
-        console.error(`Error fetching questions for subject ${subjectId}:`, err);
+    if (selectedQuestionIds && selectedQuestionIds.length > 0) {
+      // Use manually selected questions
+      questions = await QuestionBank.find({
+        _id: { $in: selectedQuestionIds },
+        isActive: true
+      });
+      console.log(`Using ${questions.length} manually selected questions`);
+    } else {
+      // Fall back to random sampling (existing logic)
+      const questionsPerSubject = Math.ceil(parseInt(numberOfQuestions) / subjectIds.length);
+
+      let allQuestions = [];
+
+      // Get questions from each subject
+      for (const subjectId of subjectIds) {
+        try {
+          const subjectQuestions = await QuestionBank.aggregate([
+            { $match: { subject: new mongoose.Types.ObjectId(subjectId), isActive: true } },
+            { $sample: { size: questionsPerSubject } }
+          ]);
+          allQuestions = allQuestions.concat(subjectQuestions);
+        } catch (err) {
+          console.error(`Error fetching questions for subject ${subjectId}:`, err);
+        }
       }
-    }
 
-    // Limit to requested number
-    const questions = allQuestions.slice(0, parseInt(numberOfQuestions));
+      // Limit to requested number
+      questions = allQuestions.slice(0, parseInt(numberOfQuestions));
+    }
 
     if (questions.length === 0) {
       return res.status(400).json({ message: 'No questions found for the selected subject(s)' });
@@ -613,6 +627,45 @@ router.get('/analytics/student/:studentId', auth, authorize('admin'), async (req
     });
   } catch (error) {
     console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Share quiz with additional students (for Past Tests feature)
+router.put('/:id/share', auth, authorize('admin'), async (req, res) => {
+  try {
+    const { studentIds } = req.body;
+
+    if (!studentIds || !Array.isArray(studentIds) || studentIds.length === 0) {
+      return res.status(400).json({ message: 'Please provide student IDs to share with' });
+    }
+
+    const quiz = await Quiz.findById(req.params.id);
+    if (!quiz) {
+      return res.status(404).json({ message: 'Quiz not found' });
+    }
+
+    // Add new students (avoid duplicates)
+    const currentStudents = quiz.assignedStudents.map(s => s.toString());
+    const newStudents = studentIds.filter(id => !currentStudents.includes(id));
+
+    if (newStudents.length === 0) {
+      return res.json({
+        message: 'All selected students already have access to this quiz',
+        totalStudents: quiz.assignedStudents.length
+      });
+    }
+
+    quiz.assignedStudents = [...quiz.assignedStudents, ...newStudents];
+    await quiz.save();
+
+    res.json({
+      message: `Quiz shared with ${newStudents.length} additional student(s)`,
+      totalStudents: quiz.assignedStudents.length,
+      newlyAdded: newStudents.length
+    });
+  } catch (error) {
+    console.error('Share quiz error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

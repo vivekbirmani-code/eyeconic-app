@@ -146,6 +146,13 @@ export default function AdminQuizHub() {
       color: '#F59E0B',
       route: '/quiz/retest-requests',
       badge: pendingRetests
+    },
+    {
+      title: 'Past Tests',
+      subtitle: `${quizStats.total} tests created`,
+      icon: BookOpen,
+      color: '#6366F1',
+      route: '/admin/past-tests'
     }
   ];
 

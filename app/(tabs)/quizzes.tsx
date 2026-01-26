@@ -77,7 +77,7 @@ function QuizzesContent() {
     fetchQuizzes();
   }, []);
 
-  const handleQuizPress = (quiz: Quiz) => {
+  const handleQuizPress = async (quiz: Quiz) => {
     if (quiz.attemptStatus?.hasAttempted && !quiz.attemptStatus?.canRetake) {
       // Already completed - go to results
       Alert.alert(
@@ -87,14 +87,31 @@ function QuizzesContent() {
           { text: 'Cancel', style: 'cancel' },
           {
             text: 'View Results',
-            onPress: () => {
-              // We need to fetch the attempt ID first
-              api.get(`/quizzes/${quiz._id}`)
-                .then(response => {
-                  // Navigate to results - the backend will handle getting the attempt
-                  router.push(`/quiz/${quiz._id}/instructions`);
-                })
-                .catch(() => router.push(`/quiz/${quiz._id}/instructions`));
+            onPress: async () => {
+              try {
+                // Fetch the attempt ID for this quiz
+                // We can use the start endpoint which returns existing attempt details if completed
+                // But it's safer to get it from a dedicated endpoint or the start endpoint's error response
+                
+                // Try to start/resume to get the attempt ID or error with ID
+                try {
+                  const response = await api.post(`/quizzes/${quiz._id}/start`);
+                  // If successful (resuming), use returned ID
+                  if (response.data.attemptId) {
+                    router.push(`/quiz/${quiz._id}/review/${response.data.attemptId}`);
+                  }
+                } catch (err: any) {
+                  // If error (already completed), get ID from error response
+                  if (err.response?.status === 400 && err.response?.data?.attemptId) {
+                    router.push(`/quiz/${quiz._id}/review/${err.response.data.attemptId}`);
+                  } else {
+                    Alert.alert('Error', 'Could not retrieve quiz results');
+                  }
+                }
+              } catch (error) {
+                console.error('Error viewing results:', error);
+                Alert.alert('Error', 'Failed to open results');
+              }
             }
           }
         ]

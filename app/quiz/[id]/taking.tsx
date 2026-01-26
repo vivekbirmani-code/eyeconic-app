@@ -79,7 +79,7 @@ function QuizTakingContent() {
   // Memoize sections to avoid recalculation
   const sections = useMemo(() => {
     if (!quiz) return [];
-    return Array.from(new Set(quiz.questions.map(q => q.section || 'General')));
+    return ['All', ...Array.from(new Set(quiz.questions.map(q => q.section || 'General')))];
   }, [quiz]);
 
   // Memoize question statuses

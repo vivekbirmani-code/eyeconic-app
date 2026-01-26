@@ -35,21 +35,7 @@ export const SectionTabs: React.FC<SectionTabsProps> = ({
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={styles.scrollContent}
       >
-        {/* Overview/All tab */}
-        <TouchableOpacity
-          style={[
-            styles.tab,
-            currentSection === 'All' && styles.activeTab
-          ]}
-          onPress={() => onSectionChange('All')}
-        >
-          <Text style={[
-            styles.tabText,
-            currentSection === 'All' && styles.activeTabText
-          ]}>
-            Overview
-          </Text>
-        </TouchableOpacity>
+
 
         {/* Section tabs */}
         {sections.map((section) => (
