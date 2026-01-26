@@ -35,6 +35,9 @@ const questionBankSchema = new mongoose.Schema({
         type: String,
         required: true
     }],
+    optionImages: [{
+        type: String // Array of URLs corresponding to options
+    }],
     correctAnswer: {
         type: Number,
         required: true,

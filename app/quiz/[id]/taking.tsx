@@ -13,7 +13,8 @@ import {
   BackHandler,
   Animated,
   Dimensions,
-  AccessibilityInfo
+  AccessibilityInfo,
+  Image
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ChevronLeft, ChevronRight, Flag, AlertCircle } from 'lucide-react-native';
@@ -28,7 +29,9 @@ import { ErrorBoundary } from '@/components/ErrorBoundary';
 interface Question {
   _id: string;
   question: string;
+  questionImage?: string;
   options: string[];
+  optionImages?: string[];
   marks: number;
   section: string;
 }
@@ -444,6 +447,15 @@ function QuizTakingContent() {
               <Text style={styles.questionText}>
                 {currentQuestion.question}
               </Text>
+              
+              {/* Question Image */}
+              {currentQuestion.questionImage ? (
+                <Image
+                  source={{ uri: currentQuestion.questionImage }}
+                  style={styles.questionImage}
+                  resizeMode="contain"
+                />
+              ) : null}
 
               {/* Options */}
               <View style={styles.optionsContainer}>
@@ -467,12 +479,24 @@ function QuizTakingContent() {
                       <Text style={styles.optionLabel}>
                         {String.fromCharCode(65 + index)}.
                       </Text>
-                      <Text style={[
-                        styles.optionText,
-                        selectedAnswer === index && styles.selectedOptionText
-                      ]}>
-                        {option}
-                      </Text>
+                      <View style={{ flex: 1 }}>
+                        {option ? (
+                          <Text style={[
+                            styles.optionText,
+                            selectedAnswer === index && styles.selectedOptionText
+                          ]}>
+                            {option}
+                          </Text>
+                        ) : null}
+                        
+                        {currentQuestion.optionImages?.[index] ? (
+                          <Image
+                            source={{ uri: currentQuestion.optionImages[index] }}
+                            style={styles.optionImage}
+                            resizeMode="contain"
+                          />
+                        ) : null}
+                      </View>
                     </View>
                   </TouchableOpacity>
                 ))}
@@ -880,5 +904,19 @@ const styles = StyleSheet.create({
   },
   disabledText: {
     color: '#9CA3AF',
+  },
+  questionImage: {
+    width: '100%',
+    height: 200,
+    marginBottom: 20,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+  },
+  optionImage: {
+    width: '100%',
+    height: 150,
+    marginTop: 8,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
   },
 });

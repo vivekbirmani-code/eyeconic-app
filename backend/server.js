@@ -16,6 +16,7 @@ const studentSubjectRoutes = require('./routes/student-subjects');
 const mentorStudentRoutes = require('./routes/mentor-students');
 const assignmentRoutes = require('./routes/assignments');
 const adminOverviewRoutes = require('./routes/admin-overview');
+const uploadRoutes = require('./routes/upload');
 const Call = require('./models/Call');
 const User = require('./models/User');
 
@@ -81,6 +82,7 @@ app.use('/api/student-subjects', studentSubjectRoutes);
 app.use('/api/mentor-students', mentorStudentRoutes);
 app.use('/api/assignments', assignmentRoutes);
 app.use('/api/admin-overview', adminOverviewRoutes);
+app.use('/api/upload', uploadRoutes);
 
 // Track socket to user mapping
 const socketUserMap = new Map();

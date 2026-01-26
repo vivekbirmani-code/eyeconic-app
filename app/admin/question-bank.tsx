@@ -12,7 +12,8 @@ import {
   ActivityIndicator,
   Platform,
   StatusBar,
-  FlatList
+  FlatList,
+  Image
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { 
@@ -25,9 +26,11 @@ import {
   Search,
   Filter,
   Trash2,
-  Edit
+  Edit,
+  Image as ImageIcon
 } from 'lucide-react-native';
 import * as DocumentPicker from 'expo-document-picker';
+import * as ImagePicker from 'expo-image-picker';
 // FileSystem is required dynamically for native platforms only
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
@@ -43,7 +46,9 @@ interface Question {
   subject: { _id: string; name: string };
   topicName?: string;
   question: string;
+  questionImage?: string;
   options: string[];
+  optionImages?: string[];
   marks: number;
 }
 
@@ -60,18 +65,23 @@ export default function QuestionBankManagement() {
   const [selectedSubject, setSelectedSubject] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
   
-  // Add Question Modal
+  // Add/Edit Question Modal
   const [showAddModal, setShowAddModal] = useState(false);
+  const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
+  
   const [newQuestion, setNewQuestion] = useState({
     subject: '',
     topicName: '',
     question: '',
+    questionImage: '',
     options: ['', '', '', ''],
+    optionImages: ['', '', '', ''],
     correctAnswer: 0,
     explanation: '',
     marks: 1
   });
   const [saving, setSaving] = useState(false);
+  const [imageUploading, setImageUploading] = useState(false);
   
   // Subject dropdown
   const [showSubjectDropdown, setShowSubjectDropdown] = useState(false);
@@ -92,7 +102,6 @@ export default function QuestionBankManagement() {
     try {
       // Use /subjects/list endpoint which returns flat array (not grouped by year)
       const response = await api.get('/subjects/list');
-      console.log('Subjects loaded:', response.data);
       setSubjects(Array.isArray(response.data) ? response.data : []);
     } catch (error) {
       console.error('Error fetching subjects:', error);
@@ -129,37 +138,148 @@ export default function QuestionBankManagement() {
     }
   };
 
+  const handlePickImage = async (type: 'question' | 'option', optionIndex?: number) => {
+    try {
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        quality: 0.8,
+        base64: true,
+      });
+
+      if (!result.canceled && result.assets[0].base64) {
+        uploadImage(result.assets[0].base64, type, optionIndex);
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to pick image');
+    }
+  };
+
+  const uploadImage = async (base64: string, type: 'question' | 'option', optionIndex?: number) => {
+    setImageUploading(true);
+    try {
+      // Create a temporary file object manually as we are sending base64 to our custom buffer upload
+      // Actually, my backend upload.js expects multipart/form-data.
+      // But creating a FormData with base64 in React Native can be tricky.
+      // Let's modify the backend call or stick to the Excel upload style which used a custom base64 endpoint?
+      // No, for individual images, standard multipart is better, but since I have base64 from picker...
+      // Let's convert base64 to blob/file or just send base64 to a new endpoint?
+      // Actually my backend/routes/upload.js expects `upload.single('image')`.
+      // Let's use `FileSystem.uploadAsync` or similar if possible, OR
+      // Simplest: Send base64 to a flexible endpoint.
+      // But wait, I created `upload.js` using `upload.single('image')`.
+      // I can change front-end to construct FormData.
+
+      // Construct FormData
+      const formData = new FormData();
+      formData.append('image', {
+        uri: `data:image/jpeg;base64,${base64}`,
+        type: 'image/jpeg',
+        name: 'upload.jpg',
+      } as any);
+
+      const response = await api.post('/upload', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+      });
+
+      const imageUrl = response.data.url;
+
+      if (type === 'question') {
+        setNewQuestion(prev => ({ ...prev, questionImage: imageUrl }));
+      } else if (type === 'option' && typeof optionIndex === 'number') {
+        setNewQuestion(prev => {
+          const newOptionImages = [...prev.optionImages];
+          newOptionImages[optionIndex] = imageUrl;
+          return { ...prev, optionImages: newOptionImages };
+        });
+      }
+    } catch (error) {
+      console.error('Upload failed:', error);
+      Alert.alert('Error', 'Failed to upload image');
+    } finally {
+      setImageUploading(false);
+    }
+  };
+
   const handleAddQuestion = async () => {
     if (!newQuestion.subject) {
       Alert.alert('Error', 'Please select a subject');
       return;
     }
-    if (!newQuestion.question.trim()) {
-      Alert.alert('Error', 'Please enter the question');
+    if (!newQuestion.question.trim() && !newQuestion.questionImage) {
+      Alert.alert('Error', 'Please enter the question or upload an image');
       return;
     }
-    if (!newQuestion.options[0] || !newQuestion.options[1]) {
-      Alert.alert('Error', 'Please enter at least 2 options');
+    
+    // Validate options: need at least 2 options matching either text or image
+    const validOptionsCount = newQuestion.options.reduce((acc, opt, idx) => {
+      const hasText = !!opt.trim();
+      const hasImage = !!newQuestion.optionImages[idx];
+      return acc + (hasText || hasImage ? 1 : 0);
+    }, 0);
+
+    if (validOptionsCount < 2) {
+      Alert.alert('Error', 'Please provide at least 2 options (text or image)');
       return;
     }
 
     setSaving(true);
     try {
-      await api.post('/question-bank', {
+      const payload = {
         ...newQuestion,
-        options: newQuestion.options.filter(o => o.trim())
-      });
+        // Ensure options array matches valid length if we want to filter empty ones? 
+        // No, we should keep 4 slots but maybe empty strings.
+        // Backend expects options string array. 'optionImages' is separate aligned array. 
+        // We will send as is.
+      };
+
+      if (editingQuestionId) {
+        await api.put(`/question-bank/${editingQuestionId}`, payload);
+        Alert.alert('Success', 'Question updated successfully');
+      } else {
+        await api.post('/question-bank', payload);
+        Alert.alert('Success', 'Question added successfully');
+      }
       
-      Alert.alert('Success', 'Question added successfully');
       setShowAddModal(false);
       resetNewQuestion();
       fetchQuestions();
       fetchStats();
     } catch (error: any) {
-      Alert.alert('Error', error.response?.data?.message || 'Failed to add question');
+      Alert.alert('Error', error.response?.data?.message || 'Failed to save question');
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleEditQuestion = (q: Question) => {
+    setEditingQuestionId(q._id);
+    setNewQuestion({
+      subject: q.subject._id,
+      topicName: q.topicName || '',
+      question: q.question,
+      questionImage: q.questionImage || '',
+      options: q.options.concat(['', '', '', '']).slice(0, 4), // Ensure 4
+      optionImages: (q.optionImages || []).concat(['', '', '', '']).slice(0, 4),
+      correctAnswer: 0, // We don't get this from API for students but for admin we should. 
+      // Wait, admin API returns keys? 'getAll' might not return 'correctAnswer' if sensitive?
+      // Let's check backend... Admin gets everything.
+      // But we need to find which index matches 'correctAnswer' (0-3).
+      // Backend schema says 'correctAnswer' is Number (0-3).
+      // Wait, the API response for 'getAll' (fetchQuestions) might not include it if I didn't check.
+      // Checking backend... `router.get('/', ...)` does `select('-correctAnswer')` ONLY for STUDENTS.
+      // Admin should receive it. I can augment interface if needed, but I'll assume it's in `q` object property if I typecasted it or use `any`.
+      // The `Question` interface above didn't have `correctAnswer`. I should add it.
+      explanation: (q as any).explanation || '',
+      marks: q.marks
+    });
+    // Set correct answer safely
+    if ((q as any).correctAnswer !== undefined) {
+      setNewQuestion(prev => ({ ...prev, correctAnswer: (q as any).correctAnswer }));
+    }
+    setShowAddModal(true);
   };
 
   const resetNewQuestion = () => {
@@ -167,7 +287,9 @@ export default function QuestionBankManagement() {
       subject: '',
       topicName: '',
       question: '',
+      questionImage: '',
       options: ['', '', '', ''],
+      optionImages: ['', '', '', ''],
       correctAnswer: 0,
       explanation: '',
       marks: 1
@@ -276,9 +398,14 @@ export default function QuestionBankManagement() {
           )}
           <Text style={styles.marksBadge}>{item.marks}M</Text>
         </View>
-        <TouchableOpacity onPress={() => handleDeleteQuestion(item._id)}>
-          <Trash2 color="#EF4444" size={18} />
-        </TouchableOpacity>
+        <View style={{ flexDirection: 'row', gap: 16 }}>
+          <TouchableOpacity onPress={() => handleEditQuestion(item)}>
+            <Edit color="#2563EB" size={18} />
+          </TouchableOpacity>
+          <TouchableOpacity onPress={() => handleDeleteQuestion(item._id)}>
+            <Trash2 color="#EF4444" size={18} />
+          </TouchableOpacity>
+        </View>
       </View>
       <Text style={styles.questionText} numberOfLines={2}>{item.question}</Text>
       <View style={styles.optionsPreview}>
@@ -393,7 +520,7 @@ export default function QuestionBankManagement() {
       <Modal visible={showAddModal} animationType="slide">
         <SafeAreaView style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Add Question</Text>
+            <Text style={styles.modalTitle}>{editingQuestionId ? 'Edit Question' : 'Add Question'}</Text>
             <TouchableOpacity onPress={() => setShowAddModal(false)}>
               <X color="#6B7280" size={24} />
             </TouchableOpacity>
@@ -452,33 +579,103 @@ export default function QuestionBankManagement() {
               onChangeText={text => setNewQuestion({ ...newQuestion, question: text })}
               multiline
             />
+            
+            {/* Question Image */}
+            <TouchableOpacity 
+              style={styles.imagePickerButton}
+              onPress={() => handlePickImage('question')}
+              disabled={imageUploading}
+            >
+              <ImageIcon color="#4B5563" size={20} />
+              <Text style={styles.imagePickerText}>
+                {newQuestion.questionImage ? 'Change Question Image' : 'Add Question Image'}
+              </Text>
+            </TouchableOpacity>
+            
+            {newQuestion.questionImage ? (
+              <View style={styles.imagePreviewContainer}>
+                <Image 
+                  source={{ uri: newQuestion.questionImage }} 
+                  style={styles.imagePreview} 
+                  resizeMode="contain"
+                />
+                <TouchableOpacity 
+                  style={styles.removeImageButton}
+                  onPress={() => setNewQuestion(prev => ({ ...prev, questionImage: '' }))}
+                >
+                  <X color="#FFF" size={16} />
+                </TouchableOpacity>
+              </View>
+            ) : null}
 
             {/* Options */}
             <Text style={styles.inputLabel}>Options *</Text>
             {newQuestion.options.map((option, index) => (
-              <View key={index} style={styles.optionRow}>
-                <TouchableOpacity
-                  style={[
-                    styles.optionRadio,
-                    newQuestion.correctAnswer === index && styles.optionRadioSelected
-                  ]}
-                  onPress={() => setNewQuestion({ ...newQuestion, correctAnswer: index })}
-                >
-                  {newQuestion.correctAnswer === index && (
-                    <View style={styles.optionRadioInner} />
-                  )}
-                </TouchableOpacity>
-                <Text style={styles.optionLabel}>{String.fromCharCode(65 + index)}.</Text>
-                <TextInput
-                  style={styles.optionInput}
-                  placeholder={`Option ${String.fromCharCode(65 + index)}`}
-                  value={option}
-                  onChangeText={text => {
-                    const newOptions = [...newQuestion.options];
-                    newOptions[index] = text;
-                    setNewQuestion({ ...newQuestion, options: newOptions });
-                  }}
-                />
+              <View key={index} style={styles.optionRowContainer}>
+                <View style={styles.optionRow}>
+                  <TouchableOpacity
+                    style={[
+                      styles.optionRadio,
+                      newQuestion.correctAnswer === index && styles.optionRadioSelected
+                    ]}
+                    onPress={() => setNewQuestion({ ...newQuestion, correctAnswer: index })}
+                  >
+                    {newQuestion.correctAnswer === index && (
+                      <View style={styles.optionRadioInner} />
+                    )}
+                  </TouchableOpacity>
+                  <Text style={styles.optionLabel}>{String.fromCharCode(65 + index)}.</Text>
+                  
+                  <View style={{ flex: 1, gap: 8 }}>
+                    <TextInput
+                      style={styles.optionInput}
+                      placeholder={`Option ${String.fromCharCode(65 + index)}`}
+                      value={option}
+                      onChangeText={text => {
+                        const newOptions = [...newQuestion.options];
+                        newOptions[index] = text;
+                        setNewQuestion({ ...newQuestion, options: newOptions });
+                      }}
+                    />
+                    
+                    {/* Option Image Controls */}
+                    <View style={styles.optionImageControls}>
+                      <TouchableOpacity 
+                        onPress={() => handlePickImage('option', index)}
+                        disabled={imageUploading}
+                        style={styles.miniImageButton}
+                      >
+                         <ImageIcon color="#6B7280" size={16} />
+                         <Text style={styles.miniImageText}>
+                           {newQuestion.optionImages[index] ? 'Change Img' : 'Add Img'}
+                         </Text>
+                      </TouchableOpacity>
+                      
+                      {newQuestion.optionImages[index] ? (
+                        <TouchableOpacity 
+                          onPress={() => {
+                            const newImages = [...newQuestion.optionImages];
+                            newImages[index] = '';
+                            setNewQuestion(prev => ({ ...prev, optionImages: newImages }));
+                          }}
+                        >
+                          <Text style={styles.removeImageText}>Remove</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                  </View>
+                </View>
+                
+                {/* Option Image Preview */}
+                {newQuestion.optionImages[index] ? (
+                  <View style={styles.optionImagePreviewContainer}>
+                    <Image 
+                      source={{ uri: newQuestion.optionImages[index] }}
+                      style={styles.optionImagePreview}
+                      resizeMode="cover"
+                    />
+                  </View>
+                ) : null}
               </View>
             ))}
             <Text style={styles.hintText}>Tap the circle to mark correct answer</Text>
@@ -512,22 +709,26 @@ export default function QuestionBankManagement() {
               {saving ? (
                 <ActivityIndicator color="#FFF" />
               ) : (
-                <Text style={styles.saveButtonText}>Save Question</Text>
+                <Text style={styles.saveButtonText}>
+                  {editingQuestionId ? 'Update Question' : 'Save Question'}
+                </Text>
               )}
             </TouchableOpacity>
 
-            {/* Add Another Button */}
-            <TouchableOpacity 
-              style={styles.addAnotherButton}
-              onPress={async () => {
-                await handleAddQuestion();
-                // Don't close modal, just reset form
-              }}
-              disabled={saving}
-            >
-              <Plus color="#2563EB" size={20} />
-              <Text style={styles.addAnotherText}>Save & Add Another</Text>
-            </TouchableOpacity>
+            {/* Add Another Button (Only in Add mode) */}
+            {!editingQuestionId && (
+              <TouchableOpacity 
+                style={styles.addAnotherButton}
+                onPress={async () => {
+                  await handleAddQuestion();
+                  // Don't close modal, just reset form
+                }}
+                disabled={saving}
+              >
+                <Plus color="#2563EB" size={20} />
+                <Text style={styles.addAnotherText}>Save & Add Another</Text>
+              </TouchableOpacity>
+            )}
 
             <View style={{ height: 40 }} />
           </ScrollView>
@@ -882,5 +1083,90 @@ const styles = StyleSheet.create({
     color: '#2563EB',
     fontSize: 16,
     fontWeight: '600',
+  },
+  imagePickerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#EBF5FF',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 8,
+    borderWidth: 1,
+    borderColor: '#2563EB',
+    borderStyle: 'dashed',
+  },
+  imagePickerText: {
+    color: '#2563EB',
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  imagePreviewContainer: {
+    marginTop: 12,
+    position: 'relative',
+    borderRadius: 8,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  imagePreview: {
+    width: '100%',
+    height: 200,
+    backgroundColor: '#F3F4F6',
+  },
+  removeImageButton: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: 'rgba(239, 68, 68, 0.9)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 8,
+    borderRadius: 20,
+    gap: 4,
+  },
+  removeImageText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  optionRowContainer: {
+    marginBottom: 16,
+  },
+  optionImageControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginLeft: 32, // Indent to align with content
+    marginTop: 8,
+  },
+  miniImageButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    backgroundColor: '#F3F4F6',
+    borderRadius: 4,
+  },
+  miniImageText: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  optionImagePreviewContainer: {
+    marginTop: 8,
+    marginLeft: 32,
+    position: 'relative',
+    width: 100,
+    height: 100,
+    borderRadius: 8,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  optionImagePreview: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#F3F4F6',
   },
 });

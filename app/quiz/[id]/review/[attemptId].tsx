@@ -10,7 +10,8 @@ import {
   Alert,
   Platform,
   StatusBar,
-  Dimensions
+  Dimensions,
+  Image
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { CheckCircle, XCircle, ChevronLeft, ChevronRight, Clock, Award, BarChart2 } from 'lucide-react-native';
@@ -23,7 +24,9 @@ const SCREEN_WIDTH = Dimensions.get('window').width;
 interface QuestionResult {
   questionIndex: number;
   question: string;
+  questionImage?: string;
   options: string[];
+  optionImages?: string[];
   selectedAnswer: number;
   correctAnswer: number;
   isCorrect: boolean;
@@ -73,7 +76,8 @@ export default function QuizReview() {
           section: q.topicName || 'General',
           selectedAnswer: q.userAnswer,
           // Ensure options is an array
-          options: Array.isArray(q.options) ? q.options : []
+          options: Array.isArray(q.options) ? q.options : [],
+          optionImages: Array.isArray(q.optionImages) ? q.optionImages : []
         }));
       }
       
@@ -327,6 +331,15 @@ export default function QuizReview() {
 
           {/* Question Text */}
           <Text style={styles.questionText}>{currentQuestion.question}</Text>
+          
+          {/* Question Image */}
+          {currentQuestion.questionImage ? (
+            <Image
+              source={{ uri: currentQuestion.questionImage }}
+              style={styles.questionImage}
+              resizeMode="contain"
+            />
+          ) : null}
 
           {/* Options */}
           <View style={styles.optionsContainer}>
@@ -358,12 +371,21 @@ export default function QuizReview() {
                         </Text>
                       )}
                     </View>
-                    <Text style={[
-                      styles.optionText,
-                      (isCorrect || isWrongSelection) && styles.highlightedText
-                    ]}>
-                      {option}
-                    </Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[
+                        styles.optionText,
+                        (isCorrect || isWrongSelection) && styles.highlightedText
+                      ]}>
+                        {option}
+                      </Text>
+                      {currentQuestion.optionImages?.[index] ? (
+                        <Image
+                          source={{ uri: currentQuestion.optionImages[index] }}
+                          style={styles.optionImage}
+                          resizeMode="contain"
+                        />
+                      ) : null}
+                    </View>
                   </View>
 
                   {isCorrect && (
@@ -802,6 +824,20 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     borderWidth: 1,
     borderColor: '#F59E0B',
+  },
+  questionImage: {
+    width: '100%',
+    height: 200,
+    marginBottom: 20,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+  },
+  optionImage: {
+    width: '100%',
+    height: 150,
+    marginTop: 8,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
   },
   notAnsweredText: {
     color: '#92400E',
