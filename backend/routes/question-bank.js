@@ -461,7 +461,7 @@ router.get('/by-subjects', auth, authorize('admin'), async (req, res) => {
 
         const questions = await QuestionBank.find(filter)
             .populate('subject', 'name')
-            .select('_id qid question subject topicName options marks')
+            .select('_id qid question subject topicName options marks tags')
             .sort({ subject: 1, createdAt: -1 })
             .limit(500);
 

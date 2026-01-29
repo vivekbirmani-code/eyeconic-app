@@ -140,6 +140,13 @@ export default function AdminQuizHub() {
       route: '/admin/student-analytics'
     },
     {
+      title: 'Import from Excel',
+      subtitle: 'Upload .xlsx files',
+      icon: Database,
+      color: '#0891B2',
+      route: '/admin/import-quiz'
+    },
+    {
       title: 'Retest Requests',
       subtitle: pendingRetests > 0 ? `${pendingRetests} pending` : 'No pending requests',
       icon: Clock,

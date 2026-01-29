@@ -21,7 +21,9 @@ import {
   Clock,
   Users,
   Check,
-  X
+  X,
+  Copy,
+  Edit
 } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
@@ -145,6 +147,31 @@ export default function PastTests() {
     }
   };
 
+  const handleDuplicate = async (quiz: Quiz) => {
+    Alert.alert(
+      'Duplicate Quiz',
+      `Create a copy of "${quiz.title}"?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Duplicate',
+          onPress: async () => {
+            try {
+              setLoading(true);
+              const response = await api.post(`/quizzes/${quiz._id}/duplicate`);
+              Alert.alert('Success', 'Quiz duplicated successfully');
+              fetchQuizzes();
+            } catch (error: any) {
+              console.error('Duplicate error:', error);
+              Alert.alert('Error', error.response?.data?.message || 'Failed to duplicate quiz');
+              setLoading(false);
+            }
+          }
+        }
+      ]
+    );
+  };
+
   const getAvailableStudents = () => {
     if (!selectedQuiz) return [];
     const query = studentSearch.toLowerCase();
@@ -247,13 +274,31 @@ export default function PastTests() {
                 <Text style={styles.dateText}>{formatDate(quiz.createdAt)}</Text>
               </View>
               
-              <TouchableOpacity 
-                style={styles.shareButton}
-                onPress={() => openShareModal(quiz)}
-              >
-                <Share2 color="#2563EB" size={20} />
-                <Text style={styles.shareButtonText}>Share</Text>
-              </TouchableOpacity>
+              <View style={styles.actionButtons}>
+                <TouchableOpacity 
+                  style={styles.actionButton}
+                  onPress={() => router.push({ pathname: '/admin/create-quiz', params: { editId: quiz._id } })}
+                >
+                  <Edit color="#4B5563" size={20} />
+                  <Text style={styles.actionButtonText}>Edit</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={styles.actionButton}
+                  onPress={() => handleDuplicate(quiz)}
+                >
+                  <Copy color="#4B5563" size={20} />
+                  <Text style={styles.actionButtonText}>Clone</Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity 
+                  style={[styles.actionButton, styles.shareBtn]}
+                  onPress={() => openShareModal(quiz)}
+                >
+                  <Share2 color="#2563EB" size={20} />
+                  <Text style={[styles.actionButtonText, styles.shareBtnText]}>Share</Text>
+                </TouchableOpacity>
+              </View>
             </View>
           ))
         )}
@@ -472,17 +517,27 @@ const styles = StyleSheet.create({
     color: '#9CA3AF',
     marginTop: 4,
   },
-  shareButton: {
+
+  actionButtons: {
     flexDirection: 'column',
-    alignItems: 'center',
+    gap: 12,
     justifyContent: 'center',
-    paddingHorizontal: 16,
+    paddingLeft: 12,
+    borderLeftWidth: 1,
+    borderLeftColor: '#F3F4F6',
+  },
+  actionButton: {
+    alignItems: 'center',
     gap: 4,
   },
-  shareButtonText: {
-    fontSize: 12,
-    color: '#2563EB',
+  actionButtonText: {
+    fontSize: 11,
+    color: '#4B5563',
     fontWeight: '500',
+  },
+  shareBtn: {},
+  shareBtnText: {
+    color: '#2563EB',
   },
   modalOverlay: {
     flex: 1,

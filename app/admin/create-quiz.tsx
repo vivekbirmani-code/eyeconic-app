@@ -12,7 +12,7 @@ import {
   Platform,
   StatusBar
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { 
   ChevronDown, 
   ChevronLeft,
@@ -46,6 +46,7 @@ interface Question {
   topicName?: string;
   options: string[];
   marks?: number;
+  tags?: string[];
 }
 
 type TestType = 'daily' | 'weekly' | 'grand';
@@ -57,6 +58,8 @@ export default function CreateQuiz() {
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
+  const params = useLocalSearchParams();
+  const { cloneId, editId } = params;
 
   // Step 1: Test Type & Subjects (now supports multiple)
   const [testType, setTestType] = useState<TestType>('daily');
@@ -76,6 +79,8 @@ export default function CreateQuiz() {
   const [selectedQuestions, setSelectedQuestions] = useState<string[]>([]);
   const [questionSearch, setQuestionSearch] = useState('');
   const [questionSubjectFilter, setQuestionSubjectFilter] = useState('');
+  const [topicFilter, setTopicFilter] = useState('');
+  const [tagFilter, setTagFilter] = useState('');
   const [loadingQuestions, setLoadingQuestions] = useState(false);
 
   // Step 4: Student Selection
@@ -98,7 +103,45 @@ export default function CreateQuiz() {
   useEffect(() => {
     fetchSubjects();
     fetchStudents();
-  }, []);
+    
+    if (cloneId) {
+      loadQuiz(cloneId as string, true);
+    } else if (editId) {
+      loadQuiz(editId as string, false);
+    }
+  }, [cloneId, editId]);
+
+  const loadQuiz = async (id: string, isClone: boolean) => {
+    try {
+      setLoading(true);
+      const response = await api.get(`/quizzes/${id}`);
+      const quiz = response.data;
+      
+      setTitle(isClone ? `Copy of ${quiz.title}` : quiz.title);
+      setTestType(quiz.testType);
+      setDuration(quiz.duration.toString());
+      setInstructions(quiz.instructions ? quiz.instructions.join('\n') : defaultInstructions.join('\n'));
+      
+      if (quiz.subject) {
+        setSelectedSubjects([quiz.subject._id]);
+      }
+      
+      if (quiz.questions && quiz.questions.length > 0) {
+        const qIds = quiz.questions.map((q: any) => q._id || q);
+        setSelectedQuestions(qIds);
+      }
+
+      if (!isClone && quiz.assignedStudents) {
+         setSelectedStudents(quiz.assignedStudents.map((s:any) => s._id || s));
+      }
+
+    } catch (error) {
+      console.error('Error loading quiz:', error);
+      Alert.alert('Error', 'Failed to load quiz details');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     if (selectedSubjects.length > 0) {
@@ -131,8 +174,23 @@ export default function CreateQuiz() {
       filtered = filtered.filter(q => q.subject._id === questionSubjectFilter);
     }
     
+    if (questionSubjectFilter) {
+      filtered = filtered.filter(q => q.subject._id === questionSubjectFilter);
+    }
+    
+    // Client-side topic filtering
+    if (topicFilter) {
+        filtered = filtered.filter(q => q.topicName?.toLowerCase().includes(topicFilter.toLowerCase()));
+    }
+
+    // Client-side tag filtering
+    if (tagFilter) {
+        const tf = tagFilter.toLowerCase();
+        filtered = filtered.filter(q => q.tags?.some(t => t.toLowerCase().includes(tf)));
+    }
+    
     setFilteredQuestions(filtered);
-  }, [questionSearch, availableQuestionsList, questionSubjectFilter]);
+  }, [questionSearch, availableQuestionsList, questionSubjectFilter, topicFilter, tagFilter]);
 
   useEffect(() => {
     // Filter students by search query and subject
@@ -291,22 +349,40 @@ export default function CreateQuiz() {
 
     setCreating(true);
     try {
-      const response = await api.post('/quizzes/create-from-bank', {
-        title: title.trim(),
-        subjects: selectedSubjects,
-        testType,
-        numberOfQuestions: selectedQuestions.length,
-        selectedQuestionIds: selectedQuestions,
-        duration: parseInt(duration),
-        instructions: instructions.split('\n').filter(i => i.trim()),
-        assignedStudents: selectedStudents
-      });
+      if (editId) {
+          // Update existing quiz
+          await api.put(`/quizzes/${editId}`, {
+            title: title.trim(),
+            subjects: selectedSubjects, // Pass array, backend handles it or takes first
+            subject: selectedSubjects[0], // Pass single for backward compat
+            testType,
+            numberOfQuestions: selectedQuestions.length,
+            questions: selectedQuestions,
+            duration: parseInt(duration),
+            instructions: instructions.split('\n').filter(i => i.trim()),
+            assignedStudents: selectedStudents
+          });
+           Alert.alert('Success', 'Quiz updated successfully!', [{ text: 'OK', onPress: () => router.back() }]);
+      } else {
+          // Create new
+          const response = await api.post('/quizzes/create-from-bank', {
+            title: title.trim(),
+            subjects: selectedSubjects,
+            testType,
+            numberOfQuestions: selectedQuestions.length,
+            selectedQuestionIds: selectedQuestions,
+            duration: parseInt(duration),
+            instructions: instructions.split('\n').filter(i => i.trim()),
+            assignedStudents: selectedStudents
+          });
+           Alert.alert(
+            'Success', 
+            `Quiz ${cloneId ? 'cloned' : 'created'} and assigned to ${selectedStudents.length} students!`,
+            [{ text: 'OK', onPress: () => router.back() }]
+          );
+      }
 
-      Alert.alert(
-        'Success',
-        `Quiz created and assigned to ${selectedStudents.length} students!`,
-        [{ text: 'OK', onPress: () => router.back() }]
-      );
+
     } catch (error: any) {
       console.error('Create quiz error:', error);
       Alert.alert('Error', error.response?.data?.message || 'Failed to create quiz');
@@ -475,6 +551,21 @@ export default function CreateQuiz() {
             <X color="#6B7280" size={18} />
           </TouchableOpacity>
         )}
+      </View>
+
+      <View style={styles.filterRow}>
+        <TextInput 
+            style={[styles.searchTextInput, { flex: 1, marginRight: 8 }]}
+            placeholder="Filter by Topic..."
+            value={topicFilter}
+            onChangeText={setTopicFilter}
+        />
+        <TextInput 
+            style={[styles.searchTextInput, { flex: 1 }]}
+            placeholder="Filter by Tag..."
+            value={tagFilter}
+            onChangeText={setTagFilter}
+        />
       </View>
 
       {/* Subject filter for questions - only show selected subjects */}

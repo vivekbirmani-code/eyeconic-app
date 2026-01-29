@@ -3,6 +3,11 @@ const Quiz = require('../models/Quiz');
 const QuizAttempt = require('../models/QuizAttempt');
 const QuestionBank = require('../models/QuestionBank');
 const { auth, authorize } = require('../middleware/auth');
+const multer = require('multer');
+const { parseExcel } = require('../utils/excelParser');
+const Subject = require('../models/Subject');
+
+const upload = multer({ storage: multer.memoryStorage() });
 
 const router = express.Router();
 
@@ -107,8 +112,16 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
       // Get questions from each subject
       for (const subjectId of subjectIds) {
         try {
+          const matchStage = { subject: new mongoose.Types.ObjectId(subjectId), isActive: true };
+          if (req.body.tags && req.body.tags.length > 0) {
+            matchStage.tags = { $in: req.body.tags };
+          }
+          if (req.body.topics && req.body.topics.length > 0) {
+            matchStage.topicName = { $in: req.body.topics };
+          }
+
           const subjectQuestions = await QuestionBank.aggregate([
-            { $match: { subject: new mongoose.Types.ObjectId(subjectId), isActive: true } },
+            { $match: matchStage },
             { $sample: { size: questionsPerSubject } }
           ]);
           allQuestions = allQuestions.concat(subjectQuestions);
@@ -156,6 +169,179 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
     });
   } catch (error) {
     console.error('Create quiz error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Import Quiz from Excel
+router.post('/import-excel', auth, authorize('admin'), upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: 'No file uploaded' });
+    }
+
+    const { quizTitle, testType, duration, subjectId, instructions } = req.body;
+
+    // Parse Excel
+    const { questions: parsedQuestions, errors } = await parseExcel(req.file.buffer);
+
+    if (errors.length > 0) {
+      return res.status(400).json({
+        message: 'Validation errors in Excel file',
+        errors: errors.slice(0, 5) // Return first 5 errors
+      });
+    }
+
+    if (parsedQuestions.length === 0) {
+      return res.status(400).json({ message: 'No questions found in Excel file' });
+    }
+
+    // Resolve Subjects
+    // Strategy: If 'subjectId' is provided (e.g. Mixed or specific), use it as the main quiz subject
+    // But verify each question's subject exists, create if missing (optional) or fail.
+    // For now, let's map text to Subject IDs.
+
+    // Cache subjects to minimize DB calls
+    const subjectsMap = {};
+    const allSubjects = await Subject.find({});
+    allSubjects.forEach(s => subjectsMap[s.name.toLowerCase()] = s._id);
+
+    const questionIds = [];
+    const createdQuestions = [];
+
+    // Create Questions
+    for (const qData of parsedQuestions) {
+      let subId = subjectsMap[qData.subjectName.toLowerCase()];
+
+      // If subject not found, create it? Or fail? 
+      // User said "Upload from existing Question Bank" but this is "Direct upload". 
+      // Safe bet: Create subject if missing to ensure import works.
+      if (!subId) {
+        const newSub = new Subject({ name: qData.subjectName });
+        await newSub.save();
+        subId = newSub._id;
+        subjectsMap[qData.subjectName.toLowerCase()] = subId;
+      }
+
+      const question = new QuestionBank({
+        subject: subId,
+        topicName: qData.topicName,
+        question: qData.question,
+        questionImage: qData.questionImage,
+        options: qData.options,
+        optionImages: qData.optionImages,
+        correctAnswer: qData.correctAnswer,
+        explanation: qData.explanation,
+        explanationImage: qData.explanationImage,
+        marks: qData.marks,
+        tags: [...qData.tags, 'excel-import', `quiz:${quizTitle}`], // Link to quiz via tag
+        createdBy: req.user._id,
+        isActive: true
+      });
+
+      await question.save();
+      createdQuestions.push(question);
+      questionIds.push(question._id);
+    }
+
+    // Create Quiz
+    const quiz = new Quiz({
+      title: quizTitle,
+      subject: subjectId || createdQuestions[0].subject, // Default to first question's subject if not provided
+      testType: testType || 'daily',
+      duration: parseInt(duration) || 30,
+      instructions: instructions ? JSON.parse(instructions) : [],
+      questions: questionIds,
+      assignedStudents: [], // Admin can assign later
+      createdBy: req.user._id
+    });
+
+    // Auto-calc total marks happens in pre-save
+    await quiz.save();
+
+    res.status(201).json({
+      message: 'Quiz imported successfully',
+      quiz,
+      questionsCreated: questionIds.length
+    });
+
+  } catch (error) {
+    console.error('Import error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Duplicate Quiz
+router.post('/:id/duplicate', auth, authorize('admin'), async (req, res) => {
+  try {
+    const originalQuiz = await Quiz.findById(req.params.id);
+    if (!originalQuiz) {
+      return res.status(404).json({ message: 'Quiz not found' });
+    }
+
+    const newQuiz = new Quiz({
+      title: `Copy of ${originalQuiz.title}`,
+      subject: originalQuiz.subject,
+      testType: originalQuiz.testType,
+      duration: originalQuiz.duration,
+      instructions: originalQuiz.instructions,
+      questions: originalQuiz.questions,
+      totalMarks: originalQuiz.totalMarks,
+      assignedStudents: [], // Do not copy students
+      createdBy: req.user._id,
+      isActive: true
+    });
+
+    await newQuiz.save();
+
+    res.status(201).json({
+      message: 'Quiz duplicated successfully',
+      quiz: newQuiz
+    });
+  } catch (error) {
+    console.error('Duplicate error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Update Quiz
+router.put('/:id', auth, authorize('admin'), async (req, res) => {
+  try {
+    const { title, duration, instructions, questions, testType, subject, assignedStudents } = req.body;
+
+    // Check if quiz exists
+    const quiz = await Quiz.findById(req.params.id);
+    if (!quiz) {
+      return res.status(404).json({ message: 'Quiz not found' });
+    }
+
+    // Optional: Check for attempts if modifying critical fields
+    // const attempts = await QuizAttempt.countDocuments({ quiz: req.params.id });
+    // if (attempts > 0 && (questions || testType)) {
+    //   return res.status(400).json({ message: 'Cannot modify questions/type of a quiz with attempts' });
+    // }
+
+    if (title) quiz.title = title;
+    if (duration) quiz.duration = parseInt(duration);
+    if (instructions) quiz.instructions = instructions;
+    if (testType) quiz.testType = testType;
+    if (subject) quiz.subject = subject; // Expecting single subject ID or handled by frontend
+    if (assignedStudents) quiz.assignedStudents = assignedStudents;
+
+    if (questions && questions.length > 0) {
+      quiz.questions = questions;
+
+      // Recalculate total marks (optional if we want to be precise)
+      const QuestionBank = require('../models/QuestionBank');
+      const qs = await QuestionBank.find({ _id: { $in: questions } });
+      quiz.totalMarks = qs.reduce((sum, q) => sum + (q.marks || 1), 0);
+    }
+
+    await quiz.save();
+
+    res.json({ message: 'Quiz updated successfully', quiz });
+  } catch (error) {
+    console.error('Update quiz error:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
