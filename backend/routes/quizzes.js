@@ -217,7 +217,11 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
       // User said "Upload from existing Question Bank" but this is "Direct upload". 
       // Safe bet: Create subject if missing to ensure import works.
       if (!subId) {
-        const newSub = new Subject({ name: qData.subjectName });
+        const newSub = new Subject({
+          name: qData.subjectName,
+          year: '1st',
+          displayOrder: 99
+        });
         await newSub.save();
         subId = newSub._id;
         subjectsMap[qData.subjectName.toLowerCase()] = subId;

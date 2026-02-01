@@ -122,14 +122,14 @@ const parseExcel = async (buffer) => {
             ].slice(0, options.length).map(img => img || '');
 
             questions.push({
-                subjectName: rowData.subject.trim(),
-                topicName: rowData.topicName ? rowData.topicName.trim() : '',
-                question: rowData.question.trim(),
+                subjectName: String(rowData.subject).trim(),
+                topicName: rowData.topicName ? String(rowData.topicName).trim() : '',
+                question: String(rowData.question).trim(),
                 questionImage: rowData.questionImage || null,
                 options,
                 optionImages,
                 correctAnswer: correctIndex,
-                explanation: rowData.explanation || '',
+                explanation: rowData.explanation ? String(rowData.explanation).trim() : '',
                 explanationImage: rowData.explanationImage || null,
                 marks: parseInt(rowData.marks) || 1,
                 tags,
