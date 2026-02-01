@@ -277,7 +277,7 @@ export default function PastTests() {
               <View style={styles.actionButtons}>
                 <TouchableOpacity 
                   style={styles.actionButton}
-                  onPress={() => router.push({ pathname: '/admin/create-quiz', params: { editId: quiz._id } })}
+                  onPress={() => router.push({ pathname: '/admin/edit-quiz', params: { id: quiz._id } })}
                 >
                   <Edit color="#4B5563" size={20} />
                   <Text style={styles.actionButtonText}>Edit</Text>

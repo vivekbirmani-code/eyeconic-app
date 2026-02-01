@@ -10,7 +10,9 @@ import {
   Alert,
   ActivityIndicator,
   Platform,
-  StatusBar
+  StatusBar,
+  Modal,
+  Image
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { 
@@ -21,7 +23,8 @@ import {
   BookOpen,
   Users,
   Search,
-  X
+  X,
+  Eye
 } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
@@ -42,9 +45,14 @@ interface Question {
   _id: string;
   qid?: string;
   question: string;
+  questionImage?: string;
   subject: { _id: string; name: string };
   topicName?: string;
   options: string[];
+  optionImages?: string[];
+  correctAnswer?: number;
+  explanation?: string;
+  explanationImage?: string;
   marks?: number;
   tags?: string[];
 }
@@ -82,6 +90,7 @@ export default function CreateQuiz() {
   const [topicFilter, setTopicFilter] = useState('');
   const [tagFilter, setTagFilter] = useState('');
   const [loadingQuestions, setLoadingQuestions] = useState(false);
+  const [selectedQuestion, setSelectedQuestion] = useState<Question | null>(null);
 
   // Step 4: Student Selection
   const [students, setStudents] = useState<Student[]>([]);
@@ -608,10 +617,7 @@ export default function CreateQuiz() {
               ]}
               onPress={() => toggleQuestion(item._id)}
             >
-              <View style={[
-                styles.checkbox,
-                selectedQuestions.includes(item._id) && styles.checkboxSelected
-              ]}>
+              <View style={[styles.checkbox, selectedQuestions.includes(item._id) && styles.checkboxSelected]}>
                 {selectedQuestions.includes(item._id) && <Check color="#FFF" size={14} />}
               </View>
               <View style={styles.questionInfo}>
@@ -621,6 +627,13 @@ export default function CreateQuiz() {
                   {item.topicName && <Text style={styles.questionTopic}> • {item.topicName}</Text>}
                 </View>
               </View>
+              <TouchableOpacity 
+                style={styles.viewButton}
+                onPress={() => setSelectedQuestion(item)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <Eye color="#2563EB" size={20} />
+              </TouchableOpacity>
             </TouchableOpacity>
           ))
         )}
@@ -802,9 +815,104 @@ export default function CreateQuiz() {
           </TouchableOpacity>
         )}
       </View>
+
+      {/* Question Detail Modal */}
+      <Modal visible={!!selectedQuestion} animationType="slide" onRequestClose={() => setSelectedQuestion(null)}>
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Question Preview</Text>
+            <TouchableOpacity onPress={() => setSelectedQuestion(null)}>
+              <X color="#FFF" size={24} />
+            </TouchableOpacity>
+          </View>
+          
+          {selectedQuestion && (
+            <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
+              {/* Question */}
+              <View style={styles.questionSection}>
+                <Text style={styles.sectionLabel}>Question</Text>
+                <Text style={styles.fullQuestionText}>{selectedQuestion.question}</Text>
+                {selectedQuestion.questionImage && (
+                  <Image 
+                    source={{ uri: selectedQuestion.questionImage }} 
+                    style={styles.questionImage}
+                    resizeMode="contain"
+                  />
+                )}
+              </View>
+
+              {/* Options */}
+              <View style={styles.optionsSection}>
+                <Text style={styles.sectionLabel}>Options</Text>
+                {selectedQuestion.options.map((option, index) => (
+                  <View 
+                    key={index} 
+                    style={[
+                      styles.optionBox,
+                      selectedQuestion.correctAnswer === index && styles.correctOption
+                    ]}
+                  >
+                    <Text style={[
+                      styles.optionLabel,
+                      selectedQuestion.correctAnswer === index && styles.correctOptionText
+                    ]}>
+                      {String.fromCharCode(65 + index)}.
+                    </Text>
+                    <View style={styles.optionContent}>
+                      <Text style={[
+                        styles.optionText,
+                        selectedQuestion.correctAnswer === index && styles.correctOptionText
+                      ]}>
+                        {option}
+                      </Text>
+                      {selectedQuestion.optionImages?.[index] && (
+                        <Image 
+                          source={{ uri: selectedQuestion.optionImages[index] }} 
+                          style={styles.optionImage}
+                          resizeMode="contain"
+                        />
+                      )}
+                    </View>
+                    {selectedQuestion.correctAnswer === index && (
+                      <Check color="#059669" size={20} />
+                    )}
+                  </View>
+                ))}
+              </View>
+
+              {/* Explanation */}
+              {(selectedQuestion.explanation || selectedQuestion.explanationImage) && (
+                <View style={styles.explanationSection}>
+                  <Text style={styles.sectionLabel}>Explanation</Text>
+                  {selectedQuestion.explanation && (
+                    <Text style={styles.explanationText}>{selectedQuestion.explanation}</Text>
+                  )}
+                  {selectedQuestion.explanationImage && (
+                    <Image 
+                      source={{ uri: selectedQuestion.explanationImage }} 
+                      style={styles.explanationImage}
+                      resizeMode="contain"
+                    />
+                  )}
+                </View>
+              )}
+
+              {/* Meta Info */}
+              <View style={styles.metaSection}>
+                <Text style={styles.metaText}>Subject: {selectedQuestion.subject?.name}</Text>
+                {selectedQuestion.topicName && <Text style={styles.metaText}>Topic: {selectedQuestion.topicName}</Text>}
+                {selectedQuestion.marks && <Text style={styles.metaText}>Marks: {selectedQuestion.marks}</Text>}
+              </View>
+
+              <View style={{ height: 40 }} />
+            </ScrollView>
+          )}
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
+
 
 const styles = StyleSheet.create({
   container: {
@@ -1191,4 +1299,125 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#6B7280',
   },
+  viewButton: {
+    padding: 8,
+  },
+  // Question Detail Modal Styles
+  modalContainer: {
+    flex: 1,
+    backgroundColor: '#F3F4F6',
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#2563EB',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#FFF',
+  },
+  modalContent: {
+    flex: 1,
+    padding: 16,
+  },
+  questionSection: {
+    backgroundColor: '#FFF',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 16,
+  },
+  sectionLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6B7280',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+  },
+  fullQuestionText: {
+    fontSize: 16,
+    color: '#1F2937',
+    lineHeight: 24,
+  },
+  questionImage: {
+    width: '100%',
+    height: 200,
+    marginTop: 12,
+    borderRadius: 8,
+  },
+  optionsSection: {
+    backgroundColor: '#FFF',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 16,
+  },
+  optionBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+    marginBottom: 8,
+    gap: 12,
+  },
+  correctOption: {
+    backgroundColor: '#D1FAE5',
+    borderWidth: 1,
+    borderColor: '#10B981',
+  },
+  optionLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    width: 24,
+  },
+  correctOptionText: {
+    color: '#059669',
+  },
+  optionContent: {
+    flex: 1,
+  },
+  optionText: {
+    fontSize: 14,
+    color: '#374151',
+    lineHeight: 20,
+  },
+  optionImage: {
+    width: '100%',
+    height: 120,
+    marginTop: 8,
+    borderRadius: 6,
+  },
+  explanationSection: {
+    backgroundColor: '#FEF3C7',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 16,
+  },
+  explanationText: {
+    fontSize: 14,
+    color: '#92400E',
+    lineHeight: 20,
+  },
+  explanationImage: {
+    width: '100%',
+    height: 150,
+    marginTop: 12,
+    borderRadius: 8,
+  },
+  metaSection: {
+    backgroundColor: '#FFF',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 16,
+  },
+  metaText: {
+    fontSize: 13,
+    color: '#6B7280',
+    marginBottom: 4,
+  },
 });
+

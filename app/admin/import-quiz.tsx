@@ -10,7 +10,9 @@ import {
   Alert,
   ActivityIndicator,
   Platform,
-  StatusBar
+  StatusBar,
+  Modal,
+  FlatList
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { 
@@ -18,7 +20,9 @@ import {
   Upload, 
   FileText,
   Check,
-  AlertCircle
+  AlertCircle,
+  Image as ImageIcon,
+  X
 } from 'lucide-react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { api } from '@/services/api';
@@ -29,11 +33,28 @@ interface Subject {
   name: string;
 }
 
+interface PreviewQuestion {
+  _id: string;
+  question: string;
+  hasQuestionImage: boolean;
+  hasOptionImages: boolean;
+  status: 'created' | 'updated' | 'skipped';
+}
+
+interface ImportStats {
+  total: number;
+  questionsCreated: number;
+  duplicatesSkipped: number;
+  duplicatesUpdated: number;
+  questionsWithImages: number;
+}
+
 export default function ImportQuiz() {
   const { user } = useAuth();
   const router = useRouter();
 
   const [loading, setLoading] = useState(false);
+  const [progressMessage, setProgressMessage] = useState('');
   const [subjects, setSubjects] = useState<Subject[]>([]);
   
   // Form State
@@ -42,6 +63,11 @@ export default function ImportQuiz() {
   const [duration, setDuration] = useState('30');
   const [subjectId, setSubjectId] = useState('');
   const [file, setFile] = useState<any>(null);
+  
+  // Preview Modal State
+  const [showPreview, setShowPreview] = useState(false);
+  const [previewQuestions, setPreviewQuestions] = useState<PreviewQuestion[]>([]);
+  const [importStats, setImportStats] = useState<ImportStats | null>(null);
 
   useEffect(() => {
     fetchSubjects();
@@ -85,6 +111,7 @@ export default function ImportQuiz() {
     }
 
     setLoading(true);
+    setProgressMessage('Uploading file and processing images...');
     try {
       const formData = new FormData();
       formData.append('file', {
@@ -101,17 +128,18 @@ export default function ImportQuiz() {
       }
       // Instructions can be added if needed, defaulted by backend for now
 
+      setProgressMessage('Processing questions and uploading images to cloud...\nThis may take a few minutes.');
       const response = await api.post('/quizzes/import-excel', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
+        timeout: 300000, // 5 minutes timeout for image uploads
       });
 
-      Alert.alert(
-        'Success',
-        `Quiz imported successfully with ${response.data.questionsCreated} questions!`,
-        [{ text: 'OK', onPress: () => router.back() }]
-      );
+      // Show preview modal with stats
+      setImportStats(response.data.stats);
+      setPreviewQuestions(response.data.previewQuestions || []);
+      setShowPreview(true);
     } catch (error: any) {
       console.error('Import error:', error);
       const msg = error.response?.data?.message || 'Failed to import quiz';
@@ -119,6 +147,7 @@ export default function ImportQuiz() {
       Alert.alert('Import Failed', `${msg}\n${details}`);
     } finally {
       setLoading(false);
+      setProgressMessage('');
     }
   };
 
@@ -229,21 +258,98 @@ export default function ImportQuiz() {
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.importButton, (!file || loading) && styles.disabledButton]}
+            style={[styles.importButton, loading && styles.importingButton, (!file || loading) && styles.disabledButton]}
             onPress={handleImport}
             disabled={!file || loading}
           >
             {loading ? (
-              <ActivityIndicator color="#FFF" />
+              <View style={{ alignItems: 'center' }}>
+                <ActivityIndicator color="#FFF" />
+                <Text style={styles.progressText}>{progressMessage}</Text>
+              </View>
             ) : (
               <Text style={styles.importButtonText}>Upload & Create Quiz</Text>
             )}
           </TouchableOpacity>
         </View>
       </ScrollView>
+
+      {/* Preview Modal */}
+      <Modal visible={showPreview} animationType="slide">
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Import Complete</Text>
+            <TouchableOpacity onPress={() => { setShowPreview(false); router.back(); }}>
+              <X color="#6B7280" size={24} />
+            </TouchableOpacity>
+          </View>
+
+          {importStats && (
+            <View style={styles.statsGrid}>
+              <View style={styles.statBox}>
+                <Text style={styles.statValue}>{importStats.total}</Text>
+                <Text style={styles.statLabel}>Total</Text>
+              </View>
+              <View style={[styles.statBox, { backgroundColor: '#D1FAE5' }]}>
+                <Text style={[styles.statValue, { color: '#059669' }]}>{importStats.questionsCreated}</Text>
+                <Text style={styles.statLabel}>Created</Text>
+              </View>
+              <View style={[styles.statBox, { backgroundColor: '#FEF3C7' }]}>
+                <Text style={[styles.statValue, { color: '#D97706' }]}>{importStats.duplicatesUpdated}</Text>
+                <Text style={styles.statLabel}>Updated</Text>
+              </View>
+              <View style={[styles.statBox, { backgroundColor: '#E5E7EB' }]}>
+                <Text style={[styles.statValue, { color: '#6B7280' }]}>{importStats.duplicatesSkipped}</Text>
+                <Text style={styles.statLabel}>Skipped</Text>
+              </View>
+              <View style={[styles.statBox, { backgroundColor: '#DBEAFE' }]}>
+                <Text style={[styles.statValue, { color: '#2563EB' }]}>{importStats.questionsWithImages}</Text>
+                <Text style={styles.statLabel}>With Images</Text>
+              </View>
+            </View>
+          )}
+
+          <FlatList
+            data={previewQuestions}
+            keyExtractor={item => item._id}
+            style={styles.previewList}
+            renderItem={({ item, index }) => (
+              <View style={[
+                styles.previewItem,
+                item.status === 'created' && { borderLeftColor: '#10B981' },
+                item.status === 'updated' && { borderLeftColor: '#F59E0B' },
+                item.status === 'skipped' && { borderLeftColor: '#9CA3AF' }
+              ]}>
+                <View style={styles.previewContent}>
+                  <Text style={styles.previewNumber}>Q{index + 1}</Text>
+                  <Text style={styles.previewText} numberOfLines={2}>{item.question}</Text>
+                </View>
+                <View style={styles.previewMeta}>
+                  {item.hasQuestionImage && <ImageIcon size={16} color="#2563EB" />}
+                  {item.hasOptionImages && <ImageIcon size={14} color="#6B7280" />}
+                  <Text style={[
+                    styles.statusBadge,
+                    item.status === 'created' && styles.statusCreated,
+                    item.status === 'updated' && styles.statusUpdated,
+                    item.status === 'skipped' && styles.statusSkipped
+                  ]}>{item.status}</Text>
+                </View>
+              </View>
+            )}
+          />
+
+          <TouchableOpacity 
+            style={styles.doneButton}
+            onPress={() => { setShowPreview(false); router.back(); }}
+          >
+            <Text style={styles.doneButtonText}>Done</Text>
+          </TouchableOpacity>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
+
 
 const styles = StyleSheet.create({
   container: {
@@ -417,5 +523,125 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 20,
     fontSize: 16,
+  },
+  // Preview Modal Styles
+  modalContainer: {
+    flex: 1,
+    backgroundColor: '#F3F4F6',
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#2563EB',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#FFF',
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    padding: 12,
+    gap: 8,
+    backgroundColor: '#FFF',
+  },
+  statBox: {
+    flex: 1,
+    minWidth: 80,
+    backgroundColor: '#F3F4F6',
+    padding: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  statValue: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#1F2937',
+  },
+  statLabel: {
+    fontSize: 11,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  previewList: {
+    flex: 1,
+    padding: 12,
+  },
+  previewItem: {
+    backgroundColor: '#FFF',
+    padding: 12,
+    marginBottom: 8,
+    borderRadius: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: '#E5E7EB',
+  },
+  previewContent: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  previewNumber: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#2563EB',
+  },
+  previewText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#374151',
+  },
+  previewMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 8,
+    justifyContent: 'flex-end',
+  },
+  statusBadge: {
+    fontSize: 10,
+    fontWeight: '600',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 10,
+    overflow: 'hidden',
+    textTransform: 'uppercase',
+  },
+  statusCreated: {
+    backgroundColor: '#D1FAE5',
+    color: '#059669',
+  },
+  statusUpdated: {
+    backgroundColor: '#FEF3C7',
+    color: '#D97706',
+  },
+  statusSkipped: {
+    backgroundColor: '#E5E7EB',
+    color: '#6B7280',
+  },
+  doneButton: {
+    backgroundColor: '#2563EB',
+    margin: 16,
+    padding: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+  },
+  doneButtonText: {
+    color: '#FFF',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  importingButton: {
+    minHeight: 80,
+    paddingVertical: 16,
+  },
+  progressText: {
+    color: '#FFF',
+    fontSize: 12,
+    marginTop: 8,
+    textAlign: 'center',
   },
 });

@@ -29,6 +29,7 @@ const parseExcel = async (buffer) => {
             TAG: 'tags',
             QUESTION: 'question',
             QIMAGE: 'questionImage',
+            Q_IMAGE: 'questionImage', // alias
             OPTION1: 'option1',
             OPTION2: 'option2',
             OPTION3: 'option3',
@@ -37,9 +38,14 @@ const parseExcel = async (buffer) => {
             OIMAGE2: 'option2Image',
             OIMAGE3: 'option3Image',
             OIMAGE4: 'option4Image',
+            O_IMAGE_1: 'option1Image', // alias
+            O_IMAGE_2: 'option2Image',
+            O_IMAGE_3: 'option3Image',
+            O_IMAGE_4: 'option4Image',
             CORRECT: 'correctAnswer',
             SOLUTION: 'explanation',
             SOLUTIONIMAGE: 'explanationImage',
+            SOLUTION_IMAGE: 'explanationImage', // alias
             MARKS: 'marks',
             // Aliases or leftovers supported for robustness
             EXPLANATION: 'explanation',
@@ -60,12 +66,17 @@ const parseExcel = async (buffer) => {
                 // Fallbacks if exact match fails
                 else if (normalized.includes('SUBJECT')) rowData.subject = row[key];
                 else if (normalized.includes('QUESTION') && !normalized.includes('IMAGE')) rowData.question = row[key];
-                else if (normalized.includes('QIMAGE')) rowData.questionImage = row[key];
-                else if (normalized.includes('OPTION1')) rowData.option1 = row[key];
-                else if (normalized.includes('OPTION2')) rowData.option2 = row[key];
-                else if (normalized.includes('OPTION3')) rowData.option3 = row[key];
-                else if (normalized.includes('OPTION4')) rowData.option4 = row[key];
+                else if (normalized.includes('QIMAGE') || (normalized.includes('Q') && normalized.includes('IMAGE'))) rowData.questionImage = row[key];
+                else if (normalized.includes('OPTION1') && !normalized.includes('IMAGE')) rowData.option1 = row[key];
+                else if (normalized.includes('OPTION2') && !normalized.includes('IMAGE')) rowData.option2 = row[key];
+                else if (normalized.includes('OPTION3') && !normalized.includes('IMAGE')) rowData.option3 = row[key];
+                else if (normalized.includes('OPTION4') && !normalized.includes('IMAGE')) rowData.option4 = row[key];
+                else if ((normalized.includes('OIMAGE1') || (normalized.includes('OPTION1') && normalized.includes('IMAGE')) || (normalized.includes('O') && normalized.includes('IMAGE') && normalized.includes('1')))) rowData.option1Image = row[key];
+                else if ((normalized.includes('OIMAGE2') || (normalized.includes('OPTION2') && normalized.includes('IMAGE')) || (normalized.includes('O') && normalized.includes('IMAGE') && normalized.includes('2')))) rowData.option2Image = row[key];
+                else if ((normalized.includes('OIMAGE3') || (normalized.includes('OPTION3') && normalized.includes('IMAGE')) || (normalized.includes('O') && normalized.includes('IMAGE') && normalized.includes('3')))) rowData.option3Image = row[key];
+                else if ((normalized.includes('OIMAGE4') || (normalized.includes('OPTION4') && normalized.includes('IMAGE')) || (normalized.includes('O') && normalized.includes('IMAGE') && normalized.includes('4')))) rowData.option4Image = row[key];
                 else if (normalized.includes('CORRECT')) rowData.correctAnswer = row[key];
+                else if ((normalized.includes('SOLUTION') && normalized.includes('IMAGE')) || normalized.includes('EXIMAGE')) rowData.explanationImage = row[key];
             });
 
             // Validation

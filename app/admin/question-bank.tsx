@@ -27,7 +27,8 @@ import {
   Filter,
   Trash2,
   Edit,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Eye
 } from 'lucide-react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
@@ -49,7 +50,11 @@ interface Question {
   questionImage?: string;
   options: string[];
   optionImages?: string[];
+  correctAnswer?: number;
+  explanation?: string;
+  explanationImage?: string;
   marks: number;
+  tags?: string[];
 }
 
 export default function QuestionBankManagement() {
@@ -88,6 +93,9 @@ export default function QuestionBankManagement() {
   
   // Stats
   const [stats, setStats] = useState<{ total: number; bySubject: any[] }>({ total: 0, bySubject: [] });
+  
+  // Question View Modal
+  const [selectedViewQuestion, setSelectedViewQuestion] = useState<Question | null>(null);
 
   useEffect(() => {
     fetchSubjects();
@@ -388,7 +396,11 @@ export default function QuestionBankManagement() {
   };
 
   const renderQuestion = ({ item, index }: { item: Question; index: number }) => (
-    <View style={styles.questionCard}>
+    <TouchableOpacity 
+      style={styles.questionCard}
+      onPress={() => setSelectedViewQuestion(item)}
+      activeOpacity={0.7}
+    >
       <View style={styles.questionHeader}>
         <Text style={styles.questionNumber}>Q{index + 1}</Text>
         <View style={styles.questionMeta}>
@@ -398,7 +410,10 @@ export default function QuestionBankManagement() {
           )}
           <Text style={styles.marksBadge}>{item.marks}M</Text>
         </View>
-        <View style={{ flexDirection: 'row', gap: 16 }}>
+        <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}>
+          <TouchableOpacity onPress={() => setSelectedViewQuestion(item)}>
+            <Eye color="#6B7280" size={18} />
+          </TouchableOpacity>
           <TouchableOpacity onPress={() => handleEditQuestion(item)}>
             <Edit color="#2563EB" size={18} />
           </TouchableOpacity>
@@ -408,6 +423,12 @@ export default function QuestionBankManagement() {
         </View>
       </View>
       <Text style={styles.questionText} numberOfLines={2}>{item.question}</Text>
+      {item.questionImage && (
+        <View style={styles.hasImageIndicator}>
+          <ImageIcon size={14} color="#2563EB" />
+          <Text style={styles.hasImageText}>Has image</Text>
+        </View>
+      )}
       <View style={styles.optionsPreview}>
         {item.options.slice(0, 2).map((opt, i) => (
           <Text key={i} style={styles.optionPreview} numberOfLines={1}>
@@ -418,7 +439,7 @@ export default function QuestionBankManagement() {
           <Text style={styles.moreOptions}>+{item.options.length - 2} more</Text>
         )}
       </View>
-    </View>
+    </TouchableOpacity>
   );
 
   if (user?.role !== 'admin') {
@@ -734,9 +755,97 @@ export default function QuestionBankManagement() {
           </ScrollView>
         </SafeAreaView>
       </Modal>
+
+      {/* Question View Modal */}
+      <Modal visible={!!selectedViewQuestion} animationType="slide" onRequestClose={() => setSelectedViewQuestion(null)}>
+        <SafeAreaView style={styles.viewModalContainer}>
+          <View style={styles.viewModalHeader}>
+            <Text style={styles.viewModalTitle}>Question Preview</Text>
+            <TouchableOpacity onPress={() => setSelectedViewQuestion(null)}>
+              <X color="#FFF" size={24} />
+            </TouchableOpacity>
+          </View>
+          
+          {selectedViewQuestion && (
+            <ScrollView style={styles.viewModalContent} showsVerticalScrollIndicator={false}>
+              {/* Question */}
+              <View style={styles.viewSection}>
+                <Text style={styles.viewSectionLabel}>Question</Text>
+                <Text style={styles.fullQuestionText}>{selectedViewQuestion.question}</Text>
+                {selectedViewQuestion.questionImage && (
+                  <Image 
+                    source={{ uri: selectedViewQuestion.questionImage }} 
+                    style={styles.viewQuestionImage}
+                    resizeMode="contain"
+                  />
+                )}
+              </View>
+
+              {/* Options */}
+              <View style={styles.viewSection}>
+                <Text style={styles.viewSectionLabel}>Options</Text>
+                {selectedViewQuestion.options.map((option, index) => (
+                  <View 
+                    key={index} 
+                    style={[
+                      styles.viewOptionBox,
+                      selectedViewQuestion.correctAnswer === index && styles.viewCorrectOption
+                    ]}
+                  >
+                    <Text style={[
+                      styles.viewOptionLabel,
+                      selectedViewQuestion.correctAnswer === index && styles.viewCorrectText
+                    ]}>
+                      {String.fromCharCode(65 + index)}.
+                    </Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[
+                        styles.viewOptionText,
+                        selectedViewQuestion.correctAnswer === index && styles.viewCorrectText
+                      ]}>
+                        {option}
+                      </Text>
+                      {selectedViewQuestion.optionImages?.[index] && (
+                        <Image 
+                          source={{ uri: selectedViewQuestion.optionImages[index] }} 
+                          style={styles.viewOptionImage}
+                          resizeMode="contain"
+                        />
+                      )}
+                    </View>
+                    {selectedViewQuestion.correctAnswer === index && (
+                      <Check color="#059669" size={20} />
+                    )}
+                  </View>
+                ))}
+              </View>
+
+              {/* Explanation */}
+              {(selectedViewQuestion.explanation || selectedViewQuestion.explanationImage) && (
+                <View style={[styles.viewSection, { backgroundColor: '#FEF3C7' }]}>
+                  <Text style={styles.viewSectionLabel}>Explanation</Text>
+                  {selectedViewQuestion.explanation && (
+                    <Text style={styles.viewExplanationText}>{selectedViewQuestion.explanation}</Text>
+                  )}
+                  {selectedViewQuestion.explanationImage && (
+                    <Image 
+                      source={{ uri: selectedViewQuestion.explanationImage }} 
+                      style={styles.viewQuestionImage}
+                      resizeMode="contain"
+                    />
+                  )}
+                </View>
+              )}
+
+              <View style={{ height: 40 }} />
+            </ScrollView>
+          )}
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
+
 
 const styles = StyleSheet.create({
   container: {
@@ -1169,4 +1278,100 @@ const styles = StyleSheet.create({
     height: '100%',
     backgroundColor: '#F3F4F6',
   },
+  hasImageIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 4,
+  },
+  hasImageText: {
+    fontSize: 11,
+    color: '#2563EB',
+  },
+  // Question View Modal Styles
+  viewModalContainer: {
+    flex: 1,
+    backgroundColor: '#F3F4F6',
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
+  },
+  viewModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    backgroundColor: '#2563EB',
+  },
+  viewModalTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#FFF',
+  },
+  viewModalContent: {
+    flex: 1,
+    padding: 16,
+  },
+  viewSection: {
+    backgroundColor: '#FFF',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 16,
+  },
+  viewSectionLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6B7280',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+  },
+  fullQuestionText: {
+    fontSize: 16,
+    color: '#1F2937',
+    lineHeight: 24,
+  },
+  viewQuestionImage: {
+    width: '100%',
+    height: 200,
+    marginTop: 12,
+    borderRadius: 8,
+  },
+  viewOptionBox: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+    marginBottom: 8,
+    gap: 12,
+  },
+  viewCorrectOption: {
+    backgroundColor: '#D1FAE5',
+    borderWidth: 1,
+    borderColor: '#10B981',
+  },
+  viewOptionLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    width: 24,
+  },
+  viewCorrectText: {
+    color: '#059669',
+  },
+  viewOptionText: {
+    fontSize: 14,
+    color: '#374151',
+    lineHeight: 20,
+  },
+  viewOptionImage: {
+    width: '100%',
+    height: 120,
+    marginTop: 8,
+    borderRadius: 6,
+  },
+  viewExplanationText: {
+    fontSize: 14,
+    color: '#92400E',
+    lineHeight: 20,
+  },
 });
+

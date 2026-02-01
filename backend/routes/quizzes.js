@@ -5,6 +5,7 @@ const QuestionBank = require('../models/QuestionBank');
 const { auth, authorize } = require('../middleware/auth');
 const multer = require('multer');
 const { parseExcel } = require('../utils/excelParser');
+const { processQuestionImages } = require('../utils/imageUploader');
 const Subject = require('../models/Subject');
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -196,11 +197,6 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
       return res.status(400).json({ message: 'No questions found in Excel file' });
     }
 
-    // Resolve Subjects
-    // Strategy: If 'subjectId' is provided (e.g. Mixed or specific), use it as the main quiz subject
-    // But verify each question's subject exists, create if missing (optional) or fail.
-    // For now, let's map text to Subject IDs.
-
     // Cache subjects to minimize DB calls
     const subjectsMap = {};
     const allSubjects = await Subject.find({});
@@ -208,14 +204,20 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
 
     const questionIds = [];
     const createdQuestions = [];
+    let firstSubjectId = subjectId; // Track first subject for quiz creation
 
-    // Create Questions
+    // Stats for preview
+    let questionsCreated = 0;
+    let duplicatesSkipped = 0;
+    let duplicatesUpdated = 0;
+    let questionsWithImages = 0;
+    const previewQuestions = [];
+
+    // Create Questions with duplicate detection
     for (const qData of parsedQuestions) {
       let subId = subjectsMap[qData.subjectName.toLowerCase()];
 
-      // If subject not found, create it? Or fail? 
-      // User said "Upload from existing Question Bank" but this is "Direct upload". 
-      // Safe bet: Create subject if missing to ensure import works.
+      // If subject not found, create it
       if (!subId) {
         const newSub = new Subject({
           name: qData.subjectName,
@@ -227,46 +229,148 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
         subjectsMap[qData.subjectName.toLowerCase()] = subId;
       }
 
-      const question = new QuestionBank({
+      // Track first subject for quiz creation
+      if (!firstSubjectId) {
+        firstSubjectId = subId;
+      }
+
+      // Check for duplicate: same question text + same options
+      const normalizedQuestion = qData.question.trim().toLowerCase();
+      const normalizedOptions = qData.options.map(o => String(o).trim().toLowerCase()).sort().join('|');
+
+      const existingQuestion = await QuestionBank.findOne({
         subject: subId,
-        topicName: qData.topicName,
-        question: qData.question,
-        questionImage: qData.questionImage,
-        options: qData.options,
-        optionImages: qData.optionImages,
-        correctAnswer: qData.correctAnswer,
-        explanation: qData.explanation,
-        explanationImage: qData.explanationImage,
-        marks: qData.marks,
-        tags: [...qData.tags, 'excel-import', `quiz:${quizTitle}`], // Link to quiz via tag
-        createdBy: req.user._id,
-        isActive: true
+        isActive: true,
+        $expr: {
+          $eq: [{ $toLower: '$question' }, normalizedQuestion]
+        }
       });
 
-      await question.save();
-      createdQuestions.push(question);
-      questionIds.push(question._id);
+      // Check if options match
+      let isDuplicate = false;
+      if (existingQuestion) {
+        const existingOptions = existingQuestion.options.map(o => String(o).trim().toLowerCase()).sort().join('|');
+        isDuplicate = existingOptions === normalizedOptions;
+      }
+
+      const newHasImage = !!(qData.questionImage || qData.optionImages?.some(img => img));
+
+      if (isDuplicate) {
+        const existingHasImage = !!(existingQuestion.questionImage || existingQuestion.optionImages?.some(img => img));
+
+        if (newHasImage && !existingHasImage) {
+          // Update existing with new images
+          existingQuestion.questionImage = qData.questionImage || existingQuestion.questionImage;
+          existingQuestion.optionImages = qData.optionImages?.some(img => img) ? qData.optionImages : existingQuestion.optionImages;
+          existingQuestion.explanationImage = qData.explanationImage || existingQuestion.explanationImage;
+          // Also update tags to include import tag
+          existingQuestion.tags = [...new Set([...existingQuestion.tags, ...qData.tags, 'excel-import', `quiz:${quizTitle}`])];
+          await existingQuestion.save();
+
+          duplicatesUpdated++;
+          questionIds.push(existingQuestion._id);
+          createdQuestions.push(existingQuestion);
+          if (existingQuestion.questionImage || existingQuestion.optionImages?.some(img => img)) {
+            questionsWithImages++;
+          }
+
+          previewQuestions.push({
+            _id: existingQuestion._id,
+            question: existingQuestion.question.substring(0, 100),
+            hasQuestionImage: !!existingQuestion.questionImage,
+            hasOptionImages: existingQuestion.optionImages?.some(img => img) || false,
+            status: 'updated'
+          });
+        } else {
+          // Skip - existing has image or neither has image
+          duplicatesSkipped++;
+          questionIds.push(existingQuestion._id);
+          if (existingQuestion.questionImage || existingQuestion.optionImages?.some(img => img)) {
+            questionsWithImages++;
+          }
+
+          previewQuestions.push({
+            _id: existingQuestion._id,
+            question: existingQuestion.question.substring(0, 100),
+            hasQuestionImage: !!existingQuestion.questionImage,
+            hasOptionImages: existingQuestion.optionImages?.some(img => img) || false,
+            status: 'skipped'
+          });
+        }
+      } else {
+        // Create new question
+        // Upload images to Cloudinary
+        console.log(`\n📝 Processing question ${questionsCreated + 1}: ${qData.question.substring(0, 50)}...`);
+        const processedQData = await processQuestionImages(qData);
+
+        const question = new QuestionBank({
+          subject: subId,
+          topicName: processedQData.topicName,
+          question: processedQData.question,
+          questionImage: processedQData.questionImage,
+          options: processedQData.options,
+          optionImages: processedQData.optionImages,
+          correctAnswer: processedQData.correctAnswer,
+          explanation: processedQData.explanation,
+          explanationImage: processedQData.explanationImage,
+          marks: processedQData.marks,
+          tags: [...qData.tags, 'excel-import', `quiz:${quizTitle}`],
+          createdBy: req.user._id,
+          isActive: true
+        });
+
+        await question.save();
+        createdQuestions.push(question);
+        questionIds.push(question._id);
+        questionsCreated++;
+
+        const newHasImage = !!(question.questionImage || question.optionImages?.some(img => img));
+        if (newHasImage) questionsWithImages++;
+
+        previewQuestions.push({
+          _id: question._id,
+          question: question.question.substring(0, 100),
+          hasQuestionImage: !!question.questionImage,
+          hasOptionImages: question.optionImages?.some(img => img) || false,
+          status: 'created'
+        });
+      }
+    }
+
+    // Check for duplicate quiz title
+    const existingQuiz = await Quiz.findOne({ title: quizTitle.trim() });
+    if (existingQuiz) {
+      return res.status(400).json({
+        message: `A quiz with the title "${quizTitle}" already exists. Please use a different name.`,
+        errorType: 'DUPLICATE_TITLE'
+      });
     }
 
     // Create Quiz
     const quiz = new Quiz({
       title: quizTitle,
-      subject: subjectId || createdQuestions[0].subject, // Default to first question's subject if not provided
+      subject: firstSubjectId || subjectId || createdQuestions[0]?.subject,
       testType: testType || 'daily',
       duration: parseInt(duration) || 30,
       instructions: instructions ? JSON.parse(instructions) : [],
       questions: questionIds,
-      assignedStudents: [], // Admin can assign later
+      assignedStudents: [],
       createdBy: req.user._id
     });
 
-    // Auto-calc total marks happens in pre-save
     await quiz.save();
 
     res.status(201).json({
       message: 'Quiz imported successfully',
       quiz,
-      questionsCreated: questionIds.length
+      stats: {
+        total: parsedQuestions.length,
+        questionsCreated,
+        duplicatesSkipped,
+        duplicatesUpdated,
+        questionsWithImages
+      },
+      previewQuestions
     });
 
   } catch (error) {
@@ -358,7 +462,7 @@ router.get('/:id', auth, async (req, res) => {
       .populate('createdBy', 'name')
       .populate({
         path: 'questions',
-        select: 'question options marks topicName questionImage' // Never send correctAnswer or explanation
+        select: 'question options marks topicName questionImage optionImages' // Never send correctAnswer or explanation
       });
 
     if (!quiz) {
