@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -6,26 +6,25 @@ import {
   SafeAreaView,
   ScrollView,
   TouchableOpacity,
-  TextInput,
-  FlatList,
-  ActivityIndicator,
   Platform,
   StatusBar,
-  Alert
+  Animated,
+  Pressable
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
   BookOpen,
   PlusCircle,
   Database,
-  Users,
-  Search,
   Clock,
   ChevronRight,
-  BarChart3
+  BarChart3,
+  Users
 } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from '@/utils/haptics';
 
 interface QuizStats {
   total: number;
@@ -58,9 +57,80 @@ export default function AdminQuizHub() {
   const [recentQuizzes, setRecentQuizzes] = useState<RecentQuiz[]>([]);
   const [pendingRetests, setPendingRetests] = useState(0);
 
+  // Animation refs
+  const headerOpacity = useRef(new Animated.Value(0)).current;
+  const statsOpacity = useRef(new Animated.Value(0)).current;
+  const statsTranslateY = useRef(new Animated.Value(20)).current;
+  const menuOpacity = useRef(new Animated.Value(0)).current;
+  const menuTranslateY = useRef(new Animated.Value(20)).current;
+  const sectionOpacity = useRef(new Animated.Value(0)).current;
+  const sectionTranslateY = useRef(new Animated.Value(20)).current;
+  const contentOpacity = useRef(new Animated.Value(0)).current;
+
   useEffect(() => {
     fetchData();
+    runEntryAnimations();
   }, []);
+
+  const runEntryAnimations = () => {
+    // Header fade in
+    Animated.timing(headerOpacity, {
+      toValue: 1,
+      duration: 500,
+      useNativeDriver: true,
+    }).start();
+
+    // Stats cards animation (delayed)
+    setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(statsOpacity, {
+          toValue: 1,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+        Animated.spring(statsTranslateY, {
+          toValue: 0,
+          tension: 50,
+          friction: 8,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }, 200);
+
+    // Menu items animation (more delayed)
+    setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(menuOpacity, {
+          toValue: 1,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+        Animated.spring(menuTranslateY, {
+          toValue: 0,
+          tension: 50,
+          friction: 8,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }, 350);
+
+    // Sections animation
+    setTimeout(() => {
+      Animated.parallel([
+        Animated.timing(sectionOpacity, {
+          toValue: 1,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+        Animated.spring(sectionTranslateY, {
+          toValue: 0,
+          tension: 50,
+          friction: 8,
+          useNativeDriver: true,
+        }),
+      ]).start();
+    }, 500);
+  };
 
   const fetchData = async () => {
     setLoading(true);
@@ -106,6 +176,12 @@ export default function AdminQuizHub() {
       console.error('Error fetching data:', error);
     } finally {
       setLoading(false);
+      // Fade in content after loading
+      Animated.timing(contentOpacity, {
+        toValue: 1,
+        duration: 400,
+        useNativeDriver: true,
+      }).start();
     }
   };
 
@@ -122,7 +198,7 @@ export default function AdminQuizHub() {
       title: 'Question Bank',
       subtitle: `${questionStats.total} questions`,
       icon: Database,
-      color: '#2563EB',
+      color: '#01b4ae',
       route: '/quizzes/question-bank'
     },
     {
@@ -163,121 +239,272 @@ export default function AdminQuizHub() {
     }
   ];
 
+  const statCards = [
+    { value: questionStats.total, label: 'Questions' },
+    { value: quizStats.total, label: 'Total Tests' },
+    { value: quizStats.daily, label: 'Daily' },
+    { value: quizStats.weekly, label: 'Weekly' }
+  ];
+
+  const handleMenuPress = (route: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    router.push(route as any);
+  };
+
+  // Skeleton component
+  const Skeleton = ({ style }: { style?: any }) => (
+    <Animated.View style={[styles.skeleton, style]}>
+      <View style={styles.skeletonShimmer} />
+    </Animated.View>
+  );
+
   return (
     <SafeAreaView style={styles.container}>
+      {/* Top glow effect */}
+      <LinearGradient
+        colors={[
+          'rgba(1, 180, 174, 0.18)',
+          'rgba(1, 180, 174, 0.08)',
+          'rgba(255, 255, 255, 0)'
+        ]}
+        locations={[0, 0.5, 1]}
+        style={styles.topGlow}
+      />
+
       <ScrollView showsVerticalScrollIndicator={false}>
-        {/* Header */}
-        <View style={styles.header}>
-          <Text style={styles.headerTitle}>Quiz Management</Text>
-          <Text style={styles.headerSubtitle}>Manage questions and tests</Text>
-        </View>
+        {/* Animated Header with Gradient */}
+        <Animated.View style={{ opacity: headerOpacity }}>
+          <LinearGradient
+            colors={['#01b4ae', '#009d99', '#01b4ae']}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={styles.headerGradient}
+          >
+            <Text style={styles.headerTitle}>Quiz Hub</Text>
+            <Text style={styles.headerSubtitle}>Manage questions and tests</Text>
+          </LinearGradient>
+        </Animated.View>
 
-        {/* Quick Stats */}
-        <View style={styles.statsContainer}>
-          <View style={styles.statCard}>
-            <Text style={styles.statNumber}>{questionStats.total}</Text>
-            <Text style={styles.statLabel}>Questions</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statNumber}>{quizStats.total}</Text>
-            <Text style={styles.statLabel}>Total Tests</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statNumber}>{quizStats.daily}</Text>
-            <Text style={styles.statLabel}>Daily</Text>
-          </View>
-          <View style={styles.statCard}>
-            <Text style={styles.statNumber}>{quizStats.weekly}</Text>
-            <Text style={styles.statLabel}>Weekly</Text>
-          </View>
-        </View>
-
-        {/* Menu Items */}
-        <View style={styles.menuContainer}>
-          {menuItems.map((item, index) => (
-            <TouchableOpacity
-              key={index}
-              style={styles.menuItem}
-              onPress={() => router.push(item.route as any)}
-            >
-              <View style={[styles.menuIconContainer, { backgroundColor: item.color + '20' }]}>
-                <item.icon color={item.color} size={24} />
-              </View>
-              <View style={styles.menuContent}>
-                <Text style={styles.menuTitle}>{item.title}</Text>
-                <Text style={styles.menuSubtitle}>{item.subtitle}</Text>
-              </View>
-              {item.badge! > 0 && (
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>{item.badge}</Text>
+        {/* Quick Stats - Premium Cards */}
+        <Animated.View
+          style={[
+            styles.statsContainer,
+            {
+              opacity: statsOpacity,
+              transform: [{ translateY: statsTranslateY }],
+            },
+          ]}
+        >
+          {loading ? (
+            // Skeleton loaders for stats
+            <>
+              {[1, 2, 3, 4].map((i) => (
+                <View key={i} style={styles.statCard}>
+                  <Skeleton style={styles.skeletonNumber} />
+                  <Skeleton style={styles.skeletonLabel} />
                 </View>
-              )}
-              <ChevronRight color="#9CA3AF" size={20} />
-            </TouchableOpacity>
-          ))}
-        </View>
+              ))}
+            </>
+          ) : (
+            statCards.map((stat, index) => (
+              <Pressable
+                key={index}
+                style={({ pressed }) => [
+                  styles.statCard,
+                  pressed && styles.statCardPressed
+                ]}
+                onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+              >
+                <Animated.View style={{ opacity: contentOpacity }}>
+                  <Text style={styles.statNumber}>{stat.value}</Text>
+                  <Text style={styles.statLabel}>{stat.label}</Text>
+                </Animated.View>
+              </Pressable>
+            ))
+          )}
+        </Animated.View>
+
+        {/* Menu Items - Premium Design */}
+        <Animated.View
+          style={[
+            styles.menuContainer,
+            {
+              opacity: menuOpacity,
+              transform: [{ translateY: menuTranslateY }],
+            },
+          ]}
+        >
+          {loading ? (
+            // Skeleton loaders for menu items
+            <>
+              {[1, 2, 3, 4, 5, 6].map((i) => (
+                <View key={i} style={styles.menuItem}>
+                  <Skeleton style={styles.skeletonIcon} />
+                  <View style={styles.menuContent}>
+                    <Skeleton style={styles.skeletonMenuTitle} />
+                    <Skeleton style={styles.skeletonMenuSubtitle} />
+                  </View>
+                </View>
+              ))}
+            </>
+          ) : (
+            menuItems.map((item, index) => (
+              <Pressable
+                key={index}
+                style={({ pressed }) => [
+                  styles.menuItem,
+                  pressed && styles.menuItemPressed
+                ]}
+                onPress={() => handleMenuPress(item.route)}
+              >
+                <Animated.View style={[styles.menuItemInner, { opacity: contentOpacity }]}>
+                  <View style={[styles.menuIconContainer, { backgroundColor: item.color + '15' }]}>
+                    <item.icon color={item.color} size={24} />
+                  </View>
+                  <View style={styles.menuContent}>
+                    <Text style={styles.menuTitle}>{item.title}</Text>
+                    <Text style={styles.menuSubtitle}>{item.subtitle}</Text>
+                  </View>
+                  {item.badge! > 0 && (
+                    <View style={styles.badge}>
+                      <Text style={styles.badgeText}>{item.badge}</Text>
+                    </View>
+                  )}
+                  <ChevronRight color="#9CA3AF" size={20} />
+                </Animated.View>
+              </Pressable>
+            ))
+          )}
+        </Animated.View>
 
         {/* Subject Breakdown */}
-        <View style={styles.section}>
+        <Animated.View
+          style={[
+            styles.section,
+            {
+              opacity: sectionOpacity,
+              transform: [{ translateY: sectionTranslateY }],
+            },
+          ]}
+        >
           <Text style={styles.sectionTitle}>Questions by Subject</Text>
           {loading ? (
-            <ActivityIndicator color="#2563EB" />
+            <View style={styles.subjectList}>
+              {[1, 2, 3, 4].map((i) => (
+                <View key={i} style={styles.subjectItem}>
+                  <View style={styles.subjectInfo}>
+                    <Skeleton style={styles.skeletonSubjectIcon} />
+                    <Skeleton style={styles.skeletonSubjectName} />
+                  </View>
+                  <Skeleton style={styles.skeletonSubjectCount} />
+                </View>
+              ))}
+            </View>
           ) : (
             <View style={styles.subjectList}>
               {questionStats.bySubject.map((item, index) => (
-                <View key={index} style={styles.subjectItem}>
-                  <View style={styles.subjectInfo}>
-                    <BookOpen color="#6B7280" size={16} />
-                    <Text style={styles.subjectName}>{item.subject}</Text>
-                  </View>
-                  <View style={styles.subjectCount}>
-                    <Text style={styles.subjectCountText}>{item.count}</Text>
-                  </View>
-                </View>
+                <Pressable
+                  key={index}
+                  style={({ pressed }) => [
+                    styles.subjectItem,
+                    pressed && styles.subjectItemPressed
+                  ]}
+                >
+                  <Animated.View style={[styles.subjectItemInner, { opacity: contentOpacity }]}>
+                    <View style={styles.subjectInfo}>
+                      <View style={styles.subjectIconContainer}>
+                        <BookOpen color="#01b4ae" size={16} />
+                      </View>
+                      <Text style={styles.subjectName}>{item.subject}</Text>
+                    </View>
+                    <View style={styles.subjectCount}>
+                      <Text style={styles.subjectCountText}>{item.count}</Text>
+                    </View>
+                  </Animated.View>
+                </Pressable>
               ))}
               {questionStats.bySubject.length === 0 && (
-                <Text style={styles.emptyText}>No questions yet. Import from Excel or add manually.</Text>
+                <View style={styles.emptyContainer}>
+                  <Text style={styles.emptyText}>No questions yet. Import from Excel or add manually.</Text>
+                </View>
               )}
             </View>
           )}
-        </View>
+        </Animated.View>
 
         {/* Recent Quizzes */}
-        <View style={styles.section}>
+        <Animated.View
+          style={[
+            styles.section,
+            {
+              opacity: sectionOpacity,
+              transform: [{ translateY: sectionTranslateY }],
+            },
+          ]}
+        >
           <Text style={styles.sectionTitle}>Recent Tests</Text>
           {loading ? (
-            <ActivityIndicator color="#2563EB" />
+            <View style={styles.quizList}>
+              {[1, 2, 3].map((i) => (
+                <View key={i} style={styles.quizItem}>
+                  <View style={styles.quizInfo}>
+                    <Skeleton style={styles.skeletonQuizTitle} />
+                    <View style={styles.quizMeta}>
+                      <Skeleton style={styles.skeletonBadge} />
+                      <Skeleton style={styles.skeletonStudentCount} />
+                    </View>
+                  </View>
+                  <Skeleton style={styles.skeletonDate} />
+                </View>
+              ))}
+            </View>
           ) : (
             <View style={styles.quizList}>
               {recentQuizzes.map((quiz, index) => (
-                <View key={index} style={styles.quizItem}>
-                  <View style={styles.quizInfo}>
-                    <Text style={styles.quizTitle} numberOfLines={1}>{quiz.title}</Text>
-                    <View style={styles.quizMeta}>
-                      <View style={[
-                        styles.typeBadge,
-                        quiz.testType === 'daily' && styles.dailyBadge,
-                        quiz.testType === 'weekly' && styles.weeklyBadge,
-                        quiz.testType === 'grand' && styles.grandBadge
-                      ]}>
-                        <Text style={styles.typeBadgeText}>{quiz.testType}</Text>
+                <Pressable
+                  key={index}
+                  style={({ pressed }) => [
+                    styles.quizItem,
+                    pressed && styles.quizItemPressed
+                  ]}
+                >
+                  <Animated.View style={[styles.quizItemInner, { opacity: contentOpacity }]}>
+                    <View style={styles.quizInfo}>
+                      <Text style={styles.quizTitle} numberOfLines={1}>{quiz.title}</Text>
+                      <View style={styles.quizMeta}>
+                        <View style={[
+                          styles.typeBadge,
+                          quiz.testType === 'daily' && styles.dailyBadge,
+                          quiz.testType === 'weekly' && styles.weeklyBadge,
+                          quiz.testType === 'grand' && styles.grandBadge
+                        ]}>
+                          <Text style={[
+                            styles.typeBadgeText,
+                            quiz.testType === 'daily' && styles.dailyBadgeText,
+                            quiz.testType === 'weekly' && styles.weeklyBadgeText,
+                            quiz.testType === 'grand' && styles.grandBadgeText
+                          ]}>{quiz.testType}</Text>
+                        </View>
+                        <View style={styles.studentCountContainer}>
+                          <Users color="#6B7280" size={12} />
+                          <Text style={styles.studentCount}>{quiz.assignedStudents?.length || 0} students</Text>
+                        </View>
                       </View>
-                      <Text style={styles.studentCount}>
-                        <Users color="#6B7280" size={12} /> {quiz.assignedStudents?.length || 0} students
-                      </Text>
                     </View>
-                  </View>
-                  <Text style={styles.quizDate}>
-                    {new Date(quiz.createdAt).toLocaleDateString()}
-                  </Text>
-                </View>
+                    <Text style={styles.quizDate}>
+                      {new Date(quiz.createdAt).toLocaleDateString()}
+                    </Text>
+                  </Animated.View>
+                </Pressable>
               ))}
               {recentQuizzes.length === 0 && (
-                <Text style={styles.emptyText}>No tests created yet.</Text>
+                <View style={styles.emptyContainer}>
+                  <Text style={styles.emptyText}>No tests created yet.</Text>
+                </View>
               )}
             </View>
           )}
-        </View>
+        </Animated.View>
 
         <View style={{ height: 40 }} />
       </ScrollView>
@@ -288,70 +515,112 @@ export default function AdminQuizHub() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: '#FFFFFF',
     paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
-  header: {
-    padding: 20,
-    backgroundColor: '#2563EB',
+  // Top glow effect
+  topGlow: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 250,
+    zIndex: 0,
+  },
+  // Header with gradient
+  headerGradient: {
+    paddingTop: 20,
+    paddingBottom: 20,
+    paddingHorizontal: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 5,
+    zIndex: 1,
   },
   headerTitle: {
     fontSize: 28,
-    fontWeight: 'bold',
-    color: '#FFF',
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: 0.5,
   },
   headerSubtitle: {
     fontSize: 14,
-    color: '#BFDBFE',
+    fontWeight: '500',
+    color: 'rgba(255, 255, 255, 0.9)',
     marginTop: 4,
+    letterSpacing: 0.2,
   },
+  // Stats cards
   statsContainer: {
     flexDirection: 'row',
     padding: 16,
-    gap: 12,
+    gap: 10,
   },
   statCard: {
     flex: 1,
-    backgroundColor: '#FFF',
-    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
     padding: 16,
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(1, 180, 174, 0.15)',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 4,
+  },
+  statCardPressed: {
+    transform: [{ scale: 0.97 }],
+    shadowOpacity: 0.04,
   },
   statNumber: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#1F2937',
+    fontSize: 26,
+    fontWeight: '700',
+    color: '#01b4ae',
+    textAlign: 'center',
   },
   statLabel: {
     fontSize: 11,
+    fontWeight: '600',
     color: '#6B7280',
     marginTop: 4,
+    textAlign: 'center',
+    letterSpacing: 0.2,
   },
+  // Menu items
   menuContainer: {
-    padding: 16,
+    paddingHorizontal: 16,
     gap: 12,
   },
   menuItem: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(1, 180, 174, 0.12)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 4,
+    overflow: 'hidden',
+  },
+  menuItemPressed: {
+    transform: [{ scale: 0.98 }],
+    shadowOpacity: 0.04,
+    backgroundColor: 'rgba(1, 180, 174, 0.03)',
+  },
+  menuItemInner: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFF',
     padding: 16,
-    borderRadius: 12,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 1,
   },
   menuIconContainer: {
     width: 48,
     height: 48,
-    borderRadius: 12,
+    borderRadius: 14,
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -363,78 +632,120 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#1F2937',
+    letterSpacing: 0.2,
   },
   menuSubtitle: {
     fontSize: 13,
     color: '#6B7280',
-    marginTop: 2,
+    marginTop: 3,
+    fontWeight: '400',
   },
   badge: {
     backgroundColor: '#EF4444',
-    paddingHorizontal: 8,
-    paddingVertical: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
     borderRadius: 12,
     marginRight: 8,
   },
   badgeText: {
     color: '#FFF',
     fontSize: 12,
-    fontWeight: '600',
+    fontWeight: '700',
   },
+  // Sections
   section: {
-    padding: 16,
+    paddingHorizontal: 16,
+    paddingTop: 24,
   },
   sectionTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '700',
-    color: '#1F2937',
-    marginBottom: 12,
+    color: '#01b4ae',
+    marginBottom: 14,
+    letterSpacing: 0.3,
   },
+  // Subject list
   subjectList: {
-    backgroundColor: '#FFF',
-    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
     overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(1, 180, 174, 0.12)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 4,
   },
   subjectItem: {
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(1, 180, 174, 0.08)',
+  },
+  subjectItemPressed: {
+    backgroundColor: 'rgba(1, 180, 174, 0.03)',
+  },
+  subjectItemInner: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
   },
   subjectInfo: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
   },
+  subjectIconContainer: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: 'rgba(1, 180, 174, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   subjectName: {
     fontSize: 15,
     color: '#1F2937',
+    fontWeight: '500',
   },
   subjectCount: {
-    backgroundColor: '#EBF5FF',
-    paddingHorizontal: 12,
-    paddingVertical: 4,
+    backgroundColor: 'rgba(1, 180, 174, 0.1)',
+    paddingHorizontal: 14,
+    paddingVertical: 6,
     borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(1, 180, 174, 0.2)',
   },
   subjectCountText: {
     fontSize: 14,
-    fontWeight: '600',
-    color: '#2563EB',
+    fontWeight: '700',
+    color: '#01b4ae',
   },
+  // Quiz list
   quizList: {
-    backgroundColor: '#FFF',
-    borderRadius: 12,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
     overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(1, 180, 174, 0.12)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 4,
   },
   quizItem: {
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(1, 180, 174, 0.08)',
+  },
+  quizItemPressed: {
+    backgroundColor: 'rgba(1, 180, 174, 0.03)',
+  },
+  quizItemInner: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
   },
   quizInfo: {
     flex: 1,
@@ -443,7 +754,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: '#1F2937',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   quizMeta: {
     flexDirection: 'row',
@@ -451,44 +762,142 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   typeBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
     backgroundColor: '#F3F4F6',
   },
   dailyBadge: {
-    backgroundColor: '#DBEAFE',
+    backgroundColor: 'rgba(1, 180, 174, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(1, 180, 174, 0.2)',
   },
   weeklyBadge: {
-    backgroundColor: '#D1FAE5',
+    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.2)',
   },
   grandBadge: {
-    backgroundColor: '#FEF3C7',
+    backgroundColor: 'rgba(139, 92, 246, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(139, 92, 246, 0.2)',
   },
   typeBadgeText: {
     fontSize: 11,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#374151',
     textTransform: 'capitalize',
+  },
+  dailyBadgeText: {
+    color: '#01b4ae',
+  },
+  weeklyBadgeText: {
+    color: '#10B981',
+  },
+  grandBadgeText: {
+    color: '#8B5CF6',
+  },
+  studentCountContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
   },
   studentCount: {
     fontSize: 12,
     color: '#6B7280',
+    fontWeight: '500',
   },
   quizDate: {
     fontSize: 12,
     color: '#9CA3AF',
+    fontWeight: '500',
+  },
+  // Empty state
+  emptyContainer: {
+    padding: 24,
+    alignItems: 'center',
   },
   emptyText: {
     fontSize: 14,
     color: '#6B7280',
     textAlign: 'center',
-    padding: 20,
+    fontWeight: '400',
   },
   errorText: {
     fontSize: 16,
     color: '#EF4444',
     textAlign: 'center',
     marginTop: 50,
+    fontWeight: '500',
+  },
+  // Skeleton loading
+  skeleton: {
+    backgroundColor: '#E5E7EB',
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  skeletonShimmer: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#E5E7EB',
+  },
+  skeletonNumber: {
+    width: 40,
+    height: 28,
+    marginBottom: 6,
+    alignSelf: 'center',
+  },
+  skeletonLabel: {
+    width: 50,
+    height: 12,
+    alignSelf: 'center',
+  },
+  skeletonIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    marginRight: 16,
+  },
+  skeletonMenuTitle: {
+    width: 120,
+    height: 18,
+    marginBottom: 6,
+  },
+  skeletonMenuSubtitle: {
+    width: 80,
+    height: 14,
+  },
+  skeletonSubjectIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+  },
+  skeletonSubjectName: {
+    width: 100,
+    height: 16,
+    marginLeft: 12,
+  },
+  skeletonSubjectCount: {
+    width: 40,
+    height: 28,
+    borderRadius: 12,
+  },
+  skeletonQuizTitle: {
+    width: 150,
+    height: 18,
+    marginBottom: 8,
+  },
+  skeletonBadge: {
+    width: 50,
+    height: 22,
+    borderRadius: 8,
+  },
+  skeletonStudentCount: {
+    width: 70,
+    height: 14,
+  },
+  skeletonDate: {
+    width: 60,
+    height: 14,
   },
 });

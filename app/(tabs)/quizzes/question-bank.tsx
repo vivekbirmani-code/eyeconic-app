@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -13,28 +13,33 @@ import {
   Platform,
   StatusBar,
   FlatList,
-  Image
+  Image,
+  Animated,
+  Pressable
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { 
-  Plus, 
-  Upload, 
-  BookOpen, 
-  ChevronDown, 
-  X, 
+import {
+  Plus,
+  Upload,
+  BookOpen,
+  ChevronDown,
+  X,
   Check,
   Search,
   Filter,
   Trash2,
   Edit,
   Image as ImageIcon,
-  Eye
+  Eye,
+  ArrowLeft,
+  ChevronRight
 } from 'lucide-react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-// FileSystem is required dynamically for native platforms only
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
+import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from '@/utils/haptics';
 
 interface Subject {
   _id: string;
@@ -60,20 +65,20 @@ interface Question {
 export default function QuestionBankManagement() {
   const { user } = useAuth();
   const router = useRouter();
-  
+
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
-  
+
   // Filters
   const [selectedSubject, setSelectedSubject] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
-  
+
   // Add/Edit Question Modal
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
-  
+
   const [newQuestion, setNewQuestion] = useState({
     subject: '',
     topicName: '',
@@ -87,28 +92,41 @@ export default function QuestionBankManagement() {
   });
   const [saving, setSaving] = useState(false);
   const [imageUploading, setImageUploading] = useState(false);
-  
+
   // Subject dropdown
   const [showSubjectDropdown, setShowSubjectDropdown] = useState(false);
-  
+
   // Stats
   const [stats, setStats] = useState<{ total: number; bySubject: any[] }>({ total: 0, bySubject: [] });
-  
+
   // Question View Modal
   const [selectedViewQuestion, setSelectedViewQuestion] = useState<Question | null>(null);
+
+  // Animation Refs
+  const headerOpacity = useRef(new Animated.Value(0)).current;
+  const contentOpacity = useRef(new Animated.Value(0)).current;
+  const scrollY = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     fetchSubjects();
     fetchStats();
+    runEntryAnimations();
   }, []);
 
   useEffect(() => {
     fetchQuestions();
   }, [selectedSubject, searchQuery]);
 
+  const runEntryAnimations = () => {
+    Animated.timing(headerOpacity, {
+      toValue: 1,
+      duration: 500,
+      useNativeDriver: true,
+    }).start();
+  };
+
   const fetchSubjects = async () => {
     try {
-      // Use /subjects/list endpoint which returns flat array (not grouped by year)
       const response = await api.get('/subjects/list');
       setSubjects(Array.isArray(response.data) ? response.data : []);
     } catch (error) {
@@ -123,9 +141,16 @@ export default function QuestionBankManagement() {
       const params: any = {};
       if (selectedSubject) params.subject = selectedSubject;
       if (searchQuery) params.search = searchQuery;
-      
+
       const response = await api.get('/question-bank', { params });
       setQuestions(response.data);
+
+      // Fade in content
+      Animated.timing(contentOpacity, {
+        toValue: 1,
+        duration: 400,
+        useNativeDriver: true,
+      }).start();
     } catch (error) {
       console.error('Error fetching questions:', error);
     } finally {
@@ -166,19 +191,6 @@ export default function QuestionBankManagement() {
   const uploadImage = async (base64: string, type: 'question' | 'option', optionIndex?: number) => {
     setImageUploading(true);
     try {
-      // Create a temporary file object manually as we are sending base64 to our custom buffer upload
-      // Actually, my backend upload.js expects multipart/form-data.
-      // But creating a FormData with base64 in React Native can be tricky.
-      // Let's modify the backend call or stick to the Excel upload style which used a custom base64 endpoint?
-      // No, for individual images, standard multipart is better, but since I have base64 from picker...
-      // Let's convert base64 to blob/file or just send base64 to a new endpoint?
-      // Actually my backend/routes/upload.js expects `upload.single('image')`.
-      // Let's use `FileSystem.uploadAsync` or similar if possible, OR
-      // Simplest: Send base64 to a flexible endpoint.
-      // But wait, I created `upload.js` using `upload.single('image')`.
-      // I can change front-end to construct FormData.
-
-      // Construct FormData
       const formData = new FormData();
       formData.append('image', {
         uri: `data:image/jpeg;base64,${base64}`,
@@ -220,7 +232,7 @@ export default function QuestionBankManagement() {
       Alert.alert('Error', 'Please enter the question or upload an image');
       return;
     }
-    
+
     // Validate options: need at least 2 options matching either text or image
     const validOptionsCount = newQuestion.options.reduce((acc, opt, idx) => {
       const hasText = !!opt.trim();
@@ -237,10 +249,6 @@ export default function QuestionBankManagement() {
     try {
       const payload = {
         ...newQuestion,
-        // Ensure options array matches valid length if we want to filter empty ones? 
-        // No, we should keep 4 slots but maybe empty strings.
-        // Backend expects options string array. 'optionImages' is separate aligned array. 
-        // We will send as is.
       };
 
       if (editingQuestionId) {
@@ -250,7 +258,7 @@ export default function QuestionBankManagement() {
         await api.post('/question-bank', payload);
         Alert.alert('Success', 'Question added successfully');
       }
-      
+
       setShowAddModal(false);
       resetNewQuestion();
       fetchQuestions();
@@ -269,21 +277,12 @@ export default function QuestionBankManagement() {
       topicName: q.topicName || '',
       question: q.question,
       questionImage: q.questionImage || '',
-      options: q.options.concat(['', '', '', '']).slice(0, 4), // Ensure 4
+      options: q.options.concat(['', '', '', '']).slice(0, 4),
       optionImages: (q.optionImages || []).concat(['', '', '', '']).slice(0, 4),
-      correctAnswer: 0, // We don't get this from API for students but for admin we should. 
-      // Wait, admin API returns keys? 'getAll' might not return 'correctAnswer' if sensitive?
-      // Let's check backend... Admin gets everything.
-      // But we need to find which index matches 'correctAnswer' (0-3).
-      // Backend schema says 'correctAnswer' is Number (0-3).
-      // Wait, the API response for 'getAll' (fetchQuestions) might not include it if I didn't check.
-      // Checking backend... `router.get('/', ...)` does `select('-correctAnswer')` ONLY for STUDENTS.
-      // Admin should receive it. I can augment interface if needed, but I'll assume it's in `q` object property if I typecasted it or use `any`.
-      // The `Question` interface above didn't have `correctAnswer`. I should add it.
+      correctAnswer: 0,
       explanation: (q as any).explanation || '',
       marks: q.marks
     });
-    // Set correct answer safely
     if ((q as any).correctAnswer !== undefined) {
       setNewQuestion(prev => ({ ...prev, correctAnswer: (q as any).correctAnswer }));
     }
@@ -302,6 +301,7 @@ export default function QuestionBankManagement() {
       explanation: '',
       marks: 1
     });
+    setEditingQuestionId(null);
   };
 
   const handleBulkImport = async () => {
@@ -315,20 +315,17 @@ export default function QuestionBankManagement() {
 
       setUploading(true);
       const file = result.assets[0];
-      
-      // Try to get file content - works differently on web vs native
+
       let base64: string;
-      
+
       try {
-        // Method 1: Try fetch (works on web with blob URLs)
         const response = await fetch(file.uri);
         const blob = await response.blob();
-        
+
         base64 = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
           reader.onload = () => {
             const dataUrl = reader.result as string;
-            // Extract base64 from data URL (format: data:mime;base64,XXXXX)
             const base64Data = dataUrl.split(',')[1];
             resolve(base64Data);
           };
@@ -336,24 +333,18 @@ export default function QuestionBankManagement() {
           reader.readAsDataURL(blob);
         });
       } catch (fetchError) {
-        console.log('Fetch method failed, trying FileSystem...');
-        // Method 2: Try expo-file-system (native only)
         try {
           const FileSystem = require('expo-file-system');
           base64 = await FileSystem.readAsStringAsync(file.uri, {
             encoding: FileSystem.EncodingType.Base64
           });
         } catch (fsError) {
-          console.error('Both methods failed:', fetchError, fsError);
-          Alert.alert('Error', 'Could not read the file. Please try again.');
+          Alert.alert('Error', 'Could not read the file.');
           setUploading(false);
           return;
         }
       }
-      
-      console.log('Uploading file:', file.name, 'Size:', base64.length);
-      
-      // Send base64 to backend
+
       const apiResponse = await api.post('/question-bank/bulk-import-base64', {
         filename: file.name,
         data: base64
@@ -361,12 +352,12 @@ export default function QuestionBankManagement() {
 
       Alert.alert(
         'Success',
-        `Imported ${apiResponse.data.count} questions!${apiResponse.data.newSubjects?.length ? `\n\nNew subjects created: ${apiResponse.data.newSubjects.join(', ')}` : ''}${apiResponse.data.errors?.length ? `\n\nWarnings: ${apiResponse.data.errors.length} rows had issues` : ''}`,
+        `Imported ${apiResponse.data.count} questions!`,
         [{ text: 'OK', onPress: () => { fetchQuestions(); fetchStats(); fetchSubjects(); } }]
       );
     } catch (error: any) {
       console.error('Import error:', error);
-      Alert.alert('Error', error.response?.data?.message || error.message || 'Failed to import questions');
+      Alert.alert('Error', 'Failed to import questions');
     } finally {
       setUploading(false);
     }
@@ -395,51 +386,77 @@ export default function QuestionBankManagement() {
     );
   };
 
+  // Skeleton Component
+  const Skeleton = ({ style }: { style?: any }) => (
+    <View style={[styles.skeleton, style]} />
+  );
+
   const renderQuestion = ({ item, index }: { item: Question; index: number }) => (
-    <TouchableOpacity 
-      style={styles.questionCard}
-      onPress={() => setSelectedViewQuestion(item)}
-      activeOpacity={0.7}
+    <Pressable
+      style={({ pressed }) => [
+        styles.questionCard,
+        pressed && styles.questionCardPressed
+      ]}
+      onPress={() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        setSelectedViewQuestion(item);
+      }}
     >
       <View style={styles.questionHeader}>
-        <Text style={styles.questionNumber}>Q{index + 1}</Text>
-        <View style={styles.questionMeta}>
-          <Text style={styles.subjectBadge}>{item.subject?.name}</Text>
-          {item.topicName && (
-            <Text style={styles.topicBadge}>{item.topicName}</Text>
-          )}
-          <Text style={styles.marksBadge}>{item.marks}M</Text>
+        <View style={styles.questionIdContainer}>
+          <Text style={styles.questionNumber}>Q{index + 1}</Text>
         </View>
-        <View style={{ flexDirection: 'row', gap: 12, alignItems: 'center' }}>
-          <TouchableOpacity onPress={() => setSelectedViewQuestion(item)}>
+        <View style={styles.questionMeta}>
+          <View style={styles.badgeContainer}>
+            <Text style={styles.badgeText}>{item.subject?.name}</Text>
+          </View>
+          {item.topicName && (
+            <View style={[styles.badgeContainer, styles.topicBadge]}>
+              <Text style={styles.topicBadgeText}>{item.topicName}</Text>
+            </View>
+          )}
+          <View style={[styles.badgeContainer, styles.marksBadge]}>
+            <Text style={styles.marksBadgeText}>{item.marks}M</Text>
+          </View>
+        </View>
+      </View>
+
+      <Text style={styles.questionText} numberOfLines={2}>{item.question}</Text>
+
+      {item.questionImage && (
+        <View style={styles.imageIndicator}>
+          <ImageIcon size={14} color="#01b4ae" />
+          <Text style={styles.imageIndicatorText}>Contains Image</Text>
+        </View>
+      )}
+
+      <View style={styles.cardFooter}>
+        <View style={styles.optionsPreview}>
+          <Text style={styles.optionCount}>{item.options.length} Options</Text>
+        </View>
+
+        <View style={styles.actionButtons}>
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => setSelectedViewQuestion(item)}
+          >
             <Eye color="#6B7280" size={18} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => handleEditQuestion(item)}>
-            <Edit color="#2563EB" size={18} />
+          <TouchableOpacity
+            style={styles.actionButton}
+            onPress={() => handleEditQuestion(item)}
+          >
+            <Edit color="#01b4ae" size={18} />
           </TouchableOpacity>
-          <TouchableOpacity onPress={() => handleDeleteQuestion(item._id)}>
+          <TouchableOpacity
+            style={[styles.actionButton, styles.deleteButton]}
+            onPress={() => handleDeleteQuestion(item._id)}
+          >
             <Trash2 color="#EF4444" size={18} />
           </TouchableOpacity>
         </View>
       </View>
-      <Text style={styles.questionText} numberOfLines={2}>{item.question}</Text>
-      {item.questionImage && (
-        <View style={styles.hasImageIndicator}>
-          <ImageIcon size={14} color="#2563EB" />
-          <Text style={styles.hasImageText}>Has image</Text>
-        </View>
-      )}
-      <View style={styles.optionsPreview}>
-        {item.options.slice(0, 2).map((opt, i) => (
-          <Text key={i} style={styles.optionPreview} numberOfLines={1}>
-            {String.fromCharCode(65 + i)}. {opt}
-          </Text>
-        ))}
-        {item.options.length > 2 && (
-          <Text style={styles.moreOptions}>+{item.options.length - 2} more</Text>
-        )}
-      </View>
-    </TouchableOpacity>
+    </Pressable>
   );
 
   if (user?.role !== 'admin') {
@@ -452,138 +469,204 @@ export default function QuestionBankManagement() {
 
   return (
     <SafeAreaView style={styles.container}>
+      <StatusBar barStyle="light-content" />
+
+      {/* Top Glow */}
+      <LinearGradient
+        colors={['rgba(1, 180, 174, 0.15)', 'rgba(255,255,255,0)']}
+        style={styles.topGlow}
+      />
+
       {/* Header */}
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.headerTitle}>Question Bank</Text>
-          <Text style={styles.headerSubtitle}>{stats.total} questions total</Text>
-        </View>
-        <View style={styles.headerActions}>
-          <TouchableOpacity 
-            style={styles.uploadButton}
-            onPress={handleBulkImport}
-            disabled={uploading}
-          >
-            {uploading ? (
-              <ActivityIndicator color="#FFF" size="small" />
-            ) : (
-              <>
-                <Upload color="#FFF" size={18} />
-                <Text style={styles.uploadButtonText}>Import Excel</Text>
-              </>
-            )}
-          </TouchableOpacity>
-          <TouchableOpacity 
-            style={styles.addButton}
-            onPress={() => setShowAddModal(true)}
-          >
-            <Plus color="#FFF" size={20} />
-          </TouchableOpacity>
-        </View>
-      </View>
-
-      {/* Stats Cards */}
-      <ScrollView 
-        horizontal 
-        showsHorizontalScrollIndicator={false}
-        style={styles.statsScroll}
-        contentContainerStyle={styles.statsContainer}
-      >
-        {stats.bySubject.map((stat, index) => (
-          <TouchableOpacity 
-            key={index}
-            style={[
-              styles.statCard,
-              selectedSubject === stat._id && styles.statCardActive
-            ]}
-            onPress={() => setSelectedSubject(selectedSubject === stat._id ? '' : stat._id)}
-          >
-            <Text style={styles.statCount}>{stat.count}</Text>
-            <Text style={styles.statSubject} numberOfLines={1}>{stat.subject}</Text>
-          </TouchableOpacity>
-        ))}
-      </ScrollView>
-
-      {/* Search & Filter */}
-      <View style={styles.searchRow}>
-        <View style={styles.searchInput}>
-          <Search color="#6B7280" size={20} />
-          <TextInput
-            style={styles.searchTextInput}
-            placeholder="Search questions..."
-            value={searchQuery}
-            onChangeText={setSearchQuery}
-            onSubmitEditing={fetchQuestions}
-          />
-        </View>
-      </View>
-
-      {/* Questions List */}
-      {loading ? (
-        <ActivityIndicator size="large" color="#2563EB" style={{ marginTop: 40 }} />
-      ) : (
-        <FlatList
-          data={questions}
-          renderItem={renderQuestion}
-          keyExtractor={item => item._id}
-          contentContainerStyle={styles.questionsList}
-          ListEmptyComponent={
-            <View style={styles.emptyState}>
-              <BookOpen color="#9CA3AF" size={48} />
-              <Text style={styles.emptyText}>No questions found</Text>
-              <Text style={styles.emptySubtext}>Add questions or import from Excel</Text>
-            </View>
-          }
-        />
-      )}
-
-      {/* Add Question Modal */}
-      <Modal visible={showAddModal} animationType="slide">
-        <SafeAreaView style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>{editingQuestionId ? 'Edit Question' : 'Add Question'}</Text>
-            <TouchableOpacity onPress={() => setShowAddModal(false)}>
-              <X color="#6B7280" size={24} />
-            </TouchableOpacity>
-          </View>
-
-          <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
-            {/* Subject Selector */}
-            <Text style={styles.inputLabel}>Subject *</Text>
-            <TouchableOpacity 
-              style={styles.dropdown}
-              onPress={() => setShowSubjectDropdown(!showSubjectDropdown)}
+      <Animated.View style={{ opacity: headerOpacity }}>
+        <LinearGradient
+          colors={['#01b4ae', '#009d99', '#01b4ae']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={styles.headerGradient}
+        >
+          <View style={styles.headerContent}>
+            <TouchableOpacity
+              onPress={() => router.back()}
+              style={styles.backButton}
             >
-              <Text style={newQuestion.subject ? styles.dropdownText : styles.dropdownPlaceholder}>
-                {(Array.isArray(subjects) ? subjects : []).find(s => s._id === newQuestion.subject)?.name || 'Select Subject'}
-              </Text>
-              <ChevronDown color="#6B7280" size={20} />
+              <ArrowLeft color="#FFF" size={24} />
             </TouchableOpacity>
-            
-            {showSubjectDropdown && (
-              <View style={styles.dropdownList}>
-                <ScrollView style={{ maxHeight: 250 }} nestedScrollEnabled={true}>
-                  {(Array.isArray(subjects) ? subjects : []).map(subject => (
-                    <TouchableOpacity
-                      key={subject._id}
-                      style={styles.dropdownItem}
-                      onPress={() => {
-                        setNewQuestion({ ...newQuestion, subject: subject._id });
-                        setShowSubjectDropdown(false);
-                      }}
-                    >
-                      <Text style={styles.dropdownItemText}>{subject.name}</Text>
-                      {newQuestion.subject === subject._id && (
-                        <Check color="#10B981" size={18} />
-                      )}
-                    </TouchableOpacity>
-                  ))}
-                </ScrollView>
-              </View>
-            )}
+            <View style={{ flex: 1 }}>
+              <Text style={styles.headerTitle}>Question Bank</Text>
+              <Text style={styles.headerSubtitle}>{stats.total} questions available</Text>
+            </View>
+            <View style={styles.headerActions}>
+              <TouchableOpacity
+                style={styles.headerIconBtn}
+                onPress={handleBulkImport}
+              >
+                {uploading ? <ActivityIndicator color="#FFF" size="small" /> : <Upload color="#FFF" size={20} />}
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.headerIconBtn}
+                onPress={() => {
+                  resetNewQuestion();
+                  setShowAddModal(true);
+                }}
+              >
+                <Plus color="#FFF" size={20} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        </LinearGradient>
+      </Animated.View>
 
-            {/* Topic */}
-            <Text style={styles.inputLabel}>Topic/Chapter</Text>
+      <View style={styles.contentContainer}>
+        {/* Search Bar */}
+        <View style={styles.searchContainer}>
+          <View style={styles.searchBar}>
+            <Search color="#9CA3AF" size={20} />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Search questions..."
+              placeholderTextColor="#9CA3AF"
+              value={searchQuery}
+              onChangeText={setSearchQuery}
+            />
+          </View>
+        </View>
+
+        {/* Categories / Stats */}
+        <View style={styles.statsListContainer}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.statsScrollContent}
+          >
+            <Pressable
+              style={[
+                styles.statChip,
+                selectedSubject === '' && styles.statChipActive
+              ]}
+              onPress={() => setSelectedSubject('')}
+            >
+              <Text style={[
+                styles.statChipText,
+                selectedSubject === '' && styles.statChipTextActive
+              ]}>All</Text>
+            </Pressable>
+
+            {stats.bySubject.map((stat, index) => (
+              <Pressable
+                key={index}
+                style={[
+                  styles.statChip,
+                  selectedSubject === stat._id && styles.statChipActive
+                ]}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setSelectedSubject(selectedSubject === stat._id ? '' : stat._id);
+                }}
+              >
+                <Text style={[
+                  styles.statChipText,
+                  selectedSubject === stat._id && styles.statChipTextActive
+                ]}>{stat.subject} ({stat.count})</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+
+        {/* Questions List */}
+        {loading ? (
+          <View style={styles.loadingContainer}>
+            {[1, 2, 3].map(i => (
+              <View key={i} style={styles.skeletonCard}>
+                <Skeleton style={{ width: 40, height: 20, marginBottom: 10 }} />
+                <Skeleton style={{ width: '80%', height: 16, marginBottom: 6 }} />
+                <Skeleton style={{ width: '60%', height: 16, marginBottom: 15 }} />
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+                  <Skeleton style={{ width: 60, height: 20 }} />
+                  <Skeleton style={{ width: 80, height: 20 }} />
+                </View>
+              </View>
+            ))}
+          </View>
+        ) : (
+          <Animated.FlatList
+            data={questions}
+            renderItem={renderQuestion}
+            keyExtractor={item => item._id}
+            contentContainerStyle={styles.listContent}
+            style={{ opacity: contentOpacity }}
+            showsVerticalScrollIndicator={false}
+            ListEmptyComponent={
+              <View style={styles.emptyState}>
+                <View style={styles.emptyIconContainer}>
+                  <BookOpen color="#01b4ae" size={32} />
+                </View>
+                <Text style={styles.emptyText}>No questions found</Text>
+                <Text style={styles.emptySubtext}>Try adjusting your filters or add a new question</Text>
+              </View>
+            }
+          />
+        )}
+      </View>
+
+      {/* Add/Edit Modal */}
+      <Modal visible={showAddModal} animationType="slide" presentationStyle="pageSheet">
+        <View style={styles.modalContainer}>
+          <LinearGradient
+            colors={['#01b4ae', '#009d99']}
+            style={styles.modalHeader}
+          >
+            <Text style={styles.modalTitle}>{editingQuestionId ? 'Edit Question' : 'Add Question'}</Text>
+            <TouchableOpacity onPress={() => setShowAddModal(false)} style={styles.closeButton}>
+              <X color="#FFF" size={24} />
+            </TouchableOpacity>
+          </LinearGradient>
+
+          <ScrollView
+            style={styles.modalContent}
+            contentContainerStyle={{ flexGrow: 1 }}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            nestedScrollEnabled={true}
+          >
+            {/* Subject Dropdown */}
+            <Text style={styles.label}>Subject *</Text>
+            <View style={{ zIndex: 3000, elevation: 5, overflow: 'visible' }}>
+              <TouchableOpacity
+                style={styles.dropdownButton}
+                onPress={() => setShowSubjectDropdown(!showSubjectDropdown)}
+              >
+                <Text style={newQuestion.subject ? styles.dropdownText : styles.placeholderText}>
+                  {(Array.isArray(subjects) ? subjects : []).find(s => s._id === newQuestion.subject)?.name || 'Select Subject'}
+                </Text>
+                <ChevronDown color="#6B7280" size={20} />
+              </TouchableOpacity>
+
+              {showSubjectDropdown && (
+                <View style={[styles.dropdownList, { position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 4000, elevation: 5 }]}>
+                  <ScrollView nestedScrollEnabled style={{ maxHeight: 200 }}>
+                    {subjects.map(subject => (
+                      <TouchableOpacity
+                        key={subject._id}
+                        style={styles.dropdownItem}
+                        onPress={() => {
+                          setNewQuestion({ ...newQuestion, subject: subject._id });
+                          setShowSubjectDropdown(false);
+                        }}
+                      >
+                        <Text style={[
+                          styles.dropdownItemText,
+                          newQuestion.subject === subject._id && styles.selectedDropdownText
+                        ]}>{subject.name}</Text>
+                        {newQuestion.subject === subject._id && <Check color="#01b4ae" size={16} />}
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+            </View>
+
+            <Text style={styles.label}>Topic</Text>
             <TextInput
               style={styles.input}
               placeholder="e.g., Cardiovascular System"
@@ -591,478 +674,511 @@ export default function QuestionBankManagement() {
               onChangeText={text => setNewQuestion({ ...newQuestion, topicName: text })}
             />
 
-            {/* Question */}
-            <Text style={styles.inputLabel}>Question *</Text>
+            <Text style={styles.label}>Question Text *</Text>
             <TextInput
               style={[styles.input, styles.textArea]}
-              placeholder="Enter your question here..."
+              placeholder="Enter question..."
+              multiline
               value={newQuestion.question}
               onChangeText={text => setNewQuestion({ ...newQuestion, question: text })}
-              multiline
             />
-            
-            {/* Question Image */}
-            <TouchableOpacity 
-              style={styles.imagePickerButton}
+
+            <TouchableOpacity
+              style={styles.imageUploadBtn}
               onPress={() => handlePickImage('question')}
-              disabled={imageUploading}
             >
-              <ImageIcon color="#4B5563" size={20} />
-              <Text style={styles.imagePickerText}>
-                {newQuestion.questionImage ? 'Change Question Image' : 'Add Question Image'}
-              </Text>
+              <ImageIcon color="#01b4ae" size={20} />
+              <Text style={styles.imageUploadText}>{newQuestion.questionImage ? 'Change Image' : 'Add Image'}</Text>
             </TouchableOpacity>
-            
+
             {newQuestion.questionImage ? (
-              <View style={styles.imagePreviewContainer}>
-                <Image 
-                  source={{ uri: newQuestion.questionImage }} 
-                  style={styles.imagePreview} 
-                  resizeMode="contain"
-                />
-                <TouchableOpacity 
-                  style={styles.removeImageButton}
+              <View style={styles.previewImageContainer}>
+                <Image source={{ uri: newQuestion.questionImage }} style={styles.previewImage} resizeMode="contain" />
+                <TouchableOpacity
+                  style={styles.removeImgBtn}
                   onPress={() => setNewQuestion(prev => ({ ...prev, questionImage: '' }))}
                 >
-                  <X color="#FFF" size={16} />
+                  <X color="#FFF" size={14} />
                 </TouchableOpacity>
               </View>
             ) : null}
 
-            {/* Options */}
-            <Text style={styles.inputLabel}>Options *</Text>
-            {newQuestion.options.map((option, index) => (
-              <View key={index} style={styles.optionRowContainer}>
-                <View style={styles.optionRow}>
+            <Text style={styles.label}>Options (Select correct answer) *</Text>
+            {newQuestion.options.map((opt, idx) => (
+              <View key={idx} style={styles.optionRow}>
+                <TouchableOpacity
+                  style={[styles.radioBtn, newQuestion.correctAnswer === idx && styles.radioBtnSelected]}
+                  onPress={() => setNewQuestion(prev => ({ ...prev, correctAnswer: idx }))}
+                >
+                  {newQuestion.correctAnswer === idx && <View style={styles.radioInner} />}
+                </TouchableOpacity>
+                <View style={{ flex: 1, gap: 8 }}>
+                  <TextInput
+                    style={styles.optionInput}
+                    placeholder={`Option ${idx + 1}`}
+                    value={opt}
+                    onChangeText={text => {
+                      const newOpts = [...newQuestion.options];
+                      newOpts[idx] = text;
+                      setNewQuestion(prev => ({ ...prev, options: newOpts }));
+                    }}
+                  />
                   <TouchableOpacity
-                    style={[
-                      styles.optionRadio,
-                      newQuestion.correctAnswer === index && styles.optionRadioSelected
-                    ]}
-                    onPress={() => setNewQuestion({ ...newQuestion, correctAnswer: index })}
+                    onPress={() => handlePickImage('option', idx)}
+                    style={styles.miniImageLink}
                   >
-                    {newQuestion.correctAnswer === index && (
-                      <View style={styles.optionRadioInner} />
-                    )}
+                    <ImageIcon size={14} color="#01b4ae" />
+                    <Text style={styles.miniImageLinkText}>
+                      {newQuestion.optionImages[idx] ? 'Change Image' : 'Add Image'}
+                    </Text>
                   </TouchableOpacity>
-                  <Text style={styles.optionLabel}>{String.fromCharCode(65 + index)}.</Text>
-                  
-                  <View style={{ flex: 1, gap: 8 }}>
-                    <TextInput
-                      style={styles.optionInput}
-                      placeholder={`Option ${String.fromCharCode(65 + index)}`}
-                      value={option}
-                      onChangeText={text => {
-                        const newOptions = [...newQuestion.options];
-                        newOptions[index] = text;
-                        setNewQuestion({ ...newQuestion, options: newOptions });
-                      }}
-                    />
-                    
-                    {/* Option Image Controls */}
-                    <View style={styles.optionImageControls}>
-                      <TouchableOpacity 
-                        onPress={() => handlePickImage('option', index)}
-                        disabled={imageUploading}
-                        style={styles.miniImageButton}
-                      >
-                         <ImageIcon color="#6B7280" size={16} />
-                         <Text style={styles.miniImageText}>
-                           {newQuestion.optionImages[index] ? 'Change Img' : 'Add Img'}
-                         </Text>
+                  {newQuestion.optionImages[idx] ? (
+                    <View style={styles.miniImagePreview}>
+                      <Image source={{ uri: newQuestion.optionImages[idx] }} style={{ width: 60, height: 60, borderRadius: 4 }} />
+                      <TouchableOpacity onPress={() => {
+                        const newImgs = [...newQuestion.optionImages];
+                        newImgs[idx] = '';
+                        setNewQuestion(prev => ({ ...prev, optionImages: newImgs }));
+                      }}>
+                        <Text style={{ color: '#EF4444', fontSize: 10, marginTop: 2 }}>Remove</Text>
                       </TouchableOpacity>
-                      
-                      {newQuestion.optionImages[index] ? (
-                        <TouchableOpacity 
-                          onPress={() => {
-                            const newImages = [...newQuestion.optionImages];
-                            newImages[index] = '';
-                            setNewQuestion(prev => ({ ...prev, optionImages: newImages }));
-                          }}
-                        >
-                          <Text style={styles.removeImageText}>Remove</Text>
-                        </TouchableOpacity>
-                      ) : null}
                     </View>
-                  </View>
+                  ) : null}
                 </View>
-                
-                {/* Option Image Preview */}
-                {newQuestion.optionImages[index] ? (
-                  <View style={styles.optionImagePreviewContainer}>
-                    <Image 
-                      source={{ uri: newQuestion.optionImages[index] }}
-                      style={styles.optionImagePreview}
-                      resizeMode="cover"
-                    />
-                  </View>
-                ) : null}
               </View>
             ))}
-            <Text style={styles.hintText}>Tap the circle to mark correct answer</Text>
 
-            {/* Explanation */}
-            <Text style={styles.inputLabel}>Explanation (Optional)</Text>
-            <TextInput
-              style={[styles.input, styles.textArea]}
-              placeholder="Explain why this is the correct answer..."
-              value={newQuestion.explanation}
-              onChangeText={text => setNewQuestion({ ...newQuestion, explanation: text })}
-              multiline
-            />
-
-            {/* Marks */}
-            <Text style={styles.inputLabel}>Marks</Text>
+            <Text style={styles.label}>Marks</Text>
             <TextInput
               style={styles.input}
-              placeholder="1"
               value={newQuestion.marks.toString()}
-              onChangeText={text => setNewQuestion({ ...newQuestion, marks: parseInt(text) || 1 })}
               keyboardType="numeric"
+              onChangeText={text => setNewQuestion({ ...newQuestion, marks: parseInt(text) || 1 })}
             />
 
-            {/* Save Button */}
-            <TouchableOpacity 
-              style={styles.saveButton}
+            <Text style={styles.label}>Explanation</Text>
+            <TextInput
+              style={[styles.input, styles.textArea]}
+              placeholder="Explain correct answer..."
+              multiline
+              value={newQuestion.explanation}
+              onChangeText={text => setNewQuestion({ ...newQuestion, explanation: text })}
+            />
+
+            <TouchableOpacity
+              style={[styles.saveBtn, saving && styles.disabledBtn]}
               onPress={handleAddQuestion}
               disabled={saving}
             >
-              {saving ? (
-                <ActivityIndicator color="#FFF" />
-              ) : (
-                <Text style={styles.saveButtonText}>
-                  {editingQuestionId ? 'Update Question' : 'Save Question'}
-                </Text>
-              )}
+              {saving ? <ActivityIndicator color="#FFF" /> : <Text style={styles.saveBtnText}>{editingQuestionId ? 'Update' : 'Save Question'}</Text>}
             </TouchableOpacity>
-
-            {/* Add Another Button (Only in Add mode) */}
-            {!editingQuestionId && (
-              <TouchableOpacity 
-                style={styles.addAnotherButton}
-                onPress={async () => {
-                  await handleAddQuestion();
-                  // Don't close modal, just reset form
-                }}
-                disabled={saving}
-              >
-                <Plus color="#2563EB" size={20} />
-                <Text style={styles.addAnotherText}>Save & Add Another</Text>
-              </TouchableOpacity>
-            )}
 
             <View style={{ height: 40 }} />
           </ScrollView>
-        </SafeAreaView>
+        </View>
       </Modal>
 
-      {/* Question View Modal */}
-      <Modal visible={!!selectedViewQuestion} animationType="slide" onRequestClose={() => setSelectedViewQuestion(null)}>
-        <SafeAreaView style={styles.viewModalContainer}>
-          <View style={styles.viewModalHeader}>
-            <Text style={styles.viewModalTitle}>Question Preview</Text>
-            <TouchableOpacity onPress={() => setSelectedViewQuestion(null)}>
+      {/* View/Preview Modal */}
+      <Modal visible={!!selectedViewQuestion} animationType="slide" presentationStyle="pageSheet">
+        <View style={styles.modalContainer}>
+          <LinearGradient
+            colors={['#01b4ae', '#009d99']}
+            style={styles.modalHeader}
+          >
+            <Text style={styles.modalTitle}>Preview</Text>
+            <TouchableOpacity onPress={() => setSelectedViewQuestion(null)} style={styles.closeButton}>
               <X color="#FFF" size={24} />
             </TouchableOpacity>
-          </View>
-          
+          </LinearGradient>
+
           {selectedViewQuestion && (
-            <ScrollView style={styles.viewModalContent} showsVerticalScrollIndicator={false}>
-              {/* Question */}
-              <View style={styles.viewSection}>
-                <Text style={styles.viewSectionLabel}>Question</Text>
-                <Text style={styles.fullQuestionText}>{selectedViewQuestion.question}</Text>
+            <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
+              <View style={styles.previewCard}>
+                <View style={styles.previewMetaRow}>
+                  <View style={styles.badgeContainer}>
+                    <Text style={styles.badgeText}>{selectedViewQuestion.subject.name}</Text>
+                  </View>
+                  <View style={[styles.badgeContainer, styles.marksBadge]}>
+                    <Text style={styles.marksBadgeText}>{selectedViewQuestion.marks} Marks</Text>
+                  </View>
+                </View>
+
+                <Text style={styles.previewQuestion}>{selectedViewQuestion.question}</Text>
+
                 {selectedViewQuestion.questionImage && (
-                  <Image 
-                    source={{ uri: selectedViewQuestion.questionImage }} 
-                    style={styles.viewQuestionImage}
+                  <Image
+                    source={{ uri: selectedViewQuestion.questionImage }}
+                    style={styles.previewMainImage}
                     resizeMode="contain"
                   />
                 )}
-              </View>
 
-              {/* Options */}
-              <View style={styles.viewSection}>
-                <Text style={styles.viewSectionLabel}>Options</Text>
-                {selectedViewQuestion.options.map((option, index) => (
-                  <View 
-                    key={index} 
+                <View style={styles.previewDivider} />
+
+                {selectedViewQuestion.options.map((opt, idx) => (
+                  <View
+                    key={idx}
                     style={[
-                      styles.viewOptionBox,
-                      selectedViewQuestion.correctAnswer === index && styles.viewCorrectOption
+                      styles.previewOption,
+                      selectedViewQuestion.correctAnswer === idx && styles.previewOptionCorrect
                     ]}
                   >
                     <Text style={[
-                      styles.viewOptionLabel,
-                      selectedViewQuestion.correctAnswer === index && styles.viewCorrectText
-                    ]}>
-                      {String.fromCharCode(65 + index)}.
-                    </Text>
+                      styles.previewOptionLabel,
+                      selectedViewQuestion.correctAnswer === idx && styles.previewOptionLabelCorrect
+                    ]}>{String.fromCharCode(65 + idx)}</Text>
                     <View style={{ flex: 1 }}>
                       <Text style={[
-                        styles.viewOptionText,
-                        selectedViewQuestion.correctAnswer === index && styles.viewCorrectText
-                      ]}>
-                        {option}
-                      </Text>
-                      {selectedViewQuestion.optionImages?.[index] && (
-                        <Image 
-                          source={{ uri: selectedViewQuestion.optionImages[index] }} 
-                          style={styles.viewOptionImage}
-                          resizeMode="contain"
-                        />
-                      )}
+                        styles.previewOptionText,
+                        selectedViewQuestion.correctAnswer === idx && styles.previewOptionTextCorrect
+                      ]}>{opt}</Text>
+                      {selectedViewQuestion.optionImages?.[idx] ? (
+                        <Image source={{ uri: selectedViewQuestion.optionImages[idx] }} style={styles.previewOptionImage} resizeMode="contain" />
+                      ) : null}
                     </View>
-                    {selectedViewQuestion.correctAnswer === index && (
-                      <Check color="#059669" size={20} />
-                    )}
+                    {selectedViewQuestion.correctAnswer === idx && <Check color="#10B981" size={20} />}
                   </View>
                 ))}
+
+                {(selectedViewQuestion.explanation || selectedViewQuestion.explanationImage) && (
+                  <View style={styles.explanationBox}>
+                    <Text style={styles.explanationTitle}>Explanation</Text>
+                    <Text style={styles.explanationText}>{selectedViewQuestion.explanation}</Text>
+                  </View>
+                )}
               </View>
-
-              {/* Explanation */}
-              {(selectedViewQuestion.explanation || selectedViewQuestion.explanationImage) && (
-                <View style={[styles.viewSection, { backgroundColor: '#FEF3C7' }]}>
-                  <Text style={styles.viewSectionLabel}>Explanation</Text>
-                  {selectedViewQuestion.explanation && (
-                    <Text style={styles.viewExplanationText}>{selectedViewQuestion.explanation}</Text>
-                  )}
-                  {selectedViewQuestion.explanationImage && (
-                    <Image 
-                      source={{ uri: selectedViewQuestion.explanationImage }} 
-                      style={styles.viewQuestionImage}
-                      resizeMode="contain"
-                    />
-                  )}
-                </View>
-              )}
-
               <View style={{ height: 40 }} />
             </ScrollView>
           )}
-        </SafeAreaView>
+        </View>
       </Modal>
+
     </SafeAreaView>
   );
 }
 
-
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F3F4F6',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
+    backgroundColor: '#F9FAFB', // Light gray bg
   },
-  header: {
+  topGlow: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 300,
+    zIndex: 0,
+  },
+  headerGradient: {
+    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight! + 10 : 50,
+    paddingBottom: 20,
+    paddingHorizontal: 20,
+    borderBottomLeftRadius: 24,
+    borderBottomRightRadius: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 10,
+    elevation: 8,
+    zIndex: 10,
+  },
+  headerContent: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
-    backgroundColor: '#2563EB',
+    gap: 15,
+  },
+  backButton: {
+    padding: 8,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.2)',
   },
   headerTitle: {
-    fontSize: 24,
-    fontWeight: 'bold',
+    fontSize: 22,
+    fontWeight: '700',
     color: '#FFF',
+    letterSpacing: 0.5,
   },
   headerSubtitle: {
-    fontSize: 14,
-    color: '#BFDBFE',
-    marginTop: 4,
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.9)',
+    marginTop: 2,
   },
   headerActions: {
     flexDirection: 'row',
-    gap: 12,
+    gap: 10,
   },
-  uploadButton: {
+  headerIconBtn: {
+    padding: 10,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 12,
+    backdropFilter: 'blur(10px)',
+  },
+  contentContainer: {
+    flex: 1,
+    paddingTop: 10,
+  },
+
+  // Search
+  searchContainer: {
+    paddingHorizontal: 20,
+    marginTop: -25, // Overlap header
+    marginBottom: 10,
+    zIndex: 20,
+  },
+  searchBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#F59E0B',
+    backgroundColor: '#FFF',
+    borderRadius: 16,
     paddingHorizontal: 16,
-    paddingVertical: 10,
-    borderRadius: 8,
-  },
-  uploadButtonText: {
-    color: '#FFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  addButton: {
-    backgroundColor: '#10B981',
-    padding: 10,
-    borderRadius: 8,
-  },
-  statsScroll: {
-    maxHeight: 90,
-    backgroundColor: '#FFF',
-  },
-  statsContainer: {
-    padding: 16,
-    gap: 12,
-  },
-  statCard: {
-    backgroundColor: '#F3F4F6',
-    paddingHorizontal: 20,
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: 'center',
-    minWidth: 100,
-    borderWidth: 2,
-    borderColor: 'transparent',
-  },
-  statCardActive: {
-    borderColor: '#2563EB',
-    backgroundColor: '#EBF5FF',
-  },
-  statCount: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#1F2937',
-  },
-  statSubject: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginTop: 4,
-  },
-  searchRow: {
-    padding: 16,
-    backgroundColor: '#FFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    height: 52,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 4,
   },
   searchInput: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F3F4F6',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    gap: 8,
-  },
-  searchTextInput: {
     flex: 1,
-    paddingVertical: 12,
+    marginLeft: 10,
     fontSize: 16,
+    color: '#1F2937',
   },
-  questionsList: {
-    padding: 16,
-    gap: 12,
+
+  // Stats/Filters
+  statsListContainer: {
+    marginBottom: 10,
   },
-  questionCard: {
+  statsScrollContent: {
+    paddingHorizontal: 20,
+    gap: 10,
+    paddingBottom: 10,
+    paddingTop: 5,
+  },
+  statChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
     backgroundColor: '#FFF',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.05,
     shadowRadius: 2,
-    elevation: 2,
+    elevation: 1,
+  },
+  statChipActive: {
+    backgroundColor: '#01b4ae',
+    borderColor: '#01b4ae',
+  },
+  statChipText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#4B5563',
+  },
+  statChipTextActive: {
+    color: '#FFF',
+  },
+
+  // List
+  listContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 40,
+    gap: 16,
+  },
+  questionCard: {
+    backgroundColor: '#FFF',
+    borderRadius: 20,
+    padding: 18,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.02)',
+  },
+  questionCardPressed: {
+    transform: [{ scale: 0.98 }],
+    shadowOpacity: 0.04,
   },
   questionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 12,
+  },
+  questionIdContainer: {
+    backgroundColor: 'rgba(1, 180, 174, 0.1)',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    marginRight: 10,
   },
   questionNumber: {
-    fontSize: 14,
+    fontSize: 12,
     fontWeight: '700',
-    color: '#2563EB',
-    marginRight: 12,
+    color: '#01b4ae',
   },
   questionMeta: {
-    flex: 1,
     flexDirection: 'row',
-    gap: 8,
+    flex: 1,
+    gap: 6,
     flexWrap: 'wrap',
   },
-  subjectBadge: {
-    fontSize: 11,
-    backgroundColor: '#EBF5FF',
-    color: '#2563EB',
+  badgeContainer: {
+    backgroundColor: '#F3F4F6',
     paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
-    fontWeight: '600',
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  badgeText: {
+    fontSize: 11,
+    color: '#4B5563',
+    fontWeight: '500',
   },
   topicBadge: {
-    fontSize: 11,
-    backgroundColor: '#F3F4F6',
-    color: '#6B7280',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
+    backgroundColor: '#EFF6FF',
+  },
+  topicBadgeText: {
+    color: '#3B82F6',
   },
   marksBadge: {
-    fontSize: 11,
-    backgroundColor: '#D1FAE5',
-    color: '#059669',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
+    backgroundColor: '#ECFDF5',
+  },
+  marksBadgeText: {
+    color: '#10B981',
     fontWeight: '600',
   },
   questionText: {
-    fontSize: 14,
+    fontSize: 15,
     color: '#1F2937',
-    lineHeight: 20,
-    marginBottom: 8,
+    marginBottom: 12,
+    lineHeight: 22,
+    fontWeight: '500',
+  },
+  imageIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 12,
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(1, 180, 174, 0.05)',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  imageIndicatorText: {
+    fontSize: 12,
+    color: '#01b4ae',
+    fontWeight: '500',
+  },
+  cardFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    paddingTop: 12,
+    marginTop: 4,
   },
   optionsPreview: {
-    gap: 4,
+    flexDirection: 'row',
   },
-  optionPreview: {
+  optionCount: {
     fontSize: 12,
     color: '#6B7280',
-  },
-  moreOptions: {
-    fontSize: 12,
-    color: '#9CA3AF',
     fontStyle: 'italic',
   },
+  actionButtons: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  actionButton: {
+    padding: 6,
+    borderRadius: 8,
+    backgroundColor: '#F9FAFB',
+  },
+  deleteButton: {
+    backgroundColor: '#FEF2F2',
+  },
+
+  // Skeleton
+  loadingContainer: {
+    paddingHorizontal: 20,
+    gap: 16,
+  },
+  skeletonCard: {
+    backgroundColor: '#FFF',
+    borderRadius: 20,
+    padding: 18,
+    height: 160,
+  },
+  skeleton: {
+    backgroundColor: '#F3F4F6',
+    borderRadius: 4,
+  },
+
+  // Empty State
   emptyState: {
     alignItems: 'center',
+    justifyContent: 'center',
     paddingVertical: 60,
+  },
+  emptyIconContainer: {
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    backgroundColor: 'rgba(1, 180, 174, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
   },
   emptyText: {
     fontSize: 18,
-    fontWeight: '600',
-    color: '#6B7280',
-    marginTop: 16,
+    fontWeight: '700',
+    color: '#1F2937',
+    marginBottom: 6,
   },
   emptySubtext: {
     fontSize: 14,
-    color: '#9CA3AF',
-    marginTop: 8,
+    color: '#6B7280',
+    textAlign: 'center',
   },
   errorText: {
-    fontSize: 16,
-    color: '#EF4444',
     textAlign: 'center',
+    color: 'red',
     marginTop: 50,
   },
+
+  // Modals
   modalContainer: {
     flex: 1,
-    backgroundColor: '#FFF',
+    backgroundColor: '#F9FAFB',
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    paddingTop: 24,
   },
   modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#1F2937',
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#FFF',
+  },
+  closeButton: {
+    padding: 6,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 20,
   },
   modalContent: {
     flex: 1,
     padding: 20,
   },
-  inputLabel: {
+  label: {
     fontSize: 14,
     fontWeight: '600',
     color: '#374151',
@@ -1070,63 +1186,72 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   input: {
-    backgroundColor: '#F3F4F6',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
+    backgroundColor: '#FFF',
     borderWidth: 1,
     borderColor: '#E5E7EB',
+    borderRadius: 12,
+    padding: 14,
+    fontSize: 16,
+    color: '#1F2937',
   },
   textArea: {
-    minHeight: 100,
+    height: 100,
     textAlignVertical: 'top',
   },
-  dropdown: {
+  dropdownButton: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#F3F4F6',
-    borderRadius: 8,
-    padding: 12,
+    backgroundColor: '#FFF',
     borderWidth: 1,
     borderColor: '#E5E7EB',
+    borderRadius: 12,
+    padding: 14,
   },
   dropdownText: {
     fontSize: 16,
     color: '#1F2937',
   },
-  dropdownPlaceholder: {
+  placeholderText: {
     fontSize: 16,
     color: '#9CA3AF',
   },
   dropdownList: {
+    marginTop: 8,
     backgroundColor: '#FFF',
-    borderRadius: 8,
+    borderRadius: 12,
     borderWidth: 1,
     borderColor: '#E5E7EB',
-    marginTop: 4,
-    maxHeight: 260,
-    overflow: 'hidden',
+    maxHeight: 200,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    elevation: 5,
   },
   dropdownItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 12,
+    padding: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#F3F4F6',
   },
   dropdownItemText: {
-    fontSize: 16,
-    color: '#1F2937',
+    fontSize: 15,
+    color: '#374151',
+  },
+  selectedDropdownText: {
+    color: '#01b4ae',
+    fontWeight: '600',
   },
   optionRow: {
     flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-    gap: 8,
+    alignItems: 'flex-start',
+    gap: 12,
+    marginBottom: 16,
   },
-  optionRadio: {
+  radioBtn: {
     width: 24,
     height: 24,
     borderRadius: 12,
@@ -1134,244 +1259,191 @@ const styles = StyleSheet.create({
     borderColor: '#D1D5DB',
     justifyContent: 'center',
     alignItems: 'center',
+    marginTop: 14,
   },
-  optionRadioSelected: {
-    borderColor: '#10B981',
+  radioBtnSelected: {
+    borderColor: '#01b4ae',
   },
-  optionRadioInner: {
+  radioInner: {
     width: 12,
     height: 12,
     borderRadius: 6,
-    backgroundColor: '#10B981',
-  },
-  optionLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#374151',
-    width: 24,
+    backgroundColor: '#01b4ae',
   },
   optionInput: {
     flex: 1,
-    backgroundColor: '#F3F4F6',
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 16,
+    backgroundColor: '#FFF',
     borderWidth: 1,
     borderColor: '#E5E7EB',
+    borderRadius: 10,
+    padding: 12,
+    fontSize: 15,
   },
-  hintText: {
-    fontSize: 12,
-    color: '#9CA3AF',
-    fontStyle: 'italic',
-    marginBottom: 8,
-  },
-  saveButton: {
-    backgroundColor: '#2563EB',
-    borderRadius: 8,
-    padding: 16,
+  saveBtn: {
+    backgroundColor: '#01b4ae',
+    borderRadius: 14,
+    padding: 18,
     alignItems: 'center',
-    marginTop: 24,
+    marginTop: 30,
+    shadowColor: '#01b4ae',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 4,
   },
-  saveButtonText: {
+  disabledBtn: {
+    opacity: 0.7,
+  },
+  saveBtnText: {
     color: '#FFF',
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
+    letterSpacing: 0.5,
   },
-  addAnotherButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    padding: 16,
-    marginTop: 12,
-    borderWidth: 1,
-    borderColor: '#2563EB',
-    borderRadius: 8,
-  },
-  addAnotherText: {
-    color: '#2563EB',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-  imagePickerButton: {
+  imageUploadBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#EBF5FF',
+    backgroundColor: 'rgba(1, 180, 174, 0.1)',
     padding: 12,
-    borderRadius: 8,
-    marginTop: 8,
-    borderWidth: 1,
-    borderColor: '#2563EB',
-    borderStyle: 'dashed',
+    borderRadius: 10,
+    marginTop: 10,
+    alignSelf: 'flex-start',
   },
-  imagePickerText: {
-    color: '#2563EB',
+  imageUploadText: {
+    color: '#01b4ae',
+    fontWeight: '600',
     fontSize: 14,
-    fontWeight: '500',
   },
-  imagePreviewContainer: {
-    marginTop: 12,
-    position: 'relative',
-    borderRadius: 8,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  imagePreview: {
+  previewImageContainer: {
+    marginTop: 10,
     width: '100%',
-    height: 200,
-    backgroundColor: '#F3F4F6',
+    height: 180,
+    borderRadius: 12,
+    backgroundColor: '#E5E7EB',
+    justifyContent: 'center',
+    alignItems: 'center',
+    overflow: 'hidden',
   },
-  removeImageButton: {
+  previewImage: {
+    width: '100%',
+    height: '100%',
+  },
+  removeImgBtn: {
     position: 'absolute',
     top: 8,
     right: 8,
-    backgroundColor: 'rgba(239, 68, 68, 0.9)',
+    backgroundColor: '#EF4444',
+    padding: 6,
+    borderRadius: 20,
+  },
+  miniImageLink: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 8,
-    borderRadius: 20,
     gap: 4,
+    marginTop: 4
   },
-  removeImageText: {
-    color: '#FFF',
+  miniImageLinkText: {
     fontSize: 12,
-    fontWeight: '600',
+    color: '#01b4ae'
   },
-  optionRowContainer: {
-    marginBottom: 16,
-  },
-  optionImageControls: {
+  miniImagePreview: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    marginLeft: 32, // Indent to align with content
-    marginTop: 8,
+    marginTop: 4
   },
-  miniImageButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    backgroundColor: '#F3F4F6',
-    borderRadius: 4,
+
+  // Preview Modal
+  previewCard: {
+    backgroundColor: '#FFF',
+    borderRadius: 20,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 10,
+    elevation: 2,
   },
-  miniImageText: {
-    fontSize: 12,
-    color: '#6B7280',
-  },
-  optionImagePreviewContainer: {
-    marginTop: 8,
-    marginLeft: 32,
-    position: 'relative',
-    width: 100,
-    height: 100,
-    borderRadius: 8,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  optionImagePreview: {
-    width: '100%',
-    height: '100%',
-    backgroundColor: '#F3F4F6',
-  },
-  hasImageIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    marginTop: 4,
-  },
-  hasImageText: {
-    fontSize: 11,
-    color: '#2563EB',
-  },
-  // Question View Modal Styles
-  viewModalContainer: {
-    flex: 1,
-    backgroundColor: '#F3F4F6',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
-  },
-  viewModalHeader: {
+  previewMetaRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 16,
-    backgroundColor: '#2563EB',
-  },
-  viewModalTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#FFF',
-  },
-  viewModalContent: {
-    flex: 1,
-    padding: 16,
-  },
-  viewSection: {
-    backgroundColor: '#FFF',
-    padding: 16,
-    borderRadius: 12,
     marginBottom: 16,
   },
-  viewSectionLabel: {
-    fontSize: 12,
+  previewQuestion: {
+    fontSize: 18,
     fontWeight: '600',
-    color: '#6B7280',
-    marginBottom: 8,
-    textTransform: 'uppercase',
+    color: '#111827',
+    lineHeight: 26,
+    marginBottom: 16,
   },
-  fullQuestionText: {
-    fontSize: 16,
-    color: '#1F2937',
-    lineHeight: 24,
-  },
-  viewQuestionImage: {
+  previewMainImage: {
     width: '100%',
     height: 200,
-    marginTop: 12,
-    borderRadius: 8,
+    borderRadius: 12,
+    marginBottom: 16,
+    backgroundColor: '#F9FAFB',
   },
-  viewOptionBox: {
+  previewDivider: {
+    height: 1,
+    backgroundColor: '#F3F4F6',
+    marginVertical: 16,
+  },
+  previewOption: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    padding: 12,
-    borderRadius: 8,
-    backgroundColor: '#F3F4F6',
-    marginBottom: 8,
+    backgroundColor: '#F9FAFB',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 10,
     gap: 12,
   },
-  viewCorrectOption: {
-    backgroundColor: '#D1FAE5',
+  previewOptionCorrect: {
+    backgroundColor: '#ECFDF5',
     borderWidth: 1,
     borderColor: '#10B981',
   },
-  viewOptionLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
-    width: 24,
+  previewOptionLabel: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#6B7280',
   },
-  viewCorrectText: {
+  previewOptionLabelCorrect: {
     color: '#059669',
   },
-  viewOptionText: {
-    fontSize: 14,
+  previewOptionText: {
+    fontSize: 15,
     color: '#374151',
-    lineHeight: 20,
+    lineHeight: 22,
   },
-  viewOptionImage: {
+  previewOptionTextCorrect: {
+    color: '#047857',
+    fontWeight: '500',
+  },
+  previewOptionImage: {
     width: '100%',
     height: 120,
     marginTop: 8,
-    borderRadius: 6,
+    borderRadius: 8,
   },
-  viewExplanationText: {
+  explanationBox: {
+    marginTop: 20,
+    backgroundColor: '#FFFBEB',
+    padding: 16,
+    borderRadius: 12,
+    borderLeftWidth: 4,
+    borderLeftColor: '#F59E0B',
+  },
+  explanationTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#B45309',
+    marginBottom: 6,
+    textTransform: 'uppercase',
+  },
+  explanationText: {
     fontSize: 14,
     color: '#92400E',
-    lineHeight: 20,
+    lineHeight: 22,
   },
 });
-
