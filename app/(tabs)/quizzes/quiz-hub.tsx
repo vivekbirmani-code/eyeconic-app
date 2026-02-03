@@ -14,9 +14,9 @@ import {
   Alert
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { 
-  BookOpen, 
-  PlusCircle, 
+import {
+  BookOpen,
+  PlusCircle,
   Database,
   Users,
   Search,
@@ -51,7 +51,7 @@ interface RecentQuiz {
 export default function AdminQuizHub() {
   const { user } = useAuth();
   const router = useRouter();
-  
+
   const [loading, setLoading] = useState(true);
   const [quizStats, setQuizStats] = useState<QuizStats>({ total: 0, daily: 0, weekly: 0, grand: 0 });
   const [questionStats, setQuestionStats] = useState<QuestionStats>({ total: 0, bySubject: [] });
@@ -81,7 +81,7 @@ export default function AdminQuizHub() {
         const quizzesResponse = await api.get('/quizzes');
         const quizzes = Array.isArray(quizzesResponse.data) ? quizzesResponse.data : [];
         setRecentQuizzes(quizzes.slice(0, 5));
-        
+
         // Calculate quiz stats
         setQuizStats({
           total: quizzes.length,
@@ -123,35 +123,35 @@ export default function AdminQuizHub() {
       subtitle: `${questionStats.total} questions`,
       icon: Database,
       color: '#2563EB',
-      route: '/admin/question-bank'
+      route: '/quizzes/question-bank'
     },
     {
       title: 'Create Quiz',
       subtitle: 'Daily, Weekly, Grand',
       icon: PlusCircle,
       color: '#10B981',
-      route: '/admin/create-quiz'
+      route: '/quizzes/create-quiz'
     },
     {
       title: 'Student Analytics',
       subtitle: 'View test history',
       icon: BarChart3,
       color: '#8B5CF6',
-      route: '/admin/student-analytics'
+      route: '/quizzes/student-analytics'
     },
     {
       title: 'Import from Excel',
       subtitle: 'Upload .xlsx files',
       icon: Database,
       color: '#0891B2',
-      route: '/admin/import-quiz'
+      route: '/quizzes/import-quiz'
     },
     {
       title: 'Retest Requests',
       subtitle: pendingRetests > 0 ? `${pendingRetests} pending` : 'No pending requests',
       icon: Clock,
       color: '#F59E0B',
-      route: '/quiz/retest-requests',
+      route: '/quizzes/retest-requests',
       badge: pendingRetests
     },
     {
@@ -159,7 +159,7 @@ export default function AdminQuizHub() {
       subtitle: `${quizStats.total} tests created`,
       icon: BookOpen,
       color: '#6366F1',
-      route: '/admin/past-tests'
+      route: '/quizzes/past-tests'
     }
   ];
 

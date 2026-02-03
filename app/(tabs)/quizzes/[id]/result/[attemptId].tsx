@@ -57,7 +57,7 @@ export default function QuizResult() {
     try {
       const response = await api.get(`/quizzes/${id}/attempt/${attemptId}/results`);
       const data = response.data;
-      
+
       // Transform backend response to match ResultData interface
       const formattedResult: ResultData = {
         attemptId: data.attempt._id,
@@ -79,7 +79,7 @@ export default function QuizResult() {
         retestRequested: data.attempt.retestRequested || false,
         retestApproved: data.attempt.retestApproved || false
       };
-      
+
       setResult(formattedResult);
     } catch (error: any) {
       console.error('Error fetching results:', error);
@@ -113,7 +113,7 @@ export default function QuizResult() {
   };
 
   const handleViewSolutions = () => {
-    router.push(`/quiz/${id}/review/${attemptId}`);
+    router.push(`/quizzes/${id}/review/${attemptId}`);
   };
 
   const handleBackToQuizzes = () => {
@@ -140,7 +140,7 @@ export default function QuizResult() {
     const hours = Math.floor(seconds / 3600);
     const minutes = Math.floor((seconds % 3600) / 60);
     const secs = seconds % 60;
-    
+
     if (hours > 0) {
       return `${hours}h ${minutes}m ${secs}s`;
     }
@@ -162,7 +162,7 @@ export default function QuizResult() {
           <Text style={styles.subtitle}>
             {new Date(result.endTime).toLocaleDateString()} • {new Date(result.endTime).toLocaleTimeString()}
           </Text>
-          
+
           <View style={styles.actionButtons}>
             {result.canRequestRetest && !result.retestRequested && (
               <TouchableOpacity style={styles.retestButton} onPress={handleRequestRetest}>

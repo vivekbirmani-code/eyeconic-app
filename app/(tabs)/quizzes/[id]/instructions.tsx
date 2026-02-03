@@ -60,9 +60,9 @@ export default function QuizInstructions() {
         'You have already attempted this quiz. Would you like to request a retest from admin?',
         [
           { text: 'Cancel', style: 'cancel' },
-          { 
-            text: 'Request Retest', 
-            onPress: () => router.push(`/quiz/${id}/retest-request`)
+          {
+            text: 'Request Retest',
+            onPress: () => router.push(`/quizzes/${id}/retest-request`)
           }
         ]
       );
@@ -79,7 +79,7 @@ export default function QuizInstructions() {
           onPress: async () => {
             try {
               await startQuiz(quiz._id);
-              router.replace(`/quiz/${id}/taking`);
+              router.replace(`/quizzes/${id}/taking`);
             } catch (error) {
               // Error handled in context
             }
@@ -116,8 +116,8 @@ export default function QuizInstructions() {
     'Ensure stable internet connection throughout the test.',
   ];
 
-  const instructions = quiz.instructions && quiz.instructions.length > 0 
-    ? quiz.instructions 
+  const instructions = quiz.instructions && quiz.instructions.length > 0
+    ? quiz.instructions
     : defaultInstructions;
 
   return (
@@ -163,7 +163,7 @@ export default function QuizInstructions() {
               📚 Number of Sections: <Text style={styles.bold}>{sections.length}</Text>
             </Text>
             {sections.map((section, index) => {
-              const sectionQuestions = quiz.questions.filter(q => 
+              const sectionQuestions = quiz.questions.filter(q =>
                 (q.section || 'General') === section
               );
               return (

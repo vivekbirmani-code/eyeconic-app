@@ -14,7 +14,7 @@ import {
   Modal
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { 
+import {
   ChevronLeft,
   Search,
   Share2,
@@ -73,7 +73,7 @@ export default function PastTests() {
       setFilteredQuizzes(quizzes);
     } else {
       setFilteredQuizzes(
-        quizzes.filter(q => 
+        quizzes.filter(q =>
           q.title.toLowerCase().includes(query) ||
           q.testType.toLowerCase().includes(query) ||
           q.subject?.name?.toLowerCase().includes(query)
@@ -189,8 +189,8 @@ export default function PastTests() {
 
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr);
-    return date.toLocaleDateString('en-US', { 
-      month: 'short', 
+    return date.toLocaleDateString('en-US', {
+      month: 'short',
       day: 'numeric',
       year: 'numeric'
     });
@@ -273,17 +273,17 @@ export default function PastTests() {
                 </View>
                 <Text style={styles.dateText}>{formatDate(quiz.createdAt)}</Text>
               </View>
-              
+
               <View style={styles.actionButtons}>
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={styles.actionButton}
-                  onPress={() => router.push({ pathname: '/admin/edit-quiz', params: { id: quiz._id } })}
+                  onPress={() => router.push({ pathname: '/quizzes/edit-quiz', params: { id: quiz._id } })}
                 >
                   <Edit color="#4B5563" size={20} />
                   <Text style={styles.actionButtonText}>Edit</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={styles.actionButton}
                   onPress={() => handleDuplicate(quiz)}
                 >
@@ -291,7 +291,7 @@ export default function PastTests() {
                   <Text style={styles.actionButtonText}>Clone</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={[styles.actionButton, styles.shareBtn]}
                   onPress={() => openShareModal(quiz)}
                 >

@@ -51,7 +51,7 @@ function QuizTakingContent() {
   const { id } = useLocalSearchParams();
   const router = useRouter();
   const { currentAttempt, saveAnswer, submitQuiz, isLoading: quizLoading } = useQuiz();
-  
+
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -109,7 +109,7 @@ function QuizTakingContent() {
 
   useEffect(() => {
     fetchQuizDetails();
-    
+
     const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
       handleBackPress();
       return true;
@@ -126,7 +126,7 @@ function QuizTakingContent() {
           api.post(`/quizzes/${id}/attempt/${currentAttempt.attemptId}/tab-switch`)
             .catch(console.error);
         }
-        
+
         // Show warning
         Alert.alert(
           '⚠️ Warning',
@@ -241,9 +241,9 @@ function QuizTakingContent() {
     setSelectedAnswer(answerIndex);
     setSaving(true);
     setSaveError(false);
-    
+
     const timeSpent = Math.floor((Date.now() - questionStartTime) / 1000);
-    
+
     try {
       await saveAnswer(currentQuestionIndex, answerIndex, markedForReview, timeSpent);
       // Announce to screen reader
@@ -259,9 +259,9 @@ function QuizTakingContent() {
   const handleMarkForReview = useCallback(async () => {
     const newMarkedState = !markedForReview;
     setMarkedForReview(newMarkedState);
-    
+
     const timeSpent = Math.floor((Date.now() - questionStartTime) / 1000);
-    
+
     try {
       await saveAnswer(currentQuestionIndex, selectedAnswer, newMarkedState, timeSpent);
       AccessibilityInfo.announceForAccessibility(
@@ -303,7 +303,7 @@ function QuizTakingContent() {
           onPress: async () => {
             try {
               const result = await submitQuiz(false);
-              router.replace(`/quiz/${id}/result/${result.attemptId || currentAttempt?.attemptId}`);
+              router.replace(`/quizzes/${id}/result/${result.attemptId || currentAttempt?.attemptId}`);
             } catch (error) {
               Alert.alert('Error', 'Failed to submit quiz. Please try again.');
             }
@@ -319,10 +319,10 @@ function QuizTakingContent() {
       'The test duration has ended. Submitting your answers...',
       [{ text: 'OK' }]
     );
-    
+
     try {
       const result = await submitQuiz(true);
-      router.replace(`/quiz/${id}/result/${result.attemptId || currentAttempt?.attemptId}`);
+      router.replace(`/quizzes/${id}/result/${result.attemptId || currentAttempt?.attemptId}`);
     } catch (error) {
       console.error('Auto-submit error:', error);
       Alert.alert('Error', 'Failed to auto-submit. Please submit manually.');
@@ -331,7 +331,7 @@ function QuizTakingContent() {
 
   const handleSectionChange = useCallback((section: string) => {
     setCurrentSection(section);
-    
+
     if (section !== 'All' && quiz) {
       const firstQuestionInSection = quiz.questions.findIndex(
         q => (q.section || 'General') === section
@@ -376,8 +376,8 @@ function QuizTakingContent() {
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <Text 
-            style={styles.quizTitle} 
+          <Text
+            style={styles.quizTitle}
             numberOfLines={1}
             accessible={true}
             accessibilityLabel={`Quiz: ${quiz.title}`}
@@ -421,7 +421,7 @@ function QuizTakingContent() {
       <View style={styles.mainContent}>
         {/* Question Area */}
         <View style={styles.questionAreaWrapper}>
-          <ScrollView 
+          <ScrollView
             ref={scrollViewRef}
             style={styles.questionArea}
             contentContainerStyle={styles.questionContentContainer}
@@ -447,7 +447,7 @@ function QuizTakingContent() {
               <Text style={styles.questionText}>
                 {currentQuestion.question}
               </Text>
-              
+
               {/* Question Image */}
               {currentQuestion.questionImage ? (
                 <Image
@@ -488,7 +488,7 @@ function QuizTakingContent() {
                             {option}
                           </Text>
                         ) : null}
-                        
+
                         {currentQuestion.optionImages?.[index] ? (
                           <Image
                             source={{ uri: currentQuestion.optionImages[index] }}
@@ -512,7 +512,7 @@ function QuizTakingContent() {
                 </TouchableOpacity>
               )}
             </View>
-            
+
             {/* Spacer for bottom nav */}
             <View style={{ height: 100 }} />
           </ScrollView>
@@ -533,8 +533,8 @@ function QuizTakingContent() {
 
       {/* Bottom Navigation */}
       <View style={styles.bottomNavWrapper}>
-        <ScrollView 
-          horizontal 
+        <ScrollView
+          horizontal
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={styles.bottomNavScroll}
         >
@@ -547,8 +547,8 @@ function QuizTakingContent() {
               ]}
               onPress={handleMarkForReview}
             >
-              <Flag 
-                color={markedForReview ? '#FFFFFF' : '#A855F7'} 
+              <Flag
+                color={markedForReview ? '#FFFFFF' : '#A855F7'}
                 size={20}
                 fill={markedForReview ? '#FFFFFF' : 'none'}
               />
@@ -586,9 +586,9 @@ function QuizTakingContent() {
                 ]}>
                   Next
                 </Text>
-                <ChevronRight 
-                  color={currentQuestionIndex === quiz.questions.length - 1 ? '#9CA3AF' : '#2563EB'} 
-                  size={20} 
+                <ChevronRight
+                  color={currentQuestionIndex === quiz.questions.length - 1 ? '#9CA3AF' : '#2563EB'}
+                  size={20}
                 />
               </TouchableOpacity>
             </View>
