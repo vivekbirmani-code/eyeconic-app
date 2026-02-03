@@ -22,7 +22,7 @@ import {
   X,
   BarChart3
 } from 'lucide-react-native';
-import * as Haptics from 'expo-haptics';
+import * as Haptics from '@/utils/haptics';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
 
@@ -415,18 +415,20 @@ export default function AdminOverview() {
                               <Text style={styles.assignmentTitle}>{assignment.title}</Text>
                               <View style={[
                                 styles.assignmentStatusBadge,
-                                { backgroundColor: 
-                                  assignment.status === 'verified' ? '#D1FAE5' :
-                                  assignment.status === 'completed' ? '#DBEAFE' :
-                                  assignment.status === 'redo' ? '#FEF3C7' : '#F3F4F6'
+                                {
+                                  backgroundColor:
+                                    assignment.status === 'verified' ? '#D1FAE5' :
+                                      assignment.status === 'completed' ? '#DBEAFE' :
+                                        assignment.status === 'redo' ? '#FEF3C7' : '#F3F4F6'
                                 }
                               ]}>
                                 <Text style={[
                                   styles.assignmentStatusText,
-                                  { color:
-                                    assignment.status === 'verified' ? '#047857' :
-                                    assignment.status === 'completed' ? '#1E40AF' :
-                                    assignment.status === 'redo' ? '#92400E' : '#6B7280'
+                                  {
+                                    color:
+                                      assignment.status === 'verified' ? '#047857' :
+                                        assignment.status === 'completed' ? '#1E40AF' :
+                                          assignment.status === 'redo' ? '#92400E' : '#6B7280'
                                   }
                                 ]}>
                                   {assignment.status.toUpperCase()}

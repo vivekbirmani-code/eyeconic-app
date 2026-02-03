@@ -19,7 +19,7 @@ import {
 import { useRouter } from 'expo-router';
 import { Plus, MessageCircle, Users, Search, X, Check } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import * as Haptics from 'expo-haptics';
+import * as Haptics from '@/utils/haptics';
 import { useAuth } from '@/context/AuthContext';
 import { useNotifications } from '@/context/NotificationContext';
 import { api } from '@/services/api';

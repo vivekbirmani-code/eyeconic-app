@@ -17,7 +17,7 @@ import {
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
 import { LogOut, AlertTriangle, Check } from 'lucide-react-native';
-import * as Haptics from 'expo-haptics';
+import * as Haptics from '@/utils/haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 
 interface StudentProfile {

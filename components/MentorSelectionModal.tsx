@@ -11,7 +11,7 @@ import {
   Easing
 } from 'react-native';
 import { X, UserCheck, User as UserIcon } from 'lucide-react-native';
-import * as Haptics from 'expo-haptics';
+import * as Haptics from '@/utils/haptics';
 import { api } from '@/services/api';
 
 interface Mentor {
@@ -373,7 +373,7 @@ const styles = StyleSheet.create({
   },
   mentorCard: {
     flexDirection: 'row',
-    alignItems:'center',
+    alignItems: 'center',
     backgroundColor: '#F9FAFB',
     padding: 16,
     borderRadius: 12,

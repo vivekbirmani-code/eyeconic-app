@@ -21,7 +21,7 @@ import {
 import { Plus, User as UserIcon, Search, X, Mail, Shield, Calendar, Phone, Lock, Key, Users as UsersIcon, Check, Square, CheckSquare, ChevronRight } from 'lucide-react-native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
-import * as Haptics from 'expo-haptics';
+import * as Haptics from '@/utils/haptics';
 
 // Enable LayoutAnimation on Android
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {

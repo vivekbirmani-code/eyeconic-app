@@ -18,7 +18,7 @@ import {
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
 import { Eye, EyeOff } from 'lucide-react-native';
-import * as Haptics from 'expo-haptics';
+import * as Haptics from '@/utils/haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 
 export default function Login() {
@@ -155,7 +155,7 @@ export default function Login() {
         style={StyleSheet.absoluteFillObject}
       />
 
-      <ScrollView 
+      <ScrollView
         contentContainerStyle={styles.scrollContentContainer}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"

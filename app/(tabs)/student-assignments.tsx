@@ -21,7 +21,7 @@ import {
   Check,
   X
 } from 'lucide-react-native';
-import * as Haptics from 'expo-haptics';
+import * as Haptics from '@/utils/haptics';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
 
@@ -105,11 +105,11 @@ export default function StudentAssignments() {
       const now = new Date();
       const dayOfWeek = now.getDay();
       const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-      
+
       const weekStart = new Date(now);
       weekStart.setDate(now.getDate() + diffToMonday);
       weekStart.setHours(0, 0, 0, 0);
-      
+
       const weekEnd = new Date(weekStart);
       weekEnd.setDate(weekStart.getDate() + 6);
       weekEnd.setHours(23, 59, 59, 999);
@@ -307,8 +307,8 @@ export default function StudentAssignments() {
       </View>
 
       {/* Stats Cards */}
-      <ScrollView 
-        horizontal 
+      <ScrollView
+        horizontal
         showsHorizontalScrollIndicator={false}
         style={styles.statsContainer}
         contentContainerStyle={styles.statsContent}
@@ -397,11 +397,11 @@ export default function StudentAssignments() {
                 <BookOpen color="#9CA3AF" size={48} />
                 <Text style={styles.emptyText}>No assignments yet</Text>
                 <Text style={styles.emptyHint}>
-                  {activeTab === 'thisWeek' 
+                  {activeTab === 'thisWeek'
                     ? 'No assignments scheduled for this week'
                     : activeTab === 'completed'
-                    ? 'Complete assignments to see them here'
-                    : 'Your mentor will assign tasks soon'
+                      ? 'Complete assignments to see them here'
+                      : 'Your mentor will assign tasks soon'
                   }
                 </Text>
               </View>

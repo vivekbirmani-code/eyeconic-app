@@ -22,7 +22,7 @@ import {
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowLeft, Send, Users, UserPlus, X, Search, Check, CheckCheck, Edit2, Trash2, Info, Phone } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import * as Haptics from 'expo-haptics';
+import * as Haptics from '@/utils/haptics';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
 import { getSocketURL } from '@/services/config';
@@ -327,7 +327,7 @@ export default function ChatScreen() {
         // If `api` is axios instance, passing FormData works.
         // I should switch upload logic to FormData for Documents to avoid base64 complexity with large files.
         // My upload endpoint `upload.js` uses `multer`. It handles multipart perfectly.
-        
+
         uploadFile(result.assets[0], 'document');
       }
     } catch (error) {
@@ -339,11 +339,11 @@ export default function ChatScreen() {
     setIsUploading(true);
     try {
       console.log('Preparing upload:', type, file.uri, file.mimeType);
-      
+
       const formData = new FormData();
-      
+
       const fileName = file.name || file.fileName || (type === 'image' ? 'image.jpg' : 'document.pdf');
-      
+
       // Infer valid mimetype if missing
       let mimeType = file.mimeType;
       if (!mimeType) {
@@ -373,8 +373,8 @@ export default function ChatScreen() {
           'Content-Type': 'multipart/form-data',
         },
         transformRequest: (data, headers) => {
-           // Axios on React Native needs this to not stringify FormData
-           return data; 
+          // Axios on React Native needs this to not stringify FormData
+          return data;
         }
       });
 
@@ -390,7 +390,7 @@ export default function ChatScreen() {
         };
 
         await api.post('/messages', {
-          content: '', 
+          content: '',
           groupId,
           attachments: [attachmentData]
         });
@@ -398,14 +398,14 @@ export default function ChatScreen() {
     } catch (error: any) {
       console.error('Upload failed details:', error);
       if (error.response) {
-         console.error('Response data:', error.response.data);
-         console.error('Response status:', error.response.status);
+        console.error('Response data:', error.response.data);
+        console.error('Response status:', error.response.status);
       }
       Alert.alert('Upload Failed', error?.response?.data?.message || 'Failed to upload file');
     } finally {
       setIsUploading(false);
       // Refresh messages
-      fetchMessages(); 
+      fetchMessages();
     }
   };
 
@@ -607,11 +607,11 @@ export default function ChatScreen() {
         ]}>
           {item.content}
         </Text>
-        
+
         {item.attachments && item.attachments.length > 0 && (
           <View style={styles.attachmentsContainer}>
             {item.attachments.map((att, index) => (
-              <AttachmentThumbnail 
+              <AttachmentThumbnail
                 key={index}
                 attachment={att as any}
                 onPress={() => {
@@ -622,7 +622,7 @@ export default function ChatScreen() {
             ))}
           </View>
         )}
-        
+
         <View style={styles.messageFooter}>
           {item.isEdited && (
             <Text style={[
@@ -700,16 +700,16 @@ export default function ChatScreen() {
 
 
         <View style={styles.inputContainer}>
-          <TouchableOpacity 
-            style={styles.attachButton} 
+          <TouchableOpacity
+            style={styles.attachButton}
             onPress={() => setIsAttachmentMenuVisible(true)}
             disabled={isUploading}
           >
-             {isUploading ? (
-               <View style={{ width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: '#6B7280', borderTopColor: 'transparent', opacity: 0.5 }} />
-             ) : (
-               <Paperclip color="#6B7280" size={20} />
-             )}
+            {isUploading ? (
+              <View style={{ width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: '#6B7280', borderTopColor: 'transparent', opacity: 0.5 }} />
+            ) : (
+              <Paperclip color="#6B7280" size={20} />
+            )}
           </TouchableOpacity>
           <TextInput
             style={styles.input}
@@ -858,26 +858,26 @@ export default function ChatScreen() {
 
       {/* Attachment Menu Modal */}
       <Modal visible={isAttachmentMenuVisible} transparent animationType="fade">
-        <Pressable 
-          style={styles.menuOverlay} 
+        <Pressable
+          style={styles.menuOverlay}
           onPress={() => setIsAttachmentMenuVisible(false)}
         >
           <View style={[styles.menuContainer, { bottom: 100, left: 20, width: 200 }]}>
-             <TouchableOpacity style={styles.menuItem} onPress={handlePickDocument}>
-                <FileText color="#374151" size={20} />
-                <Text style={styles.menuItemText}>Document</Text>
-             </TouchableOpacity>
-             <TouchableOpacity style={styles.menuItem} onPress={handlePickImage}>
-                <ImageIcon color="#374151" size={20} />
-                <Text style={styles.menuItemText}>Gallery</Text>
-             </TouchableOpacity>
+            <TouchableOpacity style={styles.menuItem} onPress={handlePickDocument}>
+              <FileText color="#374151" size={20} />
+              <Text style={styles.menuItemText}>Document</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.menuItem} onPress={handlePickImage}>
+              <ImageIcon color="#374151" size={20} />
+              <Text style={styles.menuItemText}>Gallery</Text>
+            </TouchableOpacity>
           </View>
         </Pressable>
       </Modal>
 
       {/* Attachment Viewer */}
       {viewingAttachment && (
-        <AttachmentViewer 
+        <AttachmentViewer
           attachment={viewingAttachment}
           isVisible={isViewerVisible}
           onClose={() => {

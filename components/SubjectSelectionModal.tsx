@@ -11,7 +11,7 @@ import {
   Easing
 } from 'react-native';
 import { X, Check, Square, CheckSquare } from 'lucide-react-native';
-import * as Haptics from 'expo-haptics';
+import * as Haptics from '@/utils/haptics';
 import { api } from '@/services/api';
 
 interface Subject {
@@ -237,7 +237,7 @@ export default function SubjectSelectionModal({
               {renderYearSection('2nd', subjects['2nd'])}
               {renderYearSection('3rd', subjects['3rd'])}
               {renderYearSection('4th', subjects['4th'])}
-              
+
               <View style={styles.selectedCount}>
                 <Text style={styles.selectedCountText}>
                   {selectedSubjects.size} subject{selectedSubjects.size !== 1 ? 's' : ''} selected

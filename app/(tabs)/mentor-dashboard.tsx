@@ -13,16 +13,16 @@ import {
   StatusBar,
   FlatList
 } from 'react-native';
-import { 
-  Users, 
-  Plus, 
-  Calendar, 
-  CheckCircle, 
+import {
+  Users,
+  Plus,
+  Calendar,
+  CheckCircle,
   Clock,
   BookOpen,
   TrendingUp
 } from 'lucide-react-native';
-import * as Haptics from 'expo-haptics';
+import * as Haptics from '@/utils/haptics';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
 
@@ -77,7 +77,7 @@ export default function MentorDashboard() {
   const [students, setStudents] = useState<Student[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  
+
   // Create assignment form state
   const [selectedStudentId, setSelectedStudentId] = useState('');
   const [selectedSubjectId, setSelectedSubjectId] = useState('');
@@ -138,11 +138,11 @@ export default function MentorDashboard() {
     const now = new Date();
     const dayOfWeek = now.getDay();
     const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-    
+
     const weekStart = new Date(now);
     weekStart.setDate(now.getDate() + diffToMonday);
     weekStart.setHours(0, 0, 0, 0);
-    
+
     const weekEnd = new Date(weekStart);
     weekEnd.setDate(weekStart.getDate() + 6);
     weekEnd.setHours(23, 59, 59, 999);
@@ -173,13 +173,13 @@ export default function MentorDashboard() {
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert('Success', 'Assignment created successfully');
-      
+
       // Reset form
       setTaskTitle('');
       setTaskDescription('');
       setDuration('');
       setScheduledDate('');
-      
+
       // Refresh data
       fetchAssignments();
       fetchStudents();
@@ -202,7 +202,7 @@ export default function MentorDashboard() {
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       Alert.alert('Success', action === 'done' ? 'Assignment verified!' : 'Sent back for redo');
-      
+
       setVerifyComment('');
       setSelectedAssignment(null);
       fetchAssignments();
