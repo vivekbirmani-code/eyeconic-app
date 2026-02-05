@@ -2,7 +2,7 @@ import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 
 // Production URL - Your deployed backend on Render
-const PRODUCTION_URL = 'https://eyeconic-app.vercel.app/';
+const PRODUCTION_URL = 'https://eyeconic-app.onrender.com';
 
 // Get the base URL for API calls
 export const getApiBaseURL = () => {

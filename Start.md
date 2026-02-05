@@ -1,10 +1,13 @@
 On Cloud
 eas build --platform android --profile preview --clear-cache
 
-For LocalHost
+For LocalHost (android)
 npx expo prebuild --platform android --clean
 cd android
 ./gradlew assembleRelease
+
+For LocalHost (iOS
+)
 
  APK LOCATION
 android/app/build/outputs/apk/release/app-release.apk
