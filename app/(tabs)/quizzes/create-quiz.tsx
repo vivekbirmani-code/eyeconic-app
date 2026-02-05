@@ -827,7 +827,13 @@ export default function CreateQuiz() {
           </View>
           
           {selectedQuestion && (
-            <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
+            <ScrollView 
+              style={styles.modalContent} 
+              showsVerticalScrollIndicator={true}
+              nestedScrollEnabled={true}
+              contentContainerStyle={{ paddingBottom: 40 }}
+              overScrollMode="always"
+            >
               {/* Question */}
               <View style={styles.questionSection}>
                 <Text style={styles.sectionLabel}>Question</Text>

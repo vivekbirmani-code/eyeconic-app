@@ -793,11 +793,13 @@ export default function QuestionBankManagement() {
 
           {selectedViewQuestion && (
             <ScrollView 
-              style={styles.modalContent} 
-              showsVerticalScrollIndicator={false}
+              style={{ flex: 1 }}
+              contentContainerStyle={{ padding: 20, paddingBottom: 40 }}
+              showsVerticalScrollIndicator={true}
               nestedScrollEnabled={true}
-              contentContainerStyle={{ flexGrow: 1 }}
               keyboardShouldPersistTaps="handled"
+              bounces={true}
+              overScrollMode="always"
             >
               <View style={styles.previewCard}>
                 <View style={styles.previewMetaRow}>
@@ -853,7 +855,6 @@ export default function QuestionBankManagement() {
                   </View>
                 )}
               </View>
-              <View style={{ height: 40 }} />
             </ScrollView>
           )}
         </View>

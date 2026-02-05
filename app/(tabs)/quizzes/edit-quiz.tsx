@@ -488,7 +488,13 @@ export default function EditQuiz() {
           </View>
 
           {previewQuestion && (
-            <ScrollView style={styles.previewContent} showsVerticalScrollIndicator={false}>
+            <ScrollView 
+              style={styles.previewContent} 
+              showsVerticalScrollIndicator={true}
+              nestedScrollEnabled={true}
+              contentContainerStyle={{ paddingBottom: 40 }}
+              overScrollMode="always"
+            >
               <View style={styles.previewSection}>
                 <Text style={styles.previewLabel}>Question</Text>
                 <Text style={styles.previewText}>{previewQuestion.question}</Text>
