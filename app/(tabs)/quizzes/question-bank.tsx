@@ -792,7 +792,13 @@ export default function QuestionBankManagement() {
           </LinearGradient>
 
           {selectedViewQuestion && (
-            <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
+            <ScrollView 
+              style={styles.modalContent} 
+              showsVerticalScrollIndicator={false}
+              nestedScrollEnabled={true}
+              contentContainerStyle={{ flexGrow: 1 }}
+              keyboardShouldPersistTaps="handled"
+            >
               <View style={styles.previewCard}>
                 <View style={styles.previewMetaRow}>
                   <View style={styles.badgeContainer}>
