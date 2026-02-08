@@ -15,6 +15,7 @@ import IncomingCallScreen from '@/components/IncomingCallScreen';
 import PermissionsScreen from '@/components/PermissionsScreen';
 import { usePushNotifications } from '@/hooks/usePushNotifications';
 import { useRouter } from 'expo-router';
+import { getApiBaseURL } from '@/services/config';
 
 // Inner component to access call context
 function AppContent() {
@@ -30,13 +31,34 @@ function AppContent() {
     checkPermissionsStatus();
     
     // Handle deep links
-    const handleDeepLink = (event: { url: string }) => {
+    const handleDeepLink = async (event: { url: string }) => {
       const parsed = Linking.parse(event.url);
       // Handle mentorship://quiz/{shareToken} deep links
       if (parsed.path?.startsWith('quiz/') || parsed.hostname === 'quiz') {
         const shareToken = parsed.path?.replace('quiz/', '') || parsed.queryParams?.token;
         if (shareToken) {
-          router.replace(`/guest-quiz/${shareToken}` as any);
+          try {
+            // Check if user is logged in
+            const token = await AsyncStorage.getItem('token');
+            if (token) {
+              // User is logged in - fetch quiz ID from share token and route to normal quiz
+              const API_URL = getApiBaseURL();
+              const response = await fetch(`${API_URL}/public/quiz/${shareToken}`);
+              const data = await response.json();
+              
+              if (data.success && data.quiz._id) {
+                // Navigate to normal quiz instructions
+                router.replace(`/quiz/${data.quiz._id}/instructions` as any);
+                return;
+              }
+            }
+            // Not logged in or couldn't get quiz ID - go to guest mode
+            router.replace(`/guest-quiz/${shareToken}` as any);
+          } catch (error) {
+            console.error('Deep link error:', error);
+            // Fallback to guest mode
+            router.replace(`/guest-quiz/${shareToken}` as any);
+          }
         }
       }
     };

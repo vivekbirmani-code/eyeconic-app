@@ -130,7 +130,7 @@ router.post('/quiz/:shareToken/start', async (req, res) => {
             isActive: true
         }).populate({
             path: 'questions',
-            select: 'questionText options questionImage optionImages marks'
+            select: 'question options questionImage optionImages marks'
         });
 
         if (!quiz) {
@@ -171,7 +171,7 @@ router.post('/quiz/:shareToken/start', async (req, res) => {
                     duration: quiz.duration,
                     questions: quiz.questions.map(q => ({
                         _id: q._id,
-                        questionText: q.questionText,
+                        questionText: q.question,
                         options: q.options,
                         questionImage: q.questionImage,
                         optionImages: q.optionImages,
@@ -214,7 +214,7 @@ router.post('/quiz/:shareToken/start', async (req, res) => {
                 duration: quiz.duration,
                 questions: quiz.questions.map(q => ({
                     _id: q._id,
-                    questionText: q.questionText,
+                    questionText: q.question,
                     options: q.options,
                     questionImage: q.questionImage,
                     optionImages: q.optionImages,
