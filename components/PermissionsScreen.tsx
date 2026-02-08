@@ -10,9 +10,29 @@ import {
   Alert,
 } from 'react-native';
 import { Mic, Bell, CheckCircle } from 'lucide-react-native';
-import * as Notifications from 'expo-notifications';
-import { Audio } from 'expo-av';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants from 'expo-constants';
+
+// Check if running in Expo Go
+const isExpoGo = Constants.appOwnership === 'expo';
+
+// Dynamically import Notifications to prevent crash in Expo Go
+let Notifications: any = null;
+try {
+  Notifications = require('expo-notifications');
+} catch (e) {
+  console.log('expo-notifications not available');
+}
+
+// Dynamically import Audio to prevent crash if expo-av issues
+let Audio: any = null;
+try {
+  // Use expo-av for permission request
+  const ExpoAV = require('expo-av');
+  Audio = ExpoAV.Audio;
+} catch (e) {
+  console.log('expo-av not available');
+}
 
 const { width, height } = Dimensions.get('window');
 
@@ -26,6 +46,12 @@ export default function PermissionsScreen({ onComplete }: PermissionsScreenProps
   const [isLoading, setIsLoading] = useState(false);
 
   const requestMicrophonePermission = async () => {
+    if (!Audio) {
+      console.log('Audio module not available, skipping permission');
+      setMicPermission(true); // Graceful fallback
+      return true;
+    }
+
     try {
       const { granted } = await Audio.requestPermissionsAsync();
       setMicPermission(granted);
@@ -38,6 +64,13 @@ export default function PermissionsScreen({ onComplete }: PermissionsScreenProps
   };
 
   const requestNotificationPermission = async () => {
+    // Skip in Expo Go since push notifications don't work
+    if (isExpoGo || !Notifications) {
+      console.log('Notification permission skipped in Expo Go');
+      setNotifPermission(true); // Pretend granted to allow app to continue
+      return true;
+    }
+    
     try {
       const { status } = await Notifications.requestPermissionsAsync();
       const granted = status === 'granted';
@@ -80,6 +113,11 @@ export default function PermissionsScreen({ onComplete }: PermissionsScreenProps
         <Text style={styles.subtitle}>
           We need a few permissions to enable calling and notifications.
         </Text>
+        {isExpoGo && (
+          <Text style={styles.expoGoWarning}>
+            ⚠️ Running in Expo Go - Calling & Push features disabled
+          </Text>
+        )}
       </View>
 
       <View style={styles.permissionsList}>
@@ -192,6 +230,12 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#6B7280',
     lineHeight: 24,
+  },
+  expoGoWarning: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#F59E0B',
+    fontWeight: '500',
   },
   permissionsList: {
     flex: 1,

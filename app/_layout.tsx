@@ -4,6 +4,7 @@ import { StatusBar } from 'expo-status-bar';
 import { View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Linking from 'expo-linking';
+import * as SplashScreen from 'expo-splash-screen';
 import { useFrameworkReady } from '@/hooks/useFrameworkReady';
 import { AuthProvider } from '@/context/AuthContext';
 import { NotificationProvider } from '@/context/NotificationContext';
@@ -143,6 +144,7 @@ function AppContent() {
 
   // Show permissions screen on first launch
   if (showPermissions) {
+    SplashScreen.hideAsync().catch(() => {});
     return <PermissionsScreen onComplete={handlePermissionsComplete} />;
   }
 

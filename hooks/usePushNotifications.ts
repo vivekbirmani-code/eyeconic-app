@@ -1,17 +1,30 @@
 import { useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
-import * as Notifications from 'expo-notifications';
+import Constants from 'expo-constants';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
 
-// Configure notification handling
-Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-        shouldShowAlert: true,
-        shouldPlaySound: true,
-        shouldSetBadge: true,
-    }),
-});
+// Check if running in Expo Go
+const isExpoGo = Constants.appOwnership === 'expo';
+
+// Dynamically import Notifications to prevent crash in Expo Go
+let Notifications: any = null;
+try {
+    Notifications = require('expo-notifications');
+
+    // Only set handler if not in Expo Go (push notifications don't work there)
+    if (!isExpoGo) {
+        Notifications.setNotificationHandler({
+            handleNotification: async () => ({
+                shouldShowAlert: true,
+                shouldPlaySound: true,
+                shouldSetBadge: true,
+            }),
+        });
+    }
+} catch (e) {
+    console.log('expo-notifications not available');
+}
 
 export function usePushNotifications() {
     const { user } = useAuth();
@@ -20,6 +33,12 @@ export function usePushNotifications() {
     const responseListener = useRef<any>();
 
     useEffect(() => {
+        // Skip push notification setup in Expo Go
+        if (isExpoGo || !Notifications) {
+            console.log('Push notifications disabled in Expo Go');
+            return;
+        }
+
         registerForPushNotificationsAsync().then(token => {
             if (token) {
                 setExpoPushToken(token);
@@ -31,12 +50,12 @@ export function usePushNotifications() {
         });
 
         // Listen for incoming notifications
-        notificationListener.current = Notifications.addNotificationReceivedListener(notification => {
+        notificationListener.current = Notifications.addNotificationReceivedListener((notification: any) => {
             console.log('Notification received:', notification);
         });
 
         // Listen for notification responses (when user taps)
-        responseListener.current = Notifications.addNotificationResponseReceivedListener(response => {
+        responseListener.current = Notifications.addNotificationResponseReceivedListener((response: any) => {
             console.log('Notification response:', response);
             const data = response.notification.request.content.data;
 
@@ -70,6 +89,8 @@ export function usePushNotifications() {
 }
 
 async function registerForPushNotificationsAsync(): Promise<string | null> {
+    if (!Notifications) return null;
+
     let token: string | null = null;
 
     if (Platform.OS === 'android') {

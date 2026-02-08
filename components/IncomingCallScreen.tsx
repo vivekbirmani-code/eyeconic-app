@@ -10,7 +10,15 @@ import {
   Dimensions,
 } from 'react-native';
 import { Phone, PhoneOff, X } from 'lucide-react-native';
-import { Audio } from 'expo-av';
+
+// Dynamically import expo-av
+let Audio: any = null;
+try {
+  const ExpoAV = require('expo-av');
+  Audio = ExpoAV.Audio;
+} catch (e) {
+  console.log('expo-av not available');
+}
 
 const { width, height } = Dimensions.get('window');
 
@@ -27,7 +35,7 @@ export default function IncomingCallScreen({
   onAccept,
   onDecline,
 }: IncomingCallScreenProps) {
-  const soundRef = useRef<Audio.Sound | null>(null);
+  const soundRef = useRef<any>(null); // Type as any since Audio might be missing
   const vibrationIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -46,6 +54,20 @@ export default function IncomingCallScreen({
 
     // Initial vibration
     Vibration.vibrate([0, 500, 500, 500]);
+    
+    // Try to play sound if Audio is available
+    if (Audio) {
+      try {
+        const { sound } = await Audio.Sound.createAsync(
+            require('@/assets/sounds/ringtone.mp3'),
+            { shouldPlay: true, isLooping: true }
+        );
+        soundRef.current = sound;
+        await sound.playAsync();
+      } catch (error) {
+        console.log('Error playing ringtone:', error);
+      }
+    }
   };
 
   const stopRinging = async () => {
