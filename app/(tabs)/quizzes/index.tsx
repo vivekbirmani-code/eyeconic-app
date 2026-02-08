@@ -41,6 +41,104 @@ interface Quiz {
   };
 }
 
+const getStatusBadge = (quiz: Quiz) => {
+  if (!quiz.attemptStatus?.hasAttempted) {
+    return { label: 'New', color: '#FFFFFF', bgColor: '#10B981' }; // Green
+  }
+  if (quiz.attemptStatus?.canRetake) {
+    return { label: 'Retake', color: '#FFFFFF', bgColor: '#3B82F6' }; // Blue
+  }
+  if (quiz.attemptStatus?.retestRequested) {
+    return { label: 'Pending', color: '#FFFFFF', bgColor: '#F59E0B' }; // Orange
+  }
+  return { label: 'Done', color: '#FFFFFF', bgColor: '#6B7280' }; // Gray
+};
+
+const QuizCard = ({ item, index, onPress }: { item: Quiz; index: number; onPress: (quiz: Quiz) => void }) => {
+  const status = getStatusBadge(item);
+  const translateY = useRef(new Animated.Value(50)).current;
+  const opacity = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.parallel([
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: 500,
+        delay: index * 100,
+        useNativeDriver: true,
+      }),
+      Animated.spring(translateY, {
+        toValue: 0,
+        tension: 50,
+        friction: 7,
+        useNativeDriver: true,
+      })
+    ]).start();
+  }, []);
+
+  return (
+    <Animated.View style={{ opacity, transform: [{ translateY }] }}>
+      <Pressable
+        style={({ pressed }) => [
+          styles.card,
+          pressed && styles.cardPressed
+        ]}
+        onPress={() => onPress(item)}
+      >
+        <View style={styles.cardHeader}>
+          <View style={styles.subjectBadge}>
+            <BookOpen size={12} color="#01b4ae" />
+            <Text style={styles.subjectText}>{item.subject?.name}</Text>
+          </View>
+          <View style={[styles.statusBadge, { backgroundColor: status.bgColor }]}>
+            <Text style={[styles.statusText, { color: status.color }]}>{status.label}</Text>
+          </View>
+        </View>
+
+        <Text style={styles.quizTitle} numberOfLines={2}>{item.title}</Text>
+
+        <View style={styles.cardStats}>
+          <View style={styles.statItem}>
+            <Clock size={14} color="#6B7280" />
+            <Text style={styles.statText}>{item.duration} mins</Text>
+          </View>
+          <View style={styles.statItem}>
+            <Text style={styles.dot}>•</Text>
+            <Text style={styles.statText}>{item.questions?.length || 0} Questions</Text>
+          </View>
+        </View>
+
+        {item.attemptStatus?.hasAttempted && (
+          <View style={styles.scoreContainer}>
+            <Text style={styles.scoreLabel}>Score</Text>
+            <Text style={styles.scoreValue}>
+              {item.attemptStatus.marksObtained}
+              <Text style={styles.scoreTotal}>/{item.totalMarks}</Text>
+            </Text>
+          </View>
+        )}
+
+        <View style={styles.cardFooter}>
+          <View style={styles.testTypeContainer}>
+            <Text style={styles.testTypeLabel}>Type</Text>
+            <Text style={styles.testTypeValue}>
+              {item.testType.charAt(0).toUpperCase() + item.testType.slice(1)}
+            </Text>
+          </View>
+          <View style={styles.actionButton}>
+            <Text style={styles.actionButtonText}>
+              {item.attemptStatus?.hasAttempted && !item.attemptStatus.canRetake
+                ? 'Check Results'
+                : 'Start Quiz'}
+            </Text>
+            <ChevronRight size={16} color="#01b4ae" />
+          </View>
+        </View>
+      </Pressable>
+    </Animated.View>
+  );
+};
+
 function QuizzesContent() {
   const { user } = useAuth();
   const router = useRouter();
@@ -129,111 +227,11 @@ function QuizzesContent() {
     }
   };
 
-  const getStatusBadge = (quiz: Quiz) => {
-    if (!quiz.attemptStatus?.hasAttempted) {
-      return { label: 'New', color: '#FFFFFF', bgColor: '#10B981' }; // Green
-    }
-    if (quiz.attemptStatus?.canRetake) {
-      return { label: 'Retake', color: '#FFFFFF', bgColor: '#3B82F6' }; // Blue
-    }
-    if (quiz.attemptStatus?.retestRequested) {
-      return { label: 'Pending', color: '#FFFFFF', bgColor: '#F59E0B' }; // Orange
-    }
-    return { label: 'Done', color: '#FFFFFF', bgColor: '#6B7280' }; // Gray
-  };
-
   // Filter quizzes based on active tab
   const availableQuizzes = quizzes.filter(q => !q.attemptStatus?.hasAttempted || q.attemptStatus?.canRetake);
   const completedQuizzes = quizzes.filter(q => q.attemptStatus?.hasAttempted && !q.attemptStatus?.canRetake);
 
   const displayQuizzes = activeTab === 'available' ? availableQuizzes : completedQuizzes;
-
-  const renderQuizCard = ({ item, index }: { item: Quiz; index: number }) => {
-    const status = getStatusBadge(item);
-
-    // Staggered animation for cards
-    const translateY = new Animated.Value(50);
-    const opacity = new Animated.Value(0);
-
-    useEffect(() => {
-      Animated.parallel([
-        Animated.timing(opacity, {
-          toValue: 1,
-          duration: 500,
-          delay: index * 100,
-          useNativeDriver: true,
-        }),
-        Animated.spring(translateY, {
-          toValue: 0,
-          tension: 50,
-          friction: 7,
-          useNativeDriver: true,
-        })
-      ]).start();
-    }, []);
-
-    return (
-      <Animated.View style={{ opacity, transform: [{ translateY }] }}>
-        <Pressable
-          style={({ pressed }) => [
-            styles.card,
-            pressed && styles.cardPressed
-          ]}
-          onPress={() => handleQuizPress(item)}
-        >
-          <View style={styles.cardHeader}>
-            <View style={styles.subjectBadge}>
-              <BookOpen size={12} color="#01b4ae" />
-              <Text style={styles.subjectText}>{item.subject?.name}</Text>
-            </View>
-            <View style={[styles.statusBadge, { backgroundColor: status.bgColor }]}>
-              <Text style={[styles.statusText, { color: status.color }]}>{status.label}</Text>
-            </View>
-          </View>
-
-          <Text style={styles.quizTitle} numberOfLines={2}>{item.title}</Text>
-
-          <View style={styles.cardStats}>
-            <View style={styles.statItem}>
-              <Clock size={14} color="#6B7280" />
-              <Text style={styles.statText}>{item.duration} mins</Text>
-            </View>
-            <View style={styles.statItem}>
-              <Text style={styles.dot}>•</Text>
-              <Text style={styles.statText}>{item.questions?.length || 0} Questions</Text>
-            </View>
-          </View>
-
-          {item.attemptStatus?.hasAttempted && (
-            <View style={styles.scoreContainer}>
-              <Text style={styles.scoreLabel}>Score</Text>
-              <Text style={styles.scoreValue}>
-                {item.attemptStatus.marksObtained}
-                <Text style={styles.scoreTotal}>/{item.totalMarks}</Text>
-              </Text>
-            </View>
-          )}
-
-          <View style={styles.cardFooter}>
-            <View style={styles.testTypeContainer}>
-              <Text style={styles.testTypeLabel}>Type</Text>
-              <Text style={styles.testTypeValue}>
-                {item.testType.charAt(0).toUpperCase() + item.testType.slice(1)}
-              </Text>
-            </View>
-            <View style={styles.actionButton}>
-              <Text style={styles.actionButtonText}>
-                {item.attemptStatus?.hasAttempted && !item.attemptStatus.canRetake
-                  ? 'Check Results'
-                  : 'Start Quiz'}
-              </Text>
-              <ChevronRight size={16} color="#01b4ae" />
-            </View>
-          </View>
-        </Pressable>
-      </Animated.View>
-    );
-  };
 
   // Admin view
   if (user?.role === 'admin') {
@@ -357,7 +355,13 @@ function QuizzesContent() {
         ) : (
           <FlatList
             data={displayQuizzes}
-            renderItem={renderQuizCard}
+            renderItem={({ item, index }) => (
+              <QuizCard 
+                item={item} 
+                index={index} 
+                onPress={handleQuizPress} 
+              />
+            )}
             keyExtractor={item => item._id}
             contentContainerStyle={styles.listContent}
             showsVerticalScrollIndicator={false}
