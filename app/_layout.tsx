@@ -3,11 +3,13 @@ import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { View } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Linking from 'expo-linking';
 import { useFrameworkReady } from '@/hooks/useFrameworkReady';
 import { AuthProvider } from '@/context/AuthContext';
 import { NotificationProvider } from '@/context/NotificationContext';
 import { CallProvider, useCall } from '@/context/CallContext';
 import { QuizProvider } from '@/context/QuizContext';
+import { GuestQuizProvider } from '@/context/GuestQuizContext';
 import FloatingCallBar from '@/components/FloatingCallBar';
 import IncomingCallScreen from '@/components/IncomingCallScreen';
 import PermissionsScreen from '@/components/PermissionsScreen';
@@ -26,6 +28,32 @@ function AppContent() {
 
   useEffect(() => {
     checkPermissionsStatus();
+    
+    // Handle deep links
+    const handleDeepLink = (event: { url: string }) => {
+      const parsed = Linking.parse(event.url);
+      // Handle mentorship://quiz/{shareToken} deep links
+      if (parsed.path?.startsWith('quiz/') || parsed.hostname === 'quiz') {
+        const shareToken = parsed.path?.replace('quiz/', '') || parsed.queryParams?.token;
+        if (shareToken) {
+          router.replace(`/guest-quiz/${shareToken}` as any);
+        }
+      }
+    };
+
+    // Listen for incoming deep links while app is open
+    const subscription = Linking.addEventListener('url', handleDeepLink);
+
+    // Handle deep link if app was opened via one
+    Linking.getInitialURL().then((url) => {
+      if (url) {
+        handleDeepLink({ url });
+      }
+    });
+
+    return () => {
+      subscription.remove();
+    };
   }, []);
 
   const checkPermissionsStatus = async () => {
@@ -118,6 +146,7 @@ function AppContent() {
         <Stack.Screen name="index" />
         <Stack.Screen name="login" />
         <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="guest-quiz/[shareToken]" />
         <Stack.Screen name="chat/[id]" />
         <Stack.Screen name="call/[id]" />
         <Stack.Screen name="quiz/[id]/instructions" />
@@ -143,8 +172,10 @@ export default function RootLayout() {
       <NotificationProvider>
         <CallProvider>
           <QuizProvider>
-            <AppContent />
-            <StatusBar style="dark" backgroundColor="#FFFFFF" />
+            <GuestQuizProvider>
+              <AppContent />
+              <StatusBar style="dark" backgroundColor="#FFFFFF" />
+            </GuestQuizProvider>
           </QuizProvider>
         </CallProvider>
       </NotificationProvider>

@@ -17,6 +17,7 @@ const mentorStudentRoutes = require('./routes/mentor-students');
 const assignmentRoutes = require('./routes/assignments');
 const adminOverviewRoutes = require('./routes/admin-overview');
 const uploadRoutes = require('./routes/upload');
+const publicQuizRoutes = require('./routes/public-quiz');
 const { cleanupExpiredMedia } = require('./utils/media-cleanup');
 const Call = require('./models/Call');
 const User = require('./models/User');
@@ -88,6 +89,7 @@ app.use('/api/mentor-students', mentorStudentRoutes);
 app.use('/api/assignments', assignmentRoutes);
 app.use('/api/admin-overview', adminOverviewRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/public', publicQuizRoutes);
 
 // Track socket to user mapping
 const socketUserMap = new Map();

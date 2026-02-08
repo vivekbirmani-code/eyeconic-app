@@ -46,7 +46,7 @@ const cleanupExpiredMedia = async () => {
 
                     updatedAttachments.push({
                         ...att.toObject(),
-                        url: '', // Or a placeholder URL
+                        url: 'expired_media_placeholder', // Or a placeholder URL
                         publicId: 'expired',
                         name: `${att.name} (Expired)`
                     });

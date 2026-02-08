@@ -23,10 +23,14 @@ import {
   Check,
   X,
   Copy,
-  Edit
+  Edit,
+  Globe,
+  Link,
+  AlertCircle
 } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
+import * as Clipboard from 'expo-clipboard';
 
 interface Quiz {
   _id: string;
@@ -61,6 +65,13 @@ export default function PastTests() {
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
   const [studentSearch, setStudentSearch] = useState('');
   const [sharing, setSharing] = useState(false);
+  
+  // External share state
+  const [shareMode, setShareMode] = useState<'internal' | 'external'>('internal');
+  const [publicShareUrl, setPublicShareUrl] = useState<string | null>(null);
+  const [shareExpiry, setShareExpiry] = useState<Date | null>(null);
+  const [generatingLink, setGeneratingLink] = useState(false);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     fetchQuizzes();
@@ -113,7 +124,25 @@ export default function PastTests() {
     // Pre-filter out already assigned students
     setSelectedStudents([]);
     setStudentSearch('');
+    setShareMode('internal');
+    setPublicShareUrl(null);
+    setShareExpiry(null);
+    setCopied(false);
     setShareModalVisible(true);
+    // Check if quiz already has a public share link
+    checkExistingShareLink(quiz._id);
+  };
+
+  const checkExistingShareLink = async (quizId: string) => {
+    try {
+      const response = await api.get(`/quizzes/${quizId}/share-status`);
+      if (response.data.isPublic && response.data.shareUrl) {
+        setPublicShareUrl(response.data.shareUrl);
+        setShareExpiry(response.data.publicExpiryDate ? new Date(response.data.publicExpiryDate) : null);
+      }
+    } catch (error) {
+      // Ignore - no existing share link
+    }
   };
 
   const toggleStudent = (studentId: string) => {
@@ -144,6 +173,58 @@ export default function PastTests() {
       Alert.alert('Error', error.response?.data?.message || 'Failed to share quiz');
     } finally {
       setSharing(false);
+    }
+  };
+
+  const handleGeneratePublicLink = async () => {
+    if (!selectedQuiz) return;
+    
+    setGeneratingLink(true);
+    try {
+      const response = await api.post(`/quizzes/${selectedQuiz._id}/generate-share-link`, {});
+      
+      setPublicShareUrl(response.data.shareUrl);
+      setShareExpiry(response.data.expiryDate ? new Date(response.data.expiryDate) : null);
+      Alert.alert('Success', 'Public share link generated!');
+    } catch (error: any) {
+      console.error('Generate link error:', error);
+      Alert.alert('Error', error.response?.data?.message || 'Failed to generate link');
+    } finally {
+      setGeneratingLink(false);
+    }
+  };
+
+  const handleRevokePublicLink = async () => {
+    if (!selectedQuiz) return;
+    
+    Alert.alert(
+      'Revoke Link',
+      'This will disable the public share link. Anyone with the link will no longer be able to access the quiz.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Revoke',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await api.post(`/quizzes/${selectedQuiz._id}/revoke-share-link`);
+              setPublicShareUrl(null);
+              setShareExpiry(null);
+              Alert.alert('Success', 'Share link revoked');
+            } catch (error: any) {
+              Alert.alert('Error', error.response?.data?.message || 'Failed to revoke link');
+            }
+          }
+        }
+      ]
+    );
+  };
+
+  const handleCopyLink = async () => {
+    if (publicShareUrl) {
+      await Clipboard.setStringAsync(publicShareUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     }
   };
 
@@ -327,61 +408,157 @@ export default function PastTests() {
               </Text>
             )}
 
-            <View style={styles.modalSearchInput}>
-              <Search color="#6B7280" size={18} />
-              <TextInput
-                style={styles.modalSearchTextInput}
-                placeholder="Search students..."
-                value={studentSearch}
-                onChangeText={setStudentSearch}
-              />
+            {/* Share Mode Tabs */}
+            <View style={styles.shareModeTabs}>
+              <TouchableOpacity
+                style={[styles.shareModeTab, shareMode === 'internal' && styles.shareModeTabActive]}
+                onPress={() => setShareMode('internal')}
+              >
+                <Users size={18} color={shareMode === 'internal' ? '#2563EB' : '#6B7280'} />
+                <Text style={[styles.shareModeTabText, shareMode === 'internal' && styles.shareModeTabTextActive]}>
+                  Internal
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.shareModeTab, shareMode === 'external' && styles.shareModeTabActive]}
+                onPress={() => setShareMode('external')}
+              >
+                <Globe size={18} color={shareMode === 'external' ? '#2563EB' : '#6B7280'} />
+                <Text style={[styles.shareModeTabText, shareMode === 'external' && styles.shareModeTabTextActive]}>
+                  External
+                </Text>
+              </TouchableOpacity>
             </View>
 
-            <Text style={styles.selectedCount}>
-              {selectedStudents.length} student(s) selected
-            </Text>
+            {shareMode === 'internal' ? (
+              // Internal sharing (existing student assignment)
+              <>
+                <View style={styles.modalSearchInput}>
+                  <Search color="#6B7280" size={18} />
+                  <TextInput
+                    style={styles.modalSearchTextInput}
+                    placeholder="Search students..."
+                    value={studentSearch}
+                    onChangeText={setStudentSearch}
+                  />
+                </View>
 
-            <ScrollView style={styles.studentList}>
-              {getAvailableStudents().length === 0 ? (
-                <Text style={styles.noStudentsText}>
-                  {studentSearch ? 'No matching students' : 'All students already have access'}
+                <Text style={styles.selectedCount}>
+                  {selectedStudents.length} student(s) selected
                 </Text>
-              ) : (
-                getAvailableStudents().map(student => (
-                  <TouchableOpacity
-                    key={student._id}
-                    style={[
-                      styles.studentItem,
-                      selectedStudents.includes(student._id) && styles.studentItemSelected
-                    ]}
-                    onPress={() => toggleStudent(student._id)}
-                  >
-                    <View style={[
-                      styles.checkbox,
-                      selectedStudents.includes(student._id) && styles.checkboxSelected
-                    ]}>
-                      {selectedStudents.includes(student._id) && <Check color="#FFF" size={14} />}
-                    </View>
-                    <View style={styles.studentInfo}>
-                      <Text style={styles.studentName}>{student.name}</Text>
-                      <Text style={styles.studentEmail}>{student.email}</Text>
-                    </View>
-                  </TouchableOpacity>
-                ))
-              )}
-            </ScrollView>
 
-            <TouchableOpacity
-              style={[styles.shareConfirmButton, (sharing || selectedStudents.length === 0) && styles.buttonDisabled]}
-              onPress={handleShare}
-              disabled={sharing || selectedStudents.length === 0}
-            >
-              {sharing ? (
-                <ActivityIndicator color="#FFF" />
-              ) : (
-                <Text style={styles.shareConfirmText}>Share with {selectedStudents.length} Student(s)</Text>
-              )}
-            </TouchableOpacity>
+                <ScrollView style={styles.studentList}>
+                  {getAvailableStudents().length === 0 ? (
+                    <Text style={styles.noStudentsText}>
+                      {studentSearch ? 'No matching students' : 'All students already have access'}
+                    </Text>
+                  ) : (
+                    getAvailableStudents().map(student => (
+                      <TouchableOpacity
+                        key={student._id}
+                        style={[
+                          styles.studentItem,
+                          selectedStudents.includes(student._id) && styles.studentItemSelected
+                        ]}
+                        onPress={() => toggleStudent(student._id)}
+                      >
+                        <View style={[
+                          styles.checkbox,
+                          selectedStudents.includes(student._id) && styles.checkboxSelected
+                        ]}>
+                          {selectedStudents.includes(student._id) && <Check color="#FFF" size={14} />}
+                        </View>
+                        <View style={styles.studentInfo}>
+                          <Text style={styles.studentName}>{student.name}</Text>
+                          <Text style={styles.studentEmail}>{student.email}</Text>
+                        </View>
+                      </TouchableOpacity>
+                    ))
+                  )}
+                </ScrollView>
+
+                <TouchableOpacity
+                  style={[styles.shareConfirmButton, (sharing || selectedStudents.length === 0) && styles.buttonDisabled]}
+                  onPress={handleShare}
+                  disabled={sharing || selectedStudents.length === 0}
+                >
+                  {sharing ? (
+                    <ActivityIndicator color="#FFF" />
+                  ) : (
+                    <Text style={styles.shareConfirmText}>Share with {selectedStudents.length} Student(s)</Text>
+                  )}
+                </TouchableOpacity>
+              </>
+            ) : (
+              // External sharing (public link)
+              <ScrollView 
+                style={styles.externalShareContainer}
+                contentContainerStyle={styles.externalShareContent}
+                showsVerticalScrollIndicator={true}
+                nestedScrollEnabled={true}
+                keyboardShouldPersistTaps="handled"
+              >
+                <View style={styles.externalShareInfo}>
+                  <AlertCircle size={20} color="#F59E0B" />
+                  <Text style={styles.externalShareInfoText}>
+                    Public links allow unregistered users to attempt this quiz. They'll be prompted to sign in after completion.
+                  </Text>
+                </View>
+
+                {publicShareUrl ? (
+                  <>
+                    <View style={styles.linkContainer}>
+                      <Link size={18} color="#6366f1" />
+                      <Text style={styles.linkText} numberOfLines={1}>
+                        {publicShareUrl}
+                      </Text>
+                      <TouchableOpacity
+                        style={styles.copyButton}
+                        onPress={handleCopyLink}
+                      >
+                        {copied ? (
+                          <Check size={18} color="#10B981" />
+                        ) : (
+                          <Copy size={18} color="#6B7280" />
+                        )}
+                      </TouchableOpacity>
+                    </View>
+
+                    {shareExpiry ? (
+                      <Text style={styles.expiryText}>
+                        Expires: {new Date(shareExpiry).toLocaleDateString()}
+                      </Text>
+                    ) : (
+                      <Text style={styles.expiryText}>
+                        Never expires
+                      </Text>
+                    )}
+
+                    <TouchableOpacity
+                      style={styles.revokeButton}
+                      onPress={handleRevokePublicLink}
+                    >
+                      <Text style={styles.revokeButtonText}>Revoke Link</Text>
+                    </TouchableOpacity>
+                  </>
+                ) : (
+                  <TouchableOpacity
+                    style={[styles.generateLinkButton, generatingLink && styles.buttonDisabled]}
+                    onPress={handleGeneratePublicLink}
+                    disabled={generatingLink}
+                  >
+                    {generatingLink ? (
+                      <ActivityIndicator color="#FFF" />
+                    ) : (
+                      <>
+                        <Link size={18} color="#FFF" />
+                        <Text style={styles.generateLinkText}>Generate Public Link</Text>
+                      </>
+                    )}
+                  </TouchableOpacity>
+                )}
+              </ScrollView>
+            )}
           </View>
         </View>
       </Modal>
@@ -647,5 +824,110 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: {
     opacity: 0.5,
+  },
+  // Share mode tabs
+  shareModeTabs: {
+    flexDirection: 'row',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 8,
+    padding: 4,
+    marginBottom: 16,
+  },
+  shareModeTab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 6,
+  },
+  shareModeTabActive: {
+    backgroundColor: '#FFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  shareModeTabText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#6B7280',
+  },
+  shareModeTabTextActive: {
+    color: '#2563EB',
+  },
+  // External share styles
+  externalShareContainer: {
+    maxHeight: 400,
+    width: '100%',
+  },
+  externalShareContent: {
+    paddingBottom: 20,
+  },
+  externalShareInfo: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 10,
+    backgroundColor: '#FFFBEB',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  externalShareInfoText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#92400E',
+    lineHeight: 18,
+  },
+  linkContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+    padding: 12,
+    borderRadius: 8,
+    gap: 10,
+    marginBottom: 8,
+  },
+  linkText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#374151',
+    fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+  },
+  copyButton: {
+    padding: 6,
+  },
+  expiryText: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginBottom: 16,
+  },
+  generateLinkButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#6366F1',
+    padding: 16,
+    borderRadius: 8,
+  },
+  generateLinkText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFF',
+  },
+  revokeButton: {
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#EF4444',
+  },
+  revokeButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
+    color: '#EF4444',
   },
 });

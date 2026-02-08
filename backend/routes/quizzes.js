@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const Quiz = require('../models/Quiz');
 const QuizAttempt = require('../models/QuizAttempt');
 const QuestionBank = require('../models/QuestionBank');
@@ -960,6 +961,100 @@ router.put('/:id/share', auth, authorize('admin'), async (req, res) => {
     });
   } catch (error) {
     console.error('Share quiz error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ============ PUBLIC SHARING ENDPOINTS ============
+
+// Generate public share link
+router.post('/:id/generate-share-link', auth, authorize('admin'), async (req, res) => {
+  try {
+    const { expiryDays } = req.body; // Optional: number of days until link expires
+
+    const quiz = await Quiz.findById(req.params.id);
+    if (!quiz) {
+      return res.status(404).json({ message: 'Quiz not found' });
+    }
+
+    // Generate unique share token
+    const shareToken = crypto.randomBytes(16).toString('hex');
+
+    quiz.shareToken = shareToken;
+    quiz.isPublic = true;
+
+    // Set expiry if provided
+    if (expiryDays && expiryDays > 0) {
+      const expiryDate = new Date();
+      expiryDate.setDate(expiryDate.getDate() + parseInt(expiryDays));
+      quiz.publicExpiryDate = expiryDate;
+    } else {
+      quiz.publicExpiryDate = null; // No expiry
+    }
+
+    await quiz.save();
+
+    // Generate the deep link URL (HTTPS redirect for better sharing)
+    // Use the request host to construct the URL
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    const shareUrl = `${baseUrl}/api/public/share/${shareToken}`;
+
+    res.json({
+      success: true,
+      message: 'Share link generated successfully',
+      shareToken,
+      shareUrl,
+      expiryDate: quiz.publicExpiryDate
+    });
+  } catch (error) {
+    console.error('Generate share link error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Revoke public share link
+router.post('/:id/revoke-share-link', auth, authorize('admin'), async (req, res) => {
+  try {
+    const quiz = await Quiz.findById(req.params.id);
+    if (!quiz) {
+      return res.status(404).json({ message: 'Quiz not found' });
+    }
+
+    quiz.shareToken = null;
+    quiz.isPublic = false;
+    quiz.publicExpiryDate = null;
+
+    await quiz.save();
+
+    res.json({
+      success: true,
+      message: 'Share link revoked successfully'
+    });
+  } catch (error) {
+    console.error('Revoke share link error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Get share status for a quiz
+router.get('/:id/share-status', auth, authorize('admin'), async (req, res) => {
+  try {
+    const quiz = await Quiz.findById(req.params.id)
+      .select('shareToken isPublic publicExpiryDate');
+
+    if (!quiz) {
+      return res.status(404).json({ message: 'Quiz not found' });
+    }
+
+    res.json({
+      isPublic: quiz.isPublic,
+      shareToken: quiz.shareToken,
+      shareUrl: quiz.shareToken ? `mentorship://quiz/${quiz.shareToken}` : null,
+      publicExpiryDate: quiz.publicExpiryDate,
+      isExpired: quiz.publicExpiryDate ? new Date() > quiz.publicExpiryDate : false
+    });
+  } catch (error) {
+    console.error('Get share status error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

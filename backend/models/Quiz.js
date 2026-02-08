@@ -49,6 +49,19 @@ const quizSchema = new mongoose.Schema({
   },
   expiryDate: {
     type: Date
+  },
+  // Public sharing fields
+  shareToken: {
+    type: String,
+    unique: true,
+    sparse: true  // Allows multiple null values
+  },
+  isPublic: {
+    type: Boolean,
+    default: false
+  },
+  publicExpiryDate: {
+    type: Date
   }
 }, {
   timestamps: true
