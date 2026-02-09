@@ -86,10 +86,11 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
       duration,
       instructions,
       assignedStudents,
-      selectedQuestionIds  // NEW: optional array of specific question IDs for manual selection
+      selectedQuestionIds,  // NEW: optional array of specific question IDs for manual selection
+      shareSolution   // NEW: whether to share solutions with students (defaults to true)
     } = req.body;
 
-    console.log('Creating quiz from bank:', { title, subject, subjects, testType, numberOfQuestions, selectedQuestionIds: selectedQuestionIds?.length });
+    console.log('Creating quiz from bank:', { title, subject, subjects, testType, numberOfQuestions, selectedQuestionIds: selectedQuestionIds?.length, shareSolution });
 
     const mongoose = require('mongoose');
 
@@ -157,7 +158,8 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
       questions: questions.map(q => q._id),
       totalMarks,
       assignedStudents: assignedStudents || [],
-      createdBy: req.user._id
+      createdBy: req.user._id,
+      shareSolution: shareSolution !== undefined ? shareSolution : true  // Default to true
     });
 
     await quiz.save();
@@ -416,7 +418,7 @@ router.post('/:id/duplicate', auth, authorize('admin'), async (req, res) => {
 // Update Quiz
 router.put('/:id', auth, authorize('admin'), async (req, res) => {
   try {
-    const { title, duration, instructions, questions, testType, subject, assignedStudents } = req.body;
+    const { title, duration, instructions, questions, testType, subject, assignedStudents, shareSolution } = req.body;
 
     // Check if quiz exists
     const quiz = await Quiz.findById(req.params.id);
@@ -436,6 +438,7 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
     if (testType) quiz.testType = testType;
     if (subject) quiz.subject = subject; // Expecting single subject ID or handled by frontend
     if (assignedStudents) quiz.assignedStudents = assignedStudents;
+    if (shareSolution !== undefined) quiz.shareSolution = shareSolution;  // Allow toggling solution sharing
 
     if (questions && questions.length > 0) {
       quiz.questions = questions;
@@ -696,6 +699,19 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
       }
     });
 
+    // Calculate accuracy for each section before storing
+    const sectionPerformanceArray = Object.values(sectionPerformance).map(section => {
+      const totalQuestionsInSection = section.correct + section.incorrect + section.skipped;
+      const accuracy = totalQuestionsInSection > 0 
+        ? Math.round((section.correct / totalQuestionsInSection) * 100) 
+        : 0;
+      
+      return {
+        ...section,
+        accuracy
+      };
+    });
+
     // Update attempt
     attempt.status = isAutoSubmit ? 'auto_submitted' : 'completed';
     attempt.endTime = new Date();
@@ -703,7 +719,10 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
     attempt.totalQuestions = quiz.questions.length;
     attempt.marksObtained = marksObtained;
     attempt.totalMarks = quiz.totalMarks;
-    attempt.sectionPerformance = Object.values(sectionPerformance);
+    attempt.sectionPerformance = sectionPerformanceArray;
+    
+    // SECURITY: Store shareSolution value at submission time for audit trail
+    attempt.shareSolutionAtSubmission = quiz.shareSolution !== undefined ? quiz.shareSolution : true;
 
     await attempt.save();
 
@@ -725,7 +744,7 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
   }
 });
 
-// Get results (after submission)
+// Get results (after submission) - SECURITY HARDENED
 router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
   try {
     const attempt = await QuizAttempt.findById(req.params.attemptId)
@@ -747,15 +766,21 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
       return res.status(403).json({ message: 'Access denied' });
     }
 
-    // Include full question details with correct answers (for review)
+    // SECURITY CRITICAL: Fetch current shareSolution setting dynamically
+    // This ensures no cached responses can bypass solution hiding
+    const quiz = await Quiz.findById(attempt.quiz._id);
+    const shareSolution = quiz.shareSolution !== undefined ? quiz.shareSolution : true;
+
+    // Build question data with conditional solution fields
     const questionsWithAnswers = attempt.quiz.questions.map((q, index) => {
       const userAnswer = attempt.answers.find(a => a.questionIndex === index);
-      return {
+      
+      const baseData = {
         _id: q._id,
         question: q.question,
+        questionImage: q.questionImage,
         options: q.options,
-        correctAnswer: q.correctAnswer,
-        explanation: q.explanation,
+        optionImages: q.optionImages,
         marks: q.marks,
         topicName: q.topicName,
         userAnswer: userAnswer?.selectedAnswer,
@@ -763,6 +788,16 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
         timeSpent: userAnswer?.timeSpent,
         markedForReview: userAnswer?.markedForReview
       };
+
+      // SECURITY: Only include solution fields if shareSolution is true
+      // This prevents solution data leakage even if admin changes setting after submission
+      if (shareSolution) {
+        baseData.correctAnswer = q.correctAnswer;
+        baseData.explanation = q.explanation;
+        baseData.explanationImage = q.explanationImage;
+      }
+
+      return baseData;
     });
 
     res.json({
@@ -782,7 +817,8 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
         _id: attempt.quiz._id,
         title: attempt.quiz.title,
         subject: attempt.quiz.subject,
-        testType: attempt.quiz.testType
+        testType: attempt.quiz.testType,
+        shareSolution  // IMPORTANT: Send this to frontend for UI decisions
       },
       student: attempt.student,
       questions: questionsWithAnswers

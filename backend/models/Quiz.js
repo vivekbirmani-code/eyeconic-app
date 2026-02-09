@@ -62,6 +62,11 @@ const quizSchema = new mongoose.Schema({
   },
   publicExpiryDate: {
     type: Date
+  },
+  // Solution sharing control
+  shareSolution: {
+    type: Boolean,
+    default: true  // Default to true to maintain current behavior and backward compatibility
   }
 }, {
   timestamps: true

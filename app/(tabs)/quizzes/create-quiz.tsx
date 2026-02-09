@@ -12,11 +12,12 @@ import {
   Platform,
   StatusBar,
   Modal,
-  Image
+  Image,
+  Switch
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { 
-  ChevronDown, 
+import {
+  ChevronDown,
   ChevronLeft,
   Check,
   Clock,
@@ -80,6 +81,7 @@ export default function CreateQuiz() {
   const [numberOfQuestions, setNumberOfQuestions] = useState('10');
   const [duration, setDuration] = useState('30');
   const [availableQuestions, setAvailableQuestions] = useState(0);
+  const [shareSolution, setShareSolution] = useState(true);  // NEW: Share solutions with students
 
   // Step 3: Question Selection (NEW)
   const [availableQuestionsList, setAvailableQuestionsList] = useState<Question[]>([]);
@@ -112,7 +114,7 @@ export default function CreateQuiz() {
   useEffect(() => {
     fetchSubjects();
     fetchStudents();
-    
+
     if (cloneId) {
       loadQuiz(cloneId as string, true);
     } else if (editId) {
@@ -125,23 +127,28 @@ export default function CreateQuiz() {
       setLoading(true);
       const response = await api.get(`/quizzes/${id}`);
       const quiz = response.data;
-      
+
       setTitle(isClone ? `Copy of ${quiz.title}` : quiz.title);
       setTestType(quiz.testType);
       setDuration(quiz.duration.toString());
       setInstructions(quiz.instructions ? quiz.instructions.join('\n') : defaultInstructions.join('\n'));
-      
+
+      // Load shareSolution setting (defaults to true if not present)
+      if (quiz.shareSolution !== undefined) {
+        setShareSolution(quiz.shareSolution);
+      }
+
       if (quiz.subject) {
         setSelectedSubjects([quiz.subject._id]);
       }
-      
+
       if (quiz.questions && quiz.questions.length > 0) {
         const qIds = quiz.questions.map((q: any) => q._id || q);
         setSelectedQuestions(qIds);
       }
 
       if (!isClone && quiz.assignedStudents) {
-         setSelectedStudents(quiz.assignedStudents.map((s:any) => s._id || s));
+        setSelectedStudents(quiz.assignedStudents.map((s: any) => s._id || s));
       }
 
     } catch (error) {
@@ -169,57 +176,57 @@ export default function CreateQuiz() {
   // Filter questions by search and subject filter
   useEffect(() => {
     let filtered = availableQuestionsList;
-    
+
     const query = questionSearch.toLowerCase();
     if (query) {
-      filtered = filtered.filter(q => 
-        q.question.toLowerCase().includes(query) || 
+      filtered = filtered.filter(q =>
+        q.question.toLowerCase().includes(query) ||
         q.qid?.toLowerCase().includes(query) ||
         q.topicName?.toLowerCase().includes(query)
       );
     }
-    
+
     if (questionSubjectFilter) {
       filtered = filtered.filter(q => q.subject._id === questionSubjectFilter);
     }
-    
+
     if (questionSubjectFilter) {
       filtered = filtered.filter(q => q.subject._id === questionSubjectFilter);
     }
-    
+
     // Client-side topic filtering
     if (topicFilter) {
-        filtered = filtered.filter(q => q.topicName?.toLowerCase().includes(topicFilter.toLowerCase()));
+      filtered = filtered.filter(q => q.topicName?.toLowerCase().includes(topicFilter.toLowerCase()));
     }
 
     // Client-side tag filtering
     if (tagFilter) {
-        const tf = tagFilter.toLowerCase();
-        filtered = filtered.filter(q => q.tags?.some(t => t.toLowerCase().includes(tf)));
+      const tf = tagFilter.toLowerCase();
+      filtered = filtered.filter(q => q.tags?.some(t => t.toLowerCase().includes(tf)));
     }
-    
+
     setFilteredQuestions(filtered);
   }, [questionSearch, availableQuestionsList, questionSubjectFilter, topicFilter, tagFilter]);
 
   useEffect(() => {
     // Filter students by search query and subject
     let filtered = students;
-    
+
     const query = studentSearch.toLowerCase();
     if (query) {
-      filtered = filtered.filter(s => 
-        s.name.toLowerCase().includes(query) || 
+      filtered = filtered.filter(s =>
+        s.name.toLowerCase().includes(query) ||
         s.email.toLowerCase().includes(query)
       );
     }
-    
+
     // Filter by subject if selected
     if (subjectFilter) {
-      filtered = filtered.filter(s => 
+      filtered = filtered.filter(s =>
         s.subjects?.some(sub => sub._id === subjectFilter)
       );
     }
-    
+
     setFilteredStudents(filtered);
   }, [studentSearch, students, subjectFilter]);
 
@@ -250,14 +257,14 @@ export default function CreateQuiz() {
     try {
       const response = await api.get('/question-bank/stats/summary');
       const bySubject = Array.isArray(response.data?.bySubject) ? response.data.bySubject : [];
-      
+
       // Sum up questions from all selected subjects
       let totalAvailable = 0;
       selectedSubjects.forEach(subId => {
         const stat = bySubject.find((s: any) => s._id === subId);
         totalAvailable += stat?.count || 0;
       });
-      
+
       setAvailableQuestions(totalAvailable);
     } catch (error) {
       console.error('Error fetching question count:', error);
@@ -267,12 +274,12 @@ export default function CreateQuiz() {
 
   const fetchQuestions = async () => {
     if (selectedSubjects.length === 0) return;
-    
+
     setLoadingQuestions(true);
     try {
       const params = new URLSearchParams();
       selectedSubjects.forEach(id => params.append('subjects', id));
-      
+
       const response = await api.get(`/question-bank/by-subjects?${params}`);
       const questions = Array.isArray(response.data) ? response.data : [];
       setAvailableQuestionsList(questions);
@@ -359,36 +366,38 @@ export default function CreateQuiz() {
     setCreating(true);
     try {
       if (editId) {
-          // Update existing quiz
-          await api.put(`/quizzes/${editId}`, {
-            title: title.trim(),
-            subjects: selectedSubjects, // Pass array, backend handles it or takes first
-            subject: selectedSubjects[0], // Pass single for backward compat
-            testType,
-            numberOfQuestions: selectedQuestions.length,
-            questions: selectedQuestions,
-            duration: parseInt(duration),
-            instructions: instructions.split('\n').filter(i => i.trim()),
-            assignedStudents: selectedStudents
-          });
-           Alert.alert('Success', 'Quiz updated successfully!', [{ text: 'OK', onPress: () => router.back() }]);
+        // Update existing quiz
+        await api.put(`/quizzes/${editId}`, {
+          title: title.trim(),
+          subjects: selectedSubjects, // Pass array, backend handles it or takes first
+          subject: selectedSubjects[0], // Pass single for backward compat
+          testType,
+          numberOfQuestions: selectedQuestions.length,
+          questions: selectedQuestions,
+          duration: parseInt(duration),
+          instructions: instructions.split('\n').filter(i => i.trim()),
+          assignedStudents: selectedStudents,
+          shareSolution  // NEW: Include shareSolution setting
+        });
+        Alert.alert('Success', 'Quiz updated successfully!', [{ text: 'OK', onPress: () => router.back() }]);
       } else {
-          // Create new
-          const response = await api.post('/quizzes/create-from-bank', {
-            title: title.trim(),
-            subjects: selectedSubjects,
-            testType,
-            numberOfQuestions: selectedQuestions.length,
-            selectedQuestionIds: selectedQuestions,
-            duration: parseInt(duration),
-            instructions: instructions.split('\n').filter(i => i.trim()),
-            assignedStudents: selectedStudents
-          });
-           Alert.alert(
-            'Success', 
-            `Quiz ${cloneId ? 'cloned' : 'created'} and assigned to ${selectedStudents.length} students!`,
-            [{ text: 'OK', onPress: () => router.back() }]
-          );
+        // Create new
+        const response = await api.post('/quizzes/create-from-bank', {
+          title: title.trim(),
+          subjects: selectedSubjects,
+          testType,
+          numberOfQuestions: selectedQuestions.length,
+          selectedQuestionIds: selectedQuestions,
+          duration: parseInt(duration),
+          instructions: instructions.split('\n').filter(i => i.trim()),
+          assignedStudents: selectedStudents,
+          shareSolution  // NEW: Include shareSolution setting
+        });
+        Alert.alert(
+          'Success',
+          `Quiz ${cloneId ? 'cloned' : 'created'} and assigned to ${selectedStudents.length} students!`,
+          [{ text: 'OK', onPress: () => router.back() }]
+        );
       }
 
 
@@ -413,7 +422,7 @@ export default function CreateQuiz() {
   const renderStep1 = () => (
     <View style={styles.stepContent}>
       <Text style={styles.stepTitle}>Select Test Type</Text>
-      
+
       <View style={styles.testTypeContainer}>
         {(['daily', 'weekly', 'grand'] as TestType[]).map(type => (
           <TouchableOpacity
@@ -523,6 +532,22 @@ export default function CreateQuiz() {
         placeholder="Enter instructions (one per line)"
       />
 
+      {/* Share Quiz Solution Toggle */}
+      <View style={styles.toggleContainer}>
+        <View style={styles.toggleLabelContainer}>
+          <Text style={styles.toggleLabel}>Share Quiz Solution</Text>
+          <Text style={styles.toggleHelperText}>
+            Allow students to see correct answers and explanations after submission
+          </Text>
+        </View>
+        <Switch
+          value={shareSolution}
+          onValueChange={setShareSolution}
+          trackColor={{ false: '#D1D5DB', true: '#93C5FD' }}
+          thumbColor={shareSolution ? '#2563EB' : '#9CA3AF'}
+        />
+      </View>
+
       <View style={styles.infoBox}>
         <Text style={styles.infoText}>
           📚 {availableQuestions} questions available from {selectedSubjects.length} subject(s)
@@ -535,7 +560,7 @@ export default function CreateQuiz() {
   const renderStep3 = () => (
     <View style={styles.stepContent}>
       <Text style={styles.stepTitle}>Select Questions</Text>
-      
+
       <View style={styles.selectionHeader}>
         <Text style={styles.selectionCount}>
           {selectedQuestions.length} questions selected
@@ -563,17 +588,17 @@ export default function CreateQuiz() {
       </View>
 
       <View style={styles.filterRow}>
-        <TextInput 
-            style={[styles.searchTextInput, { flex: 1, marginRight: 8 }]}
-            placeholder="Filter by Topic..."
-            value={topicFilter}
-            onChangeText={setTopicFilter}
+        <TextInput
+          style={[styles.searchTextInput, { flex: 1, marginRight: 8 }]}
+          placeholder="Filter by Topic..."
+          value={topicFilter}
+          onChangeText={setTopicFilter}
         />
-        <TextInput 
-            style={[styles.searchTextInput, { flex: 1 }]}
-            placeholder="Filter by Tag..."
-            value={tagFilter}
-            onChangeText={setTagFilter}
+        <TextInput
+          style={[styles.searchTextInput, { flex: 1 }]}
+          placeholder="Filter by Tag..."
+          value={tagFilter}
+          onChangeText={setTagFilter}
         />
       </View>
 
@@ -627,7 +652,7 @@ export default function CreateQuiz() {
                   {item.topicName && <Text style={styles.questionTopic}> • {item.topicName}</Text>}
                 </View>
               </View>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.viewButton}
                 onPress={() => setSelectedQuestion(item)}
                 hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
@@ -645,7 +670,7 @@ export default function CreateQuiz() {
   const renderStep4 = () => (
     <View style={styles.stepContent}>
       <Text style={styles.stepTitle}>Assign Students</Text>
-      
+
       <View style={styles.selectionHeader}>
         <Text style={styles.selectionCount}>
           {selectedStudents.length} of {filteredStudents.length} selected
@@ -764,8 +789,8 @@ export default function CreateQuiz() {
       </View>
 
       {/* Step Content */}
-      <ScrollView 
-        style={styles.content} 
+      <ScrollView
+        style={styles.content}
         showsVerticalScrollIndicator={false}
         nestedScrollEnabled={true}
       >
@@ -785,12 +810,12 @@ export default function CreateQuiz() {
             <Text style={styles.backButtonText}>Back</Text>
           </TouchableOpacity>
         )}
-        
+
         {step < 4 ? (
           <TouchableOpacity
-            style={[styles.nextButton, 
-              (step === 1 && selectedSubjects.length === 0) && styles.buttonDisabled,
-              (step === 3 && selectedQuestions.length === 0) && styles.buttonDisabled
+            style={[styles.nextButton,
+            (step === 1 && selectedSubjects.length === 0) && styles.buttonDisabled,
+            (step === 3 && selectedQuestions.length === 0) && styles.buttonDisabled
             ]}
             onPress={() => {
               if (step === 1 && selectedSubjects.length === 0) return;
@@ -825,10 +850,10 @@ export default function CreateQuiz() {
               <X color="#FFF" size={24} />
             </TouchableOpacity>
           </View>
-          
+
           {selectedQuestion && (
-            <ScrollView 
-              style={styles.modalContent} 
+            <ScrollView
+              style={styles.modalContent}
               showsVerticalScrollIndicator={true}
               nestedScrollEnabled={true}
               contentContainerStyle={{ paddingBottom: 40 }}
@@ -839,8 +864,8 @@ export default function CreateQuiz() {
                 <Text style={styles.sectionLabel}>Question</Text>
                 <Text style={styles.fullQuestionText}>{selectedQuestion.question}</Text>
                 {selectedQuestion.questionImage && (
-                  <Image 
-                    source={{ uri: selectedQuestion.questionImage }} 
+                  <Image
+                    source={{ uri: selectedQuestion.questionImage }}
                     style={styles.questionImage}
                     resizeMode="contain"
                   />
@@ -851,8 +876,8 @@ export default function CreateQuiz() {
               <View style={styles.optionsSection}>
                 <Text style={styles.sectionLabel}>Options</Text>
                 {selectedQuestion.options.map((option, index) => (
-                  <View 
-                    key={index} 
+                  <View
+                    key={index}
                     style={[
                       styles.optionBox,
                       selectedQuestion.correctAnswer === index && styles.correctOption
@@ -872,8 +897,8 @@ export default function CreateQuiz() {
                         {option}
                       </Text>
                       {selectedQuestion.optionImages?.[index] && (
-                        <Image 
-                          source={{ uri: selectedQuestion.optionImages[index] }} 
+                        <Image
+                          source={{ uri: selectedQuestion.optionImages[index] }}
                           style={styles.optionImage}
                           resizeMode="contain"
                         />
@@ -894,8 +919,8 @@ export default function CreateQuiz() {
                     <Text style={styles.explanationText}>{selectedQuestion.explanation}</Text>
                   )}
                   {selectedQuestion.explanationImage && (
-                    <Image 
-                      source={{ uri: selectedQuestion.explanationImage }} 
+                    <Image
+                      source={{ uri: selectedQuestion.explanationImage }}
                       style={styles.explanationImage}
                       resizeMode="contain"
                     />
@@ -1425,5 +1450,31 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     marginBottom: 4,
   },
+  // Toggle Styles for shareSolution
+  toggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F9FAFB',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  toggleLabelContainer: {
+    flex: 1,
+    marginRight: 12,
+  },
+  toggleLabel: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1F2937',
+    marginBottom: 4,
+  },
+  toggleHelperText: {
+    fontSize: 13,
+    color: '#6B7280',
+    lineHeight: 18,
+  },
 });
-

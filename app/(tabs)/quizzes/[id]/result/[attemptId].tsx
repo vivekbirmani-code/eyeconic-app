@@ -22,6 +22,7 @@ interface ResultData {
     subject: string;
     totalQuestions: number;
     totalMarks: number;
+    shareSolution: boolean;  // NEW: Whether solutions are shared with students
   };
   score: number;
   marksObtained: number;
@@ -65,7 +66,8 @@ export default function QuizResult() {
           title: data.quiz.title,
           subject: typeof data.quiz.subject === 'object' ? data.quiz.subject.name : data.quiz.subject,
           totalQuestions: data.attempt.totalQuestions,
-          totalMarks: data.attempt.totalMarks
+          totalMarks: data.attempt.totalMarks,
+          shareSolution: data.quiz.shareSolution !== undefined ? data.quiz.shareSolution : true  // NEW: Extract shareSolution
         },
         score: data.attempt.score,
         marksObtained: data.attempt.marksObtained,
@@ -147,10 +149,23 @@ export default function QuizResult() {
     return `${minutes}m ${secs}s`;
   };
 
-  const totalTimeSpent = result.sectionPerformance.reduce((sum, section) => sum + section.timeSpent, 0);
-  const correctCount = result.sectionPerformance.reduce((sum, section) => sum + section.correct, 0);
-  const incorrectCount = result.sectionPerformance.reduce((sum, section) => sum + section.incorrect, 0);
-  const skippedCount = result.sectionPerformance.reduce((sum, section) => sum + section.skipped, 0);
+  // Calculate section accuracy with fallback for backward compatibility
+  const sectionPerformanceWithAccuracy = result.sectionPerformance.map(section => {
+    const totalQuestionsInSection = section.correct + section.incorrect + section.skipped;
+    const accuracy = section.accuracy !== undefined
+      ? section.accuracy
+      : (totalQuestionsInSection > 0 ? Math.round((section.correct / totalQuestionsInSection) * 100) : 0);
+
+    return {
+      ...section,
+      accuracy
+    };
+  });
+
+  const totalTimeSpent = sectionPerformanceWithAccuracy.reduce((sum, section) => sum + section.timeSpent, 0);
+  const correctCount = sectionPerformanceWithAccuracy.reduce((sum, section) => sum + section.correct, 0);
+  const incorrectCount = sectionPerformanceWithAccuracy.reduce((sum, section) => sum + section.incorrect, 0);
+  const skippedCount = sectionPerformanceWithAccuracy.reduce((sum, section) => sum + section.skipped, 0);
   const markedCount = result.detailedResults.filter(r => r.markedForReview).length;
 
   return (
@@ -174,10 +189,13 @@ export default function QuizResult() {
                 <Text style={styles.pendingText}>Retest Pending</Text>
               </View>
             )}
-            <TouchableOpacity style={styles.solutionsButton} onPress={handleViewSolutions}>
-              <FileText color="#2563EB" size={20} />
-              <Text style={styles.solutionsButtonText}>View Solutions</Text>
-            </TouchableOpacity>
+            {/* View Solutions Button - Only show if shareSolution is true */}
+            {result.quiz.shareSolution && (
+              <TouchableOpacity style={styles.solutionsButton} onPress={handleViewSolutions}>
+                <FileText color="#2563EB" size={20} />
+                <Text style={styles.solutionsButtonText}>View Solutions</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
 
@@ -260,7 +278,7 @@ export default function QuizResult() {
             </View>
 
             {/* Table Rows */}
-            {result.sectionPerformance.map((section, index) => (
+            {sectionPerformanceWithAccuracy.map((section, index) => (
               <View key={index} style={styles.tableRow}>
                 <Text style={[styles.tableCell, styles.colSection]} numberOfLines={1}>
                   {section.sectionName}

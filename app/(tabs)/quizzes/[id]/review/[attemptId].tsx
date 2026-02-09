@@ -22,7 +22,7 @@ import { SectionTabs } from '@/components/SectionTabs';
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
 interface QuestionResult {
-  questionIndex: number;
+  _id: string;
   question: string;
   questionImage?: string;
   options: string[];
@@ -30,11 +30,13 @@ interface QuestionResult {
   selectedAnswer: number;
   correctAnswer: number;
   isCorrect: boolean;
-  markedForReview: boolean;
-  timeSpent: number;
-  explanation: string;
+  markedForReview?: boolean;
+  timeSpent?: number;
+  explanation?: string;
+  explanationImage?: string;  // NEW: Added explanationImage field
   marks: number;
   section: string;
+  questionIndex: number;
 }
 
 interface ReviewData {
@@ -44,6 +46,7 @@ interface ReviewData {
     subject: string;
     totalQuestions: number;
     totalMarks: number;
+    shareSolution: boolean;  // NEW: Whether solutions are shared with students
   };
   score: number;
   marksObtained: number;
@@ -67,10 +70,21 @@ export default function QuizReview() {
     try {
       const response = await api.get(`/quizzes/${id}/attempt/${attemptId}/results`);
       const data = response.data;
-      
-      // Map backend response to frontend interface
-      if (data.questions) {
-        data.detailedResults = data.questions.map((q: any) => ({
+
+      // Transform backend response to match ReviewData interface
+      const formattedReviewData: ReviewData = {
+        attemptId: data.attempt._id,
+        quiz: {
+          title: data.quiz.title,
+          subject: typeof data.quiz.subject === 'object' ? data.quiz.subject.name : data.quiz.subject,
+          totalQuestions: data.attempt.totalQuestions,
+          totalMarks: data.attempt.totalMarks,
+          shareSolution: data.quiz.shareSolution !== undefined ? data.quiz.shareSolution : true
+        },
+        score: data.attempt.score,
+        marksObtained: data.attempt.marksObtained,
+        percentage: Math.round((data.attempt.marksObtained / data.attempt.totalMarks) * 100) || 0,
+        detailedResults: data.questions.map((q: any) => ({
           ...q,
           questionIndex: data.questions.indexOf(q),
           section: q.topicName || 'General',
@@ -78,10 +92,10 @@ export default function QuizReview() {
           // Ensure options is an array
           options: Array.isArray(q.options) ? q.options : [],
           optionImages: Array.isArray(q.optionImages) ? q.optionImages : []
-        }));
-      }
-      
-      setReviewData(data);
+        }))
+      };
+
+      setReviewData(formattedReviewData);
     } catch (error: any) {
       console.error('Fetch review error:', error);
       Alert.alert('Error', 'Failed to load review data');
@@ -109,14 +123,14 @@ export default function QuizReview() {
 
   // Add Overview to sections
   const sections = ['Overview', ...Array.from(new Set(reviewData.detailedResults.map(q => q.section)))];
-  
+
   // Filter questions logic (only used when not in Overview)
-  const filteredQuestions = currentSection === 'Overview' 
-    ? reviewData.detailedResults 
+  const filteredQuestions = currentSection === 'Overview'
+    ? reviewData.detailedResults
     : reviewData.detailedResults.filter(q => q.section === currentSection);
 
   const currentQuestion = filteredQuestions[currentQuestionIndex];
-  
+
   const questionCounts = sections.reduce((acc, section) => {
     if (section === 'Overview') return acc;
     acc[section] = reviewData.detailedResults.filter(q => q.section === section).length;
@@ -129,7 +143,7 @@ export default function QuizReview() {
   const wrongCount = reviewData.detailedResults.filter(q => !q.isCorrect && q.selectedAnswer !== -1).length;
   const skippedCount = Math.max(0, totalQuestions - correctCount - wrongCount);
   const accuracy = totalQuestions > 0 ? Math.round((correctCount / totalQuestions) * 100) : 0;
-  
+
   // Section performance for graph
   const sectionPerformance = Array.from(new Set(reviewData.detailedResults.map(q => q.section))).map(section => {
     const sectionQs = reviewData.detailedResults.filter(q => q.section === section);
@@ -250,7 +264,7 @@ export default function QuizReview() {
                   Marks
                 </SvgText>
               </Svg>
-              
+
               {/* Legend */}
               <View style={styles.legendContainer}>
                 {pieData.map(item => (
@@ -274,14 +288,14 @@ export default function QuizReview() {
                     <Text style={styles.barSubLabel}>{section.correct}/{section.total}</Text>
                   </View>
                   <View style={styles.barTrack}>
-                    <View 
+                    <View
                       style={[
-                        styles.barFill, 
-                        { 
+                        styles.barFill,
+                        {
                           width: `${section.percentage}%`,
                           backgroundColor: section.percentage > 70 ? '#10B981' : section.percentage > 40 ? '#F59E0B' : '#EF4444'
                         }
-                      ]} 
+                      ]}
                     />
                   </View>
                   <Text style={styles.barValue}>{Math.round(section.percentage)}%</Text>
@@ -289,7 +303,7 @@ export default function QuizReview() {
               ))}
             </View>
           </View>
-          
+
           <View style={{ height: 20 }} />
         </View>
       </ScrollView>
@@ -315,7 +329,7 @@ export default function QuizReview() {
                 </View>
               </View>
             </View>
-            
+
             {/* Result Icon */}
             <View style={[
               styles.resultIcon,
@@ -331,7 +345,7 @@ export default function QuizReview() {
 
           {/* Question Text */}
           <Text style={styles.questionText}>{currentQuestion.question}</Text>
-          
+
           {/* Question Image */}
           {currentQuestion.questionImage ? (
             <Image
@@ -345,36 +359,46 @@ export default function QuizReview() {
           <View style={styles.optionsContainer}>
             {currentQuestion.options.map((option, index) => {
               const isSelected = currentQuestion.selectedAnswer === index;
-              const isCorrect = currentQuestion.correctAnswer === index;
-              const isWrongSelection = isSelected && !isCorrect;
+
+              // SECURITY: Only determine correctness if shareSolution is ON
+              const isCorrect = reviewData.quiz.shareSolution
+                ? (currentQuestion.correctAnswer === index)
+                : false;
+              const isWrongSelection = reviewData.quiz.shareSolution
+                ? (isSelected && !isCorrect)
+                : false;
 
               return (
                 <View
                   key={index}
                   style={[
                     styles.optionContainer,
-                    isCorrect && styles.correctOption,
-                    isWrongSelection && styles.wrongOption
+                    isCorrect && reviewData.quiz.shareSolution && styles.correctOption,
+                    isWrongSelection && styles.wrongOption,
+                    isSelected && !reviewData.quiz.shareSolution && styles.selectedOption  // New style
                   ]}
                 >
                   <View style={styles.optionLeft}>
                     <View style={[
                       styles.optionIndicator,
-                      isCorrect && styles.correctIndicator,
+                      isCorrect && reviewData.quiz.shareSolution && styles.correctIndicator,
                       isWrongSelection && styles.wrongIndicator
                     ]}>
-                      {isCorrect && <CheckCircle color="#10B981" size={20} />}
+                      {isCorrect && reviewData.quiz.shareSolution && <CheckCircle color="#10B981" size={20} />}
                       {isWrongSelection && <XCircle color="#EF4444" size={20} />}
                       {!isCorrect && !isWrongSelection && (
                         <Text style={styles.optionLabel}>
                           {String.fromCharCode(65 + index)}
                         </Text>
                       )}
+                      {isSelected && !reviewData.quiz.shareSolution && (
+                        <Text style={styles.optionLabel}>✓</Text>
+                      )}
                     </View>
                     <View style={{ flex: 1 }}>
                       <Text style={[
                         styles.optionText,
-                        (isCorrect || isWrongSelection) && styles.highlightedText
+                        (isCorrect || isWrongSelection || isSelected) && styles.highlightedText
                       ]}>
                         {option}
                       </Text>
@@ -388,7 +412,7 @@ export default function QuizReview() {
                     </View>
                   </View>
 
-                  {isCorrect && (
+                  {isCorrect && reviewData.quiz.shareSolution && (
                     <View style={styles.correctBadge}>
                       <Text style={styles.correctBadgeText}>Correct Answer</Text>
                     </View>
@@ -396,6 +420,11 @@ export default function QuizReview() {
                   {isWrongSelection && (
                     <View style={styles.wrongBadge}>
                       <Text style={styles.wrongBadgeText}>Your Answer</Text>
+                    </View>
+                  )}
+                  {isSelected && !reviewData.quiz.shareSolution && (
+                    <View style={styles.selectedBadge}>
+                      <Text style={styles.selectedBadgeText}>Your Selection</Text>
                     </View>
                   )}
                 </View>
@@ -412,8 +441,20 @@ export default function QuizReview() {
             </View>
           )}
 
-          {/* Explanation */}
-          {currentQuestion.explanation && (
+          {/* Show message when solutions not available */}
+          {!reviewData.quiz.shareSolution && (
+            <View style={styles.noSolutionCard}>
+              <Text style={styles.noSolutionTitle}>📚 Solutions Not Available</Text>
+              <Text style={styles.noSolutionText}>
+                The instructor has not enabled solution sharing for this quiz.
+                You can see which questions you answered, but correct answers and
+                explanations are not shown.
+              </Text>
+            </View>
+          )}
+
+          {/* Explanation - Only show if available AND shareSolution is ON */}
+          {reviewData.quiz.shareSolution && currentQuestion.explanation && (
             <View style={styles.explanationContainer}>
               <Text style={styles.explanationTitle}>💡 Explanation</Text>
               <View style={styles.explanationBox}>
@@ -422,12 +463,21 @@ export default function QuizReview() {
             </View>
           )}
 
+          {/* Explanation Image - Only show if available AND shareSolution is ON */}
+          {reviewData.quiz.shareSolution && currentQuestion.explanationImage && (
+            <Image
+              source={{ uri: currentQuestion.explanationImage }}
+              style={styles.explanationImage}
+              resizeMode="contain"
+            />
+          )}
+
           {/* Stats */}
           <View style={styles.statsContainer}>
             <View style={styles.statItem}>
               <Text style={styles.statLabel}>Time Spent</Text>
               <Text style={styles.statValue}>
-                {Math.floor(currentQuestion.timeSpent / 60)}m {currentQuestion.timeSpent % 60}s
+                {Math.floor((currentQuestion.timeSpent || 0) / 60)}m {(currentQuestion.timeSpent || 0) % 60}s
               </Text>
             </View>
             {currentQuestion.markedForReview && (
@@ -448,9 +498,9 @@ export default function QuizReview() {
           onPress={handlePrevious}
           disabled={currentQuestionIndex === 0}
         >
-          <ChevronLeft 
-            color={currentQuestionIndex === 0 ? '#9CA3AF' : '#2563EB'} 
-            size={20} 
+          <ChevronLeft
+            color={currentQuestionIndex === 0 ? '#9CA3AF' : '#2563EB'}
+            size={20}
           />
           <Text style={[
             styles.navButtonText,
@@ -478,9 +528,9 @@ export default function QuizReview() {
           ]}>
             Next
           </Text>
-          <ChevronRight 
-            color={currentQuestionIndex === filteredQuestions.length - 1 ? '#9CA3AF' : '#2563EB'} 
-            size={20} 
+          <ChevronRight
+            color={currentQuestionIndex === filteredQuestions.length - 1 ? '#9CA3AF' : '#2563EB'}
+            size={20}
           />
         </TouchableOpacity>
       </View>
@@ -927,9 +977,58 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#6B7280',
   },
+  wrongBadgeText: {
+    color: '#DC2626',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  selectedOption: {
+    borderColor: '#6366f1',
+    backgroundColor: '#F5F3FF',
+  },
+  selectedBadge: {
+    backgroundColor: '#6366f1',
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    alignSelf: 'flex-start',
+    marginTop: 8,
+  },
+  selectedBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  noSolutionCard: {
+    backgroundColor: '#FEF3C7',
+    borderRadius: 12,
+    padding: 16,
+    marginTop: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#F59E0B',
+  },
+  noSolutionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#92400E',
+    marginBottom: 8,
+  },
+  noSolutionText: {
+    fontSize: 14,
+    color: '#78350F',
+    lineHeight: 20,
+  },
+  explanationImage: {
+    width: '100%',
+    height: 200,
+    marginTop: 16,
+    borderRadius: 12,
+  },
   errorText: {
     fontSize: 16,
-    color: '#EF4444',
+    color: '#DC2626',
     textAlign: 'center',
+    marginTop: 20,
   },
 });

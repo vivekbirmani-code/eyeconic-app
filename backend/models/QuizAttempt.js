@@ -27,7 +27,8 @@ const sectionPerformanceSchema = new mongoose.Schema({
   correct: { type: Number, default: 0 },
   incorrect: { type: Number, default: 0 },
   skipped: { type: Number, default: 0 },
-  timeSpent: { type: Number, default: 0 }
+  timeSpent: { type: Number, default: 0 },
+  accuracy: { type: Number, default: 0 }  // Accuracy percentage for this section
 });
 
 const attemptSchema = new mongoose.Schema({
@@ -103,6 +104,14 @@ const attemptSchema = new mongoose.Schema({
   retestUsed: {
     type: Boolean,
     default: false
+  },
+  
+  // Audit trail: shareSolution setting at time of submission
+  // NOTE: This is for admin audit only, not used for student visibility
+  // Student visibility is determined by current quiz.shareSolution value (dynamic rule)
+  shareSolutionAtSubmission: {
+    type: Boolean,
+    default: true
   }
 }, {
   timestamps: true
