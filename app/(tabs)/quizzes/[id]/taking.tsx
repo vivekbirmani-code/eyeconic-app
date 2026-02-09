@@ -107,46 +107,7 @@ function QuizTakingContent() {
     }, {} as { [key: string]: number });
   }, [quiz, sections]);
 
-  useEffect(() => {
-    fetchQuizDetails();
 
-    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
-      handleBackPress();
-      return true;
-    });
-
-    // Announce screen to screen readers
-    AccessibilityInfo.announceForAccessibility('Quiz taking screen loaded');
-
-    // Tab switch detection (Web only)
-    const handleVisibilityChange = () => {
-      if (typeof document !== 'undefined' && document.hidden) {
-        // Log tab switch to backend
-        if (currentAttempt?.attemptId) {
-          api.post(`/quizzes/${id}/attempt/${currentAttempt.attemptId}/tab-switch`)
-            .catch(console.error);
-        }
-
-        // Show warning
-        Alert.alert(
-          '⚠️ Warning',
-          'Tab switching is not allowed during the test! This activity has been logged.',
-          [{ text: 'OK' }]
-        );
-      }
-    };
-
-    if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', handleVisibilityChange);
-    }
-
-    return () => {
-      backHandler.remove();
-      if (typeof document !== 'undefined') {
-        document.removeEventListener('visibilitychange', handleVisibilityChange);
-      }
-    };
-  }, [currentAttempt]);
 
   useEffect(() => {
     // Animate in on mount
@@ -341,6 +302,50 @@ function QuizTakingContent() {
       }
     }
   }, [quiz]);
+
+  useEffect(() => {
+    // Fetch quiz details only on mount/id change
+    fetchQuizDetails();
+  }, [id]);
+
+  useEffect(() => {
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      handleBackPress();
+      return true;
+    });
+
+    // Announce screen to screen readers
+    AccessibilityInfo.announceForAccessibility('Quiz taking screen loaded');
+
+    // Tab switch detection (Web only)
+    const handleVisibilityChange = () => {
+      if (typeof document !== 'undefined' && document.hidden) {
+        // Log tab switch to backend
+        if (currentAttempt?.attemptId) {
+          api.post(`/quizzes/${id}/attempt/${currentAttempt.attemptId}/tab-switch`)
+            .catch(console.error);
+        }
+
+        // Show warning
+        Alert.alert(
+          '⚠️ Warning',
+          'Tab switching is not allowed during the test! This activity has been logged.',
+          [{ text: 'OK' }]
+        );
+      }
+    };
+
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+    }
+
+    return () => {
+      backHandler.remove();
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+      }
+    };
+  }, [currentAttempt, handleBackPress, id]);
 
   // Loading state
   if (loading) {
