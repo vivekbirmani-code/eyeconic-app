@@ -53,7 +53,7 @@ export const SectionTabs: React.FC<SectionTabsProps> = ({
             ]}>
               {section}
             </Text>
-            {questionCounts && questionCounts[section] && (
+            {questionCounts && (questionCounts[section] || 0) > 0 && (
               <Text style={[
                 styles.countText,
                 currentSection === section && styles.activeCountText
