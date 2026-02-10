@@ -158,20 +158,20 @@ function AppContent() {
   return (
     <View style={{ flex: 1 }}>
       {/* RTCView audio streams - positioned off-screen but NOT in hidden container */}
-      {/* {renderAudioStreams()} */}
+      {renderAudioStreams()}
       
       {/* Floating call bar when minimized */}
-      {/* <FloatingCallBar /> */}
+      <FloatingCallBar />
       
       {/* Incoming call full-screen UI */}
-      {/* {incomingCall && (
+      {incomingCall && (
         <IncomingCallScreen
           callerName={incomingCall.callerName}
           groupName={incomingCall.groupName}
           onAccept={handleAcceptCall}
           onDecline={declineIncomingCall}
         />
-      )} */}
+      )}
       
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="index" />

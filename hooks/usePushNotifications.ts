@@ -35,18 +35,24 @@ export function usePushNotifications() {
     useEffect(() => {
         // Skip push notification setup in Expo Go
         if (isExpoGo || !Notifications) {
-            console.log('Push notifications disabled in Expo Go');
+            console.log('Push notifications skipped - isExpoGo:', isExpoGo, 'Notifications:', !!Notifications);
             return;
         }
 
+        console.log('Registering for push notifications, user:', user?._id);
         registerForPushNotificationsAsync().then(token => {
             if (token) {
+                console.log('Push token obtained:', token);
                 setExpoPushToken(token);
                 // Save token to backend
                 if (user?._id) {
                     savePushTokenToBackend(token);
                 }
+            } else {
+                console.log('No push token obtained');
             }
+        }).catch(err => {
+            console.error('Push notification registration failed:', err);
         });
 
         // Listen for incoming notifications

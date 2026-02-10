@@ -3,7 +3,15 @@ import { Platform, Vibration } from 'react-native';
 import { io, Socket } from 'socket.io-client';
 import { getSocketURL } from '@/services/config';
 import { useAuth } from './AuthContext';
-import { Audio } from 'expo-av';
+
+// Safe import for expo-av Audio
+let Audio: any = null;
+try {
+  const expoAv = require('expo-av');
+  Audio = expoAv.Audio;
+} catch (e) {
+  console.log('expo-av Audio not available');
+}
 
 // WebRTC imports - handled safely for both Expo Go and Native
 let RTCPeerConnection: any;
@@ -590,12 +598,14 @@ export function CallProvider({ children }: { children: ReactNode }) {
     
     try {
       // Simply ensure recording is allowed - let InCallManager handle routing to prevent conflicts
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        staysActiveInBackground: true,
-        playsInSilentModeIOS: true,
-        // Removed Android earpiece settings to avoid conflict with InCallManager
-      });
+      if (Audio) {
+        await Audio.setAudioModeAsync({
+          allowsRecordingIOS: true,
+          staysActiveInBackground: true,
+          playsInSilentModeIOS: true,
+          // Removed Android earpiece settings to avoid conflict with InCallManager
+        });
+      }
 
       const stream = await mediaDevices.getUserMedia({
         audio: {
