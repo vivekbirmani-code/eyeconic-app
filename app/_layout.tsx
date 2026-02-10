@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { View } from 'react-native';
+import { View, Text as RNText, TouchableOpacity as RNTouchable } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Linking from 'expo-linking';
 import * as SplashScreen from 'expo-splash-screen';
@@ -195,21 +195,65 @@ function AppContent() {
   );
 }
 
+// Error Boundary to catch crashes and show error info instead of crashing
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; error: Error | null }
+> {
+  constructor(props: any) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: any) {
+    console.error('App Error Boundary caught:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20, backgroundColor: '#FEE2E2' }}>
+          <View style={{ backgroundColor: '#FFFFFF', padding: 20, borderRadius: 12, maxWidth: 350, width: '100%' }}>
+            <StatusBar style="dark" backgroundColor="#FEE2E2" />
+            <RNText style={{ fontSize: 18, fontWeight: 'bold', color: '#DC2626', marginBottom: 8 }}>App Crashed</RNText>
+            <RNText style={{ fontSize: 14, color: '#374151', marginBottom: 16 }}>{String(this.state.error?.message || 'Unknown error')}</RNText>
+            <RNText style={{ fontSize: 12, color: '#6B7280' }}>{String(this.state.error?.stack?.substring(0, 300) || '')}</RNText>
+            <RNTouchable
+              style={{ marginTop: 16, backgroundColor: '#DC2626', padding: 12, borderRadius: 8, alignItems: 'center' as const }}
+              onPress={() => this.setState({ hasError: false, error: null })}
+            >
+              <RNText style={{ color: '#FFFFFF', fontWeight: '600' }}>Try Again</RNText>
+            </RNTouchable>
+          </View>
+        </View>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 export default function RootLayout() {
   useFrameworkReady();
 
   return (
-    <AuthProvider>
-      <NotificationProvider>
-        <CallProvider>
-          <QuizProvider>
-            <GuestQuizProvider>
-              <AppContent />
-              <StatusBar style="dark" backgroundColor="#FFFFFF" />
-            </GuestQuizProvider>
-          </QuizProvider>
-        </CallProvider>
-      </NotificationProvider>
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <NotificationProvider>
+          <CallProvider>
+            <QuizProvider>
+              <GuestQuizProvider>
+                <AppContent />
+                <StatusBar style="dark" backgroundColor="#FFFFFF" />
+              </GuestQuizProvider>
+            </QuizProvider>
+          </CallProvider>
+        </NotificationProvider>
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
