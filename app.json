@@ -71,6 +71,13 @@
         {
           "sounds": []
         }
+      ],
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "cameraPermission": "Allow Eyeconic to access your camera",
+          "microphonePermission": "Allow Eyeconic to access your microphone"
+        }
       ]
     ],
     "experiments": {

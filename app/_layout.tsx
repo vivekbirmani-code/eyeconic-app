@@ -110,29 +110,35 @@ function AppContent() {
     
     // Try to import RTCView
     try {
-      // const { RTCView } = require('react-native-webrtc');
-      const RTCView: any = null;
+      const { RTCView } = require('react-native-webrtc');
+      
+      if (!RTCView) return null;
+
       remoteStreams.forEach((stream, odId) => {
-        console.log('Layout rendering RTCView for stream:', odId);
-        streams.push(
-          <RTCView
-            key={odId}
-            streamURL={stream.toURL()}
-            style={{ 
-              position: 'absolute', 
-              top: -200, 
-              left: -200, 
-              width: 50, 
-              height: 50,
-              opacity: 0
-            }}
-            objectFit="cover"
-            zOrder={0}
-          />
-        );
+        // Only render if stream and URL exist
+        if (stream && stream.toURL()) {
+          console.log('Layout rendering RTCView for stream:', odId);
+          streams.push(
+            <RTCView
+              key={odId}
+              streamURL={stream.toURL()}
+              style={{ 
+                position: 'absolute', 
+                top: -200, 
+                left: -200, 
+                width: 50, 
+                height: 50,
+                opacity: 0
+              }}
+              objectFit="cover"
+              zOrder={0}
+            />
+          );
+        }
       });
     } catch (e) {
-      // WebRTC not available
+      // WebRTC not available - strict safe fail
+      return null;
     }
     
     return streams;

@@ -5,7 +5,7 @@ import { getSocketURL } from '@/services/config';
 import { useAuth } from './AuthContext';
 import { Audio } from 'expo-av';
 
-// WebRTC imports - these will fail in Expo Go
+// WebRTC imports - handled safely for both Expo Go and Native
 let RTCPeerConnection: any;
 let RTCSessionDescription: any;
 let RTCIceCandidate: any;
@@ -16,8 +16,7 @@ let InCallManager: any;
 let isWebRTCAvailable = false;
 
 try {
-  // const webrtc = require('react-native-webrtc');
-  const webrtc = { RTCPeerConnection: null, RTCSessionDescription: null, RTCIceCandidate: null, mediaDevices: null, MediaStream: null, RTCView: null };
+  const webrtc = require('react-native-webrtc');
   RTCPeerConnection = webrtc.RTCPeerConnection;
   RTCSessionDescription = webrtc.RTCSessionDescription;
   RTCIceCandidate = webrtc.RTCIceCandidate;
@@ -25,16 +24,24 @@ try {
   MediaStream = webrtc.MediaStream;
   RTCView = webrtc.RTCView;
   isWebRTCAvailable = true;
+  console.log('WebRTC initialized successfully');
   
   // Try to import InCallManager for audio routing
   try {
-    // InCallManager = require('react-native-incall-manager').default;
-    InCallManager = null;
+    InCallManager = require('react-native-incall-manager').default;
   } catch (e) {
     console.log('InCallManager not available');
   }
 } catch (e) {
-  console.log('WebRTC not available - calls will be disabled');
+  console.log('WebRTC not available - calls will be disabled in this environment (likely Expo Go)');
+  
+  // Mock objects to prevent crashes if code is accidentally called
+  RTCPeerConnection = class {};
+  RTCSessionDescription = class {};
+  RTCIceCandidate = class {};
+  mediaDevices = { getUserMedia: () => Promise.reject('WebRTC not available') };
+  MediaStream = class {};
+  RTCView = () => null;
 }
 
 interface Participant {
@@ -610,7 +617,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const audioLevelIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const audioLevelIntervalRef = useRef<any>(null);
 
   const startAudioLevelMonitor = () => {
     if (audioLevelIntervalRef.current) clearInterval(audioLevelIntervalRef.current);
