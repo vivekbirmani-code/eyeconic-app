@@ -16,6 +16,7 @@ import {
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ChevronLeft, ChevronRight, Flag, Clock, AlertCircle } from 'lucide-react-native';
 import { useGuestQuiz } from '@/context/GuestQuizContext';
+import { getSocketURL } from '@/services/config';
 
 interface Question {
   _id: string;
@@ -44,7 +45,22 @@ export default function GuestQuizTaking() {
   const [submitting, setSubmitting] = useState(false);
 
   const scrollViewRef = useRef<ScrollView>(null);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<any>(null);
+
+  // Helper to resolve image URLs (handles relative paths from backend)
+  const getImageUrl = useCallback((path?: string) => {
+    if (!path) return undefined;
+    if (path.startsWith('http') || path.startsWith('https') || path.startsWith('file://') || path.startsWith('data:')) {
+      return { uri: path };
+    }
+    
+    // Prepend base URL for relative paths
+    // getSocketURL return the root URL e.g. http://192.168.x.x:3000
+    const baseUrl = getSocketURL();
+    // Ensure we don't have double slashes if path starts with /
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    return { uri: `${baseUrl}${cleanPath}` };
+  }, []);
 
   useEffect(() => {
     if (!currentAttempt || !quizData) {
@@ -231,7 +247,7 @@ export default function GuestQuizTaking() {
         {/* Question Image */}
         {currentQuestion.questionImage && (
           <Image
-            source={{ uri: currentQuestion.questionImage }}
+            source={getImageUrl(currentQuestion.questionImage)}
             style={styles.questionImage}
             resizeMode="contain"
           />
@@ -270,7 +286,7 @@ export default function GuestQuizTaking() {
                   )}
                   {currentQuestion.optionImages?.[index] && (
                     <Image
-                      source={{ uri: currentQuestion.optionImages[index] }}
+                      source={getImageUrl(currentQuestion.optionImages[index])}
                       style={styles.optionImage}
                       resizeMode="contain"
                     />

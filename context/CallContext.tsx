@@ -16,7 +16,8 @@ let InCallManager: any;
 let isWebRTCAvailable = false;
 
 try {
-  const webrtc = require('react-native-webrtc');
+  // const webrtc = require('react-native-webrtc');
+  const webrtc = { RTCPeerConnection: null, RTCSessionDescription: null, RTCIceCandidate: null, mediaDevices: null, MediaStream: null, RTCView: null };
   RTCPeerConnection = webrtc.RTCPeerConnection;
   RTCSessionDescription = webrtc.RTCSessionDescription;
   RTCIceCandidate = webrtc.RTCIceCandidate;
@@ -27,7 +28,8 @@ try {
   
   // Try to import InCallManager for audio routing
   try {
-    InCallManager = require('react-native-incall-manager').default;
+    // InCallManager = require('react-native-incall-manager').default;
+    InCallManager = null;
   } catch (e) {
     console.log('InCallManager not available');
   }

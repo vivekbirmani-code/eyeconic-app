@@ -40,7 +40,7 @@ function AppContent() {
         if (shareToken) {
           try {
             // Check if user is logged in
-            const token = await AsyncStorage.getItem('token');
+            const token = await AsyncStorage.getItem('authToken');
             if (token) {
               // User is logged in - fetch quiz ID from share token and route to normal quiz
               const API_URL = getApiBaseURL();
@@ -110,7 +110,8 @@ function AppContent() {
     
     // Try to import RTCView
     try {
-      const { RTCView } = require('react-native-webrtc');
+      // const { RTCView } = require('react-native-webrtc');
+      const RTCView: any = null;
       remoteStreams.forEach((stream, odId) => {
         console.log('Layout rendering RTCView for stream:', odId);
         streams.push(

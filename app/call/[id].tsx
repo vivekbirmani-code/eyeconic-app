@@ -20,7 +20,8 @@ import { api } from '@/services/api';
 // Try to import RTCView for audio playback
 let RTCView: any = null;
 try {
-  const webrtc = require('react-native-webrtc');
+  // const webrtc = require('react-native-webrtc');
+  const webrtc = { RTCView: null };
   RTCView = webrtc.RTCView;
 } catch (e) {
   console.log('RTCView not available');

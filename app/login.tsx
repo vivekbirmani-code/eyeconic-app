@@ -14,12 +14,15 @@ import {
   Animated,
   Pressable,
   ScrollView,
+  Linking,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
 import { Eye, EyeOff } from 'lucide-react-native';
 import * as Haptics from '@/utils/haptics';
 import { LinearGradient } from 'expo-linear-gradient';
+
+const GOOGLE_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSccHeq1gUBguz8MYr4JGFzYFlsZeHCOsEq2BQ6g1chlvmkIuQ/viewform';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -140,6 +143,11 @@ export default function Login() {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleSignup = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Linking.openURL(GOOGLE_FORM_URL);
   };
 
   return (
@@ -284,6 +292,17 @@ export default function Login() {
                   )}
                 </Animated.View>
               </Pressable>
+
+              {/* Signup Link */}
+              <TouchableOpacity
+                onPress={handleSignup}
+                style={styles.signupLinkContainer}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.signupLinkText}>
+                  New user? <Text style={styles.signupLinkHighlight}>Fill the form to signup</Text>
+                </Text>
+              </TouchableOpacity>
             </View>
 
             {/* Footer */}
@@ -457,5 +476,18 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 24,
     lineHeight: 18,
+  },
+  signupLinkContainer: {
+    marginTop: 4,
+    alignItems: 'center',
+    padding: 4,
+  },
+  signupLinkText: {
+    fontSize: 14,
+    color: '#6B7280',
+  },
+  signupLinkHighlight: {
+    color: '#01b4ae',
+    fontWeight: '600',
   },
 });
