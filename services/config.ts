@@ -17,15 +17,15 @@ export const getApiBaseURL = () => {
     }
 
     // Dynamically get the IP address from Expo Go's host URI
-    // const debuggerHost = Constants.expoConfig?.hostUri;
-    // if (debuggerHost) {
-    //     const ip = debuggerHost.split(':')[0];
-    //     return `http://${ip}:3000/api`;
-    // }
+    const debuggerHost = Constants.expoConfig?.hostUri;
+    if (debuggerHost) {
+        const ip = debuggerHost.split(':')[0];
+        return `http://${ip}:3000/api`;
+    }
 
     // Fallback IP for development
     // Fallback IP for development (Current Machine IP)
-    return 'http://192.168.0.199:3000/api';
+    return 'http://172.20.10.4:3000/api';
 };
 
 // Get the socket URL for real-time connections
@@ -41,13 +41,13 @@ export const getSocketURL = () => {
     }
 
     // Dynamically get the IP address from Expo Go's host URI
-    // const debuggerHost = Constants.expoConfig?.hostUri;
-    // if (debuggerHost) {
-    //     const ip = debuggerHost.split(':')[0];
-    //     return `http://${ip}:3000`;
-    // }
+    const debuggerHost = Constants.expoConfig?.hostUri;
+    if (debuggerHost) {
+        const ip = debuggerHost.split(':')[0];
+        return `http://${ip}:3000`;
+    }
 
     // Fallback IP for development
     // Fallback IP for development (Current Machine IP)
-    return 'http://192.168.0.199:3000';
+    return 'http://172.20.10.4:3000';
 };
