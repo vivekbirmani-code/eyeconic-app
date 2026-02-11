@@ -904,8 +904,189 @@ router.put('/attempt/:attemptId/retest-decision', auth, authorize('admin'), asyn
   }
 });
 
+// Get test list for analytics (admin)
+router.get('/analytics/tests/list', auth, authorize('admin'), async (req, res) => {
+  try {
+    const { search, type } = req.query;
+
+    let query = { isActive: true };
+
+    // Filter by test type if specified
+    if (type && ['daily', 'weekly', 'grand'].includes(type)) {
+      query.testType = type;
+    }
+
+    // Search by title
+    if (search) {
+      query.title = { $regex: search, $options: 'i' };
+    }
+
+    const tests = await Quiz.find(query)
+      .select('title testType assignedStudents totalMarks createdAt')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    // Get attempt counts for each test
+    const testsWithStats = await Promise.all(
+      tests.map(async (test) => {
+        const attemptCount = await QuizAttempt.countDocuments({
+          quiz: test._id,
+          status: { $in: ['completed', 'auto_submitted'] }
+        });
+
+        return {
+          _id: test._id,
+          title: test.title,
+          testType: test.testType,
+          assignedCount: test.assignedStudents?.length || 0,
+          attemptCount,
+          totalMarks: test.totalMarks,
+          createdAt: test.createdAt
+        };
+      })
+    );
+
+    res.json({ tests: testsWithStats });
+  } catch (error) {
+    console.error('Get test list error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get comprehensive test analytics (admin)
+router.get('/analytics/test/:testId', auth, authorize('admin'), async (req, res) => {
+  try {
+    const quiz = await Quiz.findById(req.params.testId)
+      .populate('subject', 'name')
+      .populate('questions');
+
+    if (!quiz) {
+      return res.status(404).json({ message: 'Test not found' });
+    }
+
+    // Get all attempts for this test
+    const attempts = await QuizAttempt.find({
+      quiz: req.params.testId,
+      status: { $in: ['completed', 'auto_submitted'] }
+    })
+      .populate('student', 'name email')
+      .sort({ marksObtained: -1 });
+
+    const totalAssigned = quiz.assignedStudents?.length || 0;
+    const totalAttempted = attempts.length;
+    const completionRate = totalAssigned > 0 ? Math.round((totalAttempted / totalAssigned) * 100) : 0;
+
+    // Calculate scores
+    const scores = attempts.map(a => a.marksObtained || 0);
+    const avgScore = scores.length > 0 ? Math.round(scores.reduce((sum, s) => sum + s, 0) / scores.length) : 0;
+    const highestScore = scores.length > 0 ? Math.max(...scores) : 0;
+    const lowestScore = scores.length > 0 ? Math.min(...scores) : 0;
+
+    // Calculate performance metrics
+    const totalQuestions = quiz.questions.length;
+    let totalCorrect = 0;
+    let totalWrong = 0;
+    let totalSkipped = 0;
+    let totalTime = 0;
+
+    attempts.forEach(attempt => {
+      totalCorrect += attempt.score || 0;
+      const answered = (attempt.answers || []).filter(a => a.selectedAnswer !== -1 && a.selectedAnswer !== undefined).length;
+      totalWrong += answered - (attempt.score || 0);
+      totalSkipped += totalQuestions - answered;
+      totalTime += (attempt.endTime - attempt.startTime) / 1000 / 60; // in minutes
+    });
+
+    const avgCorrect = attempts.length > 0 ? (totalCorrect / attempts.length).toFixed(1) : 0;
+    const avgWrong = attempts.length > 0 ? (totalWrong / attempts.length).toFixed(1) : 0;
+    const avgSkipped = attempts.length > 0 ? (totalSkipped / attempts.length).toFixed(1) : 0;
+    const avgTime = attempts.length > 0 ? Math.round(totalTime / attempts.length) : 0;
+
+    // Question-wise analytics
+    const questionAnalytics = quiz.questions.map((question, index) => {
+      let correctCount = 0;
+      let wrongCount = 0;
+      let skippedCount = 0;
+
+      attempts.forEach(attempt => {
+        const answer = attempt.answers.find(a => a.questionIndex === index);
+        if (!answer || answer.selectedAnswer === -1 || answer.selectedAnswer === undefined) {
+          skippedCount++;
+        } else if (answer.selectedAnswer === question.correctAnswer) {
+          correctCount++;
+        } else {
+          wrongCount++;
+        }
+      });
+
+      const total = attempts.length || 1;
+      return {
+        questionNumber: index + 1,
+        questionText: question.question.substring(0, 100),
+        topicName: question.topicName,
+        percentCorrect: Math.round((correctCount / total) * 100),
+        percentWrong: Math.round((wrongCount / total) * 100),
+        percentSkipped: Math.round((skippedCount / total) * 100),
+        correctCount,
+        wrongCount,
+        skippedCount
+      };
+    });
+
+    // Student performance list
+    const studentPerformance = attempts.map(attempt => ({
+      _id: attempt._id,
+      student: {
+        _id: attempt.student._id,
+        name: attempt.student.name,
+        email: attempt.student.email
+      },
+      score: attempt.score,
+      totalQuestions: attempt.totalQuestions,
+      marksObtained: attempt.marksObtained,
+      totalMarks: attempt.totalMarks,
+      percentage: attempt.totalMarks ? Math.round((attempt.marksObtained / attempt.totalMarks) * 100) : 0,
+      timeSpent: Math.round((attempt.endTime - attempt.startTime) / 1000 / 60), // minutes
+      completedAt: attempt.endTime,
+      tabSwitchCount: attempt.tabSwitchCount
+    }));
+
+    res.json({
+      test: {
+        _id: quiz._id,
+        title: quiz.title,
+        subject: quiz.subject,
+        testType: quiz.testType,
+        totalMarks: quiz.totalMarks,
+        totalQuestions
+      },
+      overview: {
+        totalAssigned,
+        totalAttempted,
+        completionRate,
+        avgScore,
+        highestScore,
+        lowestScore
+      },
+      performanceMetrics: {
+        totalQuestions,
+        avgCorrect,
+        avgWrong,
+        avgSkipped,
+        avgTime
+      },
+      questionAnalytics,
+      studentPerformance
+    });
+  } catch (error) {
+    console.error('Get test analytics error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Get student analytics (admin)
 router.get('/analytics/student/:studentId', auth, authorize('admin'), async (req, res) => {
+
   try {
     const attempts = await QuizAttempt.find({
       student: req.params.studentId,

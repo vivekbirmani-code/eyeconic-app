@@ -13,8 +13,8 @@ import {
   StatusBar
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { 
-  Search, 
+import {
+  Search,
   ChevronLeft,
   User,
   BookOpen,
@@ -24,6 +24,13 @@ import {
 } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
+import TabSwitcher from '@/components/analytics/TabSwitcher';
+import TestDropdown from '@/components/analytics/test-analytics/TestDropdown';
+import TestOverview from '@/components/analytics/test-analytics/TestOverview';
+import PerformanceMetrics from '@/components/analytics/test-analytics/PerformanceMetrics';
+import QuestionAnalytics from '@/components/analytics/test-analytics/QuestionAnalytics';
+import StudentPerformanceList from '@/components/analytics/test-analytics/StudentPerformanceList';
+import AttemptDetailModal from '@/components/analytics/AttemptDetailModal';
 
 interface Student {
   _id: string;
@@ -53,37 +60,123 @@ interface StudentAnalytics {
   attempts: AttemptSummary[];
 }
 
-export default function StudentAnalytics() {
+interface TestListItem {
+  _id: string;
+  title: string;
+  testType: string;
+  assignedCount: number;
+  attemptCount: number;
+}
+
+interface TestAnalyticsData {
+  test: {
+    _id: string;
+    title: string;
+    subject: any;
+    testType: string;
+    totalMarks: number;
+    totalQuestions: number;
+  };
+  overview: {
+    totalAssigned: number;
+    totalAttempted: number;
+    completionRate: number;
+    avgScore: number;
+    highestScore: number;
+    lowestScore: number;
+  };
+  performanceMetrics: {
+    totalQuestions: number;
+    avgCorrect: string | number;
+    avgWrong: string | number;
+    avgSkipped: string | number;
+    avgTime: number;
+  };
+  questionAnalytics: any[];
+  studentPerformance: any[];
+}
+
+export default function Analytics() {
   const { user } = useAuth();
   const router = useRouter();
-  
+
+  // Tab state
+  const [activeTab, setActiveTab] = useState<'test' | 'student'>('test');
+
+  // Test Analytics state
+  const [tests, setTests] = useState<TestListItem[]>([]);
+  const [selectedTest, setSelectedTest] = useState<TestListItem | null>(null);
+  const [testAnalytics, setTestAnalytics] = useState<TestAnalyticsData | null>(null);
+  const [loadingTests, setLoadingTests] = useState(false);
+  const [loadingTestAnalytics, setLoadingTestAnalytics] = useState(false);
+
+  // Student Analytics state
   const [searchQuery, setSearchQuery] = useState('');
   const [students, setStudents] = useState<Student[]>([]);
   const [filteredStudents, setFilteredStudents] = useState<Student[]>([]);
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
-  const [analytics, setAnalytics] = useState<StudentAnalytics | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [loadingAnalytics, setLoadingAnalytics] = useState(false);
+  const [studentAnalytics, setStudentAnalytics] = useState<StudentAnalytics | null>(null);
+  const [loadingStudents, setLoadingStudents] = useState(false);
+  const [loadingStudentAnalytics, setLoadingStudentAnalytics] = useState(false);
+
+  // Modal state
+  const [selectedAttemptId, setSelectedAttemptId] = useState<string | null>(null);
+  const [modalVisible, setModalVisible] = useState(false);
 
   useEffect(() => {
-    fetchStudents();
-  }, []);
+    if (activeTab === 'test') {
+      fetchTests();
+    } else {
+      fetchStudents();
+    }
+  }, [activeTab]);
 
   useEffect(() => {
     const query = searchQuery.toLowerCase();
     setFilteredStudents(
-      students.filter(s => 
-        s.name.toLowerCase().includes(query) || 
+      students.filter(s =>
+        s.name.toLowerCase().includes(query) ||
         s.email.toLowerCase().includes(query)
       )
     );
   }, [searchQuery, students]);
 
+  useEffect(() => {
+    if (selectedTest) {
+      fetchTestAnalytics(selectedTest._id);
+    }
+  }, [selectedTest]);
+
+  const fetchTests = async () => {
+    setLoadingTests(true);
+    try {
+      const response = await api.get('/quizzes/analytics/tests/list');
+      setTests(response.data.tests || []);
+    } catch (error) {
+      console.error('Error fetching tests:', error);
+      setTests([]);
+    } finally {
+      setLoadingTests(false);
+    }
+  };
+
+  const fetchTestAnalytics = async (testId: string) => {
+    setLoadingTestAnalytics(true);
+    try {
+      const response = await api.get(`/quizzes/analytics/test/${testId}`);
+      setTestAnalytics(response.data);
+    } catch (error) {
+      console.error('Error fetching test analytics:', error);
+      setTestAnalytics(null);
+    } finally {
+      setLoadingTestAnalytics(false);
+    }
+  };
+
   const fetchStudents = async () => {
-    setLoading(true);
+    setLoadingStudents(true);
     try {
       const response = await api.get('/users?role=student');
-      // Ensure we have an array and filter for students only
       const data = Array.isArray(response.data) ? response.data : [];
       const studentsOnly = data.filter((u: any) => u.role === 'student');
       setStudents(studentsOnly);
@@ -93,26 +186,31 @@ export default function StudentAnalytics() {
       setStudents([]);
       setFilteredStudents([]);
     } finally {
-      setLoading(false);
+      setLoadingStudents(false);
     }
   };
 
   const fetchStudentAnalytics = async (studentId: string) => {
-    setLoadingAnalytics(true);
+    setLoadingStudentAnalytics(true);
     try {
       const response = await api.get(`/quizzes/analytics/student/${studentId}`);
-      setAnalytics(response.data);
+      setStudentAnalytics(response.data);
     } catch (error) {
       console.error('Error fetching analytics:', error);
-      setAnalytics(null);
+      setStudentAnalytics(null);
     } finally {
-      setLoadingAnalytics(false);
+      setLoadingStudentAnalytics(false);
     }
   };
 
   const handleSelectStudent = (student: Student) => {
     setSelectedStudent(student);
     fetchStudentAnalytics(student._id);
+  };
+
+  const handleStudentAttemptClick = (attemptId: string) => {
+    setSelectedAttemptId(attemptId);
+    setModalVisible(true);
   };
 
   if (user?.role !== 'admin') {
@@ -123,6 +221,11 @@ export default function StudentAnalytics() {
     );
   }
 
+  const tabs = [
+    { key: 'test', label: 'Test Analytics' },
+    { key: 'student', label: 'Student Analytics' }
+  ];
+
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
@@ -130,174 +233,240 @@ export default function StudentAnalytics() {
         <TouchableOpacity onPress={() => router.back()}>
           <ChevronLeft color="#FFF" size={24} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Student Analytics</Text>
+        <Text style={styles.headerTitle}>Analytics</Text>
         <View style={{ width: 24 }} />
       </View>
 
-      <View style={styles.content}>
-        {/* Search */}
-        <View style={styles.searchContainer}>
-          <Search color="#6B7280" size={20} />
-          <TextInput
-            style={styles.searchInput}
-            placeholder="Search students by name or email..."
-            value={searchQuery}
-            onChangeText={setSearchQuery}
+      {/* Tab Switcher */}
+      <TabSwitcher
+        tabs={tabs}
+        activeTab={activeTab}
+        onTabChange={(key) => setActiveTab(key as 'test' | 'student')}
+      />
+
+      {/* Content */}
+      {activeTab === 'test' ? (
+        // TEST ANALYTICS TAB
+        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+          <TestDropdown
+            tests={tests}
+            selectedTest={selectedTest}
+            onTestSelect={setSelectedTest}
+            loading={loadingTests}
           />
-        </View>
 
-        {/* Student List */}
-        {!selectedStudent ? (
-          <View style={styles.studentList}>
-            <Text style={styles.listTitle}>Select a Student</Text>
-            {loading ? (
-              <ActivityIndicator color="#2563EB" style={{ marginTop: 20 }} />
-            ) : (
-              <FlatList
-                data={filteredStudents}
-                keyExtractor={item => item._id}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    style={styles.studentItem}
-                    onPress={() => handleSelectStudent(item)}
-                  >
-                    <View style={styles.studentAvatar}>
-                      <User color="#6B7280" size={20} />
-                    </View>
-                    <View style={styles.studentInfo}>
-                      <Text style={styles.studentName}>{item.name}</Text>
-                      <Text style={styles.studentEmail}>{item.email}</Text>
-                    </View>
-                  </TouchableOpacity>
-                )}
-                ListEmptyComponent={
-                  <Text style={styles.emptyText}>No students found</Text>
-                }
-              />
-            )}
-          </View>
-        ) : (
-          /* Analytics View */
-          <ScrollView style={styles.analyticsContainer} showsVerticalScrollIndicator={false}>
-            {/* Selected Student Header */}
-            <View style={styles.selectedStudentCard}>
-              <View style={styles.studentAvatar}>
-                <User color="#6B7280" size={24} />
-              </View>
-              <View style={styles.selectedStudentInfo}>
-                <Text style={styles.selectedStudentName}>{selectedStudent.name}</Text>
-                <Text style={styles.selectedStudentEmail}>{selectedStudent.email}</Text>
-              </View>
-              <TouchableOpacity
-                style={styles.changeButton}
-                onPress={() => setSelectedStudent(null)}
-              >
-                <Text style={styles.changeButtonText}>Change</Text>
-              </TouchableOpacity>
-            </View>
-
-            {loadingAnalytics ? (
-              <ActivityIndicator color="#2563EB" style={{ marginTop: 40 }} />
-            ) : analytics ? (
-              <>
-                {/* Summary Cards */}
-                <View style={styles.summaryContainer}>
-                  <View style={styles.summaryCard}>
-                    <BookOpen color="#2563EB" size={24} />
-                    <Text style={styles.summaryNumber}>{analytics.summary.totalTests}</Text>
-                    <Text style={styles.summaryLabel}>Tests Taken</Text>
-                  </View>
-                  <View style={styles.summaryCard}>
-                    <TrendingUp color="#10B981" size={24} />
-                    <Text style={styles.summaryNumber}>{analytics.summary.avgPercentage}%</Text>
-                    <Text style={styles.summaryLabel}>Average</Text>
-                  </View>
-                  <View style={styles.summaryCard}>
-                    <Text style={[styles.summaryNumber, { fontSize: 20 }]}>
-                      {analytics.summary.obtainedMarks}/{analytics.summary.totalMarks}
-                    </Text>
-                    <Text style={styles.summaryLabel}>Total Marks</Text>
-                  </View>
+          {selectedTest && (
+            <>
+              {loadingTestAnalytics ? (
+                <ActivityIndicator color="#01b4ae" style={{ marginTop: 40 }} />
+              ) : testAnalytics ? (
+                <>
+                  <TestOverview
+                    overview={testAnalytics.overview}
+                    totalMarks={testAnalytics.test.totalMarks}
+                  />
+                  <PerformanceMetrics metrics={testAnalytics.performanceMetrics} />
+                  <QuestionAnalytics questions={testAnalytics.questionAnalytics} />
+                  <StudentPerformanceList
+                    students={testAnalytics.studentPerformance}
+                    onStudentClick={handleStudentAttemptClick}
+                  />
+                </>
+              ) : (
+                <View style={styles.emptyContainer}>
+                  <AlertTriangle color="#9CA3AF" size={48} />
+                  <Text style={styles.emptyText}>Failed to load analytics</Text>
                 </View>
+              )}
+            </>
+          )}
 
-                {/* Test History */}
-                <Text style={styles.sectionTitle}>Test History</Text>
-                {analytics.attempts.length > 0 ? (
-                  analytics.attempts.map((attempt, index) => (
-                    <View key={index} style={styles.attemptCard}>
-                      <View style={styles.attemptHeader}>
-                        <Text style={styles.attemptTitle} numberOfLines={1}>
-                          {attempt.quiz?.title || 'Untitled Quiz'}
-                        </Text>
-                        <View style={[
-                          styles.typeBadge,
-                          attempt.quiz?.testType === 'daily' && styles.dailyBadge,
-                          attempt.quiz?.testType === 'weekly' && styles.weeklyBadge,
-                          attempt.quiz?.testType === 'grand' && styles.grandBadge
-                        ]}>
-                          <Text style={styles.typeBadgeText}>{attempt.quiz?.testType || 'test'}</Text>
+          {!selectedTest && !loadingTests && (
+            <View style={styles.emptyContainer}>
+              <BookOpen color="#9CA3AF" size={48} />
+              <Text style={styles.emptyText}>Select a test to view analytics</Text>
+            </View>
+          )}
+
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      ) : (
+        // STUDENT ANALYTICS TAB
+        <View style={styles.content}>
+          {!selectedStudent ? (
+            <>
+              <View style={styles.searchContainer}>
+                <Search color="#6B7280" size={20} />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Search students by name or email..."
+                  value={searchQuery}
+                  onChangeText={setSearchQuery}
+                />
+              </View>
+
+              <View style={styles.studentList}>
+                <Text style={styles.listTitle}>Select a Student</Text>
+                {loadingStudents ? (
+                  <ActivityIndicator color="#01b4ae" style={{ marginTop: 20 }} />
+                ) : (
+                  <FlatList
+                    data={filteredStudents}
+                    keyExtractor={item => item._id}
+                    renderItem={({ item }) => (
+                      <TouchableOpacity
+                        style={styles.studentItem}
+                        onPress={() => handleSelectStudent(item)}
+                      >
+                        <View style={styles.studentAvatar}>
+                          <User color="#6B7280" size={20} />
                         </View>
-                      </View>
-                      
-                      <View style={styles.attemptStats}>
-                        <View style={styles.attemptStat}>
-                          <Text style={styles.attemptStatLabel}>Score</Text>
-                          <Text style={styles.attemptStatValue}>
-                            {attempt.score}/{attempt.totalQuestions}
+                        <View style={styles.studentInfo}>
+                          <Text style={styles.studentName}>{item.name}</Text>
+                          <Text style={styles.studentEmail}>{item.email}</Text>
+                        </View>
+                      </TouchableOpacity>
+                    )}
+                    ListEmptyComponent={
+                      <Text style={styles.emptyText}>No students found</Text>
+                    }
+                  />
+                )}
+              </View>
+            </>
+          ) : (
+            <ScrollView style={styles.analyticsContainer} showsVerticalScrollIndicator={false}>
+              <View style={styles.selectedStudentCard}>
+                <View style={styles.studentAvatar}>
+                  <User color="#6B7280" size={24} />
+                </View>
+                <View style={styles.selectedStudentInfo}>
+                  <Text style={styles.selectedStudentName}>{selectedStudent.name}</Text>
+                  <Text style={styles.selectedStudentEmail}>{selectedStudent.email}</Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.changeButton}
+                  onPress={() => setSelectedStudent(null)}
+                >
+                  <Text style={styles.changeButtonText}>Change</Text>
+                </TouchableOpacity>
+              </View>
+
+              {loadingStudentAnalytics ? (
+                <ActivityIndicator color="#01b4ae" style={{ marginTop: 40 }} />
+              ) : studentAnalytics ? (
+                <>
+                  <View style={styles.summaryContainer}>
+                    <View style={styles.summaryCard}>
+                      <BookOpen color="#2563EB" size={24} />
+                      <Text style={styles.summaryNumber}>{studentAnalytics.summary.totalTests}</Text>
+                      <Text style={styles.summaryLabel}>Tests Taken</Text>
+                    </View>
+                    <View style={styles.summaryCard}>
+                      <TrendingUp color="#10B981" size={24} />
+                      <Text style={styles.summaryNumber}>{studentAnalytics.summary.avgPercentage}%</Text>
+                      <Text style={styles.summaryLabel}>Average</Text>
+                    </View>
+                    <View style={styles.summaryCard}>
+                      <Text style={[styles.summaryNumber, { fontSize: 20 }]}>
+                        {studentAnalytics.summary.obtainedMarks}/{studentAnalytics.summary.totalMarks}
+                      </Text>
+                      <Text style={styles.summaryLabel}>Total Marks</Text>
+                    </View>
+                  </View>
+
+                  <Text style={styles.sectionTitle}>Test History</Text>
+                  {studentAnalytics.attempts.length > 0 ? (
+                    studentAnalytics.attempts.map((attempt, index) => (
+                      <TouchableOpacity
+                        key={index}
+                        style={styles.attemptCard}
+                        onPress={() => handleStudentAttemptClick(attempt._id)}
+                      >
+                        <View style={styles.attemptHeader}>
+                          <Text style={styles.attemptTitle} numberOfLines={1}>
+                            {attempt.quiz?.title || 'Untitled Quiz'}
                           </Text>
-                        </View>
-                        <View style={styles.attemptStat}>
-                          <Text style={styles.attemptStatLabel}>Marks</Text>
-                          <Text style={styles.attemptStatValue}>
-                            {attempt.marksObtained}/{attempt.totalMarks}
-                          </Text>
-                        </View>
-                        <View style={styles.attemptStat}>
-                          <Text style={styles.attemptStatLabel}>Percentage</Text>
-                          <Text style={[
-                            styles.attemptStatValue,
-                            attempt.percentage >= 60 ? styles.passText : styles.failText
+                          <View style={[
+                            styles.typeBadge,
+                            attempt.quiz?.testType === 'daily' && styles.dailyBadge,
+                            attempt.quiz?.testType === 'weekly' && styles.weeklyBadge,
+                            attempt.quiz?.testType === 'grand' && styles.grandBadge
                           ]}>
-                            {attempt.percentage}%
-                          </Text>
+                            <Text style={styles.typeBadgeText}>{attempt.quiz?.testType || 'test'}</Text>
+                          </View>
                         </View>
-                      </View>
 
-                      <View style={styles.attemptFooter}>
-                        <View style={styles.attemptDate}>
-                          <Clock color="#6B7280" size={14} />
-                          <Text style={styles.attemptDateText}>
-                            {new Date(attempt.endTime).toLocaleDateString()}
-                          </Text>
-                        </View>
-                        {attempt.tabSwitchCount > 0 && (
-                          <View style={styles.tabWarning}>
-                            <AlertTriangle color="#F59E0B" size={14} />
-                            <Text style={styles.tabWarningText}>
-                              {attempt.tabSwitchCount} tab switches
+                        <View style={styles.attemptStats}>
+                          <View style={styles.attemptStat}>
+                            <Text style={styles.attemptStatLabel}>Score</Text>
+                            <Text style={styles.attemptStatValue}>
+                              {attempt.score}/{attempt.totalQuestions}
                             </Text>
                           </View>
-                        )}
-                      </View>
-                    </View>
-                  ))
-                ) : (
-                  <View style={styles.noAttempts}>
-                    <BookOpen color="#9CA3AF" size={48} />
-                    <Text style={styles.noAttemptsText}>No tests taken yet</Text>
-                  </View>
-                )}
-              </>
-            ) : (
-              <View style={styles.noAttempts}>
-                <Text style={styles.noAttemptsText}>Failed to load analytics</Text>
-              </View>
-            )}
+                          <View style={styles.attemptStat}>
+                            <Text style={styles.attemptStatLabel}>Marks</Text>
+                            <Text style={styles.attemptStatValue}>
+                              {attempt.marksObtained}/{attempt.totalMarks}
+                            </Text>
+                          </View>
+                          <View style={styles.attemptStat}>
+                            <Text style={styles.attemptStatLabel}>Percentage</Text>
+                            <Text style={[
+                              styles.attemptStatValue,
+                              attempt.percentage >= 60 ? styles.passText : styles.failText
+                            ]}>
+                              {attempt.percentage}%
+                            </Text>
+                          </View>
+                        </View>
 
-            <View style={{ height: 40 }} />
-          </ScrollView>
-        )}
-      </View>
+                        <View style={styles.attemptFooter}>
+                          <View style={styles.attemptDate}>
+                            <Clock color="#6B7280" size={14} />
+                            <Text style={styles.attemptDateText}>
+                              {new Date(attempt.endTime).toLocaleDateString()}
+                            </Text>
+                          </View>
+                          {attempt.tabSwitchCount > 0 && (
+                            <View style={styles.tabWarning}>
+                              <AlertTriangle color="#F59E0B" size={14} />
+                              <Text style={styles.tabWarningText}>
+                                {attempt.tabSwitchCount} tab switches
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                      </TouchableOpacity>
+                    ))
+                  ) : (
+                    <View style={styles.noAttempts}>
+                      <BookOpen color="#9CA3AF" size={48} />
+                      <Text style={styles.noAttemptsText}>No tests taken yet</Text>
+                    </View>
+                  )}
+                </>
+              ) : (
+                <View style={styles.noAttempts}>
+                  <Text style={styles.noAttemptsText}>Failed to load analytics</Text>
+                </View>
+              )}
+
+              <View style={{ height: 40 }} />
+            </ScrollView>
+          )}
+        </View>
+      )}
+
+      {/* Attempt Detail Modal */}
+      <AttemptDetailModal
+        attemptId={selectedAttemptId}
+        visible={modalVisible}
+        onClose={() => {
+          setModalVisible(false);
+          setSelectedAttemptId(null);
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -313,10 +482,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: 16,
-    backgroundColor: '#2563EB',
+    backgroundColor: '#01b4ae',
   },
   headerTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#FFF',
   },
@@ -548,11 +717,15 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     marginTop: 16,
   },
+  emptyContainer: {
+    alignItems: 'center',
+    padding: 60,
+  },
   emptyText: {
-    fontSize: 14,
+    fontSize: 16,
     color: '#6B7280',
+    marginTop: 16,
     textAlign: 'center',
-    padding: 20,
   },
   errorText: {
     fontSize: 16,
