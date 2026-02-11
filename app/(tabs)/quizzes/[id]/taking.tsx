@@ -89,7 +89,7 @@ function QuizTakingContent() {
   const questionStatuses = useMemo(() => {
     if (!quiz || !currentAttempt) return [];
     return quiz.questions.map((_, index) => {
-      const answer = currentAttempt.answers[index];
+      const answer = currentAttempt.answers.find(a => a.questionIndex === index);
       return {
         answered: answer?.selectedAnswer !== -1 && answer?.selectedAnswer !== undefined,
         markedForReview: answer?.markedForReview || false,
@@ -128,7 +128,7 @@ function QuizTakingContent() {
 
   useEffect(() => {
     if (currentAttempt && currentAttempt.answers) {
-      const answer = currentAttempt.answers[currentQuestionIndex];
+      const answer = currentAttempt.answers.find(a => a.questionIndex === currentQuestionIndex);
       if (answer) {
         setSelectedAnswer(answer.selectedAnswer);
         setMarkedForReview(answer.markedForReview);

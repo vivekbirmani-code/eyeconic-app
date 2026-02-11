@@ -29,6 +29,7 @@ import {
 } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 interface Subject {
   _id: string;
@@ -82,6 +83,14 @@ export default function CreateQuiz() {
   const [duration, setDuration] = useState('30');
   const [availableQuestions, setAvailableQuestions] = useState(0);
   const [shareSolution, setShareSolution] = useState(true);  // NEW: Share solutions with students
+
+  // Time Window
+  const [scheduledDate, setScheduledDate] = useState<Date | null>(null);
+  const [expiryDate, setExpiryDate] = useState<Date | null>(null);
+  const [showStartPicker, setShowStartPicker] = useState(false);
+  const [showEndPicker, setShowEndPicker] = useState(false);
+  const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date');
+  const [tempDate, setTempDate] = useState<Date>(new Date());
 
   // Step 3: Question Selection (NEW)
   const [availableQuestionsList, setAvailableQuestionsList] = useState<Question[]>([]);
@@ -137,6 +146,10 @@ export default function CreateQuiz() {
       if (quiz.shareSolution !== undefined) {
         setShareSolution(quiz.shareSolution);
       }
+
+      // Load time window
+      if (quiz.scheduledDate) setScheduledDate(new Date(quiz.scheduledDate));
+      if (quiz.expiryDate) setExpiryDate(new Date(quiz.expiryDate));
 
       if (quiz.subject) {
         setSelectedSubjects([quiz.subject._id]);
@@ -362,6 +375,14 @@ export default function CreateQuiz() {
       Alert.alert('Error', 'Please select at least one student');
       return;
     }
+    if (!scheduledDate || !expiryDate) {
+      Alert.alert('Error', 'Please set both start and end date/time for the quiz');
+      return;
+    }
+    if (expiryDate <= scheduledDate) {
+      Alert.alert('Error', 'End date must be after start date');
+      return;
+    }
 
     setCreating(true);
     try {
@@ -377,7 +398,9 @@ export default function CreateQuiz() {
           duration: parseInt(duration),
           instructions: instructions.split('\n').filter(i => i.trim()),
           assignedStudents: selectedStudents,
-          shareSolution  // NEW: Include shareSolution setting
+          shareSolution,  // NEW: Include shareSolution setting
+          scheduledDate: scheduledDate?.toISOString(),
+          expiryDate: expiryDate?.toISOString()
         });
         Alert.alert('Success', 'Quiz updated successfully!', [{ text: 'OK', onPress: () => router.back() }]);
       } else {
@@ -391,7 +414,9 @@ export default function CreateQuiz() {
           duration: parseInt(duration),
           instructions: instructions.split('\n').filter(i => i.trim()),
           assignedStudents: selectedStudents,
-          shareSolution  // NEW: Include shareSolution setting
+          shareSolution,  // NEW: Include shareSolution setting
+          scheduledDate: scheduledDate?.toISOString(),
+          expiryDate: expiryDate?.toISOString()
         });
         Alert.alert(
           'Success',
@@ -547,6 +572,89 @@ export default function CreateQuiz() {
           thumbColor={shareSolution ? '#2563EB' : '#9CA3AF'}
         />
       </View>
+
+      {/* Time Window */}
+      <Text style={styles.inputLabel}>Start Date & Time *</Text>
+      <TouchableOpacity
+        style={styles.datePickerButton}
+        onPress={() => {
+          setTempDate(scheduledDate || new Date());
+          setPickerMode('date');
+          setShowStartPicker(true);
+        }}
+      >
+        <Clock color="#6B7280" size={18} />
+        <Text style={[styles.datePickerText, !scheduledDate && { color: '#9CA3AF' }]}>
+          {scheduledDate ? scheduledDate.toLocaleString() : 'Select start date & time'}
+        </Text>
+      </TouchableOpacity>
+      {showStartPicker && (
+        <DateTimePicker
+          value={tempDate}
+          mode={pickerMode}
+          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+          onChange={(event: any, selected?: Date) => {
+            if (event.type === 'dismissed') {
+              setShowStartPicker(false);
+              return;
+            }
+            if (selected) {
+              if (pickerMode === 'date') {
+                setTempDate(selected);
+                setPickerMode('time');
+              } else {
+                setScheduledDate(selected);
+                setShowStartPicker(false);
+                setPickerMode('date');
+              }
+            }
+          }}
+        />
+      )}
+
+      <Text style={styles.inputLabel}>End Date & Time *</Text>
+      <TouchableOpacity
+        style={styles.datePickerButton}
+        onPress={() => {
+          setTempDate(expiryDate || new Date());
+          setPickerMode('date');
+          setShowEndPicker(true);
+        }}
+      >
+        <Clock color="#6B7280" size={18} />
+        <Text style={[styles.datePickerText, !expiryDate && { color: '#9CA3AF' }]}>
+          {expiryDate ? expiryDate.toLocaleString() : 'Select end date & time'}
+        </Text>
+      </TouchableOpacity>
+      {showEndPicker && (
+        <DateTimePicker
+          value={tempDate}
+          mode={pickerMode}
+          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+          onChange={(event: any, selected?: Date) => {
+            if (event.type === 'dismissed') {
+              setShowEndPicker(false);
+              return;
+            }
+            if (selected) {
+              if (pickerMode === 'date') {
+                setTempDate(selected);
+                setPickerMode('time');
+              } else {
+                setExpiryDate(selected);
+                setShowEndPicker(false);
+                setPickerMode('date');
+              }
+            }
+          }}
+        />
+      )}
+
+      {scheduledDate && expiryDate && expiryDate <= scheduledDate && (
+        <Text style={{ color: '#EF4444', fontSize: 12, marginTop: 4 }}>
+          ⚠️ End date must be after start date
+        </Text>
+      )}
 
       <View style={styles.infoBox}>
         <Text style={styles.infoText}>
@@ -1476,5 +1584,21 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#6B7280',
     lineHeight: 18,
+  },
+  datePickerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 12,
+    gap: 10,
+  },
+  datePickerText: {
+    fontSize: 15,
+    color: '#1F2937',
+    flex: 1,
   },
 });

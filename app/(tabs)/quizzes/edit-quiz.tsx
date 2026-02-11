@@ -29,6 +29,7 @@ import {
 } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 interface Question {
   _id: string;
@@ -77,6 +78,14 @@ export default function EditQuiz() {
   const [instructions, setInstructions] = useState('');
   const [selectedQuestions, setSelectedQuestions] = useState<Question[]>([]);
 
+  // Time Window
+  const [scheduledDate, setScheduledDate] = useState<Date | null>(null);
+  const [expiryDate, setExpiryDate] = useState<Date | null>(null);
+  const [showStartPicker, setShowStartPicker] = useState(false);
+  const [showEndPicker, setShowEndPicker] = useState(false);
+  const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date');
+  const [tempDate, setTempDate] = useState<Date>(new Date());
+
   // Question Picker Modal
   const [showQuestionPicker, setShowQuestionPicker] = useState(false);
   const [availableQuestions, setAvailableQuestions] = useState<Question[]>([]);
@@ -105,6 +114,10 @@ export default function EditQuiz() {
       setDuration(quizData.duration.toString());
       setInstructions(quizData.instructions?.join('\n') || '');
       setSelectedQuestions(quizData.questions || []);
+
+      // Load time window
+      if (quizData.scheduledDate) setScheduledDate(new Date(quizData.scheduledDate));
+      if (quizData.expiryDate) setExpiryDate(new Date(quizData.expiryDate));
     } catch (error) {
       console.error('Error loading quiz:', error);
       Alert.alert('Error', 'Failed to load quiz details');
@@ -184,7 +197,9 @@ export default function EditQuiz() {
         title: title.trim(),
         duration: parseInt(duration) || 30,
         instructions: instructions.split('\n').filter(line => line.trim()),
-        questions: selectedQuestions.map(q => q._id)
+        questions: selectedQuestions.map(q => q._id),
+        scheduledDate: scheduledDate?.toISOString(),
+        expiryDate: expiryDate?.toISOString()
       });
 
       Alert.alert('Success', 'Quiz updated successfully', [
@@ -311,6 +326,91 @@ export default function EditQuiz() {
               numberOfLines={4}
               textAlignVertical="top"
             />
+          </View>
+
+          {/* Time Window */}
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>Start Date & Time</Text>
+            <TouchableOpacity
+              style={styles.datePickerButton}
+              onPress={() => {
+                setTempDate(scheduledDate || new Date());
+                setPickerMode('date');
+                setShowStartPicker(true);
+              }}
+            >
+              <Text style={[styles.datePickerText, !scheduledDate && { color: '#9CA3AF' }]}>
+                {scheduledDate ? scheduledDate.toLocaleString() : 'Select start date & time'}
+              </Text>
+            </TouchableOpacity>
+            {showStartPicker && (
+              <DateTimePicker
+                value={tempDate}
+                mode={pickerMode}
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={(event: any, selected?: Date) => {
+                  if (event.type === 'dismissed') {
+                    setShowStartPicker(false);
+                    return;
+                  }
+                  if (selected) {
+                    if (pickerMode === 'date') {
+                      setTempDate(selected);
+                      setPickerMode('time');
+                    } else {
+                      setScheduledDate(selected);
+                      setShowStartPicker(false);
+                      setPickerMode('date');
+                    }
+                  }
+                }}
+              />
+            )}
+          </View>
+
+          <View style={styles.inputGroup}>
+            <Text style={styles.label}>End Date & Time</Text>
+            <TouchableOpacity
+              style={styles.datePickerButton}
+              onPress={() => {
+                setTempDate(expiryDate || new Date());
+                setPickerMode('date');
+                setShowEndPicker(true);
+              }}
+            >
+              <Text style={[styles.datePickerText, !expiryDate && { color: '#9CA3AF' }]}>
+                {expiryDate ? expiryDate.toLocaleString() : 'Select end date & time'}
+              </Text>
+            </TouchableOpacity>
+            {showEndPicker && (
+              <DateTimePicker
+                value={tempDate}
+                mode={pickerMode}
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                onChange={(event: any, selected?: Date) => {
+                  if (event.type === 'dismissed') {
+                    setShowEndPicker(false);
+                    return;
+                  }
+                  if (selected) {
+                    if (pickerMode === 'date') {
+                      setTempDate(selected);
+                      setPickerMode('time');
+                    } else {
+                      setExpiryDate(selected);
+                      setShowEndPicker(false);
+                      setPickerMode('date');
+                    }
+                  }
+                }}
+              />
+            )}
+
+            {scheduledDate && expiryDate && expiryDate <= scheduledDate && (
+              <Text style={{ color: '#EF4444', fontSize: 12, marginTop: 4 }}>
+                ⚠️ End date must be after start date
+              </Text>
+            )}
           </View>
         </View>
 
@@ -919,5 +1019,19 @@ const styles = StyleSheet.create({
   },
   subjectChipTextActive: {
     color: '#FFF',
+  },
+  datePickerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    padding: 12,
+  },
+  datePickerText: {
+    fontSize: 15,
+    color: '#1F2937',
+    flex: 1,
   },
 });

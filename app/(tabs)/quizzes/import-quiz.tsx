@@ -27,6 +27,7 @@ import {
 import * as DocumentPicker from 'expo-document-picker';
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
+import DateTimePicker from '@react-native-community/datetimepicker';
 
 interface Subject {
   _id: string;
@@ -63,6 +64,14 @@ export default function ImportQuiz() {
   const [duration, setDuration] = useState('30');
   const [subjectId, setSubjectId] = useState('');
   const [file, setFile] = useState<any>(null);
+
+  // Time Window
+  const [scheduledDate, setScheduledDate] = useState<Date | null>(null);
+  const [expiryDate, setExpiryDate] = useState<Date | null>(null);
+  const [showStartPicker, setShowStartPicker] = useState(false);
+  const [showEndPicker, setShowEndPicker] = useState(false);
+  const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date');
+  const [tempDate, setTempDate] = useState<Date>(new Date());
   
   // Preview Modal State
   const [showPreview, setShowPreview] = useState(false);
@@ -109,6 +118,14 @@ export default function ImportQuiz() {
       Alert.alert('Error', 'Please enter a quiz title');
       return;
     }
+    if (!scheduledDate || !expiryDate) {
+      Alert.alert('Error', 'Please set both start and end date/time for the quiz');
+      return;
+    }
+    if (expiryDate <= scheduledDate) {
+      Alert.alert('Error', 'End date must be after start date');
+      return;
+    }
 
     setLoading(true);
     setProgressMessage('Uploading file and processing images...');
@@ -125,6 +142,12 @@ export default function ImportQuiz() {
       formData.append('duration', duration);
       if (subjectId) {
         formData.append('subjectId', subjectId);
+      }
+      if (scheduledDate) {
+        formData.append('scheduledDate', scheduledDate.toISOString());
+      }
+      if (expiryDate) {
+        formData.append('expiryDate', expiryDate.toISOString());
       }
       // Instructions can be added if needed, defaulted by backend for now
 
@@ -237,6 +260,87 @@ export default function ImportQuiz() {
               </TouchableOpacity>
             ))}
           </ScrollView>
+
+          {/* Time Window */}
+          <Text style={styles.label}>Start Date & Time *</Text>
+          <TouchableOpacity
+            style={styles.datePickerButton}
+            onPress={() => {
+              setTempDate(scheduledDate || new Date());
+              setPickerMode('date');
+              setShowStartPicker(true);
+            }}
+          >
+            <Text style={[styles.datePickerText, !scheduledDate && { color: '#9CA3AF' }]}>
+              {scheduledDate ? scheduledDate.toLocaleString() : 'Select start date & time'}
+            </Text>
+          </TouchableOpacity>
+          {showStartPicker && (
+            <DateTimePicker
+              value={tempDate}
+              mode={pickerMode}
+              display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+              onChange={(event: any, selected?: Date) => {
+                if (event.type === 'dismissed') {
+                  setShowStartPicker(false);
+                  return;
+                }
+                if (selected) {
+                  if (pickerMode === 'date') {
+                    setTempDate(selected);
+                    setPickerMode('time');
+                  } else {
+                    setScheduledDate(selected);
+                    setShowStartPicker(false);
+                    setPickerMode('date');
+                  }
+                }
+              }}
+            />
+          )}
+
+          <Text style={styles.label}>End Date & Time *</Text>
+          <TouchableOpacity
+            style={styles.datePickerButton}
+            onPress={() => {
+              setTempDate(expiryDate || new Date());
+              setPickerMode('date');
+              setShowEndPicker(true);
+            }}
+          >
+            <Text style={[styles.datePickerText, !expiryDate && { color: '#9CA3AF' }]}>
+              {expiryDate ? expiryDate.toLocaleString() : 'Select end date & time'}
+            </Text>
+          </TouchableOpacity>
+          {showEndPicker && (
+            <DateTimePicker
+              value={tempDate}
+              mode={pickerMode}
+              display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+              onChange={(event: any, selected?: Date) => {
+                if (event.type === 'dismissed') {
+                  setShowEndPicker(false);
+                  return;
+                }
+                if (selected) {
+                  if (pickerMode === 'date') {
+                    setTempDate(selected);
+                    setPickerMode('time');
+                  } else {
+                    setExpiryDate(selected);
+                    setShowEndPicker(false);
+                    setPickerMode('date');
+                  }
+                }
+              }}
+            />
+          )}
+
+          {scheduledDate && expiryDate && expiryDate <= scheduledDate && (
+            <Text style={{ color: '#EF4444', fontSize: 12, marginBottom: 8 }}>
+              ⚠️ End date must be after start date
+            </Text>
+          )}
 
           <Text style={styles.sectionTitle}>3. Select File</Text>
           <TouchableOpacity style={styles.uploadBox} onPress={pickFile}>
@@ -643,5 +747,20 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 8,
     textAlign: 'center',
+  },
+  datePickerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+  },
+  datePickerText: {
+    fontSize: 15,
+    color: '#1F2937',
+    flex: 1,
   },
 });

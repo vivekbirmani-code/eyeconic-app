@@ -118,7 +118,7 @@ const initialCallState: CallState = {
   isInCall: false,
   isMinimized: false,
   isMuted: false,
-  isSpeakerOn: true,
+  isSpeakerOn: false,
   participants: [],
   callDuration: 0,
   isInitiator: false,
@@ -299,7 +299,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
       // Start InCallManager for audio routing (receiver side)
       if (InCallManager) {
         InCallManager.start({ media: 'audio', auto: true, ringback: '' });
-        InCallManager.setForceSpeakerphoneOn(true);
+        InCallManager.setForceSpeakerphoneOn(false);
         console.log('InCallManager started for receiver');
       }
 
@@ -555,7 +555,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
       // Ensure InCallManager is started for audio routing
       if (InCallManager) {
         InCallManager.start({ media: 'audio', auto: true, ringback: '' });
-        InCallManager.setForceSpeakerphoneOn(true);
+        InCallManager.setForceSpeakerphoneOn(false);
       }
 
       let pc = peerConnectionsRef.current.get(userId);
@@ -719,8 +719,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
     // Start InCallManager for audio routing (speaker mode)
     if (InCallManager) {
       InCallManager.start({ media: 'audio', auto: true, ringback: '' });
-      InCallManager.setForceSpeakerphoneOn(true);
-      console.log('InCallManager started for call');
+      InCallManager.setForceSpeakerphoneOn(false);
+      console.log('InCallManager started for call (earpiece mode)');
     }
 
     socketRef.current?.emit('join_room', groupId);
@@ -760,8 +760,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
     // Start InCallManager for audio routing (speaker mode)
     if (InCallManager) {
       InCallManager.start({ media: 'audio', auto: true, ringback: '' });
-      InCallManager.setForceSpeakerphoneOn(true);
-      console.log('InCallManager started for joining call');
+      InCallManager.setForceSpeakerphoneOn(false);
+      console.log('InCallManager started for joining call (earpiece mode)');
     }
 
     socketRef.current?.emit('join_room', groupId);

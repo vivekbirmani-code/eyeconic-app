@@ -16,9 +16,10 @@ import {
 } from 'react-native';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
-import { LogOut, AlertTriangle, Check } from 'lucide-react-native';
+import { LogOut, AlertTriangle, Check, MessageCircle, BookOpen, Users, LayoutDashboard } from 'lucide-react-native';
 import * as Haptics from '@/utils/haptics';
 import { LinearGradient } from 'expo-linear-gradient';
+import { useRouter } from 'expo-router';
 
 interface StudentProfile {
   mbbsBatch: string;
@@ -35,6 +36,7 @@ interface StudentProfile {
 
 export default function Dashboard() {
   const { user, logout, refreshUser } = useAuth();
+  const router = useRouter();
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDataLoading, setIsDataLoading] = useState(true);
@@ -280,13 +282,7 @@ export default function Dashboard() {
             },
           ]}
         >
-          <Pressable
-            style={({ pressed }) => [
-              styles.card,
-              pressed && styles.cardPressed,
-            ]}
-            onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-          >
+          <View style={styles.card}>
             <Text style={styles.cardTitle}>Quick Actions</Text>
 
             {isDataLoading ? (
@@ -299,9 +295,75 @@ export default function Dashboard() {
                   {user?.role === 'mentor' && 'View your groups and interact with students'}
                   {user?.role === 'student' && 'Join groups and attempt quizzes'}
                 </Text>
+
+                <View style={styles.quickActionsGrid}>
+                  {/* Groups button - all roles */}
+                  <TouchableOpacity
+                    style={styles.quickActionButton}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      router.push('/(tabs)/groups');
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.quickActionIcon, { backgroundColor: 'rgba(37, 99, 235, 0.1)' }]}>
+                      <MessageCircle color="#2563EB" size={22} />
+                    </View>
+                    <Text style={styles.quickActionLabel}>Groups</Text>
+                  </TouchableOpacity>
+
+                  {/* Quizzes button - all roles */}
+                  <TouchableOpacity
+                    style={styles.quickActionButton}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      router.push('/(tabs)/quizzes');
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.quickActionIcon, { backgroundColor: 'rgba(16, 185, 129, 0.1)' }]}>
+                      <BookOpen color="#10B981" size={22} />
+                    </View>
+                    <Text style={styles.quickActionLabel}>Quizzes</Text>
+                  </TouchableOpacity>
+
+                  {/* My Tasks - student only */}
+                  {user?.role === 'student' && (
+                    <TouchableOpacity
+                      style={styles.quickActionButton}
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        router.push('/(tabs)/student-assignments');
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <View style={[styles.quickActionIcon, { backgroundColor: 'rgba(245, 158, 11, 0.1)' }]}>
+                        <LayoutDashboard color="#F59E0B" size={22} />
+                      </View>
+                      <Text style={styles.quickActionLabel}>My Tasks</Text>
+                    </TouchableOpacity>
+                  )}
+
+                  {/* Users - admin only */}
+                  {user?.role === 'admin' && (
+                    <TouchableOpacity
+                      style={styles.quickActionButton}
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        router.push('/(tabs)/users');
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <View style={[styles.quickActionIcon, { backgroundColor: 'rgba(139, 92, 246, 0.1)' }]}>
+                        <Users color="#8B5CF6" size={22} />
+                      </View>
+                      <Text style={styles.quickActionLabel}>Users</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
               </Animated.View>
             )}
-          </Pressable>
+          </View>
         </Animated.View>
       </ScrollView>
 
@@ -597,6 +659,38 @@ const styles = StyleSheet.create({
     color: '#4B5563',
     lineHeight: 22,
     fontWeight: '400',
+    marginBottom: 16,
+  },
+  // Quick action buttons
+  quickActionsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+  },
+  quickActionButton: {
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+    borderRadius: 16,
+    paddingVertical: 16,
+    paddingHorizontal: 12,
+    minWidth: 90,
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+  },
+  quickActionIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
+  },
+  quickActionLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#374151',
+    textAlign: 'center',
   },
   // Legacy cardText (for backward compatibility)
   cardText: {

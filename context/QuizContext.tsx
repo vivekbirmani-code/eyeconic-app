@@ -124,51 +124,51 @@ export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children
   ) => {
     if (!currentAttempt) return;
 
-    // Update local state immediately
-    const updatedAnswers = [...currentAttempt.answers];
-    const answerIndex = updatedAnswers.findIndex(a => a.questionIndex === questionIndex);
-    
-    if (answerIndex !== -1) {
-      updatedAnswers[answerIndex] = {
-        questionIndex,
-        selectedAnswer,
-        markedForReview,
-        timeSpent
-      };
-    } else {
-      updatedAnswers.push({
-        questionIndex,
-        selectedAnswer,
-        markedForReview,
-        timeSpent
-      });
-    }
-
-    setCurrentAttempt({
-      ...currentAttempt,
-      answers: updatedAnswers
-    });
-
-    // Add to save queue
-    const newQueue = new Map(saveQueue);
-    newQueue.set(questionIndex, {
+    const answerData: QuizAnswer = {
       questionIndex,
       selectedAnswer,
       markedForReview,
       timeSpent
+    };
+
+    // Update local state immediately using functional updater to avoid stale closure
+    setCurrentAttempt(prev => {
+      if (!prev) return prev;
+      const updatedAnswers = [...prev.answers];
+      const idx = updatedAnswers.findIndex(a => a.questionIndex === questionIndex);
+      
+      if (idx !== -1) {
+        updatedAnswers[idx] = answerData;
+      } else {
+        updatedAnswers.push(answerData);
+      }
+
+      return {
+        ...prev,
+        answers: updatedAnswers
+      };
     });
-    setSaveQueue(newQueue);
+
+    // Add to save queue using functional updater
+    setSaveQueue(prevQueue => {
+      const newQueue = new Map(prevQueue);
+      newQueue.set(questionIndex, answerData);
+      return newQueue;
+    });
 
     // Immediate save for critical actions (not waiting for auto-save)
     try {
       await api.put(
         `/quizzes/${currentAttempt.quizId}/attempt/${currentAttempt.attemptId}/answer`,
-        { questionIndex, selectedAnswer, markedForReview, timeSpent }
+        answerData
       );
       
       // Remove from queue after successful immediate save
-      newQueue.delete(questionIndex);
-      setSaveQueue(newQueue);
+      setSaveQueue(prevQueue => {
+        const newQueue = new Map(prevQueue);
+        newQueue.delete(questionIndex);
+        return newQueue;
+      });
     } catch (error) {
       console.warn('Immediate save failed, will retry in background:', error);
       // Keep in queue - will be picked up by processSaveQueue

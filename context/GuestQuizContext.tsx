@@ -182,30 +182,51 @@ export const GuestQuizProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   ) => {
     if (!currentAttempt) return;
 
-    // Update local state immediately
-    const updatedAnswers = [...currentAttempt.answers];
-    const answerIndex = updatedAnswers.findIndex(a => a.questionIndex === questionIndex);
+    // Update local state immediately using functional updater to avoid stale closure
+    setCurrentAttempt(prev => {
+      if (!prev) return prev;
+      
+      const updatedAnswers = [...prev.answers];
+      const answerIndex = updatedAnswers.findIndex(a => a.questionIndex === questionIndex);
 
-    const newAnswer = {
-      questionIndex,
-      selectedAnswer,
-      markedForReview,
-      timeSpent
-    };
+      const newAnswer = {
+        questionIndex,
+        selectedAnswer,
+        markedForReview,
+        timeSpent
+      };
 
-    if (answerIndex !== -1) {
-      updatedAnswers[answerIndex] = newAnswer;
-    } else {
-      updatedAnswers.push(newAnswer);
-    }
+      if (answerIndex !== -1) {
+        updatedAnswers[answerIndex] = newAnswer;
+      } else {
+        updatedAnswers.push(newAnswer);
+      }
 
-    setCurrentAttempt({
-      ...currentAttempt,
-      answers: updatedAnswers
+      return {
+        ...prev,
+        answers: updatedAnswers
+      };
     });
 
     // Save to server (fire and forget for better UX)
     try {
+      // Reconstruct answers for network request to respect scope
+      // We use the current snapshot for the network request
+      const networkAnswers = [...currentAttempt.answers];
+      const idx = networkAnswers.findIndex(a => a.questionIndex === questionIndex);
+      const answerData = {
+        questionIndex,
+        selectedAnswer,
+        markedForReview,
+        timeSpent
+      };
+      
+      if (idx !== -1) {
+        networkAnswers[idx] = answerData;
+      } else {
+        networkAnswers.push(answerData);
+      }
+
       await fetch(`${API_URL}/public/quiz/${currentAttempt.shareToken}/save-progress`, {
         method: 'POST',
         headers: {
@@ -214,7 +235,7 @@ export const GuestQuizProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         body: JSON.stringify({
           guestId,
           attemptId: currentAttempt.attemptId,
-          answers: updatedAnswers
+          answers: networkAnswers
         }),
       });
     } catch (err) {

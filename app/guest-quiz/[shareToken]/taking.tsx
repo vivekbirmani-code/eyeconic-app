@@ -98,7 +98,7 @@ export default function GuestQuizTaking() {
 
   useEffect(() => {
     if (currentAttempt?.answers) {
-      const answer = currentAttempt.answers[currentQuestionIndex];
+      const answer = currentAttempt.answers.find(a => a.questionIndex === currentQuestionIndex);
       if (answer) {
         setSelectedAnswer(answer.selectedAnswer);
         setMarkedForReview(answer.markedForReview);

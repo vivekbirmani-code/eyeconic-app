@@ -37,6 +37,7 @@ interface Quiz {
   title: string;
   testType: string;
   subject: { name: string } | null;
+  subjectNames?: string[];
   assignedStudents: string[];
   createdAt: string;
   duration: number;
@@ -338,8 +339,10 @@ export default function PastTests() {
                   ]}>
                     <Text style={styles.typeBadgeText}>{quiz.testType}</Text>
                   </View>
-                  {quiz.subject?.name && (
-                    <Text style={styles.subjectText}>{quiz.subject.name}</Text>
+                  {(quiz.subjectNames?.length ? quiz.subjectNames.join(', ') : quiz.subject?.name) && (
+                    <Text style={styles.subjectText}>
+                      {quiz.subjectNames?.length ? quiz.subjectNames.join(', ') : quiz.subject?.name}
+                    </Text>
                   )}
                 </View>
                 <View style={styles.quizStats}>

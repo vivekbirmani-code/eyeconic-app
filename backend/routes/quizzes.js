@@ -23,13 +23,41 @@ router.get('/', auth, async (req, res) => {
       quizzes = await Quiz.find({ isActive: true })
         .populate('subject', 'name')
         .populate('createdBy', 'name')
+        .populate({ path: 'questions', select: 'subject', populate: { path: 'subject', select: 'name' } })
         .sort({ createdAt: -1 });
+
+      // Compute unique subject names from questions for multi-subject display
+      quizzes = quizzes.map(q => {
+        const qObj = q.toObject();
+        const names = [...new Set(
+          (qObj.questions || [])
+            .map(qu => qu.subject?.name)
+            .filter(Boolean)
+        )];
+        qObj.subjectNames = names.length > 0 ? names : (qObj.subject?.name ? [qObj.subject.name] : []);
+        // Strip full question data to keep response small
+        qObj.questions = (qObj.questions || []).map(qu => qu._id);
+        return qObj;
+      });
     } else if (req.user.role === 'mentor') {
       // Mentor sees all quizzes for now
       quizzes = await Quiz.find({ isActive: true })
         .populate('subject', 'name')
         .populate('createdBy', 'name')
+        .populate({ path: 'questions', select: 'subject', populate: { path: 'subject', select: 'name' } })
         .sort({ createdAt: -1 });
+
+      quizzes = quizzes.map(q => {
+        const qObj = q.toObject();
+        const names = [...new Set(
+          (qObj.questions || [])
+            .map(qu => qu.subject?.name)
+            .filter(Boolean)
+        )];
+        qObj.subjectNames = names.length > 0 ? names : (qObj.subject?.name ? [qObj.subject.name] : []);
+        qObj.questions = (qObj.questions || []).map(qu => qu._id);
+        return qObj;
+      });
     } else {
       // Student sees only quizzes assigned to them
       quizzes = await Quiz.find({
@@ -87,7 +115,9 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
       instructions,
       assignedStudents,
       selectedQuestionIds,  // NEW: optional array of specific question IDs for manual selection
-      shareSolution   // NEW: whether to share solutions with students (defaults to true)
+      shareSolution,  // NEW: whether to share solutions with students (defaults to true)
+      scheduledDate,
+      expiryDate
     } = req.body;
 
     console.log('Creating quiz from bank:', { title, subject, subjects, testType, numberOfQuestions, selectedQuestionIds: selectedQuestionIds?.length, shareSolution });
@@ -159,7 +189,9 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
       totalMarks,
       assignedStudents: assignedStudents || [],
       createdBy: req.user._id,
-      shareSolution: shareSolution !== undefined ? shareSolution : true  // Default to true
+      shareSolution: shareSolution !== undefined ? shareSolution : true,  // Default to true
+      scheduledDate: scheduledDate ? new Date(scheduledDate) : undefined,
+      expiryDate: expiryDate ? new Date(expiryDate) : undefined
     });
 
     await quiz.save();
@@ -184,7 +216,7 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
       return res.status(400).json({ message: 'No file uploaded' });
     }
 
-    const { quizTitle, testType, duration, subjectId, instructions } = req.body;
+    const { quizTitle, testType, duration, subjectId, instructions, scheduledDate, expiryDate } = req.body;
 
     // Parse Excel
     const { questions: parsedQuestions, errors } = await parseExcel(req.file.buffer);
@@ -349,16 +381,25 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
       });
     }
 
-    // Create Quiz
+    // Collect all unique subject IDs from the created/linked questions
+    const allSubjectIds = [...new Set(
+      createdQuestions.map(q => q.subject?.toString()).filter(Boolean)
+    )];
+
+    // Create Quiz — use user-selected subject if provided, otherwise first question's subject
+    const primarySubjectId = subjectId || firstSubjectId || createdQuestions[0]?.subject;
+
     const quiz = new Quiz({
       title: quizTitle,
-      subject: firstSubjectId || subjectId || createdQuestions[0]?.subject,
+      subject: primarySubjectId,
       testType: testType || 'daily',
       duration: parseInt(duration) || 30,
       instructions: instructions ? JSON.parse(instructions) : [],
       questions: questionIds,
       assignedStudents: [],
-      createdBy: req.user._id
+      createdBy: req.user._id,
+      scheduledDate: scheduledDate ? new Date(scheduledDate) : undefined,
+      expiryDate: expiryDate ? new Date(expiryDate) : undefined
     });
 
     await quiz.save();
@@ -418,7 +459,7 @@ router.post('/:id/duplicate', auth, authorize('admin'), async (req, res) => {
 // Update Quiz
 router.put('/:id', auth, authorize('admin'), async (req, res) => {
   try {
-    const { title, duration, instructions, questions, testType, subject, assignedStudents, shareSolution } = req.body;
+    const { title, duration, instructions, questions, testType, subject, assignedStudents, shareSolution, scheduledDate, expiryDate } = req.body;
 
     // Check if quiz exists
     const quiz = await Quiz.findById(req.params.id);
@@ -439,6 +480,8 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
     if (subject) quiz.subject = subject; // Expecting single subject ID or handled by frontend
     if (assignedStudents) quiz.assignedStudents = assignedStudents;
     if (shareSolution !== undefined) quiz.shareSolution = shareSolution;  // Allow toggling solution sharing
+    if (scheduledDate) quiz.scheduledDate = new Date(scheduledDate);
+    if (expiryDate) quiz.expiryDate = new Date(expiryDate);
 
     if (questions && questions.length > 0) {
       quiz.questions = questions;
@@ -511,6 +554,15 @@ router.post('/:id/start', auth, authorize('student'), async (req, res) => {
 
     if (!quiz.assignedStudents.includes(req.user._id)) {
       return res.status(403).json({ message: 'You are not assigned to this quiz' });
+    }
+
+    // Enforce time window
+    const now = new Date();
+    if (quiz.scheduledDate && now < quiz.scheduledDate) {
+      return res.status(403).json({ message: 'This quiz has not started yet. It opens on ' + quiz.scheduledDate.toLocaleString(), scheduledDate: quiz.scheduledDate });
+    }
+    if (quiz.expiryDate && now > quiz.expiryDate) {
+      return res.status(403).json({ message: 'This quiz has expired. It closed on ' + quiz.expiryDate.toLocaleString(), expiryDate: quiz.expiryDate });
     }
 
     // Check for existing attempt
@@ -702,10 +754,10 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
     // Calculate accuracy for each section before storing
     const sectionPerformanceArray = Object.values(sectionPerformance).map(section => {
       const totalQuestionsInSection = section.correct + section.incorrect + section.skipped;
-      const accuracy = totalQuestionsInSection > 0 
-        ? Math.round((section.correct / totalQuestionsInSection) * 100) 
+      const accuracy = totalQuestionsInSection > 0
+        ? Math.round((section.correct / totalQuestionsInSection) * 100)
         : 0;
-      
+
       return {
         ...section,
         accuracy
@@ -720,7 +772,7 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
     attempt.marksObtained = marksObtained;
     attempt.totalMarks = quiz.totalMarks;
     attempt.sectionPerformance = sectionPerformanceArray;
-    
+
     // SECURITY: Store shareSolution value at submission time for audit trail
     attempt.shareSolutionAtSubmission = quiz.shareSolution !== undefined ? quiz.shareSolution : true;
 
@@ -774,7 +826,7 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
     // Build question data with conditional solution fields
     const questionsWithAnswers = attempt.quiz.questions.map((q, index) => {
       const userAnswer = attempt.answers.find(a => a.questionIndex === index);
-      
+
       const baseData = {
         _id: q._id,
         question: q.question,

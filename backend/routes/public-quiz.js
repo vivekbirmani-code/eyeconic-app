@@ -73,13 +73,22 @@ router.get('/quiz/:shareToken', async (req, res) => {
             isActive: true
         })
             .populate('subject', 'name')
-            .select('title subject duration instructions totalMarks questions publicExpiryDate');
+            .select('title subject duration instructions totalMarks questions publicExpiryDate scheduledDate expiryDate');
 
         if (!quiz) {
             return res.status(404).json({
                 success: false,
                 message: 'Quiz not found or link has expired'
             });
+        }
+
+        // Enforce time window
+        const now = new Date();
+        if (quiz.scheduledDate && now < quiz.scheduledDate) {
+            return res.status(403).json({ success: false, message: 'This quiz has not started yet. It opens on ' + quiz.scheduledDate.toLocaleString(), scheduledDate: quiz.scheduledDate });
+        }
+        if (quiz.expiryDate && now > quiz.expiryDate) {
+            return res.status(403).json({ success: false, message: 'This quiz has expired. It closed on ' + quiz.expiryDate.toLocaleString(), expiryDate: quiz.expiryDate });
         }
 
         // Check if public link has expired
@@ -138,6 +147,15 @@ router.post('/quiz/:shareToken/start', async (req, res) => {
                 success: false,
                 message: 'Quiz not found or link has expired'
             });
+        }
+
+        // Enforce time window
+        const now = new Date();
+        if (quiz.scheduledDate && now < quiz.scheduledDate) {
+            return res.status(403).json({ success: false, message: 'This quiz has not started yet. It opens on ' + quiz.scheduledDate.toLocaleString(), scheduledDate: quiz.scheduledDate });
+        }
+        if (quiz.expiryDate && now > quiz.expiryDate) {
+            return res.status(403).json({ success: false, message: 'This quiz has expired. It closed on ' + quiz.expiryDate.toLocaleString(), expiryDate: quiz.expiryDate });
         }
 
         // Check if public link has expired
