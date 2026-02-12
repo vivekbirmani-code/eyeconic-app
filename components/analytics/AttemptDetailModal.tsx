@@ -6,9 +6,11 @@ import {
     StyleSheet,
     TouchableOpacity,
     ScrollView,
-    ActivityIndicator
+    ActivityIndicator,
+    Platform,
+    StatusBar
 } from 'react-native';
-import { X, CheckCircle, XCircle, MinusCircle, Clock } from 'lucide-react-native';
+import { X, CheckCircle, XCircle, MinusCircle, Clock, Award, BarChart3, FileText } from 'lucide-react-native';
 import { api } from '@/services/api';
 
 interface AttemptDetailModalProps {
@@ -27,8 +29,17 @@ interface AttemptDetail {
         totalQuestions: number;
         marksObtained: number;
         totalMarks: number;
-        sectionPerformance: any[];
+        sectionPerformance: Array<{
+            sectionName: string;
+            correct: number;
+            incorrect: number;
+            skipped: number;
+            timeSpent: number;
+            accuracy?: number;
+        }>;
         tabSwitchCount: number;
+        retestRequested?: boolean;
+        retestApproved?: boolean;
     };
     quiz: {
         _id: string;
@@ -36,6 +47,7 @@ interface AttemptDetail {
         subject: any;
         testType: string;
         shareSolution: boolean;
+        totalQuestions: number; // Ensure this is available or derived
     };
     student: {
         _id: string;
@@ -60,7 +72,10 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
 
         setLoading(true);
         try {
-            // Extract quizId from attemptId by finding the quiz
+            // Extract quizId from attemptId by finding the quiz (if needed, or backend handles it)
+            // The previous logic was: get attempt -> get quizId -> get results
+            // We'll stick to that to be safe, or just call the result endpoint if it's robust.
+            // Following previous pattern:
             const attemptRes = await api.get(`/quizzes/attempt/${attemptId}`);
             const quizId = attemptRes.data.quiz;
 
@@ -75,21 +90,81 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
 
     if (!visible) return null;
 
+    // --- Helper Functions from Result Screen ---
+
+    const formatTime = (seconds: number) => {
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        const secs = seconds % 60;
+
+        if (hours > 0) {
+            return `${hours}h ${minutes}m ${secs}s`;
+        }
+        return `${minutes}m ${secs}s`;
+    };
+
     const calculateStats = () => {
         if (!attemptData) return null;
 
         const correct = attemptData.attempt.score;
-        const total = attemptData.attempt.totalQuestions;
-        const answered = attemptData.questions.filter(q =>
+        // Parsing totalQuestions if it's not directly on attempt (sometimes it's on quiz)
+        const total = attemptData.attempt.totalQuestions || attemptData.quiz.totalQuestions || 0;
+        
+        // Calculate answered based on questions array if available, or fallback
+        const answered = attemptData.questions ? attemptData.questions.filter(q =>
             q.userAnswer !== undefined && q.userAnswer !== -1
-        ).length;
-        const wrong = answered - correct;
-        const skipped = total - answered;
+        ).length : (total - (attemptData.attempt.score + (total - attemptData.attempt.score))); // Fallback logic is tricky without data
 
-        return { correct, wrong, skipped, total };
+        // Use strict counts if available in sectionPerformance
+        let totalCorrect = 0;
+        let totalWrong = 0;
+        let totalSkipped = 0;
+        
+        if (attemptData.attempt.sectionPerformance && attemptData.attempt.sectionPerformance.length > 0) {
+             attemptData.attempt.sectionPerformance.forEach(s => {
+                 totalCorrect += s.correct;
+                 totalWrong += s.incorrect;
+                 totalSkipped += s.skipped;
+             });
+        } else {
+            // Fallback if section performance is missing (legacy attempts)
+            totalCorrect = correct;
+            const computedAnswered = attemptData.questions ? attemptData.questions.filter(q => q.userAnswer !== undefined && q.userAnswer !== -1).length : 0;
+            totalWrong = computedAnswered - totalCorrect;
+            totalSkipped = total - computedAnswered;
+        }
+
+        const markedCount = attemptData.questions ? attemptData.questions.filter(r => r.markedForReview).length : 0;
+        
+        // Time spent - sometimes available in milliseconds in attempt.endTime - attempt.startTime
+        // or sum of section times
+        let totalTimeSpent = 0;
+        if(attemptData.attempt.sectionPerformance) {
+            totalTimeSpent = attemptData.attempt.sectionPerformance.reduce((sum, section) => sum + section.timeSpent, 0);
+        }
+        if (totalTimeSpent === 0 && attemptData.attempt.startTime && attemptData.attempt.endTime) {
+             totalTimeSpent = (new Date(attemptData.attempt.endTime).getTime() - new Date(attemptData.attempt.startTime).getTime()) / 1000;
+        }
+
+        const percentage = attemptData.attempt.totalMarks ? Math.round((attemptData.attempt.marksObtained / attemptData.attempt.totalMarks) * 100) : 0;
+
+        return { correct: totalCorrect, wrong: totalWrong, skipped: totalSkipped, total, markedCount, totalTimeSpent, percentage };
     };
 
     const stats = calculateStats();
+
+    // Prepare section performance with accuracy
+    const sectionPerformanceWithAccuracy = attemptData?.attempt.sectionPerformance ? attemptData.attempt.sectionPerformance.map(section => {
+        const totalQuestionsInSection = section.correct + section.incorrect + section.skipped;
+        const accuracy = section.accuracy !== undefined
+            ? section.accuracy
+            : (totalQuestionsInSection > 0 ? Math.round((section.correct / totalQuestionsInSection) * 100) : 0);
+
+        return {
+            ...section,
+            accuracy
+        };
+    }) : [];
 
     return (
         <Modal
@@ -102,7 +177,9 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
                 <View style={styles.modal}>
                     {/* Header */}
                     <View style={styles.header}>
-                        <Text style={styles.title}>Attempt Details</Text>
+                        <Text style={styles.title}>
+                             {attemptData ? attemptData.student.name : 'Attempt Details'}
+                        </Text>
                         <TouchableOpacity onPress={onClose}>
                             <X color="#1F2937" size={24} />
                         </TouchableOpacity>
@@ -112,81 +189,118 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
                         <View style={styles.loadingContainer}>
                             <ActivityIndicator color="#01b4ae" size="large" />
                         </View>
-                    ) : attemptData ? (
+                    ) : attemptData && stats ? (
                         <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-                            {/* Student Info */}
-                            <View style={styles.section}>
-                                <Text style={styles.sectionTitle}>Student</Text>
-                                <Text style={styles.studentName}>{attemptData.student.name}</Text>
-                                <Text style={styles.studentEmail}>{attemptData.student.email}</Text>
-                            </View>
-
-                            {/* Quiz Info */}
-                            <View style={styles.section}>
-                                <Text style={styles.sectionTitle}>Quiz</Text>
+                            
+                            {/* Student & Quiz Info Header */}
+                            <View style={styles.infoSection}>
                                 <Text style={styles.quizTitle}>{attemptData.quiz.title}</Text>
-                                <View style={styles.typeBadge}>
-                                    <Text style={styles.typeBadgeText}>{attemptData.quiz.testType}</Text>
-                                </View>
-                            </View>
-
-                            {/* Score Summary */}
-                            <View style={styles.section}>
-                                <Text style={styles.sectionTitle}>Score</Text>
-                                <View style={styles.scoreContainer}>
-                                    <Text style={styles.scoreText}>
-                                        {attemptData.attempt.marksObtained}/{attemptData.attempt.totalMarks}
-                                    </Text>
-                                    <Text style={styles.percentageText}>
-                                        ({Math.round((attemptData.attempt.marksObtained / attemptData.attempt.totalMarks) * 100)}%)
-                                    </Text>
-                                </View>
-                            </View>
-
-                            {/* Statistics */}
-                            {stats && (
-                                <View style={styles.section}>
-                                    <Text style={styles.sectionTitle}>Statistics</Text>
-                                    <View style={styles.statsGrid}>
-                                        <View style={styles.statCard}>
-                                            <CheckCircle color="#10B981" size={20} />
-                                            <Text style={styles.statValue}>{stats.correct}</Text>
-                                            <Text style={styles.statLabel}>Correct</Text>
-                                        </View>
-                                        <View style={styles.statCard}>
-                                            <XCircle color="#EF4444" size={20} />
-                                            <Text style={styles.statValue}>{stats.wrong}</Text>
-                                            <Text style={styles.statLabel}>Wrong</Text>
-                                        </View>
-                                        <View style={styles.statCard}>
-                                            <MinusCircle color="#9CA3AF" size={20} />
-                                            <Text style={styles.statValue}>{stats.skipped}</Text>
-                                            <Text style={styles.statLabel}>Skipped</Text>
-                                        </View>
-                                        <View style={styles.statCard}>
-                                            <Clock color="#F59E0B" size={20} />
-                                            <Text style={styles.statValue}>
-                                                {Math.round((new Date(attemptData.attempt.endTime).getTime() -
-                                                    new Date(attemptData.attempt.startTime).getTime()) / 1000 / 60)}m
-                                            </Text>
-                                            <Text style={styles.statLabel}>Time</Text>
-                                        </View>
-                                    </View>
-                                </View>
-                            )}
-
-                            {/* Date */}
-                            <View style={styles.section}>
-                                <Text style={styles.sectionTitle}>Completed</Text>
+                                <Text style={styles.studentEmail}>{attemptData.student.email}</Text>
                                 <Text style={styles.dateText}>
-                                    {new Date(attemptData.attempt.endTime).toLocaleString('en-US', {
-                                        month: 'long',
-                                        day: 'numeric',
-                                        year: 'numeric',
-                                        hour: 'numeric',
-                                        minute: '2-digit'
-                                    })}
+                                     {new Date(attemptData.attempt.endTime).toLocaleString()}
                                 </Text>
+                            </View>
+
+                            {/* Score Card - Mirrored from Result Screen */}
+                            <View style={styles.scoreCard}>
+                                <View style={styles.scoreIconContainer}>
+                                    {stats.percentage >= 50 ? (
+                                        <CheckCircle color="#10B981" size={64} />
+                                    ) : (
+                                        <XCircle color="#EF4444" size={64} />
+                                    )}
+                                </View>
+                                <Text style={styles.scoreText}>
+                                    {stats.correct}/{stats.total}
+                                </Text>
+                                <Text style={styles.scoreSubtext}>Questions Correct</Text>
+                                <View style={styles.percentageContainer}>
+                                    <Text style={[
+                                        styles.percentageText,
+                                        stats.percentage >= 50 ? styles.passPercentage : styles.failPercentage
+                                    ]}>
+                                        {stats.percentage}%
+                                    </Text>
+                                </View>
+                                <Text style={styles.marksText}>{attemptData.attempt.marksObtained} / {attemptData.attempt.totalMarks} Marks</Text>
+                            </View>
+
+                            {/* Metrics Grid 1: Counts */}
+                            <View style={styles.metricsContainer}>
+                                <View style={styles.metricCard}>
+                                    <CheckCircle color="#10B981" size={24} />
+                                    <Text style={styles.metricValue}>{stats.correct}</Text>
+                                    <Text style={styles.metricLabel}>Correct</Text>
+                                </View>
+                                <View style={styles.metricCard}>
+                                    <XCircle color="#EF4444" size={24} />
+                                    <Text style={styles.metricValue}>{stats.wrong}</Text>
+                                    <Text style={styles.metricLabel}>Incorrect</Text>
+                                </View>
+                                <View style={styles.metricCard}>
+                                    <MinusCircle color="#F59E0B" size={24} />
+                                    <Text style={styles.metricValue}>{stats.skipped}</Text>
+                                    <Text style={styles.metricLabel}>Skipped</Text>
+                                </View>
+                            </View>
+
+                            {/* Metrics Grid 2: Analysis */}
+                            <View style={styles.metricsContainer}>
+                                <View style={styles.metricCard}>
+                                    <BarChart3 color="#6B7280" size={24} />
+                                    <Text style={styles.metricValue}>{stats.markedCount}</Text>
+                                    <Text style={styles.metricLabel}>Marked</Text>
+                                </View>
+                                <View style={styles.metricCard}>
+                                    <Award color="#8B5CF6" size={24} />
+                                    <Text style={styles.metricValue}>{stats.percentage}%</Text>
+                                    <Text style={styles.metricLabel}>Accuracy</Text>
+                                </View>
+                                <View style={styles.metricCard}>
+                                    <Clock color="#3B82F6" size={24} />
+                                    <Text style={styles.metricValue}>{formatTime(stats.totalTimeSpent)}</Text>
+                                    <Text style={styles.metricLabel}>Time</Text>
+                                </View>
+                            </View>
+
+                            {/* Section Performance Table */}
+                             <View style={styles.sectionContainer}>
+                                <Text style={styles.sectionTitle}>Section Performance</Text>
+                                <View style={styles.tableContainer}>
+                                    {/* Table Header */}
+                                    <View style={styles.tableHeader}>
+                                        <Text style={[styles.tableHeaderText, styles.colSection]}>Section</Text>
+                                        <Text style={[styles.tableHeaderText, styles.colStat]}>Correct</Text>
+                                        <Text style={[styles.tableHeaderText, styles.colStat]}>Wrong</Text>
+                                        <Text style={[styles.tableHeaderText, styles.colStat]}>Skip</Text>
+                                        <Text style={[styles.tableHeaderText, styles.colStat]}>Acc%</Text>
+                                        <Text style={[styles.tableHeaderText, styles.colTime]}>Time</Text>
+                                    </View>
+
+                                    {/* Table Rows */}
+                                    {sectionPerformanceWithAccuracy.map((section, index) => (
+                                        <View key={index} style={styles.tableRow}>
+                                            <Text style={[styles.tableCell, styles.colSection]} numberOfLines={1}>
+                                                {section.sectionName}
+                                            </Text>
+                                            <Text style={[styles.tableCell, styles.colStat, styles.correctText]}>
+                                                {section.correct}
+                                            </Text>
+                                            <Text style={[styles.tableCell, styles.colStat, styles.incorrectText]}>
+                                                {section.incorrect}
+                                            </Text>
+                                            <Text style={[styles.tableCell, styles.colStat, styles.skippedText]}>
+                                                {section.skipped}
+                                            </Text>
+                                            <Text style={[styles.tableCell, styles.colStat]}>
+                                                {section.accuracy}%
+                                            </Text>
+                                            <Text style={[styles.tableCell, styles.colTime]}>
+                                                {formatTime(section.timeSpent)}
+                                            </Text>
+                                        </View>
+                                    ))}
+                                </View>
                             </View>
 
                             {/* Tab Switch Warning */}
@@ -218,21 +332,26 @@ const styles = StyleSheet.create({
         justifyContent: 'flex-end',
     },
     modal: {
-        backgroundColor: '#FFFFFF',
+        backgroundColor: '#F3F4F6', // Changed to greyish background for contrast with white cards
         borderTopLeftRadius: 20,
         borderTopRightRadius: 20,
-        maxHeight: '85%',
+        maxHeight: '90%',
+        flex: 1, 
+        marginTop: 60, // Give some space from top
     },
     header: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
         padding: 20,
+        backgroundColor: '#FFFFFF',
         borderBottomWidth: 1,
         borderBottomColor: '#E5E7EB',
+        borderTopLeftRadius: 20,
+        borderTopRightRadius: 20,
     },
     title: {
-        fontSize: 20,
+        fontSize: 18,
         fontWeight: '700',
         color: '#1F2937',
     },
@@ -243,102 +362,189 @@ const styles = StyleSheet.create({
     content: {
         flex: 1,
     },
-    section: {
-        paddingHorizontal: 20,
-        paddingVertical: 16,
-        borderBottomWidth: 1,
-        borderBottomColor: '#F3F4F6',
-    },
-    sectionTitle: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#6B7280',
-        marginBottom: 8,
-        textTransform: 'uppercase',
-    },
-    studentName: {
-        fontSize: 18,
-        fontWeight: '600',
-        color: '#1F2937',
+    // ID Card / Info Section
+    infoSection: {
+        padding: 20,
+        backgroundColor: '#FFFFFF',
+        marginBottom: 10,
     },
     studentEmail: {
         fontSize: 14,
         color: '#6B7280',
-        marginTop: 4,
+        marginTop: 2,
     },
     quizTitle: {
-        fontSize: 16,
-        fontWeight: '600',
+        fontSize: 20,
+        fontWeight: 'bold',
         color: '#1F2937',
-        marginBottom: 8,
     },
-    typeBadge: {
-        alignSelf: 'flex-start',
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 6,
-        backgroundColor: 'rgba(1, 180, 174, 0.1)',
-    },
-    typeBadgeText: {
+    dateText: {
         fontSize: 12,
-        fontWeight: '700',
-        color: '#01b4ae',
-        textTransform: 'capitalize',
+        color: '#9CA3AF',
+        marginTop: 4,
     },
-    scoreContainer: {
-        flexDirection: 'row',
-        alignItems: 'baseline',
-        gap: 8,
+    // Score Card
+    scoreCard: {
+        margin: 16,
+        padding: 24,
+        backgroundColor: '#FFFFFF',
+        borderRadius: 16,
+        alignItems: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 3,
+    },
+    scoreIconContainer: {
+        marginBottom: 16,
     },
     scoreText: {
-        fontSize: 32,
-        fontWeight: '700',
+        fontSize: 40,
+        fontWeight: 'bold',
         color: '#1F2937',
+    },
+    scoreSubtext: {
+        fontSize: 14,
+        color: '#6B7280',
+        marginTop: 4,
+    },
+    marksText: {
+        marginTop: 8,
+        fontSize: 14,
+        color: '#6B7280',
+        fontWeight: '500'
+    },
+    percentageContainer: {
+        marginTop: 12,
+        paddingHorizontal: 16,
+        paddingVertical: 6,
+        borderRadius: 20,
+        backgroundColor: '#F9FAFB'
     },
     percentageText: {
         fontSize: 20,
-        fontWeight: '600',
-        color: '#6B7280',
+        fontWeight: 'bold',
     },
-    statsGrid: {
+    passPercentage: {
+        color: '#10B981',
+    },
+    failPercentage: {
+        color: '#EF4444',
+    },
+    // Metrics
+    metricsContainer: {
         flexDirection: 'row',
+        paddingHorizontal: 16,
         gap: 12,
+        marginBottom: 12,
     },
-    statCard: {
+    metricCard: {
         flex: 1,
-        backgroundColor: '#F9FAFB',
+        backgroundColor: '#FFFFFF',
+        borderRadius: 12,
         padding: 12,
-        borderRadius: 8,
         alignItems: 'center',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 1 },
+        shadowOpacity: 0.05,
+        shadowRadius: 2,
+        elevation: 1,
     },
-    statValue: {
-        fontSize: 20,
-        fontWeight: '700',
+    metricValue: {
+        fontSize: 18,
+        fontWeight: 'bold',
         color: '#1F2937',
-        marginTop: 4,
+        marginTop: 8,
     },
-    statLabel: {
+    metricLabel: {
         fontSize: 11,
         color: '#6B7280',
         marginTop: 2,
+        textAlign: 'center',
     },
-    dateText: {
+    // Section Table
+    sectionContainer: {
+        margin: 16,
+    },
+    sectionTitle: {
         fontSize: 16,
+        fontWeight: 'bold',
         color: '#1F2937',
+        marginBottom: 12,
+        marginLeft: 4,
     },
+    tableContainer: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 12,
+        overflow: 'hidden',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 2,
+    },
+    tableHeader: {
+        flexDirection: 'row',
+        backgroundColor: '#F9FAFB',
+        paddingVertical: 12,
+        paddingHorizontal: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#E5E7EB',
+    },
+    tableHeaderText: {
+        fontSize: 11,
+        fontWeight: '700',
+        color: '#4B5563',
+    },
+    tableRow: {
+        flexDirection: 'row',
+        paddingVertical: 12,
+        paddingHorizontal: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F3F4F6',
+    },
+    tableCell: {
+        fontSize: 12,
+        color: '#4B5563',
+    },
+    colSection: {
+        flex: 2,
+    },
+    colStat: {
+        flex: 1,
+        textAlign: 'center',
+    },
+    colTime: {
+        flex: 1.2,
+        textAlign: 'right',
+    },
+    correctText: {
+        color: '#10B981',
+        fontWeight: '600',
+    },
+    incorrectText: {
+        color: '#EF4444',
+        fontWeight: '600',
+    },
+    skippedText: {
+        color: '#F59E0B',
+        fontWeight: '600',
+    },
+    // Warnings & Errors
     warningCard: {
-        backgroundColor: '#FEF3C7',
+        margin: 16,
         padding: 16,
-        marginHorizontal: 20,
-        marginTop: 16,
-        borderRadius: 8,
-        borderLeftWidth: 4,
-        borderLeftColor: '#F59E0B',
+        backgroundColor: '#FEF2F2',
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#FECACA',
     },
     warningText: {
+        color: '#991B1B',
         fontSize: 14,
-        color: '#92400E',
-        fontWeight: '500',
+        textAlign: 'center',
+        fontWeight: '600',
     },
     errorContainer: {
         padding: 40,
@@ -347,5 +553,6 @@ const styles = StyleSheet.create({
     errorText: {
         fontSize: 16,
         color: '#EF4444',
+        textAlign: 'center',
     },
 });

@@ -54,19 +54,56 @@ router.get('/', auth, async (req, res) => {
 // Create group (Admin only)
 router.post('/', auth, authorize('admin'), async (req, res) => {
   try {
-    const { name, description, memberIds } = req.body;
+    const { name, description, memberIds, type = 'general' } = req.body;
+
+    // Validate group type
+    if (!['general', 'mentors', 'admin'].includes(type)) {
+      return res.status(400).json({ message: 'Invalid group type' });
+    }
 
     // Start with admin as member
     const initialMembers = [req.user._id];
+    let allMemberIds = [req.user._id];
 
     // Add additional members if provided
     if (memberIds && memberIds.length > 0) {
       initialMembers.push(...memberIds);
+      allMemberIds.push(...memberIds);
+    }
+
+    // Validate members based on group type
+    if (memberIds && memberIds.length > 0) {
+      const members = await User.find({ _id: { $in: allMemberIds } });
+
+      // Check for Mentors Group: Only Admins and Mentors allowed
+      if (type === 'mentors') {
+        const hasStudents = members.some(m => m.role === 'student');
+        if (hasStudents) {
+          return res.status(400).json({ message: 'Mentors group cannot contain students' });
+        }
+      }
+
+      // Check for Admin Group: Only Admins allowed
+      if (type === 'admin') {
+        const hasNonAdmins = members.some(m => m.role !== 'admin');
+        if (hasNonAdmins) {
+          return res.status(400).json({ message: 'Admin group can only contain admins' });
+        }
+      }
+
+      // Check for General Group: Max 1 Student allowed
+      if (type === 'general') {
+        const studentCount = members.filter(m => m.role === 'student').length;
+        if (studentCount > 1) {
+          return res.status(400).json({ message: 'General group can only have 1 student' });
+        }
+      }
     }
 
     const group = new Group({
       name,
       description,
+      type,
       members: initialMembers,
       createdBy: req.user._id
     });
@@ -103,6 +140,38 @@ router.post('/:id/members', auth, authorize('admin'), async (req, res) => {
     const group = await Group.findById(req.params.id);
     if (!group) {
       return res.status(404).json({ message: 'Group not found' });
+    }
+
+    // Validate new members based on group type
+    const currentMembers = await User.find({ _id: { $in: group.members } });
+    const newMembersData = await User.find({ _id: { $in: userIds } });
+
+    // Check for Mentors Group
+    if (group.type === 'mentors') {
+      const hasStudents = newMembersData.some(m => m.role === 'student');
+      if (hasStudents) {
+        return res.status(400).json({ message: 'Cannot add students to a Mentors group' });
+      }
+    }
+
+    // Check for Admin Group
+    if (group.type === 'admin') {
+      const hasNonAdmins = newMembersData.some(m => m.role !== 'admin');
+      if (hasNonAdmins) {
+        return res.status(400).json({ message: 'Cannot add non-admins to an Admin group' });
+      }
+    }
+
+    // Check for General Group
+    if (group.type === 'general') {
+      // Count existing students
+      const currentStudentCount = currentMembers.filter(m => m.role === 'student').length;
+      // Count new students
+      const newStudentCount = newMembersData.filter(m => m.role === 'student').length;
+
+      if (currentStudentCount + newStudentCount > 1) {
+        return res.status(400).json({ message: 'General group cannot have more than 1 student' });
+      }
     }
 
     // Get existing member IDs as strings for comparison

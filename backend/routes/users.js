@@ -32,7 +32,7 @@ router.get('/search', auth, authorize('admin'), async (req, res) => {
     }
 
     // Filter by role
-    if (role && ['mentor', 'student'].includes(role)) {
+    if (role && ['mentor', 'student', 'admin'].includes(role)) {
       query.role = role;
     }
 

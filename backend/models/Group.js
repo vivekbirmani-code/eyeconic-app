@@ -6,6 +6,12 @@ const groupSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
+  type: {
+    type: String,
+    enum: ['general', 'mentors', 'admin'],
+    default: 'general',
+    required: true
+  },
   description: {
     type: String,
     trim: true

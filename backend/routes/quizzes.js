@@ -1338,4 +1338,18 @@ router.get('/:id/share-status', auth, authorize('admin'), async (req, res) => {
   }
 });
 
+// Get attempt details by ID (used for retrieving quizId)
+router.get('/attempt/:id', auth, async (req, res) => {
+  try {
+    const attempt = await QuizAttempt.findById(req.params.id);
+    if (!attempt) {
+      return res.status(404).json({ message: 'Attempt not found' });
+    }
+    res.json(attempt);
+  } catch (error) {
+    console.error('Get attempt error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 module.exports = router;
