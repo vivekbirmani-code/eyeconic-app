@@ -509,11 +509,21 @@ router.get('/:id', auth, async (req, res) => {
       .populate('createdBy', 'name')
       .populate({
         path: 'questions',
-        select: 'question options marks topicName questionImage optionImages' // Never send correctAnswer or explanation
+        select: 'question options marks topicName questionImage optionImages subject',
+        populate: {
+          path: 'subject',
+          select: 'name'
+        }
       });
 
     if (!quiz) {
       return res.status(404).json({ message: 'Quiz not found' });
+    }
+
+    // Log any questions with missing subject data for debugging
+    const questionsWithoutSubject = quiz.questions.filter(q => !q.subject);
+    if (questionsWithoutSubject.length > 0) {
+      console.warn(`Quiz ${quiz._id}: ${questionsWithoutSubject.length} questions without subject data`);
     }
 
     // Check access for students

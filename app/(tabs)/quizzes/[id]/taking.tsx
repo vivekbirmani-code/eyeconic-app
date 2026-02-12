@@ -34,7 +34,10 @@ interface Question {
   options: string[];
   optionImages?: string[];
   marks: number;
-  section: string;
+  subject?: {
+    _id: string;
+    name: string;
+  };
 }
 
 interface Quiz {
@@ -92,19 +95,25 @@ function QuizTakingContent() {
     setFailedImages(prev => new Set(prev).add(url));
   }, []);
 
+  // Helper to safely get subject name with fallback
+  const getSubjectName = useCallback((question: Question): string => {
+    return question.subject?.name || 'Uncategorized';
+  }, []);
+
   // Memoize filtered questions for performance
   const filteredQuestions = useMemo(() => {
     if (!quiz) return [];
     return currentSection === 'All'
       ? quiz.questions
-      : quiz.questions.filter(q => (q.section || 'General') === currentSection);
-  }, [quiz, currentSection]);
+      : quiz.questions.filter(q => getSubjectName(q) === currentSection);
+  }, [quiz, currentSection, getSubjectName]);
 
   // Memoize sections to avoid recalculation
   const sections = useMemo(() => {
     if (!quiz) return [];
-    return ['All', ...Array.from(new Set(quiz.questions.map(q => q.section || 'General')))];
-  }, [quiz]);
+    const subjects = quiz.questions.map(q => getSubjectName(q));
+    return ['All', ...Array.from(new Set(subjects))];
+  }, [quiz, getSubjectName]);
 
   // Memoize question statuses
   const questionStatuses = useMemo(() => {
@@ -123,10 +132,14 @@ function QuizTakingContent() {
   const questionCounts = useMemo(() => {
     if (!quiz) return {};
     return sections.reduce((acc, section) => {
-      acc[section] = quiz.questions.filter(q => (q.section || 'General') === section).length;
+      if (section === 'All') {
+        acc[section] = quiz.questions.length;
+      } else {
+        acc[section] = quiz.questions.filter(q => getSubjectName(q) === section).length;
+      }
       return acc;
     }, {} as { [key: string]: number });
-  }, [quiz, sections]);
+  }, [quiz, sections, getSubjectName]);
 
 
 
@@ -316,13 +329,13 @@ function QuizTakingContent() {
 
     if (section !== 'All' && quiz) {
       const firstQuestionInSection = quiz.questions.findIndex(
-        q => (q.section || 'General') === section
+        q => getSubjectName(q) === section
       );
       if (firstQuestionInSection !== -1) {
         setCurrentQuestionIndex(firstQuestionInSection);
       }
     }
-  }, [quiz]);
+  }, [quiz, getSubjectName]);
 
   useEffect(() => {
     // Fetch quiz details only on mount/id change
@@ -461,7 +474,7 @@ function QuizTakingContent() {
                 </Text>
                 <View style={styles.badges}>
                   <View style={styles.sectionBadge}>
-                    <Text style={styles.badgeText}>{currentQuestion.section || 'General'}</Text>
+                    <Text style={styles.badgeText}>{getSubjectName(currentQuestion)}</Text>
                   </View>
                   <View style={styles.marksBadge}>
                     <Text style={styles.badgeText}>{currentQuestion.marks} marks</Text>
