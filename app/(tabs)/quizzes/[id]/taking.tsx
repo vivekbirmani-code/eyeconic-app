@@ -25,6 +25,7 @@ import { QuestionNavigationGrid } from '@/components/QuestionNavigationGrid';
 import { SectionTabs } from '@/components/SectionTabs';
 import { QuestionSkeleton } from '@/components/Skeleton';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { getSocketURL } from '@/services/config';
 
 interface Question {
   _id: string;
@@ -63,6 +64,7 @@ function QuizTakingContent() {
   const [showNavigationGrid, setShowNavigationGrid] = useState(SCREEN_WIDTH > 768);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(false);
+  const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
 
   // Animations
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -70,6 +72,25 @@ function QuizTakingContent() {
   const buttonScaleAnim = useRef(new Animated.Value(1)).current;
 
   const scrollViewRef = useRef<ScrollView>(null);
+
+  // Helper to resolve image URLs (handles relative paths from backend)
+  const getImageUrl = useCallback((path?: string) => {
+    if (!path) return undefined;
+    if (path.startsWith('http') || path.startsWith('https') || path.startsWith('file://') || path.startsWith('data:')) {
+      return { uri: path };
+    }
+
+    // Prepend base URL for relative paths
+    const baseUrl = getSocketURL();
+    // Ensure we don't have double slashes if path starts with /
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+    return { uri: `${baseUrl}${cleanPath}` };
+  }, []);
+
+  // Handle image load errors gracefully
+  const handleImageError = useCallback((url: string) => {
+    setFailedImages(prev => new Set(prev).add(url));
+  }, []);
 
   // Memoize filtered questions for performance
   const filteredQuestions = useMemo(() => {
@@ -454,13 +475,14 @@ function QuizTakingContent() {
               </Text>
 
               {/* Question Image */}
-              {currentQuestion.questionImage ? (
+              {currentQuestion.questionImage && !failedImages.has(currentQuestion.questionImage) && (
                 <Image
-                  source={{ uri: currentQuestion.questionImage }}
+                  source={getImageUrl(currentQuestion.questionImage)}
                   style={styles.questionImage}
                   resizeMode="contain"
+                  onError={() => handleImageError(currentQuestion.questionImage!)}
                 />
-              ) : null}
+              )}
 
               {/* Options */}
               <View style={styles.optionsContainer}>
@@ -494,13 +516,14 @@ function QuizTakingContent() {
                           </Text>
                         ) : null}
 
-                        {currentQuestion.optionImages?.[index] ? (
+                        {currentQuestion.optionImages?.[index] && !failedImages.has(currentQuestion.optionImages[index]) && (
                           <Image
-                            source={{ uri: currentQuestion.optionImages[index] }}
+                            source={getImageUrl(currentQuestion.optionImages[index])}
                             style={styles.optionImage}
                             resizeMode="contain"
+                            onError={() => handleImageError(currentQuestion.optionImages![index])}
                           />
-                        ) : null}
+                        )}
                       </View>
                     </View>
                   </TouchableOpacity>

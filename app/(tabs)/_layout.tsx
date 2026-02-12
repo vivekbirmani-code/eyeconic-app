@@ -3,10 +3,12 @@ import { Users, MessageCircle, BookOpen, Home, UserCheck, ClipboardList, Trendin
 import { useAuth } from '@/context/AuthContext';
 import { View, Text, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import { useNotifications } from '@/context/NotificationContext';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 function TabInner() {
   const { totalUnreadCount } = useNotifications();
   const { user } = useAuth();
+  const insets = useSafeAreaInsets();
 
   const isAdmin = user?.role === 'admin';
   const isMentor = user?.role === 'mentor';
@@ -30,15 +32,15 @@ function TabInner() {
           },
           shadowOpacity: 0.1,
           shadowRadius: 8,
-          height: Platform.OS === 'ios' ? 80 : 75,
-          paddingBottom: Platform.OS === 'ios' ? 15 : 12,
-          paddingTop: 12,
+          height: 60 + insets.bottom,
+          paddingBottom: insets.bottom + 5,
+          paddingTop: 10,
           paddingHorizontal: 4,
         },
         tabBarLabelStyle: {
           fontSize: 10,
           fontWeight: '600',
-          marginTop: 3,
+          marginTop: 2,
           marginBottom: 0,
         },
         tabBarIconStyle: {
