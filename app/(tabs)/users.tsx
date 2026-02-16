@@ -57,12 +57,12 @@ interface User {
   studentProfile?: StudentProfile;
   createdAt?: string;
   groups?: { _id: string; name: string }[];
-  assignedMentor?: {
+  assignedMentors?: {
     _id: string;
     name: string;
     email: string;
     phone?: string;
-  };
+  }[];
   assignedSubjects?: Subject[];
 }
 
@@ -353,10 +353,11 @@ export default function Users() {
     setIsLoadingMentor(true);
     try {
       const response = await api.get(`/mentor-students/student/${studentId}`);
-      if (response.data) {
-        setSelectedUser(prev => prev ? { ...prev, assignedMentor: response.data.mentor } : null);
+      if (response.data && response.data.mentors) {
+        // response.data.mentors is the array
+        setSelectedUser(prev => prev ? { ...prev, assignedMentors: response.data.mentors } : null);
       } else {
-        setSelectedUser(prev => prev ? { ...prev, assignedMentor: undefined } : null);
+        setSelectedUser(prev => prev ? { ...prev, assignedMentors: [] } : null);
       }
     } catch (error) {
       console.error('Error fetching mentor details:', error);
@@ -1108,48 +1109,49 @@ export default function Users() {
                       {/* Mentor Assignment Section */}
                       <View style={styles.assignmentSection}>
                         <View style={styles.assignmentHeader}>
-                          <Text style={styles.assignmentTitle}>Assigned Mentor</Text>
+                          <Text style={styles.assignmentTitle}>Assigned Mentors</Text>
                           <TouchableOpacity
-                            style={[
-                              styles.assignButton,
-                              selectedUser.assignedMentor ? styles.changeButton : {}
-                            ]}
+                            style={styles.assignButton}
                             onPress={() => setIsMentorModalVisible(true)}
                           >
-                            <Text style={[
-                              styles.assignButtonText,
-                              selectedUser.assignedMentor ? styles.changeButtonText : {}
-                            ]}>
-                              {selectedUser.assignedMentor ? 'Change Mentor' : 'Assign Mentor'}
-                            </Text>
+                            <Text style={styles.assignButtonText}>Manage Mentors</Text>
                           </TouchableOpacity>
                         </View>
 
-                        {isLoadingMentor && !selectedUser.assignedMentor ? (
+                        {isLoadingMentor && (!selectedUser.assignedMentors || selectedUser.assignedMentors.length === 0) ? (
                           <View style={styles.mentorLoadingContainer}>
                             <ActivityIndicator size="small" color="#01b4ae" />
-                            <Text style={styles.mentorLoadingText}>Loading mentor info...</Text>
+                            <Text style={styles.mentorLoadingText}>Loading mentors...</Text>
                           </View>
-                        ) : selectedUser.assignedMentor ? (
-                          <View style={styles.assignedMentorCard}>
-                            <View style={styles.assignedMentorAvatar}>
-                              <UserIcon color="#01b4ae" size={20} />
-                            </View>
-                            <View style={styles.assignedMentorInfo}>
-                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                                <Text style={styles.assignedMentorName}>{selectedUser.assignedMentor.name}</Text>
-                                {isLoadingMentor && <ActivityIndicator size="small" color="#01b4ae" />}
+                        ) : selectedUser.assignedMentors && selectedUser.assignedMentors.length > 0 ? (
+                          <View style={{ gap: 8 }}>
+                            {selectedUser.assignedMentors.map((mentor) => (
+                              <View key={mentor._id} style={styles.assignedMentorCard}>
+                                <View style={styles.assignedMentorAvatar}>
+                                  <Text style={{ color: '#01b4ae', fontWeight: 'bold' }}>
+                                    {mentor.name.charAt(0).toUpperCase()}
+                                  </Text>
+                                </View>
+                                <View style={styles.assignedMentorInfo}>
+                                  <Text style={styles.assignedMentorName}>{mentor.name}</Text>
+                                  <Text style={styles.assignedMentorEmail}>{mentor.email}</Text>
+                                  {mentor.phone && (
+                                    <Text style={styles.assignedMentorPhone}>{mentor.phone}</Text>
+                                  )}
+                                </View>
                               </View>
-                              <Text style={styles.assignedMentorEmail}>{selectedUser.assignedMentor.email}</Text>
-                              {selectedUser.assignedMentor.phone && (
-                                <Text style={styles.assignedMentorPhone}>{selectedUser.assignedMentor.phone}</Text>
-                              )}
-                            </View>
+                            ))}
                           </View>
                         ) : (
-                          <Text style={styles.assignmentHint}>
-                            No mentor assigned. Assign a mentor to manage this student.
-                          </Text>
+                          <View style={styles.emptyMentorState}>
+                            <Text style={styles.emptyMentorText}>No mentors assigned</Text>
+                            <TouchableOpacity
+                              style={styles.assignLink}
+                              onPress={() => setIsMentorModalVisible(true)}
+                            >
+                              <Text style={styles.assignLinkText}>Assign Now</Text>
+                            </TouchableOpacity>
+                          </View>
                         )}
                       </View>
                     </>
@@ -1314,34 +1316,40 @@ export default function Users() {
       </Modal>
 
       {/* Subject Selection Modal */}
-      {selectedUser && selectedUser.role === 'student' && (
-        <SubjectSelectionModal
-          visible={isSubjectModalVisible}
-          onClose={() => setIsSubjectModalVisible(false)}
-          studentId={selectedUser._id}
-          studentName={selectedUser.name}
-          onSave={handleSaveSubjects}
-        />
-      )}
+      {
+        selectedUser && selectedUser.role === 'student' && (
+          <SubjectSelectionModal
+            visible={isSubjectModalVisible}
+            onClose={() => setIsSubjectModalVisible(false)}
+            studentId={selectedUser._id}
+            studentName={selectedUser.name}
+            onSave={handleSaveSubjects}
+          />
+        )
+      }
 
       {/* Mentor Selection Modal */}
-      {selectedUser && selectedUser.role === 'student' && (
-        <MentorSelectionModal
-          visible={isMentorModalVisible}
-          onClose={() => setIsMentorModalVisible(false)}
-          studentId={selectedUser._id}
-          studentName={selectedUser.name}
-          onSave={(assignedMentor) => {
-            // Optimistic UI Update
-            setSelectedUser(prev => prev ? { ...prev, assignedMentor } : null);
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      {
+        selectedUser && selectedUser.role === 'student' && (
+          <MentorSelectionModal
+            visible={isMentorModalVisible}
+            onClose={() => setIsMentorModalVisible(false)}
+            studentId={selectedUser._id}
+            studentName={selectedUser.name}
+            onSave={(assignedMentor) => {
+              // Optimistic UI Update - we might receive just one, or maybe we should just refetch
+              // For simplicity and correctness with multi-select, let's just refetch
+              // Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-            // Background fetch to ensure consistency
-            fetchMentorDetails(selectedUser._id);
-          }}
-        />
-      )}
-    </SafeAreaView>
+              // Background fetch to ensure consistency
+              if (selectedUser) {
+                fetchMentorDetails(selectedUser._id);
+              }
+            }}
+          />
+        )
+      }
+    </SafeAreaView >
   );
 }
 
@@ -2218,5 +2226,70 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#78350F',
     fontStyle: 'italic',
+  },
+  // New Mentor List Styles
+  mentorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+    padding: 12,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    marginBottom: 6,
+  },
+  mentorAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#E0F2FE',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+    borderWidth: 1,
+    borderColor: '#BAE6FD',
+  },
+  mentorInitials: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#0284C7',
+  },
+  mentorInfoInRow: {
+    flex: 1,
+  },
+  mentorName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  mentorDetailText: {
+    fontSize: 13,
+    color: '#6B7280',
+  },
+  emptyMentorState: {
+    alignItems: 'center',
+    padding: 24,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderStyle: 'dashed',
+  },
+  emptyMentorText: {
+    marginTop: 8,
+    fontSize: 14,
+    color: '#6B7280',
+    marginBottom: 12,
+  },
+  assignLink: {
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    backgroundColor: '#E0F7F6',
+    borderRadius: 20,
+  },
+  assignLinkText: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#01b4ae',
   },
 });

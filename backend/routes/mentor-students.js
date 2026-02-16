@@ -15,22 +15,22 @@ router.get('/mentor/:mentorId', auth, async (req, res) => {
             return res.status(403).json({ message: 'Access denied' });
         }
 
-        const assignments = await MentorStudentAssignment.find({
-            mentor: mentorId,
-            isActive: true
+        // Find students who have this mentor in their mentors array
+        const students = await User.find({ 
+            mentors: mentorId,
+            role: 'student'
         })
-            .populate('student', 'name email phone role isProfileComplete')
-            .populate('assignedBy', 'name email')
-            .sort({ createdAt: -1 });
+        .select('name email phone role isProfileComplete studentProfile mentors')
+        .populate('mentors', 'name email phone');
 
-        res.json(assignments);
+        res.json(students);
     } catch (error) {
         console.error('Error fetching mentor students:', error);
         res.status(500).json({ message: 'Server error' });
     }
 });
 
-// Get mentor assigned to a student
+// Get mentors assigned to a student
 router.get('/student/:studentId', auth, async (req, res) => {
     try {
         const studentId = req.params.studentId;
@@ -40,43 +40,34 @@ router.get('/student/:studentId', auth, async (req, res) => {
             return res.status(403).json({ message: 'Access denied' });
         }
 
-        const assignment = await MentorStudentAssignment.findOne({
-            student: studentId,
-            isActive: true
-        })
-            .populate('mentor', 'name email phone role')
-            .populate('assignedBy', 'name email');
+        const student = await User.findById(studentId)
+            .populate('mentors', 'name email phone role')
+            .select('mentors');
 
-        if (!assignment) {
-            return res.json(null);
+        if (!student) {
+            return res.status(404).json({ message: 'Student not found' });
         }
 
-        res.json(assignment);
+        // Return object with mentors array to match expected structure or just the array?
+        // Existing frontend expects single object with mentor field. 
+        // We will return list of mentors now.
+        res.json({ mentors: student.mentors || [] });
     } catch (error) {
-        console.error('Error fetching student mentor:', error);
+        console.error('Error fetching student mentors:', error);
         res.status(500).json({ message: 'Server error' });
     }
 });
 
-// Assign mentor to student (Admin only)
+// Assign mentors to student (Admin only)
 router.post('/', auth, authorize('admin'), async (req, res) => {
     try {
-        const { mentorId, studentId } = req.body;
+        const { mentorIds, studentId } = req.body;
 
-        if (!mentorId || !studentId) {
-            return res.status(400).json({ message: 'Mentor ID and Student ID are required' });
+        if (!Array.isArray(mentorIds) || !studentId) {
+            return res.status(400).json({ message: 'Mentor IDs (array) and Student ID are required' });
         }
 
-        // Verify mentor exists and has mentor role
-        const mentor = await User.findById(mentorId);
-        if (!mentor) {
-            return res.status(404).json({ message: 'Mentor not found' });
-        }
-        if (mentor.role !== 'mentor') {
-            return res.status(400).json({ message: 'User is not a mentor' });
-        }
-
-        // Verify student exists and has student role
+        // Verify student exists
         const student = await User.findById(studentId);
         if (!student) {
             return res.status(404).json({ message: 'Student not found' });
@@ -85,62 +76,101 @@ router.post('/', auth, authorize('admin'), async (req, res) => {
             return res.status(400).json({ message: 'User is not a student' });
         }
 
-        // Deactivate any existing active assignments for this student
-        await MentorStudentAssignment.updateMany(
-            { student: studentId, isActive: true },
-            { isActive: false }
-        );
-
-        // Check if assignment already exists
-        let assignment = await MentorStudentAssignment.findOne({
-            mentor: mentorId,
-            student: studentId
+        // Verify all mentors exist and are mentors
+        const mentors = await User.find({ 
+            _id: { $in: mentorIds },
+            role: 'mentor'
         });
 
-        if (assignment) {
-            // Reactivate if it was deactivated
-            assignment.isActive = true;
-            assignment.assignedBy = req.user._id;
-            await assignment.save();
-        } else {
-            // Create new assignment
-            assignment = new MentorStudentAssignment({
-                mentor: mentorId,
-                student: studentId,
-                assignedBy: req.user._id
+        if (mentors.length !== mentorIds.length) {
+            return res.status(400).json({ message: 'One or more invalid mentor IDs provided' });
+        }
+
+        const oldMentorIds = student.mentors ? student.mentors.map(id => id.toString()) : [];
+        
+        // Update student's mentors list
+        student.mentors = mentorIds;
+        await student.save();
+
+        // --- HISTORY TRACKING (Optional but good for audit) ---
+        // 1. Deactivate assignments for mentors who were removed
+        const removedMentorIds = oldMentorIds.filter(id => !mentorIds.includes(id));
+        if (removedMentorIds.length > 0) {
+             await MentorStudentAssignment.updateMany(
+                { 
+                    student: studentId, 
+                    mentor: { $in: removedMentorIds },
+                    isActive: true 
+                },
+                { isActive: false }
+            );
+        }
+
+        // 2. Create/Activate assignments for new mentors
+        const newMentorIds = mentorIds.filter(id => !oldMentorIds.includes(id));
+        
+        for (const mId of newMentorIds) {
+             // Check if assignment record exists
+             let assignment = await MentorStudentAssignment.findOne({
+                mentor: mId,
+                student: studentId
             });
-            await assignment.save();
+
+            if (assignment) {
+                if (!assignment.isActive) {
+                    assignment.isActive = true;
+                    assignment.assignedBy = req.user._id;
+                    await assignment.save();
+                }
+            } else {
+                await MentorStudentAssignment.create({
+                    mentor: mId,
+                    student: studentId,
+                    assignedBy: req.user._id
+                });
+            }
         }
+        // ----------------------------------------------------
 
-        // Populate before returning
-        await assignment.populate('mentor', 'name email phone role');
-        await assignment.populate('student', 'name email phone role');
-        await assignment.populate('assignedBy', 'name email');
+        // Return updated student with populated mentors
+        await student.populate('mentors', 'name email phone role');
+        
+        res.status(200).json({ 
+            message: 'Mentors assigned successfully',
+            mentors: student.mentors 
+        });
 
-        res.status(201).json(assignment);
     } catch (error) {
-        console.error('Error assigning mentor to student:', error);
-        if (error.code === 11000) {
-            return res.status(400).json({ message: 'This mentor-student assignment already exists' });
-        }
-        res.status(500).json({ message: 'Server error' });
+        console.error('Error assigning mentors:', error);
+        res.status(500).json({ message: 'Server error: ' + error.message });
     }
 });
 
-// Remove mentor-student assignment (Admin only)
+// Remove mentor-student assignment (Admin only) - Legacy/Single removal helper
 router.delete('/:id', auth, authorize('admin'), async (req, res) => {
+    // This was removing by Assignment ID. 
+    // We might need a route to remove by mentorId/studentId pair for the new clean UI,
+    // OR just rely on the POST / (bulk update) which handles removals.
+    // Keeping this for legacy support if needed, but it might break if we strictly transition.
+    // Let's perform a "soft delete" by finding the assignment and then also pulling from User.mentors.
+    
     try {
-        const assignment = await MentorStudentAssignment.findByIdAndUpdate(
-            req.params.id,
-            { isActive: false },
-            { new: true }
-        );
-
+        const assignment = await MentorStudentAssignment.findById(req.params.id);
+        
         if (!assignment) {
             return res.status(404).json({ message: 'Assignment not found' });
         }
 
-        res.json({ message: 'Mentor-student assignment removed successfully' });
+        // Remove from User.mentors
+        await User.findByIdAndUpdate(assignment.student, {
+            $pull: { mentors: assignment.mentor }
+        });
+
+        // Deactivate assignment
+        assignment.isActive = false;
+        await assignment.save();
+
+        res.json({ message: 'Mentor removed successfully' });
     } catch (error) {
         console.error('Error removing assignment:', error);
         res.status(500).json({ message: 'Server error' });

@@ -47,8 +47,7 @@ export default function MentorSelectionModal({
   onSave
 }: MentorSelectionModalProps) {
   const [mentors, setMentors] = useState<Mentor[]>([]);
-  const [currentAssignment, setCurrentAssignment] = useState<MentorAssignment | null>(null);
-  const [selectedMentorId, setSelectedMentorId] = useState<string>('');
+  const [selectedMentorIds, setSelectedMentorIds] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -110,9 +109,12 @@ export default function MentorSelectionModal({
     setIsLoading(true);
     try {
       const response = await api.get(`/mentor-students/student/${studentId}`);
-      if (response.data) {
-        setCurrentAssignment(response.data);
-        setSelectedMentorId(response.data.mentor._id);
+      if (response.data && response.data.mentors) {
+        // response.data.mentors is array of mentor objects
+        const ids = response.data.mentors.map((m: Mentor) => m._id);
+        setSelectedMentorIds(ids);
+      } else {
+        setSelectedMentorIds([]);
       }
     } catch (error) {
       console.error('Error fetching current assignment:', error);
@@ -122,41 +124,37 @@ export default function MentorSelectionModal({
   };
 
   const handleSave = async () => {
-    if (!selectedMentorId) {
-      alert('Please select a mentor');
-      return;
-    }
-
-    // If same mentor is selected, just close
-    if (currentAssignment && currentAssignment.mentor._id === selectedMentorId) {
-      onClose();
-      return;
-    }
-
-    const selectedMentor = mentors.find(m => m._id === selectedMentorId);
-    if (!selectedMentor) return;
-
     setIsSaving(true);
     try {
       await api.post('/mentor-students', {
-        mentorId: selectedMentorId,
+        mentorIds: selectedMentorIds,
         studentId
       });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      onSave(selectedMentor);
+      // We need to pass back something to update local state, 
+      // but the parent likely refetches or we can just pass the list of selected mentor objects
+      const selectedMentors = mentors.filter(m => selectedMentorIds.includes(m._id));
+      onSave(selectedMentors[0]); // Keep signature for now or updated parent? 
+      // Actually, let's just close and let parent refetch as per plan
       onClose();
     } catch (error: any) {
-      console.error('Error assigning mentor:', error);
-      alert(error?.response?.data?.message || 'Failed to assign mentor');
+      console.error('Error assigning mentors:', error);
+      alert(error?.response?.data?.message || 'Failed to assign mentors');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setIsSaving(false);
     }
   };
 
-  const selectMentor = (mentorId: string) => {
+  const toggleMentor = (mentorId: string) => {
     Haptics.selectionAsync();
-    setSelectedMentorId(mentorId);
+    setSelectedMentorIds(prev => {
+      if (prev.includes(mentorId)) {
+        return prev.filter(id => id !== mentorId);
+      } else {
+        return [...prev, mentorId];
+      }
+    });
   };
 
   return (
@@ -177,7 +175,7 @@ export default function MentorSelectionModal({
         >
           <View style={styles.header}>
             <View>
-              <Text style={styles.title}>Assign Mentor</Text>
+              <Text style={styles.title}>Assign Mentors</Text>
               <Text style={styles.subtitle}>{studentName}</Text>
             </View>
             <TouchableOpacity onPress={onClose} style={styles.closeButton}>
@@ -192,21 +190,9 @@ export default function MentorSelectionModal({
             </View>
           ) : (
             <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-              {currentAssignment && (
-                <View style={styles.currentAssignment}>
-                  <Text style={styles.currentLabel}>Current Mentor:</Text>
-                  <View style={styles.currentMentorCard}>
-                    <UserCheck color="#10B981" size={20} />
-                    <View style={styles.currentMentorInfo}>
-                      <Text style={styles.currentMentorName}>{currentAssignment.mentor.name}</Text>
-                      <Text style={styles.currentMentorEmail}>{currentAssignment.mentor.email}</Text>
-                    </View>
-                  </View>
-                </View>
-              )}
 
               <Text style={styles.sectionTitle}>
-                {currentAssignment ? 'Select New Mentor' : 'Select Mentor'}
+                Select Mentors
               </Text>
 
               {mentors.length === 0 ? (
@@ -216,38 +202,39 @@ export default function MentorSelectionModal({
                 </View>
               ) : (
                 <View style={styles.mentorList}>
-                  {mentors.map(mentor => (
-                    <TouchableOpacity
-                      key={mentor._id}
-                      style={[
-                        styles.mentorCard,
-                        selectedMentorId === mentor._id && styles.mentorCardSelected
-                      ]}
-                      onPress={() => selectMentor(mentor._id)}
-                      activeOpacity={0.7}
-                    >
-                      <View style={[
-                        styles.radioCircle,
-                        selectedMentorId === mentor._id && styles.radioCircleSelected
-                      ]}>
-                        {selectedMentorId === mentor._id && (
-                          <View style={styles.radioInner} />
-                        )}
-                      </View>
-                      <View style={styles.mentorInfo}>
-                        <Text style={[
-                          styles.mentorName,
-                          selectedMentorId === mentor._id && styles.mentorNameSelected
+                  {mentors.map(mentor => {
+                    const isSelected = selectedMentorIds.includes(mentor._id);
+                    return (
+                      <TouchableOpacity
+                        key={mentor._id}
+                        style={[
+                          styles.mentorCard,
+                          isSelected && styles.mentorCardSelected
+                        ]}
+                        onPress={() => toggleMentor(mentor._id)}
+                        activeOpacity={0.7}
+                      >
+                        <View style={[
+                          styles.checkboxCircle,
+                          isSelected && styles.checkboxCircleSelected
                         ]}>
-                          {mentor.name}
-                        </Text>
-                        <Text style={styles.mentorEmail}>{mentor.email}</Text>
-                        {mentor.phone && (
-                          <Text style={styles.mentorPhone}>{mentor.phone}</Text>
-                        )}
-                      </View>
-                    </TouchableOpacity>
-                  ))}
+                          {isSelected && <UserCheck color="#FFFFFF" size={14} />}
+                        </View>
+                        <View style={styles.mentorInfo}>
+                          <Text style={[
+                            styles.mentorName,
+                            isSelected && styles.mentorNameSelected
+                          ]}>
+                            {mentor.name}
+                          </Text>
+                          <Text style={styles.mentorEmail}>{mentor.email}</Text>
+                          {mentor.phone && (
+                            <Text style={styles.mentorPhone}>{mentor.phone}</Text>
+                          )}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
               )}
             </ScrollView>
@@ -264,17 +251,17 @@ export default function MentorSelectionModal({
             <TouchableOpacity
               style={[
                 styles.saveButton,
-                (isSaving || !selectedMentorId) && styles.saveButtonDisabled
+                isSaving && styles.saveButtonDisabled
               ]}
               onPress={handleSave}
-              disabled={isSaving || isLoading || !selectedMentorId}
+              disabled={isSaving || isLoading}
             >
               {isSaving ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
                 <>
                   <UserCheck color="#FFFFFF" size={18} />
-                  <Text style={styles.saveButtonText}>Assign Mentor</Text>
+                  <Text style={styles.saveButtonText}>Save Assignments</Text>
                 </>
               )}
             </TouchableOpacity>
@@ -331,40 +318,6 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 20
   },
-  currentAssignment: {
-    marginBottom: 24
-  },
-  currentLabel: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#6B7280',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-    marginBottom: 8
-  },
-  currentMentorCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#ECFDF5',
-    padding: 16,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#D1FAE5'
-  },
-  currentMentorInfo: {
-    flex: 1,
-    marginLeft: 12
-  },
-  currentMentorName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#111827',
-    marginBottom: 2
-  },
-  currentMentorEmail: {
-    fontSize: 14,
-    color: '#6B7280'
-  },
   sectionTitle: {
     fontSize: 16,
     fontWeight: '600',
@@ -387,23 +340,19 @@ const styles = StyleSheet.create({
     backgroundColor: '#ECFDF5',
     borderColor: '#01b4ae'
   },
-  radioCircle: {
+  checkboxCircle: {
     width: 24,
     height: 24,
-    borderRadius: 12,
+    borderRadius: 6,
     borderWidth: 2,
     borderColor: '#9CA3AF',
     justifyContent: 'center',
     alignItems: 'center',
-    marginRight: 12
+    marginRight: 12,
+    backgroundColor: 'transparent'
   },
-  radioCircleSelected: {
-    borderColor: '#01b4ae'
-  },
-  radioInner: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
+  checkboxCircleSelected: {
+    borderColor: '#01b4ae',
     backgroundColor: '#01b4ae'
   },
   mentorInfo: {
