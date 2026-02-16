@@ -30,6 +30,7 @@ import {
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { formatToIST } from '@/utils/date';
 
 interface Subject {
   _id: string;
@@ -654,6 +655,25 @@ export default function CreateQuiz() {
         <Text style={{ color: '#EF4444', fontSize: 12, marginTop: 4 }}>
           ⚠️ End date must be after start date
         </Text>
+      )}
+
+      {/* IST Preview Helper */}
+      {(scheduledDate || expiryDate) && (
+        <View style={{ marginTop: 8, padding: 8, backgroundColor: '#F3F4F6', borderRadius: 8 }}>
+          <Text style={{ fontSize: 12, color: '#4B5563', fontWeight: '600', marginBottom: 4 }}>
+            Students will see (IST):
+          </Text>
+          {scheduledDate && (
+            <Text style={{ fontSize: 12, color: '#6B7280' }}>
+              Starts: {formatToIST(scheduledDate)}
+            </Text>
+          )}
+          {expiryDate && (
+            <Text style={{ fontSize: 12, color: '#6B7280' }}>
+              Ends: {formatToIST(expiryDate)}
+            </Text>
+          )}
+        </View>
       )}
 
       <View style={styles.infoBox}>

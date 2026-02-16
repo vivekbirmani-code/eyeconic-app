@@ -15,6 +15,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { BookOpen, Clock, FileText, Award } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { useQuiz } from '@/context/QuizContext';
+import { formatToIST } from '@/utils/date';
 
 interface Quiz {
   _id: string;
@@ -25,6 +26,8 @@ interface Quiz {
   totalMarks: number;
   questions: any[];
   attemptStatus?: any;
+  scheduledDate?: string;
+  expiryDate?: string;
 }
 
 export default function QuizInstructions() {
@@ -134,7 +137,6 @@ export default function QuizInstructions() {
           </Text>
         </View>
 
-        {/* Quick Stats */}
         <View style={styles.statsContainer}>
           <View style={styles.statCard}>
             <FileText color="#2563EB" size={24} />
@@ -154,6 +156,25 @@ export default function QuizInstructions() {
             <Text style={styles.statLabel}>Minutes</Text>
           </View>
         </View>
+
+        {/* Time Window (IST) */}
+        {(quiz.scheduledDate || quiz.expiryDate) && (
+          <View style={styles.section}>
+            <View style={[styles.noteCard, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
+              <Text style={[styles.noteTitle, { color: '#1E40AF' }]}>📅 Schedule (IST)</Text>
+              {quiz.scheduledDate && (
+                <Text style={[styles.noteText, { color: '#1E40AF' }]}>
+                  • Starts: {formatToIST(quiz.scheduledDate)}
+                </Text>
+              )}
+              {quiz.expiryDate && (
+                <Text style={[styles.noteText, { color: '#1E40AF' }]}>
+                  • Ends: {formatToIST(quiz.expiryDate)}
+                </Text>
+              )}
+            </View>
+          </View>
+        )}
 
         {/* Test Structure */}
         <View style={styles.section}>

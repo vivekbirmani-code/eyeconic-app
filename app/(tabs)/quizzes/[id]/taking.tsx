@@ -26,6 +26,7 @@ import { SectionTabs } from '@/components/SectionTabs';
 import { QuestionSkeleton } from '@/components/Skeleton';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { getSocketURL } from '@/services/config';
+import { formatToIST } from '@/utils/date';
 
 interface Question {
   _id: string;
@@ -47,6 +48,7 @@ interface Quiz {
   duration: number;
   totalMarks: number;
   questions: Question[];
+  expiryDate?: string;
 }
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -412,7 +414,6 @@ function QuizTakingContent() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <Text
@@ -423,6 +424,11 @@ function QuizTakingContent() {
           >
             {quiz.title}
           </Text>
+          {quiz.expiryDate && (
+            <Text style={{ fontSize: 11, color: '#6B7280', marginTop: 2 }}>
+              Ends: {formatToIST(quiz.expiryDate)}
+            </Text>
+          )}
         </View>
         <View style={styles.headerRight}>
           {currentAttempt && (

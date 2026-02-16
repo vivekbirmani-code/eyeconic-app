@@ -566,13 +566,21 @@ router.post('/:id/start', auth, authorize('student'), async (req, res) => {
       return res.status(403).json({ message: 'You are not assigned to this quiz' });
     }
 
-    // Enforce time window
+const { formatToIST } = require('../utils/dateUtils');
+
+    // Enforce time window (UTC comparison)
     const now = new Date();
     if (quiz.scheduledDate && now < quiz.scheduledDate) {
-      return res.status(403).json({ message: 'This quiz has not started yet. It opens on ' + quiz.scheduledDate.toLocaleString(), scheduledDate: quiz.scheduledDate });
+      return res.status(403).json({ 
+        message: 'This quiz has not started yet. It opens on ' + formatToIST(quiz.scheduledDate), 
+        scheduledDate: quiz.scheduledDate 
+      });
     }
     if (quiz.expiryDate && now > quiz.expiryDate) {
-      return res.status(403).json({ message: 'This quiz has expired. It closed on ' + quiz.expiryDate.toLocaleString(), expiryDate: quiz.expiryDate });
+      return res.status(403).json({ 
+        message: 'This quiz has expired. It closed on ' + formatToIST(quiz.expiryDate), 
+        expiryDate: quiz.expiryDate 
+      });
     }
 
     // Check for existing attempt

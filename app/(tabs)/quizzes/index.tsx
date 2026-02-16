@@ -22,6 +22,7 @@ import { QuizCardSkeleton } from '@/components/Skeleton';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from '@/utils/haptics';
+import { formatToIST } from '@/utils/date';
 
 interface Quiz {
   _id: string;
@@ -39,6 +40,8 @@ interface Quiz {
     canRetake?: boolean;
     retestRequested?: boolean;
   };
+  scheduledDate?: string;
+  expiryDate?: string;
 }
 
 const getStatusBadge = (quiz: Quiz) => {
@@ -96,6 +99,22 @@ const QuizCard = ({ item, index, onPress }: { item: Quiz; index: number; onPress
         </View>
 
         <Text style={styles.quizTitle} numberOfLines={2}>{item.title}</Text>
+
+        {/* Schedule Display (IST) */}
+        {(item.scheduledDate || item.expiryDate) && (
+          <View style={{ marginBottom: 12 }}>
+            {item.scheduledDate && (
+              <Text style={{ fontSize: 11, color: '#64748B', fontWeight: '500' }}>
+                Starts: {formatToIST(item.scheduledDate)}
+              </Text>
+            )}
+            {item.expiryDate && (
+              <Text style={{ fontSize: 11, color: '#64748B', fontWeight: '500' }}>
+                Ends: {formatToIST(item.expiryDate)}
+              </Text>
+            )}
+          </View>
+        )}
 
         <View style={styles.cardStats}>
           <View style={styles.statItem}>
@@ -356,10 +375,10 @@ function QuizzesContent() {
           <FlatList
             data={displayQuizzes}
             renderItem={({ item, index }) => (
-              <QuizCard 
-                item={item} 
-                index={index} 
-                onPress={handleQuizPress} 
+              <QuizCard
+                item={item}
+                index={index}
+                onPress={handleQuizPress}
               />
             )}
             keyExtractor={item => item._id}

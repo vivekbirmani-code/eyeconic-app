@@ -76,7 +76,7 @@ export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     try {
       const updates = Array.from(saveQueue.values());
-      
+
       // Send all updates to server
       await Promise.all(
         updates.map(answer =>
@@ -96,7 +96,7 @@ export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsLoading(true);
     try {
       const response = await api.post(`/quizzes/${quizId}/start`);
-      
+
       const attempt: QuizAttempt = {
         attemptId: response.data.attemptId,
         quizId,
@@ -109,7 +109,15 @@ export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setCurrentAttempt(attempt);
     } catch (error: any) {
       console.error('Start quiz error:', error);
-      Alert.alert('Error', error.response?.data?.message || 'Failed to start quiz');
+      if (error.response) {
+        console.error('Error response:', error.response.data);
+        console.error('Error status:', error.response.status);
+      }
+
+      const errorMessage = error.response?.data?.message || 'Failed to start quiz';
+      const errorTitle = error.response?.status === 403 ? 'Access Denied' : 'Error';
+
+      Alert.alert(errorTitle, errorMessage);
       throw error;
     } finally {
       setIsLoading(false);
@@ -136,7 +144,7 @@ export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!prev) return prev;
       const updatedAnswers = [...prev.answers];
       const idx = updatedAnswers.findIndex(a => a.questionIndex === questionIndex);
-      
+
       if (idx !== -1) {
         updatedAnswers[idx] = answerData;
       } else {
@@ -162,7 +170,7 @@ export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children
         `/quizzes/${currentAttempt.quizId}/attempt/${currentAttempt.attemptId}/answer`,
         answerData
       );
-      
+
       // Remove from queue after successful immediate save
       setSaveQueue(prevQueue => {
         const newQueue = new Map(prevQueue);
