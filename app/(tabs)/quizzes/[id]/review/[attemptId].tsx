@@ -61,14 +61,16 @@ export default function QuizReview() {
   const [loading, setLoading] = useState(true);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [currentSection, setCurrentSection] = useState<string>('Overview');
+  const [groupBy, setGroupBy] = useState<'subject' | 'tag' | 'topic'>('topic');
+  const [showGroupByDropdown, setShowGroupByDropdown] = useState(false);
 
   useEffect(() => {
     fetchReviewData();
-  }, []);
+  }, [groupBy]);
 
   const fetchReviewData = async () => {
     try {
-      const response = await api.get(`/quizzes/${id}/attempt/${attemptId}/results`);
+      const response = await api.get(`/quizzes/${id}/attempt/${attemptId}/results?groupBy=${groupBy}`);
       const data = response.data;
 
       // Transform backend response to match ReviewData interface
@@ -279,7 +281,56 @@ export default function QuizReview() {
 
           {/* Section Performance Bar Chart */}
           <View style={styles.chartCard}>
-            <Text style={styles.chartTitle}>Section Analysis</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <Text style={styles.chartTitle}>Section Analysis</Text>
+
+              <TouchableOpacity
+                style={styles.filterButton}
+                onPress={() => setShowGroupByDropdown(!showGroupByDropdown)}
+              >
+                <Text style={styles.filterButtonText}>
+                  {groupBy === 'subject' ? 'By Subject' : groupBy === 'tag' ? 'By Tag' : 'By Topic'}
+                </Text>
+                <Text style={styles.filterButtonArrow}>▾</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Dropdown Menu */}
+            {showGroupByDropdown && (
+              <View style={styles.dropdownContainer}>
+                <TouchableOpacity
+                  style={styles.dropdownItem}
+                  onPress={() => {
+                    setGroupBy('subject');
+                    setShowGroupByDropdown(false);
+                  }}
+                >
+                  <Text style={[styles.dropdownText, groupBy === 'subject' && styles.dropdownTextActive]}>By Subject</Text>
+                  {groupBy === 'subject' && <Text style={styles.checkmark}>✓</Text>}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.dropdownItem}
+                  onPress={() => {
+                    setGroupBy('tag');
+                    setShowGroupByDropdown(false);
+                  }}
+                >
+                  <Text style={[styles.dropdownText, groupBy === 'tag' && styles.dropdownTextActive]}>By Tag</Text>
+                  {groupBy === 'tag' && <Text style={styles.checkmark}>✓</Text>}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.dropdownItem}
+                  onPress={() => {
+                    setGroupBy('topic');
+                    setShowGroupByDropdown(false);
+                  }}
+                >
+                  <Text style={[styles.dropdownText, groupBy === 'topic' && styles.dropdownTextActive]}>By Topic</Text>
+                  {groupBy === 'topic' && <Text style={styles.checkmark}>✓</Text>}
+                </TouchableOpacity>
+              </View>
+            )}
+
             <View style={styles.barChartContainer}>
               {sectionPerformance.map((section, index) => (
                 <View key={index} style={styles.barRow}>
@@ -981,6 +1032,60 @@ const styles = StyleSheet.create({
     color: '#DC2626',
     fontSize: 12,
     fontWeight: '600',
+  },
+  filterButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    backgroundColor: '#EBF5FF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#2563EB',
+  },
+  filterButtonText: {
+    fontSize: 13,
+    color: '#2563EB',
+    fontWeight: '600',
+  },
+  filterButtonArrow: {
+    fontSize: 14,
+    color: '#2563EB',
+  },
+  dropdownContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  dropdownItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  dropdownText: {
+    fontSize: 14,
+    color: '#374151',
+  },
+  dropdownTextActive: {
+    color: '#2563EB',
+    fontWeight: '600',
+  },
+  checkmark: {
+    fontSize: 16,
+    color: '#2563EB',
+    fontWeight: 'bold',
   },
   selectedOption: {
     borderColor: '#6366f1',

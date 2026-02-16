@@ -190,10 +190,14 @@ router.post('/bulk-import', auth, authorize('admin'), upload.single('file'), asy
                 const oImage3 = convertDriveToDirectLink(row.O_IMAGE_3 || row.o_image_3 || row.OPTION3_IMAGE || row['OPTION 3 IMAGE']);
                 const oImage4 = convertDriveToDirectLink(row.O_IMAGE_4 || row.o_image_4 || row.OPTION4_IMAGE || row['OPTION 4 IMAGE']);
 
+                // Parse tags (comma-separated)
+                const tagsRaw = (row.TAGS || row.tags || row.TAG || '').toString().trim();
+                const tags = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(t => t) : [];
+
                 const questionData = {
                     qid: (row.QID || row.qid || '').toString().trim() || undefined,
                     subject: subjectId,
-                    topicName: (row.TOPIC || row.topic || row.TAG || '').toString().trim(),
+                    topicName: (row.TOPIC || row.topic || '').toString().trim(),
                     question: questionText,
                     questionImage: convertDriveToDirectLink(row.Q_IMAGE || row.q_image || ''),
                     options: [option1, option2, option3 || '', option4 || ''].filter(o => o),
@@ -204,6 +208,9 @@ router.post('/bulk-import', auth, authorize('admin'), upload.single('file'), asy
                     explanation: (row.EXPLANATION || row.explanation || row.EXPLAINATION || '').toString().trim(),
                     explanationImage: convertDriveToDirectLink(row.EX_IMAGE || row.ex_image || ''),
                     marks: parseInt(row.MARKS || row.marks || '1') || 1,
+                    positiveMarks: parseInt(row.POSITIVE_MARKS || row.positive_marks || row.positiveMarks || row.MARKS || row.marks || '4') || 4,
+                    negativeMarks: parseInt(row.NEGATIVE_MARKS || row.negative_marks || row.negativeMarks || '0') || 0,
+                    tags: tags,
                     marrowCode: (row.MARROW_CODE || row['MARROW CODE'] || '').toString().trim() || undefined,
                     source: (row.SOURCE || row.source || '').toString().trim() || undefined,
                     createdBy: req.user._id

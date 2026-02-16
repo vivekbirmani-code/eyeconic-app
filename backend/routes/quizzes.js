@@ -831,12 +831,18 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
 // Get results (after submission) - SECURITY HARDENED
 router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
   try {
+    const { groupBy = 'topic' } = req.query; // subject, tag, or topic
+
     const attempt = await QuizAttempt.findById(req.params.attemptId)
       .populate({
         path: 'quiz',
         populate: {
           path: 'questions',
-          model: 'QuestionBank'
+          model: 'QuestionBank',
+          populate: {
+            path: 'subject',
+            select: 'name'
+          }
         }
       })
       .populate('student', 'name email');
@@ -855,6 +861,63 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
     const quiz = await Quiz.findById(attempt.quiz._id);
     const shareSolution = quiz.shareSolution !== undefined ? quiz.shareSolution : true;
 
+    // Recalculate section performance based on groupBy parameter
+    const sectionPerformance = {};
+    
+    attempt.quiz.questions.forEach((q, index) => {
+      const answer = attempt.answers.find(a => a.questionIndex === index);
+      
+      // Determine section based on groupBy
+      let section = 'General';
+      if (groupBy === 'subject') {
+        section = q.subject?.name || 'General';
+      } else if (groupBy === 'tag') {
+        // Use first tag if available
+        section = (q.tags && q.tags.length > 0) ? q.tags[0] : 'Untagged';
+      } else {
+        // Default to topic
+        section = q.topicName || 'General';
+      }
+
+      if (!sectionPerformance[section]) {
+        sectionPerformance[section] = {
+          sectionName: section,
+          correct: 0,
+          incorrect: 0,
+          skipped: 0,
+          timeSpent: 0
+        };
+      }
+
+      const hasAnswer = answer && answer.selectedAnswer != null && answer.selectedAnswer !== -1;
+      
+      if (!hasAnswer) {
+        sectionPerformance[section].skipped++;
+      } else if (answer.isCorrect) {
+        sectionPerformance[section].correct++;
+      } else {
+        sectionPerformance[section].incorrect++;
+      }
+
+      if (answer) {
+        sectionPerformance[section].timeSpent += answer.timeSpent || 0;
+      }
+    });
+
+    // Calculate accuracy for each section
+    const sectionPerformanceArray = Object.values(sectionPerformance).map(section => {
+      const totalQuestionsInSection = section.correct + section.incorrect + section.skipped;
+      const accuracy = totalQuestionsInSection > 0
+        ? Math.round((section.correct / totalQuestionsInSection) * 100)
+        : 0;
+
+      return {
+        ...section,
+        accuracy,
+        total: totalQuestionsInSection
+      };
+    });
+
     // Build question data with conditional solution fields
     const questionsWithAnswers = attempt.quiz.questions.map((q, index) => {
       const userAnswer = attempt.answers.find(a => a.questionIndex === index);
@@ -867,6 +930,7 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
         optionImages: q.optionImages,
         marks: q.marks,
         topicName: q.topicName,
+        tags: q.tags,
         userAnswer: userAnswer?.selectedAnswer,
         isCorrect: userAnswer?.isCorrect,
         timeSpent: userAnswer?.timeSpent,
@@ -894,7 +958,7 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
         totalQuestions: attempt.totalQuestions,
         marksObtained: attempt.marksObtained,
         totalMarks: attempt.totalMarks,
-        sectionPerformance: attempt.sectionPerformance,
+        sectionPerformance: sectionPerformanceArray,
         tabSwitchCount: attempt.tabSwitchCount
       },
       quiz: {
@@ -905,7 +969,8 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
         shareSolution  // IMPORTANT: Send this to frontend for UI decisions
       },
       student: attempt.student,
-      questions: questionsWithAnswers
+      questions: questionsWithAnswers,
+      groupBy // Send back the grouping method for frontend reference
     });
   } catch (error) {
     console.error(error);

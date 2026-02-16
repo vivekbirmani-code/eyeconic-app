@@ -107,7 +107,8 @@ export default function QuestionBankManagement() {
     explanation: '',
     marks: 1, // Keep for backward compatibility
     positiveMarks: 4,
-    negativeMarks: -1
+    negativeMarks: -1,
+    tags: []
   });
   const [saving, setSaving] = useState(false);
   const [imageUploading, setImageUploading] = useState(false);
@@ -306,7 +307,8 @@ export default function QuestionBankManagement() {
       explanation: (q as any).explanation || '',
       marks: q.marks,
       positiveMarks: q.positiveMarks !== undefined ? q.positiveMarks : q.marks,
-      negativeMarks: q.negativeMarks !== undefined ? q.negativeMarks : 0 // Default to 0 for old questions (safe migration)
+      negativeMarks: q.negativeMarks !== undefined ? q.negativeMarks : 0, // Default to 0 for old questions (safe migration)
+      tags: q.tags || []
     });
     if ((q as any).correctAnswer !== undefined) {
       setNewQuestion(prev => ({ ...prev, correctAnswer: (q as any).correctAnswer }));
@@ -326,7 +328,8 @@ export default function QuestionBankManagement() {
       explanation: '',
       marks: 1,
       positiveMarks: 4,
-      negativeMarks: -1
+      negativeMarks: -1,
+      tags: []
     });
     setEditingQuestionId(null);
   };
@@ -804,6 +807,21 @@ export default function QuestionBankManagement() {
                 />
                 <Text style={styles.helperText}>Deduction for incorrect answer</Text>
               </View>
+            </View>
+
+            {/* Tags Input */}
+            <View>
+              <Text style={styles.label}>Tags (Optional)</Text>
+              <TextInput
+                style={styles.input}
+                value={newQuestion.tags?.join(', ') || ''}
+                placeholder="e.g., Cardiology, Emergency, Anatomy"
+                onChangeText={text => {
+                  const tags = text.split(',').map(t => t.trim()).filter(t => t);
+                  setNewQuestion({ ...newQuestion, tags });
+                }}
+              />
+              <Text style={styles.helperText}>Separate multiple tags with commas</Text>
             </View>
 
             <Text style={styles.label}>Explanation</Text>
