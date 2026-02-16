@@ -85,6 +85,12 @@ router.post('/', auth, authorize('admin'), async (req, res) => {
             return res.status(400).json({ message: 'User is not a student' });
         }
 
+        // Deactivate any existing active assignments for this student
+        await MentorStudentAssignment.updateMany(
+            { student: studentId, isActive: true },
+            { isActive: false }
+        );
+
         // Check if assignment already exists
         let assignment = await MentorStudentAssignment.findOne({
             mentor: mentorId,

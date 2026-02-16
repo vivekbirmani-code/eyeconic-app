@@ -36,7 +36,7 @@ interface MentorSelectionModalProps {
   onClose: () => void;
   studentId: string;
   studentName: string;
-  onSave: () => void;
+  onSave: (mentor: Mentor) => void;
 }
 
 export default function MentorSelectionModal({
@@ -133,6 +133,9 @@ export default function MentorSelectionModal({
       return;
     }
 
+    const selectedMentor = mentors.find(m => m._id === selectedMentorId);
+    if (!selectedMentor) return;
+
     setIsSaving(true);
     try {
       await api.post('/mentor-students', {
@@ -140,7 +143,7 @@ export default function MentorSelectionModal({
         studentId
       });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      onSave();
+      onSave(selectedMentor);
       onClose();
     } catch (error: any) {
       console.error('Error assigning mentor:', error);

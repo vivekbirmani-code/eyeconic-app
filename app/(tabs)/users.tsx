@@ -16,7 +16,8 @@ import {
   Easing,
   LayoutAnimation,
   UIManager,
-  Pressable
+  Pressable,
+  ActivityIndicator
 } from 'react-native';
 import { Plus, User as UserIcon, Search, X, Mail, Shield, Calendar, Phone, Lock, Key, Users as UsersIcon, Check, Square, CheckSquare, ChevronRight } from 'lucide-react-native';
 import { BlurView } from 'expo-blur';
@@ -56,6 +57,12 @@ interface User {
   studentProfile?: StudentProfile;
   createdAt?: string;
   groups?: { _id: string; name: string }[];
+  assignedMentor?: {
+    _id: string;
+    name: string;
+    email: string;
+    phone?: string;
+  };
 }
 
 interface GroupAssignment {
@@ -102,6 +109,9 @@ export default function Users() {
   const filterSlideY = useRef(new Animated.Value(20)).current;
   const searchFocusAnim = useRef(new Animated.Value(0)).current;
   const [isSearchFocused, setIsSearchFocused] = useState(false);
+
+  // Mentor assignment state
+  const [isLoadingMentor, setIsLoadingMentor] = useState(false);
 
   // Modal animation values
   const modalOpacity = useRef(new Animated.Value(0)).current;
@@ -230,6 +240,11 @@ export default function Users() {
     setSelectedUser(userItem);
     setNewPassword('');
 
+    // Fetch assigned mentor for student
+    if (userItem.role === 'student') {
+      fetchMentorDetails(userItem._id);
+    }
+
     // Haptic feedback
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
@@ -321,6 +336,22 @@ export default function Users() {
       Alert.alert('Error', message);
     } finally {
       setIsResettingPassword(false);
+    }
+  };
+
+  const fetchMentorDetails = async (studentId: string) => {
+    setIsLoadingMentor(true);
+    try {
+      const response = await api.get(`/mentor-students/student/${studentId}`);
+      if (response.data) {
+        setSelectedUser(prev => prev ? { ...prev, assignedMentor: response.data.mentor } : null);
+      } else {
+        setSelectedUser(prev => prev ? { ...prev, assignedMentor: undefined } : null);
+      }
+    } catch (error) {
+      console.error('Error fetching mentor details:', error);
+    } finally {
+      setIsLoadingMentor(false);
     }
   };
 
@@ -1005,15 +1036,47 @@ export default function Users() {
                         <View style={styles.assignmentHeader}>
                           <Text style={styles.assignmentTitle}>Assigned Mentor</Text>
                           <TouchableOpacity
-                            style={styles.assignButton}
+                            style={[
+                              styles.assignButton,
+                              selectedUser.assignedMentor ? styles.changeButton : {}
+                            ]}
                             onPress={() => setIsMentorModalVisible(true)}
                           >
-                            <Text style={styles.assignButtonText}>Assign Mentor</Text>
+                            <Text style={[
+                              styles.assignButtonText,
+                              selectedUser.assignedMentor ? styles.changeButtonText : {}
+                            ]}>
+                              {selectedUser.assignedMentor ? 'Change Mentor' : 'Assign Mentor'}
+                            </Text>
                           </TouchableOpacity>
                         </View>
-                        <Text style={styles.assignmentHint}>
-                          Mentor responsible for this student's assignments
-                        </Text>
+
+                        {isLoadingMentor && !selectedUser.assignedMentor ? (
+                          <View style={styles.mentorLoadingContainer}>
+                            <ActivityIndicator size="small" color="#01b4ae" />
+                            <Text style={styles.mentorLoadingText}>Loading mentor info...</Text>
+                          </View>
+                        ) : selectedUser.assignedMentor ? (
+                          <View style={styles.assignedMentorCard}>
+                            <View style={styles.assignedMentorAvatar}>
+                              <UserIcon color="#01b4ae" size={20} />
+                            </View>
+                            <View style={styles.assignedMentorInfo}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+                                <Text style={styles.assignedMentorName}>{selectedUser.assignedMentor.name}</Text>
+                                {isLoadingMentor && <ActivityIndicator size="small" color="#01b4ae" />}
+                              </View>
+                              <Text style={styles.assignedMentorEmail}>{selectedUser.assignedMentor.email}</Text>
+                              {selectedUser.assignedMentor.phone && (
+                                <Text style={styles.assignedMentorPhone}>{selectedUser.assignedMentor.phone}</Text>
+                              )}
+                            </View>
+                          </View>
+                        ) : (
+                          <Text style={styles.assignmentHint}>
+                            No mentor assigned. Assign a mentor to manage this student.
+                          </Text>
+                        )}
                       </View>
                     </>
                   )}
@@ -1197,9 +1260,13 @@ export default function Users() {
           onClose={() => setIsMentorModalVisible(false)}
           studentId={selectedUser._id}
           studentName={selectedUser.name}
-          onSave={() => {
-            // Optionally refresh user details or show success message
+          onSave={(assignedMentor) => {
+            // Optimistic UI Update
+            setSelectedUser(prev => prev ? { ...prev, assignedMentor } : null);
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+            // Background fetch to ensure consistency
+            fetchMentorDetails(selectedUser._id);
           }}
         />
       )}
@@ -1602,30 +1669,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     backgroundColor: '#FFFFFF',
     borderRadius: 8,
-    padding: 12,
-    gap: 10,
     borderWidth: 1,
     borderColor: '#E5E7EB',
+    paddingHorizontal: 10,
+    marginBottom: 10,
   },
   resetInput: {
     flex: 1,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
     fontSize: 14,
     color: '#000000',
   },
   resetButton: {
     flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     backgroundColor: '#01b4ae',
     borderRadius: 8,
     padding: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 10,
     gap: 8,
-    shadowColor: '#01b4ae',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 4,
-    elevation: 3,
   },
   resetButtonDisabled: {
     opacity: 0.6,
@@ -1635,6 +1698,92 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
   },
+
+  // Mentor Assignment Styles
+  changeButton: {
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+  },
+  changeButtonText: {
+    color: '#374151',
+  },
+  mentorLoadingContainer: {
+    padding: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  mentorLoadingText: {
+    color: '#6B7280',
+    fontSize: 13,
+  },
+  assignedMentorCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ECFDF5',
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D1FAE5',
+  },
+  assignedMentorAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  assignedMentorInfo: {
+    flex: 1,
+  },
+  assignedMentorName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#064E3B',
+    marginBottom: 2,
+  },
+  assignedMentorEmail: {
+    fontSize: 13,
+    color: '#047857',
+  },
+  assignedMentorPhone: {
+    fontSize: 12,
+    color: '#6EE7B7',
+    marginTop: 2,
+  },
+  mentorGroupSection: {
+    marginTop: 10,
+    marginBottom: 10,
+    padding: 15,
+    backgroundColor: '#F0FDFA',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#CCFBF1',
+  },
+  mentorGroupTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#0F766E',
+    marginBottom: 10,
+  },
+  manageGroupsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0D9488',
+    borderRadius: 8,
+    padding: 10,
+    gap: 6,
+  },
+  manageGroupsButtonText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+
   // Student Profile Styles
   studentProfileSection: {
     marginTop: 20,
@@ -1718,35 +1867,7 @@ const styles = StyleSheet.create({
     color: '#01b4ae',
     fontWeight: '700',
   },
-  // Mentor Group Management Styles
-  mentorGroupSection: {
-    marginTop: 20,
-    padding: 15,
-    backgroundColor: '#F0FDF4',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#10B981',
-  },
-  mentorGroupTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#047857',
-    marginBottom: 12,
-  },
-  manageGroupsButton: {
-    flexDirection: 'row',
-    backgroundColor: '#01b4ae',
-    borderRadius: 8,
-    padding: 12,
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-  },
-  manageGroupsButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
-  },
+
   // Group Modal Styles
   groupModal: {
     backgroundColor: '#FFFFFF',
