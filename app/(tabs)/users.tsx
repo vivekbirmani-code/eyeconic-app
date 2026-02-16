@@ -63,6 +63,14 @@ interface User {
     email: string;
     phone?: string;
   };
+  assignedSubjects?: Subject[];
+}
+
+interface Subject {
+  _id: string;
+  name: string;
+  year: string;
+  displayOrder: number;
 }
 
 interface GroupAssignment {
@@ -112,6 +120,7 @@ export default function Users() {
 
   // Mentor assignment state
   const [isLoadingMentor, setIsLoadingMentor] = useState(false);
+  const [isLoadingSubjects, setIsLoadingSubjects] = useState(false);
 
   // Modal animation values
   const modalOpacity = useRef(new Animated.Value(0)).current;
@@ -243,6 +252,7 @@ export default function Users() {
     // Fetch assigned mentor for student
     if (userItem.role === 'student') {
       fetchMentorDetails(userItem._id);
+      fetchStudentSubjects(userItem._id);
     }
 
     // Haptic feedback
@@ -352,6 +362,54 @@ export default function Users() {
       console.error('Error fetching mentor details:', error);
     } finally {
       setIsLoadingMentor(false);
+    }
+  };
+
+  const fetchStudentSubjects = async (studentId: string) => {
+    setIsLoadingSubjects(true);
+    try {
+      const response = await api.get(`/student-subjects/${studentId}`);
+      if (response.data && response.data.subjects) {
+        // Verify we have an array
+        const subjects = Array.isArray(response.data.subjects) ? response.data.subjects : [];
+        setSelectedUser(prev => prev ? { ...prev, assignedSubjects: subjects } : null);
+      } else {
+        setSelectedUser(prev => prev ? { ...prev, assignedSubjects: [] } : null);
+      }
+    } catch (error) {
+      console.error('Error fetching student subjects:', error);
+      // On error, we might want to default to empty or keep previous state? 
+      // For now, let's not clear it if it was optimistic, but maybe show toast?
+      // Actually, if fetch fails, we should probably verify state.
+    } finally {
+      setIsLoadingSubjects(false);
+    }
+  };
+
+  const handleSaveSubjects = async (subjects: Subject[]) => {
+    // 1. Optimistic update
+    setSelectedUser(prev => prev ? { ...prev, assignedSubjects: subjects } : null);
+
+    if (!selectedUser) return;
+
+    // 2. Perform Save
+    const subjectIds = subjects.map(s => s._id);
+    try {
+      await api.post(`/student-subjects/${selectedUser._id}`, {
+        subjectIds
+      });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+      // 3. Silent Refetch (Source of Truth)
+      await fetchStudentSubjects(selectedUser._id);
+
+    } catch (error: any) {
+      console.error('Error saving subjects:', error);
+      alert(error?.response?.data?.message || 'Failed to save subjects');
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+
+      // On error, revert to server state (which might be empty or old, but better than broken optimistic state)
+      fetchStudentSubjects(selectedUser._id);
     }
   };
 
@@ -1026,9 +1084,25 @@ export default function Users() {
                             <Text style={styles.assignButtonText}>Manage Subjects</Text>
                           </TouchableOpacity>
                         </View>
-                        <Text style={styles.assignmentHint}>
-                          Subjects assigned to this student for learning
-                        </Text>
+
+                        {isLoadingSubjects && !selectedUser.assignedSubjects ? (
+                          <View style={styles.mentorLoadingContainer}>
+                            <ActivityIndicator size="small" color="#01b4ae" />
+                            <Text style={styles.mentorLoadingText}>Loading subjects...</Text>
+                          </View>
+                        ) : selectedUser.assignedSubjects && selectedUser.assignedSubjects.length > 0 ? (
+                          <View style={styles.assignedSubjectsList}>
+                            {selectedUser.assignedSubjects.map((subject, index) => (
+                              <View key={subject._id || index} style={styles.assignedSubjectChip}>
+                                <Text style={styles.assignedSubjectText}>{subject.name}</Text>
+                              </View>
+                            ))}
+                          </View>
+                        ) : (
+                          <Text style={styles.assignmentHint}>
+                            No subjects assigned yet.
+                          </Text>
+                        )}
                       </View>
 
                       {/* Mentor Assignment Section */}
@@ -1246,10 +1320,7 @@ export default function Users() {
           onClose={() => setIsSubjectModalVisible(false)}
           studentId={selectedUser._id}
           studentName={selectedUser.name}
-          onSave={() => {
-            // Optionally refresh user details or show success message
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          }}
+          onSave={handleSaveSubjects}
         />
       )}
 
@@ -1597,6 +1668,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 12,
+  },
+  assignedSubjectsList: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 8,
+  },
+  assignedSubjectChip: {
+    backgroundColor: '#E0F7F6',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#B2F5EA',
+  },
+  assignedSubjectText: {
+    color: '#00796B',
+    fontSize: 12,
+    fontWeight: '600',
   },
   detailName: {
     fontSize: 22,

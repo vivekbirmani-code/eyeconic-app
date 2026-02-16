@@ -33,7 +33,7 @@ interface SubjectSelectionModalProps {
   onClose: () => void;
   studentId: string;
   studentName: string;
-  onSave: () => void;
+  onSave: (subjects: Subject[]) => void;
 }
 
 export default function SubjectSelectionModal({
@@ -135,22 +135,22 @@ export default function SubjectSelectionModal({
     });
   };
 
-  const handleSave = async () => {
-    setIsSaving(true);
-    try {
-      await api.post(`/student-subjects/${studentId}`, {
-        subjectIds: Array.from(selectedSubjects)
+  const handleSave = () => {
+    // Optimistic Update Preparation
+    const selectedSubjectObjects: Subject[] = [];
+
+    // Flatten subjects to find selected ones
+    Object.values(subjects).forEach(yearSubjects => {
+      yearSubjects.forEach((subject: Subject) => {
+        if (selectedSubjects.has(subject._id)) {
+          selectedSubjectObjects.push(subject);
+        }
       });
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      onSave();
-      onClose();
-    } catch (error: any) {
-      console.error('Error saving subjects:', error);
-      alert(error?.response?.data?.message || 'Failed to save subjects');
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-    } finally {
-      setIsSaving(false);
-    }
+    });
+
+    // Pass data to parent
+    onSave(selectedSubjectObjects);
+    onClose();
   };
 
   const renderYearSection = (year: string, yearSubjects: Subject[]) => {
