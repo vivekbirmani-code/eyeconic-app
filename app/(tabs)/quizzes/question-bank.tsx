@@ -59,6 +59,23 @@ interface Question {
   explanation?: string;
   explanationImage?: string;
   marks: number;
+  positiveMarks?: number | string; // Allow string for editing state
+  negativeMarks?: number | string; // Allow string for editing state
+  tags?: string[];
+}
+
+interface QuestionFormState {
+  subject: string;
+  topicName: string;
+  question: string;
+  questionImage: string;
+  options: string[];
+  optionImages: string[];
+  correctAnswer: number;
+  explanation: string;
+  marks: number;
+  positiveMarks: number | string;
+  negativeMarks: number | string;
   tags?: string[];
 }
 
@@ -79,7 +96,7 @@ export default function QuestionBankManagement() {
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
 
-  const [newQuestion, setNewQuestion] = useState({
+  const [newQuestion, setNewQuestion] = useState<QuestionFormState>({
     subject: '',
     topicName: '',
     question: '',
@@ -88,7 +105,9 @@ export default function QuestionBankManagement() {
     optionImages: ['', '', '', ''],
     correctAnswer: 0,
     explanation: '',
-    marks: 1
+    marks: 1, // Keep for backward compatibility
+    positiveMarks: 4,
+    negativeMarks: -1
   });
   const [saving, setSaving] = useState(false);
   const [imageUploading, setImageUploading] = useState(false);
@@ -249,6 +268,10 @@ export default function QuestionBankManagement() {
     try {
       const payload = {
         ...newQuestion,
+        positiveMarks: parseFloat(newQuestion.positiveMarks?.toString() || '0') || 0,
+        negativeMarks: parseFloat(newQuestion.negativeMarks?.toString() || '0') || 0,
+        // Ensure marks syncs with positiveMarks
+        marks: parseFloat(newQuestion.positiveMarks?.toString() || '0') || 0,
       };
 
       if (editingQuestionId) {
@@ -281,7 +304,9 @@ export default function QuestionBankManagement() {
       optionImages: (q.optionImages || []).concat(['', '', '', '']).slice(0, 4),
       correctAnswer: 0,
       explanation: (q as any).explanation || '',
-      marks: q.marks
+      marks: q.marks,
+      positiveMarks: q.positiveMarks !== undefined ? q.positiveMarks : q.marks,
+      negativeMarks: q.negativeMarks !== undefined ? q.negativeMarks : 0 // Default to 0 for old questions (safe migration)
     });
     if ((q as any).correctAnswer !== undefined) {
       setNewQuestion(prev => ({ ...prev, correctAnswer: (q as any).correctAnswer }));
@@ -299,7 +324,9 @@ export default function QuestionBankManagement() {
       optionImages: ['', '', '', ''],
       correctAnswer: 0,
       explanation: '',
-      marks: 1
+      marks: 1,
+      positiveMarks: 4,
+      negativeMarks: -1
     });
     setEditingQuestionId(null);
   };
@@ -416,7 +443,7 @@ export default function QuestionBankManagement() {
             </View>
           )}
           <View style={[styles.badgeContainer, styles.marksBadge]}>
-            <Text style={styles.marksBadgeText}>{item.marks}M</Text>
+            <Text style={styles.marksBadgeText}>+{item.positiveMarks ?? item.marks} / {item.negativeMarks ?? 0}</Text>
           </View>
         </View>
       </View>
@@ -748,13 +775,36 @@ export default function QuestionBankManagement() {
               </View>
             ))}
 
-            <Text style={styles.label}>Marks</Text>
-            <TextInput
-              style={styles.input}
-              value={newQuestion.marks.toString()}
-              keyboardType="numeric"
-              onChangeText={text => setNewQuestion({ ...newQuestion, marks: parseInt(text) || 1 })}
-            />
+            <View style={{ flexDirection: 'row', gap: 12 }}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.label}>Positive Marks (+)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={newQuestion.positiveMarks?.toString() || ''}
+                  keyboardType="numeric"
+                  placeholder="+4"
+                  onChangeText={text => {
+                    // Update state with raw text to allow easy editing
+                    setNewQuestion({ ...newQuestion, positiveMarks: text });
+                  }}
+                />
+                <Text style={styles.helperText}>Marks for correct answer</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.label}>Negative Marks (-)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={newQuestion.negativeMarks?.toString() || ''}
+                  keyboardType="numeric"
+                  placeholder="-1"
+                  onChangeText={text => {
+                    // Update state with raw text to allow easy editing
+                    setNewQuestion({ ...newQuestion, negativeMarks: text });
+                  }}
+                />
+                <Text style={styles.helperText}>Deduction for incorrect answer</Text>
+              </View>
+            </View>
 
             <Text style={styles.label}>Explanation</Text>
             <TextInput
@@ -792,7 +842,7 @@ export default function QuestionBankManagement() {
           </LinearGradient>
 
           {selectedViewQuestion && (
-            <ScrollView 
+            <ScrollView
               style={{ flex: 1 }}
               contentContainerStyle={{ padding: 20, paddingBottom: 40 }}
               showsVerticalScrollIndicator={true}
@@ -1193,13 +1243,21 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   input: {
-    backgroundColor: '#FFF',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 8,
     borderWidth: 1,
     borderColor: '#E5E7EB',
-    borderRadius: 12,
-    padding: 14,
+    padding: 12,
     fontSize: 16,
     color: '#1F2937',
+    marginBottom: 16,
+  },
+  helperText: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: -12,
+    marginBottom: 16,
+    marginLeft: 4
   },
   textArea: {
     height: 100,

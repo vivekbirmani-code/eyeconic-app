@@ -761,7 +761,9 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
       } else if (answer.selectedAnswer === question.correctAnswer) {
         // Correct answer
         correctCount++;
-        marksObtained += question.marks || 1;
+        // Use positiveMarks if available, otherwise fallback to marks or 1
+        const points = question.positiveMarks !== undefined ? question.positiveMarks : (question.marks || 1);
+        marksObtained += points;
         sectionPerformance[section].correct++;
         answer.isCorrect = true;
       } else {
@@ -769,6 +771,11 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
         incorrectCount++;
         sectionPerformance[section].incorrect++;
         answer.isCorrect = false;
+        
+        // Deduct negative marks (if any)
+        // Default to 0 if not set (safe migration for old questions)
+        const deduction = question.negativeMarks !== undefined ? Math.abs(question.negativeMarks) : 0;
+        marksObtained -= deduction;
       }
 
       if (answer) {
