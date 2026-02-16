@@ -749,16 +749,23 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
         };
       }
 
-      if (!answer || answer.selectedAnswer === -1 || answer.selectedAnswer === undefined) {
+      // CRITICAL FIX: Check if question was answered at all
+      // Using != null to catch BOTH null and undefined
+      const hasAnswer = answer && answer.selectedAnswer != null && answer.selectedAnswer !== -1;
+
+      if (!hasAnswer) {
+        // Question was skipped (either never visited OR visited but not answered)
         skippedCount++;
         sectionPerformance[section].skipped++;
         if (answer) answer.isCorrect = false;
       } else if (answer.selectedAnswer === question.correctAnswer) {
+        // Correct answer
         correctCount++;
         marksObtained += question.marks || 1;
         sectionPerformance[section].correct++;
         answer.isCorrect = true;
       } else {
+        // Incorrect answer
         incorrectCount++;
         sectionPerformance[section].incorrect++;
         answer.isCorrect = false;

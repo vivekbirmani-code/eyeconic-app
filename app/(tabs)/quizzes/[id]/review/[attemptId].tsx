@@ -140,8 +140,8 @@ export default function QuizReview() {
   // Analytics Calculations
   const totalQuestions = reviewData.quiz.totalQuestions || reviewData.detailedResults.length || 0;
   const correctCount = reviewData.detailedResults.filter(q => q.isCorrect).length;
-  const wrongCount = reviewData.detailedResults.filter(q => !q.isCorrect && q.selectedAnswer !== -1).length;
-  const skippedCount = Math.max(0, totalQuestions - correctCount - wrongCount);
+  const wrongCount = reviewData.detailedResults.filter(q => !q.isCorrect && q.selectedAnswer != null && q.selectedAnswer !== -1).length;
+  const skippedCount = reviewData.detailedResults.filter(q => q.selectedAnswer == null || q.selectedAnswer === -1).length;
   const accuracy = totalQuestions > 0 ? Math.round((correctCount / totalQuestions) * 100) : 0;
 
   // Section performance for graph
