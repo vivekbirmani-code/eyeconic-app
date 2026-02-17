@@ -295,6 +295,16 @@ export default function QuestionBankManagement() {
   };
 
   const handleEditQuestion = (q: Question) => {
+    // Check if subject exists
+    if (!q.subject || !q.subject._id) {
+      Alert.alert(
+        'Cannot Edit',
+        'This question has no subject assigned or the subject was deleted. Please delete and recreate this question.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     setEditingQuestionId(q._id);
     setNewQuestion({
       subject: q.subject._id,
@@ -307,7 +317,7 @@ export default function QuestionBankManagement() {
       explanation: (q as any).explanation || '',
       marks: q.marks,
       positiveMarks: q.positiveMarks !== undefined ? q.positiveMarks : q.marks,
-      negativeMarks: q.negativeMarks !== undefined ? q.negativeMarks : 0, // Default to 0 for old questions (safe migration)
+      negativeMarks: q.negativeMarks !== undefined ? q.negativeMarks : 0,
       tags: q.tags || []
     });
     if ((q as any).correctAnswer !== undefined) {
@@ -438,7 +448,7 @@ export default function QuestionBankManagement() {
         </View>
         <View style={styles.questionMeta}>
           <View style={styles.badgeContainer}>
-            <Text style={styles.badgeText}>{item.subject?.name}</Text>
+            <Text style={styles.badgeText}>{item.subject?.name || 'Unknown Subject'}</Text>
           </View>
           {item.topicName && (
             <View style={[styles.badgeContainer, styles.topicBadge]}>

@@ -2,6 +2,7 @@ On Cloud
 eas build --platform android --profile preview --clear-cache
 
 For LocalHost (android)
+npx expo prebuild --platform android
 npx expo prebuild --platform android --clean
 cd android
 ./gradlew assembleRelease
