@@ -22,9 +22,9 @@ const { cleanupExpiredMedia } = require('./utils/media-cleanup');
 const Call = require('./models/Call');
 const User = require('./models/User');
 
-// Schedule media cleanup (run once on start, then daily)
-cleanupExpiredMedia(); // Run immediately on startup
-setInterval(cleanupExpiredMedia, 24 * 60 * 60 * 1000); // Run every 24 hours
+// Schedule media cleanup (moved to DB connection success callback)
+// cleanupExpiredMedia(); 
+// setInterval(cleanupExpiredMedia, 24 * 60 * 60 * 1000); 
 
 // Send push notification using Expo's push service
 async function sendPushNotification(expoPushToken, title, body, data = {}) {
@@ -72,8 +72,16 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 // Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI || 'mongodb+srv://REDACTED:REDACTED@cluster0.g7l8wx5.mongodb.net/?appName=Cluster0')
-  .then(() => console.log('Connected to MongoDB'))
+mongoose.connect(process.env.MONGODB_URI || 'mongodb+srv://REDACTED:REDACTED@cluster0.g7l8wx5.mongodb.net/?appName=Cluster0', {
+  serverSelectionTimeoutMS: 5000,
+  maxPoolSize: 10,
+})
+  .then(() => {
+    console.log('Connected to MongoDB');
+    // Schedule media cleanup (run once on start, then daily)
+    cleanupExpiredMedia(); // Run immediately on startup
+    setInterval(cleanupExpiredMedia, 24 * 60 * 60 * 1000); // Run every 24 hours
+  })
   .catch(err => console.error('MongoDB connection error:', err));
 
 // Routes

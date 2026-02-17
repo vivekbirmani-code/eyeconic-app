@@ -10,7 +10,7 @@ import {
     Platform,
     StatusBar
 } from 'react-native';
-import { X, CheckCircle, XCircle, MinusCircle, Clock, Award, BarChart3, FileText } from 'lucide-react-native';
+import { X, CheckCircle, XCircle, MinusCircle, Clock, Award, BarChart3, FileText, ChevronDown } from 'lucide-react-native';
 import { api } from '@/services/api';
 
 interface AttemptDetailModalProps {
@@ -60,12 +60,20 @@ interface AttemptDetail {
 export default function AttemptDetailModal({ attemptId, visible, onClose }: AttemptDetailModalProps) {
     const [loading, setLoading] = useState(false);
     const [attemptData, setAttemptData] = useState<AttemptDetail | null>(null);
+    const [groupBy, setGroupBy] = useState<'topic' | 'subject' | 'tag'>('topic');
+    const [showDropdown, setShowDropdown] = useState(false);
 
     useEffect(() => {
         if (visible && attemptId) {
             fetchAttemptDetails();
         }
     }, [visible, attemptId]);
+
+    useEffect(() => {
+        if (visible && attemptId && attemptData) {
+            fetchAttemptDetails();
+        }
+    }, [groupBy]);
 
     const fetchAttemptDetails = async () => {
         if (!attemptId) return;
@@ -79,7 +87,7 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
             const attemptRes = await api.get(`/quizzes/attempt/${attemptId}`);
             const quizId = attemptRes.data.quiz;
 
-            const response = await api.get(`/quizzes/${quizId}/attempt/${attemptId}/results`);
+            const response = await api.get(`/quizzes/${quizId}/attempt/${attemptId}/results?groupBy=${groupBy}`);
             setAttemptData(response.data);
         } catch (error) {
             console.error('Error fetching attempt details:', error);
@@ -264,6 +272,42 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
                             </View>
 
                             {/* Section Performance Table */}
+                            <View style={styles.filterContainer}>
+                                <Text style={styles.filterLabel}>Group by:</Text>
+                                <TouchableOpacity
+                                    style={styles.dropdown}
+                                    onPress={() => setShowDropdown(!showDropdown)}
+                                >
+                                    <Text style={styles.dropdownText}>
+                                        {groupBy === 'topic' ? 'By Topic' : groupBy === 'subject' ? 'By Subject' : 'By Tag'}
+                                    </Text>
+                                    <ChevronDown size={16} color="#6B7280" />
+                                </TouchableOpacity>
+                            </View>
+
+                            {showDropdown && (
+                                <View style={styles.dropdownMenu}>
+                                    <TouchableOpacity
+                                        style={styles.dropdownOption}
+                                        onPress={() => { setGroupBy('topic'); setShowDropdown(false); }}
+                                    >
+                                        <Text style={[styles.dropdownOptionText, groupBy === 'topic' && styles.dropdownOptionTextActive]}>By Topic</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={styles.dropdownOption}
+                                        onPress={() => { setGroupBy('subject'); setShowDropdown(false); }}
+                                    >
+                                        <Text style={[styles.dropdownOptionText, groupBy === 'subject' && styles.dropdownOptionTextActive]}>By Subject</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={styles.dropdownOption}
+                                        onPress={() => { setGroupBy('tag'); setShowDropdown(false); }}
+                                    >
+                                        <Text style={[styles.dropdownOptionText, groupBy === 'tag' && styles.dropdownOptionTextActive]}>By Tag</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            )}
+
                              <View style={styles.sectionContainer}>
                                 <Text style={styles.sectionTitle}>Section Performance</Text>
                                 <View style={styles.tableContainer}>
@@ -554,5 +598,61 @@ const styles = StyleSheet.create({
         fontSize: 16,
         color: '#EF4444',
         textAlign: 'center',
+    },
+    // Filter dropdown styles
+    filterContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 16,
+        marginBottom: 12,
+        gap: 8,
+    },
+    filterLabel: {
+        fontSize: 14,
+        fontWeight: '600',
+        color: '#4B5563',
+    },
+    dropdown: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#FFFFFF',
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: '#E5E7EB',
+        gap: 6,
+    },
+    dropdownText: {
+        fontSize: 14,
+        color: '#1F2937',
+        fontWeight: '500',
+    },
+    dropdownMenu: {
+        backgroundColor: '#FFFFFF',
+        marginHorizontal: 16,
+        marginBottom: 12,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: '#E5E7EB',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+        elevation: 3,
+    },
+    dropdownOption: {
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: '#F3F4F6',
+    },
+    dropdownOptionText: {
+        fontSize: 14,
+        color: '#4B5563',
+    },
+    dropdownOptionTextActive: {
+        color: '#2563EB',
+        fontWeight: '600',
     },
 });

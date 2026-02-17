@@ -86,15 +86,28 @@ export default function QuizReview() {
         score: data.attempt.score,
         marksObtained: data.attempt.marksObtained,
         percentage: Math.round((data.attempt.marksObtained / data.attempt.totalMarks) * 100) || 0,
-        detailedResults: data.questions.map((q: any) => ({
-          ...q,
-          questionIndex: data.questions.indexOf(q),
-          section: q.topicName || 'General',
-          selectedAnswer: q.userAnswer,
-          // Ensure options is an array
-          options: Array.isArray(q.options) ? q.options : [],
-          optionImages: Array.isArray(q.optionImages) ? q.optionImages : []
-        }))
+        detailedResults: data.questions.map((q: any) => {
+          // Determine section based on groupBy parameter
+          let section = 'General';
+          if (groupBy === 'subject') {
+            section = q.subject?.name || 'General';
+          } else if (groupBy === 'tag') {
+            section = (q.tags && q.tags.length > 0) ? q.tags[0] : 'Untagged';
+          } else {
+            // Default to topic
+            section = q.topicName || 'General';
+          }
+
+          return {
+            ...q,
+            questionIndex: data.questions.indexOf(q),
+            section,
+            selectedAnswer: q.userAnswer,
+            // Ensure options is an array
+            options: Array.isArray(q.options) ? q.options : [],
+            optionImages: Array.isArray(q.optionImages) ? q.optionImages : []
+          };
+        })
       };
 
       setReviewData(formattedReviewData);
@@ -597,7 +610,7 @@ export default function QuizReview() {
           <Text style={styles.subtitle}>Solutions & Explanations</Text>
         </View>
         <View style={styles.scoreContainer}>
-          <Text style={styles.scoreText}>{reviewData.score}/{reviewData.quiz.totalQuestions}</Text>
+          <Text style={styles.scoreText}>{reviewData.marksObtained}/{reviewData.quiz.totalMarks}</Text>
           <Text style={styles.scoreLabel}>Score</Text>
         </View>
       </View>

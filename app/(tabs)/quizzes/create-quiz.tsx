@@ -376,11 +376,7 @@ export default function CreateQuiz() {
       Alert.alert('Error', 'Please select at least one student');
       return;
     }
-    if (!scheduledDate || !expiryDate) {
-      Alert.alert('Error', 'Please set both start and end date/time for the quiz');
-      return;
-    }
-    if (expiryDate <= scheduledDate) {
+    if (scheduledDate && expiryDate && expiryDate <= scheduledDate) {
       Alert.alert('Error', 'End date must be after start date');
       return;
     }
@@ -575,7 +571,7 @@ export default function CreateQuiz() {
       </View>
 
       {/* Time Window */}
-      <Text style={styles.inputLabel}>Start Date & Time *</Text>
+      <Text style={styles.inputLabel}>Start Date & Time</Text>
       <TouchableOpacity
         style={styles.datePickerButton}
         onPress={() => {
@@ -586,7 +582,7 @@ export default function CreateQuiz() {
       >
         <Clock color="#6B7280" size={18} />
         <Text style={[styles.datePickerText, !scheduledDate && { color: '#9CA3AF' }]}>
-          {scheduledDate ? scheduledDate.toLocaleString() : 'Select start date & time'}
+          {scheduledDate ? scheduledDate.toLocaleString() : 'Select start date & time (Optional)'}
         </Text>
       </TouchableOpacity>
       {showStartPicker && (
@@ -613,7 +609,7 @@ export default function CreateQuiz() {
         />
       )}
 
-      <Text style={styles.inputLabel}>End Date & Time *</Text>
+      <Text style={styles.inputLabel}>End Date & Time</Text>
       <TouchableOpacity
         style={styles.datePickerButton}
         onPress={() => {
@@ -624,7 +620,7 @@ export default function CreateQuiz() {
       >
         <Clock color="#6B7280" size={18} />
         <Text style={[styles.datePickerText, !expiryDate && { color: '#9CA3AF' }]}>
-          {expiryDate ? expiryDate.toLocaleString() : 'Select end date & time'}
+          {expiryDate ? expiryDate.toLocaleString() : 'Select end date & time (Optional)'}
         </Text>
       </TouchableOpacity>
       {showEndPicker && (
