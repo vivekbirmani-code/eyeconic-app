@@ -292,7 +292,7 @@ export default function CallScreen() {
 
         <TouchableOpacity
           style={[styles.controlButton, styles.endCallButton]}
-          onPress={endCall}
+          onPress={leaveCall}
         >
           <PhoneOff color="#FFFFFF" size={28} />
         </TouchableOpacity>

@@ -204,7 +204,12 @@ export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       return response.data;
     } catch (error: any) {
-      Alert.alert('Error', error.response?.data?.message || 'Failed to submit quiz');
+      // Only show alert for manual submission errors
+      // Auto-submit errors are handled by the calling component
+      if (!isAutoSubmit) {
+        const errorMessage = error.response?.data?.message || 'Failed to submit quiz';
+        Alert.alert('Error', errorMessage);
+      }
       throw error;
     } finally {
       setIsLoading(false);

@@ -311,18 +311,59 @@ function QuizTakingContent() {
   }, [submitQuiz, id, currentAttempt, router]);
 
   const handleTimeUp = useCallback(async () => {
-    Alert.alert(
-      'Time Up!',
-      'The test duration has ended. Submitting your answers...',
-      [{ text: 'OK' }]
-    );
-
     try {
       const result = await submitQuiz(true);
-      router.replace(`/quizzes/${id}/result/${result.attemptId || currentAttempt?.attemptId}`);
-    } catch (error) {
+      
+      // Handle case where quiz was already submitted
+      if (result.isAlreadySubmitted) {
+        Alert.alert(
+          'Already Submitted',
+          'This quiz has already been submitted.',
+          [{ 
+            text: 'View Results', 
+            onPress: () => router.replace(`/quizzes/${id}/result/${result.attemptId || currentAttempt?.attemptId}`)
+          }]
+        );
+        return;
+      }
+
+      // Successful auto-submit
+      Alert.alert(
+        'Time Up!',
+        'The test duration has ended. Your answers have been submitted.',
+        [{ 
+          text: 'View Results',
+          onPress: () => router.replace(`/quizzes/${id}/result/${result.attemptId || currentAttempt?.attemptId}`)
+        }]
+      );
+    } catch (error: any) {
       console.error('Auto-submit error:', error);
-      Alert.alert('Error', 'Failed to auto-submit. Please submit manually.');
+      
+      // Show specific error message from backend if available
+      const errorMessage = error.response?.data?.message || 'Failed to auto-submit. Please submit manually.';
+      const errorCode = error.response?.data?.errorCode;
+      
+      // Handle specific error cases
+      if (errorCode === 'ATTEMPT_NOT_FOUND') {
+        Alert.alert(
+          'Error',
+          'Your quiz attempt could not be found. Your progress may have been lost.',
+          [{ text: 'OK', onPress: () => router.back() }]
+        );
+      } else if (errorCode === 'QUIZ_NOT_FOUND') {
+        Alert.alert(
+          'Error',
+          'This quiz no longer exists. Your attempt could not be submitted.',
+          [{ text: 'OK', onPress: () => router.back() }]
+        );
+      } else {
+        // Generic error - allow manual submission
+        Alert.alert(
+          'Auto-Submit Failed',
+          errorMessage + '\n\nPlease try submitting manually using the Submit button.',
+          [{ text: 'OK' }]
+        );
+      }
     }
   }, [submitQuiz, id, currentAttempt, router]);
 

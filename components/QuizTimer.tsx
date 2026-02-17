@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 
 interface QuizTimerProps {
@@ -16,6 +16,12 @@ export const QuizTimer: React.FC<QuizTimerProps> = ({
 }) => {
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [isWarning, setIsWarning] = useState(false);
+  const timeUpCalledRef = useRef(false);
+
+  useEffect(() => {
+    // Reset the timeUpCalled flag when startTime changes (new attempt)
+    timeUpCalledRef.current = false;
+  }, [startTime]);
 
   useEffect(() => {
     const calculateTimeRemaining = () => {
@@ -25,7 +31,11 @@ export const QuizTimer: React.FC<QuizTimerProps> = ({
       const remaining = total - elapsed;
 
       if (remaining <= 0) {
-        onTimeUp();
+        // Only call onTimeUp once
+        if (!timeUpCalledRef.current) {
+          timeUpCalledRef.current = true;
+          onTimeUp();
+        }
         return 0;
       }
 
@@ -41,11 +51,22 @@ export const QuizTimer: React.FC<QuizTimerProps> = ({
       if (!isPaused) {
         const remaining = calculateTimeRemaining();
         setTimeRemaining(remaining);
+        
+        // Clear interval when time is up to prevent unnecessary ticks
+        if (remaining <= 0) {
+          clearInterval(timer);
+        }
       }
     }, 1000);
 
     // Initial calculation
-    setTimeRemaining(calculateTimeRemaining());
+    const initial = calculateTimeRemaining();
+    setTimeRemaining(initial);
+    
+    // If already expired on mount, clear immediately
+    if (initial <= 0) {
+      clearInterval(timer);
+    }
 
     return () => clearInterval(timer);
   }, [duration, startTime, isPaused, isWarning, onTimeUp]);

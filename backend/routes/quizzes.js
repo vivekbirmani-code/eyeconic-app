@@ -566,20 +566,20 @@ router.post('/:id/start', auth, authorize('student'), async (req, res) => {
       return res.status(403).json({ message: 'You are not assigned to this quiz' });
     }
 
-const { formatToIST } = require('../utils/dateUtils');
+    const { formatToIST } = require('../utils/dateUtils');
 
     // Enforce time window (UTC comparison)
     const now = new Date();
     if (quiz.scheduledDate && now < quiz.scheduledDate) {
-      return res.status(403).json({ 
-        message: 'This quiz has not started yet. It opens on ' + formatToIST(quiz.scheduledDate), 
-        scheduledDate: quiz.scheduledDate 
+      return res.status(403).json({
+        message: 'This quiz has not started yet. It opens on ' + formatToIST(quiz.scheduledDate),
+        scheduledDate: quiz.scheduledDate
       });
     }
     if (quiz.expiryDate && now > quiz.expiryDate) {
-      return res.status(403).json({ 
-        message: 'This quiz has expired. It closed on ' + formatToIST(quiz.expiryDate), 
-        expiryDate: quiz.expiryDate 
+      return res.status(403).json({
+        message: 'This quiz has expired. It closed on ' + formatToIST(quiz.expiryDate),
+        expiryDate: quiz.expiryDate
       });
     }
 
@@ -709,23 +709,59 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
   try {
     const { isAutoSubmit } = req.body;
 
+    // Detailed logging for debugging
+    console.log(`[Submit Quiz] User: ${req.user._id}, Quiz: ${req.params.id}, Attempt: ${req.params.attemptId}, Auto: ${isAutoSubmit}`);
+
+    // Validate attempt exists and belongs to the user
     const attempt = await QuizAttempt.findOne({
       _id: req.params.attemptId,
       student: req.user._id
     }).populate('quiz');
 
     if (!attempt) {
-      return res.status(404).json({ message: 'Attempt not found' });
+      console.error(`[Submit Quiz] Attempt not found: ${req.params.attemptId} for user ${req.user._id}`);
+      return res.status(404).json({
+        message: 'Quiz attempt not found. Please restart the quiz.',
+        errorCode: 'ATTEMPT_NOT_FOUND'
+      });
     }
 
-    if (attempt.status === 'completed') {
+    // Check if already submitted (idempotent behavior)
+    if (attempt.status === 'completed' || attempt.status === 'auto_submitted') {
+      console.log(`[Submit Quiz] Already submitted: ${attempt._id}, status: ${attempt.status}`);
       return res.json({
         message: 'Quiz already submitted',
-        attemptId: attempt._id
+        attemptId: attempt._id,
+        isAlreadySubmitted: true
+      });
+    }
+
+    // Validate quiz data
+    if (!attempt.quiz || !attempt.quiz._id) {
+      console.error(`[Submit Quiz] Invalid quiz reference in attempt ${attempt._id}`);
+      return res.status(400).json({
+        message: 'Invalid quiz data. Please contact support.',
+        errorCode: 'INVALID_QUIZ_DATA'
       });
     }
 
     const quiz = await Quiz.findById(attempt.quiz._id).populate('questions');
+
+    if (!quiz) {
+      console.error(`[Submit Quiz] Quiz not found: ${attempt.quiz._id}`);
+      return res.status(404).json({
+        message: 'Quiz not found. It may have been deleted.',
+        errorCode: 'QUIZ_NOT_FOUND'
+      });
+    }
+
+    if (!quiz.questions || quiz.questions.length === 0) {
+      console.error(`[Submit Quiz] Quiz has no questions: ${quiz._id}`);
+      return res.status(400).json({
+        message: 'Quiz has no questions. Please contact support.',
+        errorCode: 'NO_QUESTIONS'
+      });
+    }
 
     // Calculate score
     let correctCount = 0;
@@ -771,7 +807,7 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
         incorrectCount++;
         sectionPerformance[section].incorrect++;
         answer.isCorrect = false;
-        
+
         // Deduct negative marks (if any)
         // Default to 0 if not set (safe migration for old questions)
         const deduction = question.negativeMarks !== undefined ? Math.abs(question.negativeMarks) : 0;
@@ -810,6 +846,8 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
 
     await attempt.save();
 
+    console.log(`[Submit Quiz] Successfully submitted: ${attempt._id}, Score: ${correctCount}/${quiz.questions.length}`);
+
     res.json({
       message: 'Quiz submitted successfully',
       attemptId: attempt._id,
@@ -823,8 +861,28 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
       skippedCount
     });
   } catch (error) {
-    console.error('Submit error:', error);
-    res.status(500).json({ message: 'Server error' });
+    console.error('[Submit Quiz] ERROR:', error);
+    console.error('[Submit Quiz] Error stack:', error.stack);
+
+    // Provide more specific error messages
+    let errorMessage = 'Failed to submit quiz. Please try again.';
+    let statusCode = 500;
+
+    if (error.name === 'ValidationError') {
+      errorMessage = 'Invalid quiz data. Please contact support.';
+      statusCode = 400;
+    } else if (error.name === 'CastError') {
+      errorMessage = 'Invalid quiz or attempt ID.';
+      statusCode = 400;
+    } else if (error.code === 'ETIMEDOUT' || error.code === 'ECONNREFUSED') {
+      errorMessage = 'Database connection failed. Please try again.';
+      statusCode = 503;
+    }
+
+    res.status(statusCode).json({
+      message: errorMessage,
+      errorCode: error.name || 'UNKNOWN_ERROR'
+    });
   }
 });
 
@@ -863,10 +921,10 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
 
     // Recalculate section performance based on groupBy parameter
     const sectionPerformance = {};
-    
+
     attempt.quiz.questions.forEach((q, index) => {
       const answer = attempt.answers.find(a => a.questionIndex === index);
-      
+
       // Determine section based on groupBy
       let section = 'General';
       if (groupBy === 'subject') {
@@ -890,7 +948,7 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
       }
 
       const hasAnswer = answer && answer.selectedAnswer != null && answer.selectedAnswer !== -1;
-      
+
       if (!hasAnswer) {
         sectionPerformance[section].skipped++;
       } else if (answer.isCorrect) {
