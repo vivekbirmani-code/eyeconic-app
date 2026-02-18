@@ -66,6 +66,7 @@ router.get('/', auth, async (req, res) => {
       })
         .populate('subject', 'name')
         .populate('createdBy', 'name')
+        .populate({ path: 'questions', select: 'subject', populate: { path: 'subject', select: 'name' } })
         .sort({ createdAt: -1 });
 
       // Add attempt status for each quiz
@@ -76,22 +77,34 @@ router.get('/', auth, async (req, res) => {
       });
 
       quizzes = quizzes.map(quiz => {
+        const qObj = quiz.toObject();
+
+        // Compute unique subject names from questions (same as admin/mentor)
+        const names = [...new Set(
+          (qObj.questions || [])
+            .map(qu => qu.subject?.name)
+            .filter(Boolean)
+        )];
+        qObj.subjectNames = names.length > 0 ? names : (qObj.subject?.name ? [qObj.subject.name] : []);
+
+        // Strip full question data to keep response small
+        qObj.questions = (qObj.questions || []).map(qu => qu._id);
+
         const attempt = attempts.find(a => a.quiz.toString() === quiz._id.toString());
-        return {
-          ...quiz.toObject(),
-          attemptStatus: attempt ? {
-            hasAttempted: true,
-            status: attempt.status,
-            score: attempt.score,
-            marksObtained: attempt.marksObtained,
-            canRetake: attempt.retestApproved && !attempt.retestUsed,
-            retestRequested: attempt.retestRequested && !attempt.retestApproved
-          } : {
-            hasAttempted: false,
-            canRetake: false,
-            retestRequested: false
-          }
+        qObj.attemptStatus = attempt ? {
+          hasAttempted: true,
+          status: attempt.status,
+          score: attempt.score,
+          marksObtained: attempt.marksObtained,
+          canRetake: attempt.retestApproved && !attempt.retestUsed,
+          retestRequested: attempt.retestRequested && !attempt.retestApproved
+        } : {
+          hasAttempted: false,
+          canRetake: false,
+          retestRequested: false
         };
+
+        return qObj;
       });
     }
 
@@ -546,7 +559,16 @@ router.get('/:id', auth, async (req, res) => {
       }
     }
 
-    res.json(quiz);
+    const qObj = quiz.toObject();
+    // Compute unique subject names from questions (same logic as list endpoint)
+    const names = [...new Set(
+      (qObj.questions || [])
+        .map(qu => qu.subject?.name)
+        .filter(Boolean)
+    )];
+    qObj.subjectNames = names.length > 0 ? names : (qObj.subject?.name ? [qObj.subject.name] : []);
+
+    res.json(qObj);
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error' });
@@ -1023,6 +1045,14 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
         _id: attempt.quiz._id,
         title: attempt.quiz.title,
         subject: attempt.quiz.subject,
+        subjectNames: (() => {
+          const names = [...new Set(
+            (attempt.quiz.questions || [])
+              .map(qu => qu.subject?.name)
+              .filter(Boolean)
+          )];
+          return names.length > 0 ? names : (attempt.quiz.subject?.name ? [attempt.quiz.subject.name] : []);
+        })(),
         testType: attempt.quiz.testType,
         shareSolution  // IMPORTANT: Send this to frontend for UI decisions
       },
@@ -1070,11 +1100,44 @@ router.get('/retest-requests/pending', auth, authorize('admin'), async (req, res
       retestRequested: true,
       retestApproved: { $ne: true }
     })
-      .populate('quiz', 'title subject testType')
+      .populate({
+        path: 'quiz',
+        select: 'title subject testType questions',
+        populate: [
+          {
+            path: 'questions',
+            select: 'subject',
+            populate: {
+              path: 'subject',
+              select: 'name'
+            }
+          },
+          {
+            path: 'subject',
+            select: 'name'
+          }
+        ]
+      })
       .populate('student', 'name email')
       .sort({ retestRequestedAt: -1 });
 
-    res.json(requests);
+    // Compute subjectNames for each request
+    const requestsWithSubjects = requests.map(req => {
+      const rObj = req.toObject();
+      if (rObj.quiz) {
+        const names = [...new Set(
+          (rObj.quiz.questions || [])
+            .map(qu => qu.subject?.name)
+            .filter(Boolean)
+        )];
+        rObj.quiz.subjectNames = names.length > 0 ? names : (rObj.quiz.subject?.name ? [rObj.quiz.subject.name] : []);
+        // Remove questions to keep response light
+        delete rObj.quiz.questions;
+      }
+      return rObj;
+    });
+
+    res.json(requestsWithSubjects);
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error' });

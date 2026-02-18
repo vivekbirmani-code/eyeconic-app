@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -22,9 +22,12 @@ import {
   X,
   BarChart3
 } from 'lucide-react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import * as Haptics from '@/utils/haptics';
 import { useAuth } from '@/context/AuthContext';
+import { useNotifications } from '@/context/NotificationContext';
 import { api } from '@/services/api';
+import { useAppRefresh } from '@/hooks/useAppRefresh';
 
 interface StudentStat {
   _id: string;
@@ -96,6 +99,7 @@ type TabType = 'students' | 'mentors';
 
 export default function AdminOverview() {
   const { user } = useAuth();
+  const { socket } = useNotifications();
   const [activeTab, setActiveTab] = useState<TabType>('students');
   const [students, setStudents] = useState<StudentStat[]>([]);
   const [mentors, setMentors] = useState<MentorStat[]>([]);
@@ -104,13 +108,8 @@ export default function AdminOverview() {
   const [isMentorDetailsLoading, setIsMentorDetailsLoading] = useState(false);
   const [showMentorModal, setShowMentorModal] = useState(false);
 
-  useEffect(() => {
-    if (user?.role === 'admin') {
-      fetchData();
-    }
-  }, [user, activeTab]);
-
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
+    if (user?.role !== 'admin') return;
     setIsLoading(true);
     try {
       if (activeTab === 'students') {
@@ -125,7 +124,28 @@ export default function AdminOverview() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [user, activeTab]);
+
+  // Refresh on tab focus
+  useFocusEffect(
+    useCallback(() => {
+      fetchData();
+    }, [fetchData])
+  );
+
+  // Refresh when app comes to foreground
+  useAppRefresh(fetchData);
+
+  // Listen for real-time user_updated events from server
+  useEffect(() => {
+    if (!socket) return;
+    socket.on('user_updated', fetchData);
+    socket.on('data_updated', fetchData);
+    return () => {
+      socket.off('user_updated', fetchData);
+      socket.off('data_updated', fetchData);
+    };
+  }, [socket, fetchData]);
 
   const fetchMentorDetails = async (mentorId: string) => {
     setIsMentorDetailsLoading(true);

@@ -2,6 +2,7 @@ const express = require('express');
 const Group = require('../models/Group');
 const User = require('../models/User');
 const { auth, authorize } = require('../middleware/auth');
+const { emitToUser, emitToAdmins } = require('../utils/socket-helpers');
 
 const router = express.Router();
 
@@ -121,6 +122,18 @@ router.post('/', auth, authorize('admin'), async (req, res) => {
     await group.populate('members', 'name email role');
     await group.populate('createdBy', 'name');
 
+    // Notify all new members (except the admin creator) about the new group
+    if (memberIds && memberIds.length > 0) {
+      memberIds.forEach(memberId => {
+        emitToUser(memberId, 'group_added', {
+          groupId: group._id.toString(),
+          groupName: group.name
+        });
+      });
+    }
+    // Also notify admins so their users/overview screens refresh
+    emitToAdmins('data_updated', { type: 'group' });
+
     res.status(201).json(group);
   } catch (error) {
     console.error(error);
@@ -194,6 +207,16 @@ router.post('/:id/members', auth, authorize('admin'), async (req, res) => {
 
     await group.populate('members', 'name email role');
 
+    // Notify newly added members about the group
+    newMembers.forEach(memberId => {
+      emitToUser(memberId, 'group_added', {
+        groupId: group._id.toString(),
+        groupName: group.name
+      });
+    });
+    // Notify admins
+    emitToAdmins('data_updated', { type: 'group' });
+
     res.json(group);
   } catch (error) {
     console.error(error);
@@ -227,6 +250,13 @@ router.delete('/:id/members/:userId', auth, authorize('admin'), async (req, res)
 
     await group.save();
     await group.populate('members', 'name email role');
+
+    // Notify removed user
+    emitToUser(req.params.userId, 'group_removed', {
+      groupId: group._id.toString()
+    });
+    // Notify admins
+    emitToAdmins('data_updated', { type: 'group' });
 
     res.json(group);
   } catch (error) {
@@ -396,6 +426,24 @@ router.post('/bulk-mentor-assignment', auth, authorize('admin'), async (req, res
       message: 'Mentor assignments updated successfully',
       groups: groupsWithStatus
     });
+
+    // Notify the mentor about group changes
+    if (addToGroups && addToGroups.length > 0) {
+      addToGroups.forEach(groupId => {
+        const grp = groupsWithStatus.find(g => g._id.toString() === groupId.toString());
+        emitToUser(mentorId, 'group_added', {
+          groupId: groupId.toString(),
+          groupName: grp ? grp.name : ''
+        });
+      });
+    }
+    if (removeFromGroups && removeFromGroups.length > 0) {
+      removeFromGroups.forEach(groupId => {
+        emitToUser(mentorId, 'group_removed', { groupId: groupId.toString() });
+      });
+    }
+    // Notify admins
+    emitToAdmins('data_updated', { type: 'group' });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error' });

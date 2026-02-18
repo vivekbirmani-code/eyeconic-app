@@ -21,6 +21,7 @@ interface Quiz {
   _id: string;
   title: string;
   subject: any;
+  subjectNames?: string[]; // computed by backend
   duration: number;
   instructions: string[];
   totalMarks: number;
@@ -133,7 +134,9 @@ export default function QuizInstructions() {
           </View>
           <Text style={styles.title}>{quiz.title}</Text>
           <Text style={styles.subject}>
-            {typeof quiz.subject === 'object' ? quiz.subject?.name : quiz.subject}
+            {quiz.subjectNames && quiz.subjectNames.length > 1
+              ? 'MIXED'
+              : (quiz.subjectNames?.[0] || (typeof quiz.subject === 'object' ? quiz.subject?.name : quiz.subject) || 'General').toUpperCase()}
           </Text>
         </View>
 

@@ -5,6 +5,9 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 require('dotenv').config();
 
+// Import socket helpers BEFORE routes to avoid circular deps
+const socketHelpers = require('./utils/socket-helpers');
+
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
 const groupRoutes = require('./routes/groups');
@@ -65,6 +68,9 @@ const io = socketIo(server, {
   }
 });
 
+// Initialize socket helpers with the io instance
+socketHelpers.setIo(io);
+
 // Middleware
 app.use(cors());
 // Increase body size limit for large Excel file uploads (base64 encoded)
@@ -99,7 +105,7 @@ app.use('/api/admin-overview', adminOverviewRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/public', publicQuizRoutes);
 
-// Track socket to user mapping
+// Track socket to user mapping (socket.id → userId)
 const socketUserMap = new Map();
 const Group = require('./models/Group');
 const Message = require('./models/Message');
@@ -110,9 +116,13 @@ io.on('connection', (socket) => {
 
   // Register user with socket and auto-join all their group rooms
   socket.on('register_user', async (userId) => {
-    socketUserMap.set(socket.id, userId);
-    socket.userId = userId;
+    const userIdStr = userId.toString();
+    socketUserMap.set(socket.id, userIdStr);
+    socket.userId = userIdStr;
     console.log(`User ${userId} registered with socket ${socket.id}`);
+
+    // Register in reverse map (via socket-helpers)
+    socketHelpers.registerSocket(socket.id, userIdStr);
 
     // Auto-join all groups user belongs to (for receiving calls globally)
     try {
@@ -452,7 +462,9 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
+    const userId = socketUserMap.get(socket.id);
     socketUserMap.delete(socket.id);
+    socketHelpers.unregisterSocket(socket.id, userId);
     console.log('User disconnected:', socket.id);
   });
 });

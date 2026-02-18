@@ -28,6 +28,7 @@ interface Quiz {
   _id: string;
   title: string;
   subject: { _id: string; name: string };
+  subjectNames?: string[];  // computed by backend: unique subject names from questions
   testType: 'daily' | 'weekly' | 'grand';
   duration: number;
   totalMarks: number;
@@ -91,7 +92,11 @@ const QuizCard = ({ item, index, onPress }: { item: Quiz; index: number; onPress
         <View style={styles.cardHeader}>
           <View style={styles.subjectBadge}>
             <BookOpen size={12} color="#01b4ae" />
-            <Text style={styles.subjectText}>{item.subject?.name}</Text>
+            <Text style={styles.subjectText}>
+              {item.subjectNames && item.subjectNames.length > 1
+                ? 'MIXED'
+                : (item.subjectNames?.[0] || item.subject?.name || 'General').toUpperCase()}
+            </Text>
           </View>
           <View style={[styles.statusBadge, { backgroundColor: status.bgColor }]}>
             <Text style={[styles.statusText, { color: status.color }]}>{status.label}</Text>

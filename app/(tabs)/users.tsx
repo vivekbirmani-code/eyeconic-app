@@ -23,15 +23,18 @@ import { Plus, User as UserIcon, Search, X, Mail, Shield, Calendar, Phone, Lock,
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from '@/utils/haptics';
+import { useFocusEffect } from '@react-navigation/native';
 
 // Enable LayoutAnimation on Android
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 import { useAuth } from '@/context/AuthContext';
+import { useNotifications } from '@/context/NotificationContext';
 import { api } from '@/services/api';
 import SubjectSelectionModal from '@/components/SubjectSelectionModal';
 import MentorSelectionModal from '@/components/MentorSelectionModal';
+import { useAppRefresh } from '@/hooks/useAppRefresh';
 
 interface StudentProfile {
   mbbsBatch?: string;
@@ -82,6 +85,7 @@ interface GroupAssignment {
 
 export default function Users() {
   const { user } = useAuth();
+  const { socket } = useNotifications();
   const [users, setUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isCreateModalVisible, setIsCreateModalVisible] = useState(false);
@@ -172,11 +176,16 @@ export default function Users() {
     ]).start();
   }, []);
 
-  useEffect(() => {
-    fetchUsers();
+  // Staggered card animation function (declared before fetchUsers so it can be referenced)
+  const animateCardList = useCallback((count: number) => {
+    LayoutAnimation.configureNext({
+      duration: 300,
+      update: { type: LayoutAnimation.Types.easeInEaseOut },
+      create: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
+    });
   }, []);
 
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     setIsLoading(true);
     try {
       const response = await api.get('/users');
@@ -188,16 +197,29 @@ export default function Users() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [animateCardList]);
 
-  // Staggered card animation function
-  const animateCardList = useCallback((count: number) => {
-    LayoutAnimation.configureNext({
-      duration: 300,
-      update: { type: LayoutAnimation.Types.easeInEaseOut },
-      create: { type: LayoutAnimation.Types.easeInEaseOut, property: LayoutAnimation.Properties.opacity },
-    });
-  }, []);
+  // Refresh on tab focus
+  useFocusEffect(
+    useCallback(() => {
+      fetchUsers();
+    }, [fetchUsers])
+  );
+
+  // Refresh when app comes to foreground
+  useAppRefresh(fetchUsers);
+
+  // Listen for real-time user_updated events from server
+  useEffect(() => {
+    if (!socket) return;
+    socket.on('user_updated', fetchUsers);
+    socket.on('data_updated', fetchUsers);
+    return () => {
+      socket.off('user_updated', fetchUsers);
+      socket.off('data_updated', fetchUsers);
+    };
+  }, [socket, fetchUsers]);
+
 
   // Filter users based on search query and role filter
   const filteredUsers = useMemo(() => {

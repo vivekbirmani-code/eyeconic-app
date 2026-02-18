@@ -17,12 +17,14 @@ import {
   Pressable,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { Plus, MessageCircle, Users, Search, X, Check, ChevronDown, ChevronUp } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from '@/utils/haptics';
 import { useAuth } from '@/context/AuthContext';
 import { useNotifications } from '@/context/NotificationContext';
 import { api } from '@/services/api';
+import { useAppRefresh } from '@/hooks/useAppRefresh';
 
 interface User {
   _id: string;
@@ -41,7 +43,7 @@ interface Group {
 
 export default function Groups() {
   const { user } = useAuth();
-  const { unreadCounts } = useNotifications();
+  const { unreadCounts, socket } = useNotifications();
   const router = useRouter();
   const [groups, setGroups] = useState<Group[]>([]);
   const [isModalVisible, setIsModalVisible] = useState(false);
@@ -100,11 +102,8 @@ export default function Groups() {
     ]).start();
   }, []);
 
-  useEffect(() => {
-    fetchGroups();
-  }, []);
-
-  const fetchGroups = async () => {
+  // Declare fetchGroups first so hooks below can reference it
+  const fetchGroups = useCallback(async () => {
     setIsLoading(true);
     try {
       const response = await api.get('/groups');
@@ -114,7 +113,28 @@ export default function Groups() {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
+
+  // Refresh on tab focus (every time user navigates to this tab)
+  useFocusEffect(
+    useCallback(() => {
+      fetchGroups();
+    }, [fetchGroups])
+  );
+
+  // Refresh when app comes back to foreground
+  useAppRefresh(fetchGroups);
+
+  // Listen for real-time group_added/group_removed events from server
+  useEffect(() => {
+    if (!socket) return;
+    socket.on('group_added', fetchGroups);
+    socket.on('group_removed', fetchGroups);
+    return () => {
+      socket.off('group_added', fetchGroups);
+      socket.off('group_removed', fetchGroups);
+    };
+  }, [socket, fetchGroups]);
 
   const searchUsers = useCallback(async (query: string, role: string) => {
     if (!query.trim()) {

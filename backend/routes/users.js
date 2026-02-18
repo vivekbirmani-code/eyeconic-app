@@ -1,6 +1,7 @@
 const express = require('express');
 const User = require('../models/User');
 const { auth, authorize } = require('../middleware/auth');
+const { emitToAdmins } = require('../utils/socket-helpers');
 
 const router = express.Router();
 
@@ -93,6 +94,9 @@ router.put('/profile', auth, async (req, res) => {
 
     await user.save();
 
+    // Notify all admins that a user's profile was updated
+    emitToAdmins('user_updated', { userId: user._id.toString() });
+
     res.json({
       message: 'Profile updated successfully',
       user: {
@@ -184,6 +188,9 @@ router.put('/:id', auth, async (req, res) => {
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
+
+    // Notify all admins that a user was updated
+    emitToAdmins('user_updated', { userId: user._id.toString() });
 
     res.json(user);
   } catch (error) {

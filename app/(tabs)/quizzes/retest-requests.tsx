@@ -24,7 +24,8 @@ interface RetestRequest {
   quiz: {
     _id: string;
     title: string;
-    subject: string;
+    subject: { _id: string; name: string } | string;
+    subjectNames?: string[];
   };
   score: number;
   totalQuestions: number;
@@ -93,7 +94,11 @@ export default function RetestRequests() {
 
         <View style={styles.quizInfo}>
           <Text style={styles.quizTitle}>{item.quiz.title}</Text>
-          <Text style={styles.quizSubject}>{item.quiz.subject}</Text>
+          <Text style={styles.quizSubject}>
+            {item.quiz.subjectNames && item.quiz.subjectNames.length > 1
+              ? 'MIXED'
+              : (item.quiz.subjectNames?.[0] || (typeof item.quiz.subject === 'object' ? item.quiz.subject?.name : item.quiz.subject) || 'General').toUpperCase()}
+          </Text>
         </View>
 
         <View style={styles.stats}>
