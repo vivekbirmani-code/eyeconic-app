@@ -79,7 +79,8 @@
           "microphonePermission": "Allow Eyeconic to access your microphone"
         }
       ],
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "./plugins/withWakeUp"
     ],
     "experiments": {
       "typedRoutes": true

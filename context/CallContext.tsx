@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useRef, useEffect, ReactNode } from 'react';
-import { Platform, Vibration } from 'react-native';
+import { Platform, Vibration, AppState } from 'react-native';
+import WakeUpModule from '@/modules/WakeUpModule';
 import { io, Socket } from 'socket.io-client';
 import { getSocketURL } from '@/services/config';
 import { useAuth } from './AuthContext';
@@ -230,6 +231,17 @@ export function CallProvider({ children }: { children: ReactNode }) {
       callerName: initiatorName,
       callerId: initiatorId,
     });
+
+    if (Platform.OS === 'android') {
+      const appState = AppState.currentState;
+      if (appState === 'background' || appState === 'inactive') {
+        try {
+          WakeUpModule.activate();
+        } catch (error) {
+          console.error('Failed to wake up device:', error);
+        }
+      }
+    }
   };
 
   const handleCallInitiated = (data: any) => {
