@@ -17,6 +17,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ChevronLeft, ChevronRight, Flag, Clock, AlertCircle } from 'lucide-react-native';
 import { useGuestQuiz } from '@/context/GuestQuizContext';
 import { getSocketURL } from '@/services/config';
+import { SectionTabs } from '@/components/SectionTabs';
 
 interface Question {
   _id: string;
@@ -42,6 +43,8 @@ export default function GuestQuizTaking() {
   const [selectedAnswer, setSelectedAnswer] = useState<number>(-1);
   const [markedForReview, setMarkedForReview] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState(0);
+  const [currentSection, setCurrentSection] = useState('All');
+  const [questionStartTime, setQuestionStartTime] = useState(Date.now());
   const [submitting, setSubmitting] = useState(false);
 
   const scrollViewRef = useRef<ScrollView>(null);
@@ -107,7 +110,17 @@ export default function GuestQuizTaking() {
         setMarkedForReview(false);
       }
     }
-  }, [currentQuestionIndex, currentAttempt]);
+    setQuestionStartTime(Date.now());
+
+    // Auto-update section tab based on current question
+    if (quizData) {
+      const question = quizData.questions[currentQuestionIndex];
+      const subject = question.subjectName || 'Uncategorized';
+      if (subject !== 'Uncategorized' && subject !== currentSection) {
+        setCurrentSection(subject);
+      }
+    }
+  }, [currentQuestionIndex, currentAttempt, quizData]);
 
   const handleBackPress = () => {
     Alert.alert(
@@ -128,28 +141,59 @@ export default function GuestQuizTaking() {
 
   const handleAnswerSelect = async (answerIndex: number) => {
     setSelectedAnswer(answerIndex);
-    await saveGuestAnswer(currentQuestionIndex, answerIndex, markedForReview, 0);
+    const timeSpent = Math.floor((Date.now() - questionStartTime) / 1000);
+    await saveGuestAnswer(currentQuestionIndex, answerIndex, markedForReview, timeSpent);
   };
 
   const handleMarkForReview = async () => {
     const newState = !markedForReview;
     setMarkedForReview(newState);
-    await saveGuestAnswer(currentQuestionIndex, selectedAnswer, newState, 0);
+    const timeSpent = Math.floor((Date.now() - questionStartTime) / 1000);
+    await saveGuestAnswer(currentQuestionIndex, selectedAnswer, newState, timeSpent);
   };
 
-  const handleNextQuestion = () => {
+  const handleNextQuestion = async () => {
     if (quizData && currentQuestionIndex < quizData.questions.length - 1) {
+      // Save current progress/time before moving
+      const timeSpent = Math.floor((Date.now() - questionStartTime) / 1000);
+      try {
+        await saveGuestAnswer(currentQuestionIndex, selectedAnswer, markedForReview, timeSpent);
+      } catch (err) {
+        console.error('Save failed on guest skip:', err);
+      }
+
       setCurrentQuestionIndex(prev => prev + 1);
       scrollViewRef.current?.scrollTo({ y: 0, animated: false });
     }
   };
 
-  const handlePreviousQuestion = () => {
+  const handlePreviousQuestion = async () => {
     if (currentQuestionIndex > 0) {
+      // Save current progress/time before moving
+      const timeSpent = Math.floor((Date.now() - questionStartTime) / 1000);
+      try {
+        await saveGuestAnswer(currentQuestionIndex, selectedAnswer, markedForReview, timeSpent);
+      } catch (err) {
+        console.error('Save failed on guest skip back:', err);
+      }
+
       setCurrentQuestionIndex(prev => prev - 1);
       scrollViewRef.current?.scrollTo({ y: 0, animated: false });
     }
   };
+
+  const handleSectionChange = useCallback((section: string) => {
+    setCurrentSection(section);
+
+    if (section !== 'All' && quizData) {
+      const firstQuestionInSection = quizData.questions.findIndex(
+        q => (q.subjectName || 'Uncategorized') === section
+      );
+      if (firstQuestionInSection !== -1) {
+        setCurrentQuestionIndex(firstQuestionInSection);
+      }
+    }
+  }, [quizData]);
 
   const handleSubmit = async (isAutoSubmit: boolean = false) => {
     if (!isAutoSubmit) {
@@ -222,6 +266,21 @@ export default function GuestQuizTaking() {
           </Text>
         </View>
       </View>
+
+      {/* Section Tabs */}
+      <SectionTabs
+        sections={['All', ...new Set(quizData.questions.map(q => q.subjectName || 'Uncategorized').filter(s => s !== 'Uncategorized'))].sort()}
+        currentSection={currentSection}
+        onSectionChange={handleSectionChange}
+        questionCounts={(() => {
+          const counts: Record<string, number> = { All: quizData.questions.length };
+          quizData.questions.forEach(q => {
+            const s = q.subjectName || 'Uncategorized';
+            counts[s] = (counts[s] || 0) + 1;
+          });
+          return counts;
+        })()}
+      />
 
       {/* Question Content */}
       <ScrollView 

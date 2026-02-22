@@ -21,6 +21,7 @@ const assignmentRoutes = require('./routes/assignments');
 const adminOverviewRoutes = require('./routes/admin-overview');
 const uploadRoutes = require('./routes/upload');
 const publicQuizRoutes = require('./routes/public-quiz');
+const studentAnalyticsRoutes = require('./routes/student-analytics');
 const { cleanupExpiredMedia } = require('./utils/media-cleanup');
 const Call = require('./models/Call');
 const User = require('./models/User');
@@ -104,6 +105,7 @@ app.use('/api/assignments', assignmentRoutes);
 app.use('/api/admin-overview', adminOverviewRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/public', publicQuizRoutes);
+app.use('/api/student-analytics', studentAnalyticsRoutes);
 
 // Track socket to user mapping (socket.id → userId)
 const socketUserMap = new Map();

@@ -9,6 +9,17 @@ const XLSX = require('xlsx');
 
 const router = express.Router();
 
+// Get question bank stats
+router.get('/stats', auth, authorize('admin'), async (req, res) => {
+    try {
+        const total = await QuestionBank.countDocuments({ isActive: true });
+        res.json({ total });
+    } catch (error) {
+        console.error('Error fetching question stats:', error);
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
 // Configure multer for file upload
 const upload = multer({ storage: multer.memoryStorage() });
 

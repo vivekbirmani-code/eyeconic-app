@@ -98,8 +98,8 @@ function QuizTakingContent() {
   }, []);
 
   // Helper to safely get subject name with fallback
-  const getSubjectName = useCallback((question: Question): string => {
-    return question.subject?.name || 'Uncategorized';
+  const getSubjectName = useCallback((question: any): string => {
+    return question.subject?.name || question.subjectName || 'Uncategorized';
   }, []);
 
   // Memoize filtered questions for performance
@@ -176,6 +176,18 @@ function QuizTakingContent() {
     setQuestionStartTime(Date.now());
     setSaveError(false);
 
+    // Auto-update section tab based on current question
+    if (quiz) {
+      const question = quiz.questions[currentQuestionIndex];
+      const subject = getSubjectName(question);
+      if (subject !== 'Uncategorized' && subject !== currentSection) {
+        setCurrentSection(subject);
+      } else if (subject === 'Uncategorized' && currentSection !== 'All') {
+        // If question is uncategorized and we are in a section, might want to stay or go to All
+        // Decided: stay in current section if navigating manually, but usually they follow order.
+      }
+    }
+
     // Animate question change
     Animated.sequence([
       Animated.timing(fadeAnim, {
@@ -189,7 +201,7 @@ function QuizTakingContent() {
         useNativeDriver: true,
       }),
     ]).start();
-  }, [currentQuestionIndex, currentAttempt]);
+  }, [currentQuestionIndex, currentAttempt, quiz]);
 
   const fetchQuizDetails = async () => {
     try {
@@ -269,19 +281,35 @@ function QuizTakingContent() {
     }
   }, [markedForReview, currentQuestionIndex, selectedAnswer, questionStartTime, saveAnswer]);
 
-  const handleNextQuestion = useCallback(() => {
+  const handleNextQuestion = useCallback(async () => {
     if (quiz && currentQuestionIndex < quiz.questions.length - 1) {
+      // Save current progress/time before moving
+      const timeSpent = Math.floor((Date.now() - questionStartTime) / 1000);
+      try {
+        await saveAnswer(currentQuestionIndex, selectedAnswer, markedForReview, timeSpent);
+      } catch (err) {
+        console.error('Save failed on skip:', err);
+      }
+
       setCurrentQuestionIndex(prev => prev + 1);
       scrollViewRef.current?.scrollTo({ y: 0, animated: false });
     }
-  }, [quiz, currentQuestionIndex]);
+  }, [quiz, currentQuestionIndex, questionStartTime, selectedAnswer, markedForReview, saveAnswer]);
 
-  const handlePreviousQuestion = useCallback(() => {
+  const handlePreviousQuestion = useCallback(async () => {
     if (currentQuestionIndex > 0) {
+      // Save current progress/time before moving
+      const timeSpent = Math.floor((Date.now() - questionStartTime) / 1000);
+      try {
+        await saveAnswer(currentQuestionIndex, selectedAnswer, markedForReview, timeSpent);
+      } catch (err) {
+        console.error('Save failed on skip back:', err);
+      }
+
       setCurrentQuestionIndex(prev => prev - 1);
       scrollViewRef.current?.scrollTo({ y: 0, animated: false });
     }
-  }, [currentQuestionIndex]);
+  }, [currentQuestionIndex, questionStartTime, selectedAnswer, markedForReview, saveAnswer]);
 
   const handleQuestionSelect = useCallback((index: number) => {
     setCurrentQuestionIndex(index);

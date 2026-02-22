@@ -1,0 +1,6 @@
+src/pages/admin/quizzes/Analytics.tsx(1,8): error TS6133: 'React' is declared but its value is never read.
+src/pages/admin/quizzes/CreateQuiz.tsx(28,10): error TS6133: 'loading' is declared but its value is never read.
+src/pages/admin/quizzes/CreateQuiz.tsx(28,19): error TS6133: 'setLoading' is declared but its value is never read.
+src/pages/admin/quizzes/CreateQuiz.tsx(35,10): error TS6133: 'showSubjectDropdown' is declared but its value is never read.
+src/pages/admin/quizzes/CreateQuiz.tsx(35,31): error TS6133: 'setShowSubjectDropdown' is declared but its value is never read.
+src/pages/admin/quizzes/CreateQuiz.tsx(54,21): error TS6133: 'setTagFilter' is declared but its value is never read.

@@ -13,6 +13,34 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 const router = express.Router();
 
+// Get quiz stats
+router.get('/stats', auth, authorize('admin', 'mentor'), async (req, res) => {
+  try {
+    const total = await Quiz.countDocuments({ isActive: true });
+    const daily = await Quiz.countDocuments({ isActive: true, testType: 'daily' });
+    const weekly = await Quiz.countDocuments({ isActive: true, testType: 'weekly' });
+    const grand = await Quiz.countDocuments({ isActive: true, testType: 'grand' });
+    res.json({ total, daily, weekly, grand });
+  } catch (error) {
+    console.error('Stats error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get pending retests (must be before /:id)
+router.get('/retests/pending', auth, authorize('admin', 'mentor'), async (req, res) => {
+  try {
+    const attempts = await QuizAttempt.find({
+      retestRequested: true,
+      retestApproved: false
+    }).populate('student', 'name email').populate('quiz', 'title');
+    res.json(attempts);
+  } catch (error) {
+    console.error('Pending retests error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Get all quizzes (role-based access)
 router.get('/', auth, async (req, res) => {
   try {
@@ -511,6 +539,89 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
   } catch (error) {
     console.error('Update quiz error:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Get quiz analytics list
+router.get('/analytics/list', auth, authorize('admin', 'mentor'), async (req, res) => {
+  try {
+    const quizzes = await Quiz.find({ isActive: true })
+      .select('title testType assignedStudents')
+      .sort({ createdAt: -1 });
+
+    const analyticsList = await Promise.all(quizzes.map(async (quiz) => {
+      const attemptCount = await QuizAttempt.countDocuments({
+        quiz: quiz._id,
+        status: { $in: ['completed', 'auto_submitted'] }
+      });
+
+      return {
+        _id: quiz._id,
+        title: quiz.title,
+        testType: quiz.testType,
+        assignedCount: quiz.assignedStudents.length,
+        attemptCount
+      };
+    }));
+
+    res.json(analyticsList);
+  } catch (error) {
+    console.error('Analytics list error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get detailed quiz analytics
+router.get('/analytics/:id', auth, authorize('admin', 'mentor'), async (req, res) => {
+  try {
+    const quizId = req.params.id;
+    const attempts = await QuizAttempt.find({
+      quiz: quizId,
+      status: { $in: ['completed', 'auto_submitted'] }
+    }).populate('student', 'name email');
+
+    if (attempts.length === 0) {
+      return res.json({
+        totalAttempts: 0,
+        averageScore: 0,
+        avgCorrect: 0,
+        avgTime: 0,
+        studentPerformance: []
+      });
+    }
+
+    let totalScore = 0;
+    let totalCorrect = 0;
+    let totalTime = 0;
+
+    const studentPerformance = attempts.map(a => {
+      const percentage = a.totalMarks > 0 ? (a.marksObtained / a.totalMarks) * 100 : 0;
+      totalScore += percentage;
+      totalCorrect += a.correctCount || 0;
+      totalTime += a.timeTaken || 0;
+
+      return {
+        studentId: a.student?._id,
+        studentName: a.student?.name || 'Unknown',
+        percentage,
+        correct: a.correctCount || 0,
+        wrong: a.incorrectCount || 0,
+        skipped: a.skippedCount || 0,
+        timeTaken: a.timeTaken || 0,
+        tabSwitchCount: a.tabSwitchCount || 0
+      };
+    });
+
+    res.json({
+      totalAttempts: attempts.length,
+      averageScore: totalScore / attempts.length,
+      avgCorrect: totalCorrect / attempts.length,
+      avgTime: totalTime / attempts.length,
+      studentPerformance
+    });
+  } catch (error) {
+    console.error('Quiz analytics detail error:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
