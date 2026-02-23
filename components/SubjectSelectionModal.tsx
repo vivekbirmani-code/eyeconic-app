@@ -28,6 +28,15 @@ interface GroupedSubjects {
   '4th': Subject[];
 }
 
+// Exactly 19 allowed subject names — used to filter out any extras from the DB
+const ALLOWED_SUBJECT_NAMES = new Set([
+  'ANATOMY', 'PHYSIOLOGY', 'BIOCHEMISTRY',
+  'PATHOLOGY', 'PHARMACOLOGY', 'MICROBIOLOGY',
+  'PSM', 'OPHTHALMOLOGY', 'ENT', 'FMT',
+  'MEDICINE', 'SURGERY', 'ORTHOPAEDICS', 'ANAESTHESIA',
+  'PAEDIATRICS', 'PSYCHIATRY', 'RADIOLOGY', 'OBGYN', 'DERMATOLOGY',
+]);
+
 interface SubjectSelectionModalProps {
   visible: boolean;
   onClose: () => void;
@@ -101,7 +110,15 @@ export default function SubjectSelectionModal({
   const fetchSubjects = async () => {
     try {
       const response = await api.get('/subjects');
-      setSubjects(response.data);
+      // Filter each year group to only the 19 allowed subjects
+      const raw: GroupedSubjects = response.data;
+      const filtered: GroupedSubjects = {
+        '1st': (raw['1st'] || []).filter((s: Subject) => ALLOWED_SUBJECT_NAMES.has(s.name.toUpperCase())),
+        '2nd': (raw['2nd'] || []).filter((s: Subject) => ALLOWED_SUBJECT_NAMES.has(s.name.toUpperCase())),
+        '3rd': (raw['3rd'] || []).filter((s: Subject) => ALLOWED_SUBJECT_NAMES.has(s.name.toUpperCase())),
+        '4th': (raw['4th'] || []).filter((s: Subject) => ALLOWED_SUBJECT_NAMES.has(s.name.toUpperCase())),
+      };
+      setSubjects(filtered);
     } catch (error) {
       console.error('Error fetching subjects:', error);
     }

@@ -10,7 +10,9 @@ import {
   FlatList,
   ActivityIndicator,
   Platform,
-  StatusBar
+  StatusBar,
+  Linking,
+  Alert
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
@@ -20,7 +22,10 @@ import {
   BookOpen,
   TrendingUp,
   Clock,
-  AlertTriangle
+  AlertTriangle,
+  Download,
+  BarChart3,
+  Grid3X3
 } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
@@ -58,6 +63,18 @@ interface StudentAnalytics {
     avgPercentage: number;
   };
   attempts: AttemptSummary[];
+}
+
+interface SubjectPerformance {
+  subjectId: string;
+  subjectName: string;
+  tests: number;
+  totalMarks: number;
+  obtainedMarks: number;
+  totalCorrect: number;
+  totalQuestions: number;
+  percentage: number;
+  attempts: any[];
 }
 
 interface TestListItem {
@@ -101,7 +118,7 @@ export default function Analytics() {
   const router = useRouter();
 
   // Tab state
-  const [activeTab, setActiveTab] = useState<'test' | 'student'>('test');
+  const [activeTab, setActiveTab] = useState<'test' | 'student' | 'heatmap'>('test');
 
   // Test Analytics state
   const [tests, setTests] = useState<TestListItem[]>([]);
@@ -119,6 +136,15 @@ export default function Analytics() {
   const [loadingStudents, setLoadingStudents] = useState(false);
   const [loadingStudentAnalytics, setLoadingStudentAnalytics] = useState(false);
 
+  // Subject-wise report for selected student
+  const [subjectReport, setSubjectReport] = useState<SubjectPerformance[]>([]);
+  const [loadingSubjects, setLoadingSubjects] = useState(false);
+  const [expandedSubject, setExpandedSubject] = useState<string | null>(null);
+
+  // Heat map state
+  const [heatmapData, setHeatmapData] = useState<any>(null);
+  const [loadingHeatmap, setLoadingHeatmap] = useState(false);
+
   // Modal state
   const [selectedAttemptId, setSelectedAttemptId] = useState<string | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
@@ -126,8 +152,10 @@ export default function Analytics() {
   useEffect(() => {
     if (activeTab === 'test') {
       fetchTests();
-    } else {
+    } else if (activeTab === 'student') {
       fetchStudents();
+    } else if (activeTab === 'heatmap') {
+      fetchHeatmap();
     }
   }, [activeTab]);
 
@@ -213,6 +241,57 @@ export default function Analytics() {
     setModalVisible(true);
   };
 
+  const fetchSubjectReport = async (studentId: string) => {
+    setLoadingSubjects(true);
+    try {
+      const response = await api.get(`/quizzes/analytics/student/${studentId}/subjects`);
+      setSubjectReport(response.data.subjects || []);
+    } catch (error) {
+      console.error('Error fetching subject report:', error);
+      setSubjectReport([]);
+    } finally {
+      setLoadingSubjects(false);
+    }
+  };
+
+  const fetchHeatmap = async () => {
+    setLoadingHeatmap(true);
+    try {
+      const response = await api.get('/quizzes/analytics/heatmap');
+      setHeatmapData(response.data);
+    } catch (error) {
+      console.error('Error fetching heatmap:', error);
+      setHeatmapData(null);
+    } finally {
+      setLoadingHeatmap(false);
+    }
+  };
+
+  const handleDownloadCSV = async () => {
+    if (!selectedTest) return;
+    try {
+      const baseURL = api.defaults.baseURL || '';
+      // Extract the bearer token from the axios instance
+      const authHeader = api.defaults.headers.common['Authorization'] as string;
+      const token = authHeader ? authHeader.replace('Bearer ', '') : '';
+      
+      // Append the token as a query parameter so the backend auth middleware can read it
+      const url = `${baseURL}/quizzes/analytics/test-report/${selectedTest._id}/csv?token=${token}`;
+      
+      // Open in browser to trigger the download
+      Linking.openURL(url);
+    } catch (error) {
+      Alert.alert('Error', 'Failed to download CSV');
+    }
+  };
+
+  // When selecting a student, also fetch their subject report
+  const handleSelectStudentEnhanced = (student: Student) => {
+    setSelectedStudent(student);
+    fetchStudentAnalytics(student._id);
+    fetchSubjectReport(student._id);
+  };
+
   if (user?.role !== 'admin') {
     return (
       <SafeAreaView style={styles.container}>
@@ -223,7 +302,8 @@ export default function Analytics() {
 
   const tabs = [
     { key: 'test', label: 'Test Analytics' },
-    { key: 'student', label: 'Student Analytics' }
+    { key: 'student', label: 'Student Analytics' },
+    { key: 'heatmap', label: 'Heat Map' }
   ];
 
   return (
@@ -241,7 +321,7 @@ export default function Analytics() {
       <TabSwitcher
         tabs={tabs}
         activeTab={activeTab}
-        onTabChange={(key) => setActiveTab(key as 'test' | 'student')}
+        onTabChange={(key) => setActiveTab(key as 'test' | 'student' | 'heatmap')}
       />
 
       {/* Content */}
@@ -266,6 +346,16 @@ export default function Analytics() {
                     totalMarks={testAnalytics.test.totalMarks}
                   />
                   <PerformanceMetrics metrics={testAnalytics.performanceMetrics} />
+
+                  {/* Download CSV Button */}
+                  <TouchableOpacity
+                    style={styles.downloadButton}
+                    onPress={handleDownloadCSV}
+                  >
+                    <Download color="#FFF" size={18} />
+                    <Text style={styles.downloadButtonText}>Download Report (CSV)</Text>
+                  </TouchableOpacity>
+
                   <QuestionAnalytics questions={testAnalytics.questionAnalytics} />
                   <StudentPerformanceList
                     students={testAnalytics.studentPerformance}
@@ -290,7 +380,7 @@ export default function Analytics() {
 
           <View style={{ height: 40 }} />
         </ScrollView>
-      ) : (
+      ) : activeTab === 'student' ? (
         // STUDENT ANALYTICS TAB
         <View style={styles.content}>
           {!selectedStudent ? (
@@ -316,7 +406,7 @@ export default function Analytics() {
                     renderItem={({ item }) => (
                       <TouchableOpacity
                         style={styles.studentItem}
-                        onPress={() => handleSelectStudent(item)}
+                        onPress={() => handleSelectStudentEnhanced(item)}
                       >
                         <View style={styles.studentAvatar}>
                           <User color="#6B7280" size={20} />
@@ -375,7 +465,69 @@ export default function Analytics() {
                     </View>
                   </View>
 
-                  <Text style={styles.sectionTitle}>Test History</Text>
+                  {/* Subject-Wise Performance */}
+                  <Text style={styles.sectionTitle}>Subject-Wise Performance</Text>
+                  {loadingSubjects ? (
+                    <ActivityIndicator color="#01b4ae" style={{ marginTop: 12 }} />
+                  ) : subjectReport.length > 0 ? (
+                    subjectReport.map(sub => (
+                      <TouchableOpacity
+                        key={sub.subjectId}
+                        style={styles.subjectCard}
+                        onPress={() => setExpandedSubject(
+                          expandedSubject === sub.subjectId ? null : sub.subjectId
+                        )}
+                        activeOpacity={0.7}
+                      >
+                        <View style={styles.subjectHeader}>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.subjectName}>{sub.subjectName}</Text>
+                            <Text style={styles.subjectMeta}>
+                              {sub.tests} tests • {sub.totalCorrect}/{sub.totalQuestions} correct
+                            </Text>
+                          </View>
+                          <View style={[
+                            styles.subjectPctBadge,
+                            { backgroundColor: sub.percentage >= 60 ? '#D1FAE5' : '#FEE2E2' }
+                          ]}>
+                            <Text style={[
+                              styles.subjectPctText,
+                              { color: sub.percentage >= 60 ? '#059669' : '#DC2626' }
+                            ]}>
+                              {sub.percentage}%
+                            </Text>
+                          </View>
+                        </View>
+                        <View style={styles.progressBarBg}>
+                          <View style={[
+                            styles.progressBarFill,
+                            { width: `${Math.min(sub.percentage, 100)}%`, backgroundColor: sub.percentage >= 60 ? '#10B981' : '#EF4444' }
+                          ]} />
+                        </View>
+                        {expandedSubject === sub.subjectId && sub.attempts.length > 0 && (
+                          <View style={styles.subjectAttempts}>
+                            {sub.attempts.map((att: any, i: number) => (
+                              <TouchableOpacity
+                                key={i}
+                                style={styles.subjectAttemptRow}
+                                onPress={() => handleStudentAttemptClick(att._id)}
+                              >
+                                <Text style={styles.subjectAttemptTitle} numberOfLines={1}>{att.quizTitle}</Text>
+                                <Text style={[
+                                  styles.subjectAttemptPct,
+                                  { color: att.percentage >= 60 ? '#10B981' : '#EF4444' }
+                                ]}>{att.percentage}%</Text>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        )}
+                      </TouchableOpacity>
+                    ))
+                  ) : (
+                    <Text style={{ color: '#9CA3AF', textAlign: 'center', marginTop: 12 }}>No subject data available</Text>
+                  )}
+
+                  <Text style={[styles.sectionTitle, { marginTop: 24 }]}>Test History</Text>
                   {studentAnalytics.attempts.length > 0 ? (
                     studentAnalytics.attempts.map((attempt, index) => (
                       <TouchableOpacity
@@ -456,6 +608,79 @@ export default function Analytics() {
             </ScrollView>
           )}
         </View>
+      ) : (
+        // HEAT MAP TAB
+        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+          {loadingHeatmap ? (
+            <ActivityIndicator color="#01b4ae" style={{ marginTop: 60 }} />
+          ) : heatmapData ? (
+            <View style={{ padding: 16 }}>
+              <Text style={styles.sectionTitle}>Performance Heat Map</Text>
+              <Text style={{ color: '#6B7280', fontSize: 13, marginBottom: 16 }}>
+                Students × Tests • Color indicates accuracy percentage
+              </Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={true}>
+                <View>
+                  <View style={{ flexDirection: 'row' }}>
+                    <View style={[styles.heatCell, styles.heatHeaderCell, { width: 120 }]}>
+                      <Text style={styles.heatHeaderText}>Student</Text>
+                    </View>
+                    {heatmapData.tests.map((t: any) => (
+                      <View key={t._id} style={[styles.heatCell, styles.heatHeaderCell]}>
+                        <Text style={styles.heatHeaderText} numberOfLines={2}>{t.title}</Text>
+                      </View>
+                    ))}
+                  </View>
+                  {heatmapData.students.map((s: any) => (
+                    <View key={s.studentId} style={{ flexDirection: 'row' }}>
+                      <View style={[styles.heatCell, { width: 120, backgroundColor: '#F9FAFB' }]}>
+                        <Text style={{ fontSize: 11, color: '#374151', fontWeight: '500' }} numberOfLines={1}>{s.studentName}</Text>
+                      </View>
+                      {heatmapData.tests.map((t: any) => {
+                        const score = s.scores[t._id];
+                        const bg = score === undefined ? '#F3F4F6'
+                          : score >= 80 ? '#059669'
+                          : score >= 60 ? '#10B981'
+                          : score >= 40 ? '#FBBF24'
+                          : score >= 20 ? '#F97316'
+                          : '#EF4444';
+                        return (
+                          <View key={t._id} style={[styles.heatCell, { backgroundColor: bg }]}>
+                            <Text style={{ fontSize: 11, color: score !== undefined ? '#FFF' : '#9CA3AF', fontWeight: '600' }}>
+                              {score !== undefined ? `${score}%` : '—'}
+                            </Text>
+                          </View>
+                        );
+                      })}
+                    </View>
+                  ))}
+                </View>
+              </ScrollView>
+              <View style={styles.heatLegend}>
+                <Text style={{ fontSize: 12, color: '#6B7280', marginRight: 8 }}>Legend:</Text>
+                {[
+                  { color: '#059669', label: '80%+' },
+                  { color: '#10B981', label: '60-79%' },
+                  { color: '#FBBF24', label: '40-59%' },
+                  { color: '#F97316', label: '20-39%' },
+                  { color: '#EF4444', label: '<20%' },
+                  { color: '#F3F4F6', label: 'N/A' }
+                ].map((item, i) => (
+                  <View key={i} style={{ flexDirection: 'row', alignItems: 'center', marginRight: 10 }}>
+                    <View style={{ width: 12, height: 12, backgroundColor: item.color, borderRadius: 2, marginRight: 4 }} />
+                    <Text style={{ fontSize: 11, color: '#6B7280' }}>{item.label}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          ) : (
+            <View style={styles.emptyContainer}>
+              <Grid3X3 color="#9CA3AF" size={48} />
+              <Text style={styles.emptyText}>No heatmap data available</Text>
+            </View>
+          )}
+          <View style={{ height: 40 }} />
+        </ScrollView>
       )}
 
       {/* Attempt Detail Modal */}
@@ -732,5 +957,111 @@ const styles = StyleSheet.create({
     color: '#EF4444',
     textAlign: 'center',
     marginTop: 50,
+  },
+  downloadButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#01b4ae',
+    padding: 14,
+    borderRadius: 10,
+    marginHorizontal: 16,
+    marginVertical: 12,
+    gap: 8,
+  },
+  downloadButtonText: {
+    color: '#FFF',
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  subjectCard: {
+    backgroundColor: '#FFF',
+    padding: 16,
+    borderRadius: 12,
+    marginBottom: 10,
+  },
+  subjectHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+  },
+  subjectName: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1F2937',
+  },
+  subjectMeta: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  subjectPctBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  subjectPctText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  progressBarBg: {
+    height: 6,
+    backgroundColor: '#E5E7EB',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  progressBarFill: {
+    height: 6,
+    borderRadius: 3,
+  },
+  subjectAttempts: {
+    marginTop: 10,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    paddingTop: 8,
+  },
+  subjectAttemptRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 6,
+  },
+  subjectAttemptTitle: {
+    flex: 1,
+    fontSize: 13,
+    color: '#374151',
+    marginRight: 8,
+  },
+  subjectAttemptPct: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  heatCell: {
+    width: 70,
+    height: 40,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 0.5,
+    borderColor: '#E5E7EB',
+  },
+  heatHeaderCell: {
+    backgroundColor: '#F9FAFB',
+    height: 50,
+  },
+  heatHeaderText: {
+    fontSize: 10,
+    fontWeight: '600',
+    color: '#374151',
+    textAlign: 'center',
+  },
+  heatLegend: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    marginTop: 16,
+    padding: 10,
+    backgroundColor: '#FFF',
+    borderRadius: 8,
   },
 });

@@ -56,7 +56,8 @@ export default function QuizResult() {
 
   const fetchResults = async () => {
     try {
-      const response = await api.get(`/quizzes/${id}/attempt/${attemptId}/results`);
+      // groupBy=subject ensures section analysis groups by actual subject names
+      const response = await api.get(`/quizzes/${id}/attempt/${attemptId}/results?groupBy=subject`);
       const data = response.data;
 
       // Transform backend response to match ResultData interface
@@ -67,11 +68,14 @@ export default function QuizResult() {
           subject: typeof data.quiz.subject === 'object' ? data.quiz.subject.name : data.quiz.subject,
           totalQuestions: data.attempt.totalQuestions,
           totalMarks: data.attempt.totalMarks,
-          shareSolution: data.quiz.shareSolution !== undefined ? data.quiz.shareSolution : true  // NEW: Extract shareSolution
+          shareSolution: data.quiz.shareSolution !== undefined ? data.quiz.shareSolution : true
         },
         score: data.attempt.score,
         marksObtained: data.attempt.marksObtained,
-        percentage: Math.round((data.attempt.marksObtained / data.attempt.totalMarks) * 100) || 0,
+        // Accuracy = correct questions / total questions (not marks/totalMarks which can exceed 100%)
+        percentage: data.attempt.totalQuestions > 0
+          ? Math.round((data.attempt.score / data.attempt.totalQuestions) * 100)
+          : 0,
         startTime: data.attempt.startTime,
         endTime: data.attempt.endTime,
         status: data.attempt.status,

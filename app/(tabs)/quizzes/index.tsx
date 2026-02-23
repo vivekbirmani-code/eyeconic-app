@@ -136,8 +136,8 @@ const QuizCard = ({ item, index, onPress }: { item: Quiz; index: number; onPress
           <View style={styles.scoreContainer}>
             <Text style={styles.scoreLabel}>Score</Text>
             <Text style={styles.scoreValue}>
-              {item.attemptStatus.marksObtained}
-              <Text style={styles.scoreTotal}>/{item.totalMarks}</Text>
+              {item.attemptStatus.score ?? item.attemptStatus.marksObtained}
+              <Text style={styles.scoreTotal}>/{item.questions?.length || 0} Questions</Text>
             </Text>
           </View>
         )}

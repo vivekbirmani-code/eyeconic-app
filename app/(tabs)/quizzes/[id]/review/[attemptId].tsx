@@ -61,7 +61,7 @@ export default function QuizReview() {
   const [loading, setLoading] = useState(true);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [currentSection, setCurrentSection] = useState<string>('Overview');
-  const [groupBy, setGroupBy] = useState<'subject' | 'tag' | 'topic'>('topic');
+  const [groupBy, setGroupBy] = useState<'subject' | 'tag' | 'topic'>('subject');
   const [showGroupByDropdown, setShowGroupByDropdown] = useState(false);
 
   useEffect(() => {
@@ -85,7 +85,10 @@ export default function QuizReview() {
         },
         score: data.attempt.score,
         marksObtained: data.attempt.marksObtained,
-        percentage: Math.round((data.attempt.marksObtained / data.attempt.totalMarks) * 100) || 0,
+        // Accuracy = correctCount/totalQuestions (not marks/totalMarks which can exceed 100%)
+        percentage: data.attempt.totalQuestions > 0
+          ? Math.round((data.attempt.score / data.attempt.totalQuestions) * 100)
+          : 0,
         detailedResults: data.questions.map((q: any) => {
           // Determine section based on groupBy parameter
           let section = 'General';
@@ -610,7 +613,7 @@ export default function QuizReview() {
           <Text style={styles.subtitle}>Solutions & Explanations</Text>
         </View>
         <View style={styles.scoreContainer}>
-          <Text style={styles.scoreText}>{reviewData.marksObtained}/{reviewData.quiz.totalMarks}</Text>
+          <Text style={styles.scoreText}>{reviewData.score}/{reviewData.quiz.totalQuestions}</Text>
           <Text style={styles.scoreLabel}>Score</Text>
         </View>
       </View>

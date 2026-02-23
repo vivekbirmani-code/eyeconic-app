@@ -141,6 +141,40 @@ router.post('/', auth, authorize('admin'), async (req, res) => {
   }
 });
 
+// Update group name/description (Admin only)
+router.put('/:id', auth, authorize('admin'), async (req, res) => {
+  try {
+    const { name, description } = req.body;
+    const group = await Group.findById(req.params.id);
+    if (!group) {
+      return res.status(404).json({ message: 'Group not found' });
+    }
+
+    if (name !== undefined) group.name = name.trim();
+    if (description !== undefined) group.description = description.trim();
+    await group.save();
+
+    await group.populate('members', 'name email role');
+    await group.populate('createdBy', 'name');
+
+    // Notify members about the update
+    group.members.forEach(member => {
+      if (member._id.toString() !== req.user._id.toString()) {
+        emitToUser(member._id.toString(), 'group_updated', {
+          groupId: group._id.toString(),
+          groupName: group.name
+        });
+      }
+    });
+    emitToAdmins('data_updated', { type: 'group' });
+
+    res.json(group);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Add members to group (Admin only)
 router.post('/:id/members', auth, authorize('admin'), async (req, res) => {
   try {

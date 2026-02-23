@@ -216,10 +216,23 @@ export function CallProvider({ children }: { children: ReactNode }) {
   };
 
   const handleIncomingCall = (data: any) => {
-    const { callId, groupId, initiatorId, initiatorName, groupName } = data;
-    
-    // Don't show incoming call if already in a call
-    if (callState.isInCall) return;
+    const { callId, groupId, initiatorId, initiatorName, groupName, targetUserIds } = data;
+
+    // Guard: only show ring to the user(s) who were explicitly targeted
+    // This is a client-side safety check in addition to the server-side targeted emit
+    const currentUserId = userRef.current?._id;
+    if (targetUserIds && targetUserIds.length > 0) {
+      const isTargeted = targetUserIds.some(
+        (id: string) => id.toString() === currentUserId?.toString()
+      );
+      if (!isTargeted) {
+        console.log('Ignoring incoming_call — current user is not a target');
+        return;
+      }
+    }
+
+    // Use ref to avoid stale closure on isInCall state
+    if (callStateRef.current.isInCall) return;
     
     console.log('Incoming call from:', initiatorName);
     

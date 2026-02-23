@@ -18,7 +18,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
-import { Plus, MessageCircle, Users, Search, X, Check, ChevronDown, ChevronUp } from 'lucide-react-native';
+import { Plus, MessageCircle, Users, Search, X, Check, ChevronDown, ChevronUp, Pencil } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from '@/utils/haptics';
 import { useAuth } from '@/context/AuthContext';
@@ -63,6 +63,11 @@ export default function Groups() {
   const [isSearching, setIsSearching] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+
+  // Edit group state
+  const [editGroup, setEditGroup] = useState<Group | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editDescription, setEditDescription] = useState('');
 
   // Animation values for premium UI
   const headerOpacity = useRef(new Animated.Value(0)).current;
@@ -248,6 +253,30 @@ export default function Groups() {
     router.push({ pathname: '/chat/[id]', params: { id: groupId } });
   };
 
+  const openEditModal = (group: Group) => {
+    setEditGroup(group);
+    setEditName(group.name);
+    setEditDescription(group.description || '');
+  };
+
+  const handleEditGroup = async () => {
+    if (!editGroup || !editName.trim()) {
+      Alert.alert('Error', 'Group name is required');
+      return;
+    }
+    try {
+      await api.put(`/groups/${editGroup._id}`, {
+        name: editName.trim(),
+        description: editDescription.trim()
+      });
+      setEditGroup(null);
+      fetchGroups();
+      Alert.alert('Success', 'Group updated successfully');
+    } catch (error: any) {
+      Alert.alert('Error', error?.response?.data?.message || 'Failed to update group');
+    }
+  };
+
   // Skeleton loading card component
   const SkeletonGroupCard = () => {
     const shimmerAnim = useRef(new Animated.Value(0)).current;
@@ -330,11 +359,25 @@ export default function Groups() {
         <View style={styles.groupInfo}>
           <View style={styles.groupHeaderRow}>
             <Text style={styles.groupName}>{item.name}</Text>
-            {unreadCount > 0 && (
-              <View style={styles.unreadBadge}>
-                <Text style={styles.unreadBadgeText}>{unreadCount}</Text>
-              </View>
-            )}
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              {user?.role === 'admin' && (
+                <TouchableOpacity
+                  onPress={(e) => {
+                    e.stopPropagation?.();
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    openEditModal(item);
+                  }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <Pencil color="#6B7280" size={16} />
+                </TouchableOpacity>
+              )}
+              {unreadCount > 0 && (
+                <View style={styles.unreadBadge}>
+                  <Text style={styles.unreadBadgeText}>{unreadCount}</Text>
+                </View>
+              )}
+            </View>
           </View>
           <Text style={styles.groupDescription}>{item.description}</Text>
           <View style={styles.memberCount}>
@@ -645,6 +688,45 @@ export default function Groups() {
           </SafeAreaView>
         </Modal>
       )}
+
+      {/* Edit Group Modal */}
+      <Modal visible={!!editGroup} animationType="slide" transparent>
+        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 20 }}>
+          <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 20 }}>
+            <Text style={{ fontSize: 18, fontWeight: '700', color: '#1F2937', marginBottom: 16 }}>Edit Group</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Group Name"
+              placeholderTextColor="#9CA3AF"
+              value={editName}
+              onChangeText={setEditName}
+            />
+            <TextInput
+              style={styles.textArea}
+              placeholder="Description (optional)"
+              placeholderTextColor="#9CA3AF"
+              value={editDescription}
+              onChangeText={setEditDescription}
+              multiline
+              numberOfLines={3}
+            />
+            <View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
+              <TouchableOpacity
+                style={{ flex: 1, backgroundColor: '#F3F4F6', padding: 14, borderRadius: 10, alignItems: 'center' }}
+                onPress={() => setEditGroup(null)}
+              >
+                <Text style={{ color: '#6B7280', fontWeight: '600' }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={{ flex: 1, backgroundColor: '#01b4ae', padding: 14, borderRadius: 10, alignItems: 'center' }}
+                onPress={handleEditGroup}
+              >
+                <Text style={{ color: '#FFFFFF', fontWeight: '600' }}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 }

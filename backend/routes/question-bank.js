@@ -64,7 +64,7 @@ router.get('/', auth, async (req, res) => {
             .populate('chapter', 'name')
             .populate('topic', 'name')
             .sort({ createdAt: -1 })
-            .limit(100);
+            .limit(Math.min(parseInt(req.query.limit) || 100, 1000));
 
         // Only hide answers for students, show for admin/mentor
         if (req.user.role === 'student') {

@@ -118,11 +118,7 @@ export default function ImportQuiz() {
       Alert.alert('Error', 'Please enter a quiz title');
       return;
     }
-    if (!scheduledDate || !expiryDate) {
-      Alert.alert('Error', 'Please set both start and end date/time for the quiz');
-      return;
-    }
-    if (expiryDate <= scheduledDate) {
+    if (scheduledDate && expiryDate && expiryDate <= scheduledDate) {
       Alert.alert('Error', 'End date must be after start date');
       return;
     }
@@ -262,7 +258,7 @@ export default function ImportQuiz() {
           </ScrollView>
 
           {/* Time Window */}
-          <Text style={styles.label}>Start Date & Time *</Text>
+          <Text style={styles.label}>Start Date & Time (Optional)</Text>
           <TouchableOpacity
             style={styles.datePickerButton}
             onPress={() => {
@@ -299,7 +295,7 @@ export default function ImportQuiz() {
             />
           )}
 
-          <Text style={styles.label}>End Date & Time *</Text>
+          <Text style={styles.label}>End Date & Time (Optional)</Text>
           <TouchableOpacity
             style={styles.datePickerButton}
             onPress={() => {

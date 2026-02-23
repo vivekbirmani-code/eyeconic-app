@@ -93,6 +93,8 @@ export default function EditQuiz() {
   const [questionSearch, setQuestionSearch] = useState('');
   const [subjects, setSubjects] = useState<Subject[]>([]);
   const [filterSubjectId, setFilterSubjectId] = useState<string>('all');
+  // Temporary selection state for the picker (committed on Save)
+  const [pickerSelections, setPickerSelections] = useState<Set<string>>(new Set());
 
   // Question Preview Modal
   const [previewQuestion, setPreviewQuestion] = useState<Question | null>(null);
@@ -127,18 +129,17 @@ export default function EditQuiz() {
     }
   };
 
-  const loadAvailableQuestions = async (subjectId?: string) => {
+  // allQuestions holds every question loaded when the picker opens — never changes during session
+  const [allQuestions, setAllQuestions] = useState<Question[]>([]);
+
+  const loadAllQuestions = async () => {
     try {
       setLoadingQuestions(true);
-      const params: any = { limit: 500 };
-      
-      // If a specific subject is selected (not 'all'), filter by it
-      if (subjectId && subjectId !== 'all') {
-        params.subject = subjectId;
-      }
-      
-      const response = await api.get('/question-bank', { params });
-      setAvailableQuestions(response.data.questions || response.data);
+      // Load without subject filter so we get everything; use a large limit
+      const response = await api.get('/question-bank', { params: { limit: 1000 } });
+      const fetchedQs: Question[] = response.data.questions || response.data;
+      setAllQuestions(fetchedQs);
+      setAvailableQuestions(fetchedQs); // keep availableQuestions in sync
     } catch (error) {
       console.error('Error loading questions:', error);
       Alert.alert('Error', 'Failed to load questions');
@@ -164,16 +165,41 @@ export default function EditQuiz() {
   };
 
   const handleOpenQuestionPicker = () => {
+    // Initialize picker selections from the current selected questions
+    const initialSelections = new Set(selectedQuestions.map(q => q._id));
+    setPickerSelections(initialSelections);
+
     setShowQuestionPicker(true);
     setFilterSubjectId('all');
+    setQuestionSearch('');
     fetchSubjects();
-    loadAvailableQuestions('all');
+    loadAllQuestions();
   };
 
-  const handleAddQuestion = (question: Question) => {
-    if (!selectedQuestions.find(q => q._id === question._id)) {
-      setSelectedQuestions([...selectedQuestions, question]);
-    }
+  const handleTogglePickerQuestion = (question: Question) => {
+    setPickerSelections(prev => {
+      const next = new Set(prev);
+      if (next.has(question._id)) {
+        next.delete(question._id);
+      } else {
+        next.add(question._id);
+      }
+      return next;
+    });
+  };
+
+  const handleSavePickerSelections = () => {
+    // Build the selection array from allQuestions + initially selected questions
+    const pool = [...allQuestions, ...selectedQuestions];
+    const seen = new Set<string>();
+    const deduped = pool.filter(q => {
+      if (seen.has(q._id)) return false;
+      seen.add(q._id);
+      return true;
+    });
+    const newSelection = deduped.filter(q => pickerSelections.has(q._id));
+    setSelectedQuestions(newSelection);
+    setShowQuestionPicker(false);
   };
 
   const handleRemoveQuestion = (questionId: string) => {
@@ -202,9 +228,9 @@ export default function EditQuiz() {
         expiryDate: expiryDate?.toISOString()
       });
 
-      Alert.alert('Success', 'Quiz updated successfully', [
-        { text: 'OK', onPress: () => router.back() }
-      ]);
+      // Refresh local quiz state so screen shows updated values immediately
+      await loadQuiz();
+      Alert.alert('Success', 'Quiz updated successfully');
     } catch (error) {
       console.error('Error saving quiz:', error);
       Alert.alert('Error', 'Failed to save quiz');
@@ -213,12 +239,20 @@ export default function EditQuiz() {
     }
   };
 
-  const filteredAvailableQuestions = availableQuestions.filter(q => {
+  // Client-side filtering: filter allQuestions by subject chip AND search text
+  const filteredAvailableQuestions = allQuestions.filter(q => {
+    // Subject chip filter
+    if (filterSubjectId && filterSubjectId !== 'all') {
+      // Match against the question's subject._id
+      const qSubjectId = typeof q.subject === 'object' ? (q.subject as any)?._id : q.subject;
+      if (qSubjectId !== filterSubjectId) return false;
+    }
+    // Text search filter
     if (questionSearch) {
       const search = questionSearch.toLowerCase();
       return q.question.toLowerCase().includes(search) ||
-             q.qid?.toLowerCase().includes(search) ||
-             q.topicName?.toLowerCase().includes(search);
+             (q.qid?.toLowerCase() ?? '').includes(search) ||
+             (q.topicName?.toLowerCase() ?? '').includes(search);
     }
     return true;
   });
@@ -504,10 +538,7 @@ export default function EditQuiz() {
           >
             <TouchableOpacity
               style={[styles.subjectChip, filterSubjectId === 'all' && styles.subjectChipActive]}
-              onPress={() => {
-                setFilterSubjectId('all');
-                loadAvailableQuestions('all');
-              }}
+              onPress={() => setFilterSubjectId('all')}
             >
               <Text style={[styles.subjectChipText, filterSubjectId === 'all' && styles.subjectChipTextActive]}>
                 All
@@ -517,10 +548,7 @@ export default function EditQuiz() {
               <TouchableOpacity
                 key={sub._id}
                 style={[styles.subjectChip, filterSubjectId === sub._id && styles.subjectChipActive]}
-                onPress={() => {
-                  setFilterSubjectId(sub._id);
-                  loadAvailableQuestions(sub._id);
-                }}
+                onPress={() => setFilterSubjectId(sub._id)}
               >
                 <Text style={[styles.subjectChipText, filterSubjectId === sub._id && styles.subjectChipTextActive]}>
                   {sub.name}
@@ -537,32 +565,38 @@ export default function EditQuiz() {
             <FlatList
               data={filteredAvailableQuestions}
               keyExtractor={(item) => item._id}
-              contentContainerStyle={styles.listContent}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={[
-                    styles.pickerItem,
-                    isQuestionSelected(item._id) && styles.pickerItemSelected
-                  ]}
-                  onPress={() => handleAddQuestion(item)}
-                  disabled={isQuestionSelected(item._id)}
-                >
-                  <View style={styles.pickerCheckbox}>
-                    {isQuestionSelected(item._id) && <Check color="#FFF" size={14} />}
-                  </View>
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.pickerQuestionText} numberOfLines={2}>
-                      {item.question}
-                    </Text>
-                    <Text style={styles.pickerMeta}>
-                      {item.topicName && `${item.topicName} • `}{item.marks}M
-                    </Text>
-                  </View>
-                  {item.questionImage && (
-                    <ImageIcon size={16} color="#2563EB" />
-                  )}
-                </TouchableOpacity>
-              )}
+              contentContainerStyle={[styles.listContent, { paddingBottom: 90 }]}
+              renderItem={({ item }) => {
+                const selected = pickerSelections.has(item._id);
+                return (
+                  <TouchableOpacity
+                    style={[
+                      styles.pickerItem,
+                      selected && styles.pickerItemSelected
+                    ]}
+                    onPress={() => handleTogglePickerQuestion(item)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[
+                      styles.pickerCheckbox,
+                      selected && styles.pickerCheckboxSelected
+                    ]}>
+                      {selected && <Check color="#FFF" size={14} />}
+                    </View>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.pickerQuestionText} numberOfLines={2}>
+                        {item.question}
+                      </Text>
+                      <Text style={styles.pickerMeta}>
+                        {item.subject?.name ? `${item.subject.name}` : ''}{item.topicName ? ` • ${item.topicName}` : ''} • {item.marks}M
+                      </Text>
+                    </View>
+                    {item.questionImage && (
+                      <ImageIcon size={16} color="#2563EB" />
+                    )}
+                  </TouchableOpacity>
+                );
+              }}
               ListEmptyComponent={
                 <View style={styles.emptyState}>
                   <Text style={styles.emptyText}>No questions found</Text>
@@ -570,6 +604,20 @@ export default function EditQuiz() {
               }
             />
           )}
+
+          {/* Save selection button */}
+          <View style={styles.pickerSaveBar}>
+            <Text style={styles.pickerSelectionCount}>
+              {pickerSelections.size} question{pickerSelections.size !== 1 ? 's' : ''} selected
+            </Text>
+            <TouchableOpacity
+              style={styles.pickerSaveButton}
+              onPress={handleSavePickerSelections}
+            >
+              <Check color="#FFF" size={18} />
+              <Text style={styles.pickerSaveButtonText}>Save Selection</Text>
+            </TouchableOpacity>
+          </View>
         </SafeAreaView>
       </Modal>
 
@@ -913,6 +961,48 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     backgroundColor: '#FFF',
+  },
+  pickerCheckboxSelected: {
+    backgroundColor: '#2563EB',
+    borderColor: '#2563EB',
+  },
+  pickerSaveBar: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#FFF',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+  },
+  pickerSelectionCount: {
+    fontSize: 14,
+    color: '#374151',
+    fontWeight: '500',
+  },
+  pickerSaveButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#10B981',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+    gap: 6,
+  },
+  pickerSaveButtonText: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '600',
   },
   pickerQuestionText: {
     fontSize: 14,

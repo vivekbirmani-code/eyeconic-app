@@ -118,22 +118,27 @@ io.on('connection', (socket) => {
 
   // Register user with socket and auto-join all their group rooms
   socket.on('register_user', async (userId) => {
+    if (!userId) {
+      console.warn('register_user called with null or undefined userId. Ignoring.');
+      return;
+    }
+
     const userIdStr = userId.toString();
     socketUserMap.set(socket.id, userIdStr);
     socket.userId = userIdStr;
-    console.log(`User ${userId} registered with socket ${socket.id}`);
+    console.log(`User ${userIdStr} registered with socket ${socket.id}`);
 
     // Register in reverse map (via socket-helpers)
     socketHelpers.registerSocket(socket.id, userIdStr);
 
     // Auto-join all groups user belongs to (for receiving calls globally)
     try {
-      const groups = await Group.find({ members: userId }).select('_id');
+      const groups = await Group.find({ members: userIdStr }).select('_id');
       groups.forEach(group => {
         socket.join(group._id.toString());
-        console.log(`User ${userId} auto-joined group room: ${group._id}`);
+        console.log(`User ${userIdStr} auto-joined group room: ${group._id}`);
       });
-      console.log(`User ${userId} joined ${groups.length} group rooms`);
+      console.log(`User ${userIdStr} joined ${groups.length} group rooms`);
     } catch (error) {
       console.error('Error auto-joining groups:', error);
     }
@@ -176,15 +181,28 @@ io.on('connection', (socket) => {
       });
       await call.save();
 
-      // Notify group about incoming call via socket
-      socket.to(groupId).emit('incoming_call', {
+      // Notify ONLY targeted users about the incoming call (not the whole group room)
+      const callPayload = {
         callId: call._id,
         groupId,
         groupName,
         initiatorId,
         initiatorName,
         targetUserIds
-      });
+      };
+
+      if (targetUserIds && targetUserIds.length > 0) {
+        // Emit only to each selected target user's socket(s)
+        for (const targetId of targetUserIds) {
+          if (targetId.toString() !== initiatorId.toString()) {
+            socketHelpers.emitToUser(targetId, 'incoming_call', callPayload);
+          }
+        }
+      } else {
+        // Fallback: no targets specified → ring the whole group (original behavior for "call all")
+        socket.to(groupId).emit('incoming_call', callPayload);
+      }
+
 
       // Save call started message to chat history
       try {

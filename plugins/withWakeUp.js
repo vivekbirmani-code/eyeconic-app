@@ -55,9 +55,24 @@ const withWakeUpManifest = (config) => {
         const androidManifest = config.modResults;
         const mainApplication = AndroidConfig.Manifest.getMainApplicationOrThrow(androidManifest);
 
-        // Add Permissions
-        AndroidConfig.Manifest.addPermission(androidManifest, 'android.permission.USE_FULL_SCREEN_INTENT');
-        AndroidConfig.Manifest.addPermission(androidManifest, 'android.permission.WAKE_LOCK');
+        // Add Permissions manually
+        if (!androidManifest.manifest['uses-permission']) {
+            androidManifest.manifest['uses-permission'] = [];
+        }
+        const permissionsToAdd = [
+            'android.permission.USE_FULL_SCREEN_INTENT',
+            'android.permission.WAKE_LOCK'
+        ];
+        permissionsToAdd.forEach(permissionName => {
+            const hasPermission = androidManifest.manifest['uses-permission'].some(
+                (p) => p.$ && p.$['android:name'] === permissionName
+            );
+            if (!hasPermission) {
+                androidManifest.manifest['uses-permission'].push({
+                    $: { 'android:name': permissionName }
+                });
+            }
+        });
 
         // Add Service
         // Check if service already exists to avoid duplicates

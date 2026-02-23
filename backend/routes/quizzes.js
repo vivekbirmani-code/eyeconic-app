@@ -571,6 +571,226 @@ router.get('/analytics/list', auth, authorize('admin', 'mentor'), async (req, re
   }
 });
 
+// ==================== ENHANCED ANALYTICS ENDPOINTS ====================
+
+// Test-wise student report: all students' marks/correct/incorrect/%/percentile for a specific test
+router.get('/analytics/test-report/:testId', auth, authorize('admin', 'mentor'), async (req, res) => {
+  try {
+    const quiz = await Quiz.findById(req.params.testId)
+      .populate('subject', 'name')
+      .populate('questions');
+    if (!quiz) return res.status(404).json({ message: 'Test not found' });
+
+    const attempts = await QuizAttempt.find({
+      quiz: req.params.testId,
+      status: { $in: ['completed', 'auto_submitted'] }
+    }).populate('student', 'name email');
+
+    // Calculate percentile ranking
+    const sorted = [...attempts].sort((a, b) => (b.marksObtained || 0) - (a.marksObtained || 0));
+    const total = sorted.length;
+
+    const students = sorted.map((a, idx) => {
+      const correct = a.score || 0;
+      const incorrect = (a.totalQuestions || 0) - correct - (a.answers?.filter(ans => ans.selectedAnswer === -1).length || 0);
+      const skipped = (a.totalQuestions || 0) - correct - Math.max(0, incorrect);
+      const pct = a.totalQuestions > 0 ? Math.round((correct / a.totalQuestions) * 100) : 0;
+      // Percentile = percentage of students scored below this student
+      const belowCount = sorted.filter(s => (s.marksObtained || 0) < (a.marksObtained || 0)).length;
+      const percentile = total > 1 ? Math.round((belowCount / (total - 1)) * 100) : 100;
+
+      return {
+        _id: a._id,
+        studentName: a.student?.name || 'Unknown',
+        studentEmail: a.student?.email || '',
+        rank: idx + 1,
+        correct,
+        incorrect: Math.max(0, incorrect),
+        skipped: Math.max(0, skipped),
+        marksObtained: a.marksObtained || 0,
+        totalMarks: a.totalMarks || 0,
+        totalQuestions: a.totalQuestions || 0,
+        percentage: pct,
+        percentile
+      };
+    });
+
+    res.json({
+      test: {
+        _id: quiz._id,
+        title: quiz.title,
+        subject: quiz.subject?.name || 'General',
+        totalMarks: quiz.totalMarks,
+        totalQuestions: quiz.questions.length
+      },
+      students,
+      totalAttempted: total,
+      totalAssigned: quiz.assignedStudents?.length || 0
+    });
+  } catch (error) {
+    console.error('Test report error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// CSV download of test-wise report
+router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mentor'), async (req, res) => {
+  try {
+    const quiz = await Quiz.findById(req.params.testId)
+      .populate('subject', 'name')
+      .populate('questions');
+    if (!quiz) return res.status(404).json({ message: 'Test not found' });
+
+    const attempts = await QuizAttempt.find({
+      quiz: req.params.testId,
+      status: { $in: ['completed', 'auto_submitted'] }
+    }).populate('student', 'name email');
+
+    const sorted = [...attempts].sort((a, b) => (b.marksObtained || 0) - (a.marksObtained || 0));
+    const total = sorted.length;
+
+    // Build CSV
+    let csv = 'Rank,Student Name,Email,Correct,Incorrect,Skipped,Marks Obtained,Total Marks,Percentage,Percentile\n';
+    sorted.forEach((a, idx) => {
+      const correct = a.score || 0;
+      const incorrect = (a.totalQuestions || 0) - correct - (a.answers?.filter(ans => ans.selectedAnswer === -1).length || 0);
+      const skipped = (a.totalQuestions || 0) - correct - Math.max(0, incorrect);
+      const pct = a.totalQuestions > 0 ? Math.round((correct / a.totalQuestions) * 100) : 0;
+      const belowCount = sorted.filter(s => (s.marksObtained || 0) < (a.marksObtained || 0)).length;
+      const percentile = total > 1 ? Math.round((belowCount / (total - 1)) * 100) : 100;
+
+      csv += `${idx + 1},"${a.student?.name || 'Unknown'}","${a.student?.email || ''}",${correct},${Math.max(0, incorrect)},${Math.max(0, skipped)},${a.marksObtained || 0},${a.totalMarks || 0},${pct}%,${percentile}\n`;
+    });
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${quiz.title.replace(/"/g, '')}_report.csv"`);
+    res.send(csv);
+  } catch (error) {
+    console.error('CSV export error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Student subject-wise performance report
+router.get('/analytics/student/:studentId/subjects', auth, authorize('admin', 'mentor'), async (req, res) => {
+  try {
+    const { subject } = req.query; // optional filter
+    const filter = {
+      student: req.params.studentId,
+      status: { $in: ['completed', 'auto_submitted'] }
+    };
+
+    const attempts = await QuizAttempt.find(filter)
+      .populate({
+        path: 'quiz',
+        populate: { path: 'subject', select: 'name' }
+      })
+      .sort({ endTime: -1 });
+
+    // Group by subject
+    const subjectMap = {};
+    attempts.forEach(a => {
+      const subId = a.quiz?.subject?._id?.toString() || 'unknown';
+      const subName = a.quiz?.subject?.name || 'General';
+
+      if (subject && subId !== subject) return; // filter by specific subject
+
+      if (!subjectMap[subId]) {
+        subjectMap[subId] = {
+          subjectId: subId,
+          subjectName: subName,
+          tests: 0,
+          totalMarks: 0,
+          obtainedMarks: 0,
+          totalCorrect: 0,
+          totalQuestions: 0,
+          attempts: []
+        };
+      }
+      subjectMap[subId].tests++;
+      subjectMap[subId].totalMarks += a.totalMarks || 0;
+      subjectMap[subId].obtainedMarks += a.marksObtained || 0;
+      subjectMap[subId].totalCorrect += a.score || 0;
+      subjectMap[subId].totalQuestions += a.totalQuestions || 0;
+      subjectMap[subId].attempts.push({
+        _id: a._id,
+        quizTitle: a.quiz?.title || 'Untitled',
+        quizId: a.quiz?._id,
+        testType: a.quiz?.testType || 'daily',
+        score: a.score,
+        totalQuestions: a.totalQuestions,
+        marksObtained: a.marksObtained,
+        totalMarks: a.totalMarks,
+        percentage: a.totalQuestions > 0 ? Math.round((a.score / a.totalQuestions) * 100) : 0,
+        endTime: a.endTime
+      });
+    });
+
+    // Add percentage to each subject
+    const subjects = Object.values(subjectMap).map(s => ({
+      ...s,
+      percentage: s.totalQuestions > 0 ? Math.round((s.totalCorrect / s.totalQuestions) * 100) : 0
+    }));
+
+    res.json({ subjects });
+  } catch (error) {
+    console.error('Student subject report error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Heatmap data: students × tests matrix with % scores
+router.get('/analytics/heatmap', auth, authorize('admin'), async (req, res) => {
+  try {
+    const { subject, limit: lim } = req.query;
+
+    // Get recent quizzes (up to 20)
+    const quizFilter = { isActive: true };
+    if (subject) quizFilter.subject = subject;
+    const quizzes = await Quiz.find(quizFilter)
+      .populate('subject', 'name')
+      .sort({ createdAt: -1 })
+      .limit(parseInt(lim) || 20)
+      .select('title subject totalMarks questions');
+
+    const quizIds = quizzes.map(q => q._id);
+
+    // Get all attempts for these quizzes
+    const attempts = await QuizAttempt.find({
+      quiz: { $in: quizIds },
+      status: { $in: ['completed', 'auto_submitted'] }
+    }).populate('student', 'name email');
+
+    // Build student → quiz → % map
+    const studentMap = {};
+    attempts.forEach(a => {
+      const sId = a.student?._id?.toString();
+      if (!sId) return;
+      if (!studentMap[sId]) {
+        studentMap[sId] = {
+          studentId: sId,
+          studentName: a.student?.name || 'Unknown',
+          scores: {}
+        };
+      }
+      const pct = a.totalQuestions > 0 ? Math.round((a.score / a.totalQuestions) * 100) : 0;
+      studentMap[sId].scores[a.quiz.toString()] = pct;
+    });
+
+    res.json({
+      tests: quizzes.map(q => ({
+        _id: q._id,
+        title: q.title,
+        subject: q.subject?.name || 'General'
+      })),
+      students: Object.values(studentMap)
+    });
+  } catch (error) {
+    console.error('Heatmap error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Get detailed quiz analytics
 router.get('/analytics/:id', auth, authorize('admin', 'mentor'), async (req, res) => {
   try {
@@ -879,6 +1099,10 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
     }
 
     const quiz = await Quiz.findById(attempt.quiz._id).populate('questions');
+    // Populate subject on each question so section performance uses subject names
+    if (quiz && quiz.questions) {
+      await QuestionBank.populate(quiz.questions, { path: 'subject', select: 'name' });
+    }
 
     if (!quiz) {
       console.error(`[Submit Quiz] Quiz not found: ${attempt.quiz._id}`);
@@ -906,7 +1130,7 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
 
     quiz.questions.forEach((question, index) => {
       const answer = attempt.answers.find(a => a.questionIndex === index);
-      const section = question.topicName || 'General';
+      const section = question.subject?.name || question.topicName || 'General';
 
       if (!sectionPerformance[section]) {
         sectionPerformance[section] = {
@@ -1024,22 +1248,24 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
   try {
     const { groupBy = 'topic' } = req.query; // subject, tag, or topic
 
+    // Step 1: Populate quiz with questions (QuestionBank docs)
     const attempt = await QuizAttempt.findById(req.params.attemptId)
       .populate({
         path: 'quiz',
         populate: {
           path: 'questions',
-          model: 'QuestionBank',
-          populate: {
-            path: 'subject',
-            select: 'name'
-          }
+          model: 'QuestionBank'
         }
       })
       .populate('student', 'name email');
 
     if (!attempt) {
       return res.status(404).json({ message: 'Attempt not found' });
+    }
+
+    // Step 2: Explicitly populate subject on each question (avoids 3-level deep populate issue)
+    if (attempt.quiz && attempt.quiz.questions) {
+      await QuestionBank.populate(attempt.quiz.questions, { path: 'subject', select: 'name' });
     }
 
     // Check access
@@ -1120,6 +1346,7 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
         options: q.options,
         optionImages: q.optionImages,
         marks: q.marks,
+        subject: q.subject,
         topicName: q.topicName,
         tags: q.tags,
         userAnswer: userAnswer?.selectedAnswer,
@@ -1670,5 +1897,7 @@ router.get('/attempt/:id', auth, async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 });
+
+
 
 module.exports = router;
