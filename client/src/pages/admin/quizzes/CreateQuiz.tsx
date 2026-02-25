@@ -180,13 +180,13 @@ export default function CreateQuiz() {
 
       if (editId) {
         await api.put(`/quizzes/${editId}`, payload);
-        alert('Quiz updated successfully!');
+        alert('Test updated successfully!');
       } else {
         await api.post('/quizzes/create-from-bank', payload);
-        alert(`Quiz ${cloneId ? 'cloned' : 'created'} successfully!`);
+        alert(`Test ${cloneId ? 'cloned' : 'created'} successfully!`);
       }
       navigate('/quizzes');
-    } catch (e: any) { alert(e.response?.data?.message || 'Failed to create quiz'); }
+    } catch (e: any) { alert(e.response?.data?.message || 'Failed to create test'); }
     finally { setCreating(false); }
   };
 
@@ -198,7 +198,7 @@ export default function CreateQuiz() {
       {/* Header */}
       <div className="bg-white px-8 py-5 border-b border-gray-200 sticky top-0 z-30 flex justify-between items-center">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">{editId ? 'Edit Quiz' : cloneId ? 'Clone Quiz' : 'Create Quiz'}</h1>
+          <h1 className="text-2xl font-bold text-gray-900">{editId ? 'Edit Test' : cloneId ? 'Clone Test' : 'Create Test'}</h1>
           <p className="text-sm text-gray-500">Step {step} of 4</p>
         </div>
         <button onClick={() => navigate('/quizzes')} className="p-2 bg-gray-100 rounded-full hover:bg-gray-200">
@@ -274,10 +274,10 @@ export default function CreateQuiz() {
           {/* STEP 2 */}
           {step === 2 && (
             <div className="space-y-6 animate-fade-in">
-              <h2 className="text-xl font-bold text-gray-900">2. Quiz Settings</h2>
+              <h2 className="text-xl font-bold text-gray-900">2. Test Settings</h2>
               
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-2">Quiz Title</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">Test Title</label>
                 <input type="text" value={title} onChange={e => setTitle(e.target.value)} className="w-full p-4 border border-gray-300 rounded-xl focus:ring-2 focus:ring-[#01b4ae] focus:outline-none" />
               </div>
 
@@ -416,7 +416,7 @@ export default function CreateQuiz() {
             <button 
               onClick={() => {
                 if (step === 1 && selectedSubjects.length === 0) return alert('Select at least one subject');
-                if (step === 2 && !title.trim()) return alert('Enter quiz title');
+                if (step === 2 && !title.trim()) return alert('Enter test title');
                 if (step === 3 && selectedQuestions.length === 0) return alert('Select at least one question');
                 setStep(step + 1);
               }}
@@ -430,7 +430,7 @@ export default function CreateQuiz() {
               disabled={creating}
               className={`flex items-center px-8 py-3 rounded-xl font-bold shadow-lg transition-all ${creating ? 'bg-gray-400 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700 text-white shadow-green-600/30'}`}
             >
-              <Check className="w-5 h-5 mr-2" /> {creating ? 'Saving...' : editId ? 'Update Quiz' : 'Create Quiz'}
+              <Check className="w-5 h-5 mr-2" /> {creating ? 'Saving...' : editId ? 'Update Test' : 'Create Test'}
             </button>
           )}
         </div>

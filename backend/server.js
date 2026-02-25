@@ -173,6 +173,14 @@ io.on('connection', (socket) => {
     const { groupId, groupName, initiatorId, initiatorName, targetUserIds } = data;
 
     try {
+      // Validate initiator role
+      const initiator = await User.findById(initiatorId);
+      if (!initiator || initiator.role === 'student') {
+        console.warn(`User ${initiatorId} attempted to initiate a call but is a student or not found.`);
+        socket.emit('call_error', { message: 'Students are not allowed to initiate calls.' });
+        return;
+      }
+
       // Create call record
       const call = new Call({
         groupId,

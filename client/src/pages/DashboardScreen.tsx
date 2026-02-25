@@ -113,15 +113,15 @@ export default function DashboardScreen() {
                   <span className="text-[15px] font-bold text-gray-800">Groups</span>
                 </button>
 
-                {/* Quizzes button - all roles */}
+                {/* Tests button - all roles */}
                 <button
                   onClick={() => navigate('/quizzes')}
-                  className="group flex flex-col items-center justify-center bg-gray-50 hover:bg-white rounded-3xl py-8 px-4 border-2 border-transparent hover:border-emerald-100 shadow-sm hover:shadow-xl transition-all duration-300"
+                  className="flex flex-col items-center justify-center p-6 bg-white border border-gray-100 rounded-2xl shadow-sm hover:shadow-md hover:border-[#01b4ae]/30 transition-all group"
                 >
-                  <div className="w-16 h-16 rounded-2xl bg-emerald-50 group-hover:bg-emerald-100 flex items-center justify-center mb-4 transition-colors">
-                    <BookOpen className="text-emerald-500 w-8 h-8" />
+                  <div className="w-14 h-14 bg-emerald-50 rounded-xl flex items-center justify-center mb-4 group-hover:scale-110 group-hover:bg-emerald-100 transition-all">
+                    <BookOpen className="w-7 h-7 text-emerald-600" />
                   </div>
-                  <span className="text-[15px] font-bold text-gray-800">Quizzes</span>
+                  <span className="text-[15px] font-bold text-gray-800">Tests</span>
                 </button>
 
                 {/* My Tasks - student only */}

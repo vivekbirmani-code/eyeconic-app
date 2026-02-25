@@ -24,6 +24,7 @@ interface User {
   isProfileComplete?: boolean;
   studentProfile?: StudentProfile;
   groups?: string[];
+  unseenQuizzes?: string[];
 }
 
 interface AuthContextType {

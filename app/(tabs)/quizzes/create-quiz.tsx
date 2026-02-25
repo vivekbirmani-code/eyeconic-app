@@ -80,6 +80,7 @@ export default function CreateQuiz() {
 
   // Step 2: Quiz Settings
   const [title, setTitle] = useState('');
+  const [showDurationDropdown, setShowDurationDropdown] = useState(false);
   const [numberOfQuestions, setNumberOfQuestions] = useState('10');
   const [duration, setDuration] = useState('30');
   const [availableQuestions, setAvailableQuestions] = useState(0);
@@ -470,9 +471,9 @@ export default function CreateQuiz() {
               {type.charAt(0).toUpperCase() + type.slice(1)} Test
             </Text>
             <Text style={styles.testTypeDesc}>
-              {type === 'daily' && '10-20 questions\n15-30 mins'}
-              {type === 'weekly' && '30-50 questions\n45-60 mins'}
-              {type === 'grand' && '100+ questions\n2-3 hours'}
+              {type === 'daily' && ''}
+              {type === 'weekly' && ''}
+              {type === 'grand' && ''}
             </Text>
           </TouchableOpacity>
         ))}
@@ -492,6 +493,28 @@ export default function CreateQuiz() {
       {showSubjectDropdown && (
         <View style={styles.dropdownList}>
           <ScrollView style={{ maxHeight: 250 }} nestedScrollEnabled={true}>
+            <TouchableOpacity
+              style={[
+                styles.dropdownItem,
+                Array.isArray(subjects) && subjects.length > 0 && selectedSubjects.length === subjects.length && styles.dropdownItemSelected
+              ]}
+              onPress={() => {
+                const subjectsArray = Array.isArray(subjects) ? subjects : [];
+                if (selectedSubjects.length === subjectsArray.length && subjectsArray.length > 0) {
+                  setSelectedSubjects([]);
+                } else {
+                  setSelectedSubjects(subjectsArray.map(s => s._id));
+                }
+              }}
+            >
+              <View style={[
+                styles.checkbox,
+                Array.isArray(subjects) && subjects.length > 0 && selectedSubjects.length === subjects.length && styles.checkboxSelected
+              ]}>
+                {Array.isArray(subjects) && subjects.length > 0 && selectedSubjects.length === subjects.length && <Check color="#FFF" size={14} />}
+              </View>
+              <Text style={styles.dropdownItemText}>Select All</Text>
+            </TouchableOpacity>
             {(Array.isArray(subjects) ? subjects : []).map(subject => (
               <TouchableOpacity
                 key={subject._id}
@@ -537,13 +560,45 @@ export default function CreateQuiz() {
       />
 
       <Text style={styles.inputLabel}>Duration (minutes)</Text>
-      <TextInput
-        style={styles.input}
-        value={duration}
-        onChangeText={setDuration}
-        keyboardType="numeric"
-        placeholder="30"
-      />
+      <View style={{ position: 'relative', zIndex: 10 }}>
+        <TextInput
+          style={styles.input}
+          value={duration}
+          onChangeText={setDuration}
+          keyboardType="numeric"
+          placeholder="30"
+        />
+        <TouchableOpacity 
+          style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 50, justifyContent: 'center', alignItems: 'center' }}
+          onPress={() => setShowDurationDropdown(!showDurationDropdown)}
+        >
+          <ChevronDown color="#6B7280" size={20} />
+        </TouchableOpacity>
+      </View>
+      {showDurationDropdown && (
+        <View style={styles.dropdownList}>
+          {[
+            { label: '50 minutes', value: '50' },
+            { label: '1.5 hrs', value: '90' },
+            { label: '3 hrs', value: '180' },
+            { label: '3.5 hrs', value: '210' },
+          ].map(option => (
+            <TouchableOpacity
+              key={option.value}
+              style={[
+                styles.dropdownItem,
+                duration === option.value && styles.dropdownItemSelected
+              ]}
+              onPress={() => {
+                setDuration(option.value);
+                setShowDurationDropdown(false);
+              }}
+            >
+              <Text style={styles.dropdownItemText}>{option.label}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      )}
 
       <Text style={styles.inputLabel}>Instructions</Text>
       <TextInput

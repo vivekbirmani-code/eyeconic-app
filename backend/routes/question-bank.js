@@ -152,21 +152,10 @@ router.post('/bulk-import', auth, authorize('admin'), upload.single('file'), asy
 
                 let subjectId = subjectsMap[subjectName.toLowerCase()];
 
-                // Create subject if doesn't exist
+                // Error if subject doesn't exist
                 if (!subjectId) {
-                    if (!newSubjects.has(subjectName.toLowerCase())) {
-                        const newSubject = await Subject.create({
-                            name: subjectName,
-                            code: subjectName.substring(0, 3).toUpperCase(),
-                            year: '2024'
-                        });
-                        subjectId = newSubject._id;
-                        subjectsMap[subjectName.toLowerCase()] = subjectId;
-                        newSubjects.add(subjectName.toLowerCase());
-                        console.log(`Created new subject: ${subjectName}`);
-                    } else {
-                        subjectId = subjectsMap[subjectName.toLowerCase()];
-                    }
+                    errors.push(`Row ${rowNum}: Unknown subject '${subjectName}'. Please use standard subject names.`);
+                    continue;
                 }
 
                 // Get question text
@@ -325,21 +314,10 @@ router.post('/bulk-import-base64', auth, authorize('admin'), async (req, res) =>
 
                 let subjectId = subjectsMap[subjectName.toLowerCase()];
 
-                // Create subject if doesn't exist
+                // Error if subject doesn't exist
                 if (!subjectId) {
-                    if (!newSubjects.has(subjectName.toLowerCase())) {
-                        const newSubject = await Subject.create({
-                            name: subjectName,
-                            code: subjectName.substring(0, 3).toUpperCase(),
-                            year: '2024'
-                        });
-                        subjectId = newSubject._id;
-                        subjectsMap[subjectName.toLowerCase()] = subjectId;
-                        newSubjects.add(subjectName.toLowerCase());
-                        console.log(`Created new subject: ${subjectName}`);
-                    } else {
-                        subjectId = subjectsMap[subjectName.toLowerCase()];
-                    }
+                    errors.push(`Row ${rowNum}: Unknown subject '${subjectName}'. Please use standard subject names.`);
+                    continue;
                 }
 
                 // Get question text

@@ -649,12 +649,7 @@ function QuizTakingContent() {
 
       {/* Bottom Navigation */}
       <View style={styles.bottomNavWrapper}>
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={styles.bottomNavScroll}
-        >
-          <View style={styles.bottomNav}>
+        <View style={styles.bottomNav}>
             <TouchableOpacity
               style={[
                 styles.navButton,
@@ -668,12 +663,6 @@ function QuizTakingContent() {
                 size={20}
                 fill={markedForReview ? '#FFFFFF' : 'none'}
               />
-              <Text style={[
-                styles.navButtonText,
-                markedForReview && styles.markedButtonText
-              ]}>
-                {markedForReview ? 'Marked' : 'Mark Review'}
-              </Text>
             </TouchableOpacity>
 
             <View style={styles.navButtonGroup}>
@@ -717,7 +706,6 @@ function QuizTakingContent() {
               <Text style={styles.submitButtonText}>Submit</Text>
             </TouchableOpacity>
           </View>
-        </ScrollView>
       </View>
     </SafeAreaView>
   );
@@ -960,23 +948,21 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#E5E7EB',
   },
-  bottomNavScroll: {
-    paddingHorizontal: 12,
-  },
   bottomNav: {
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
     paddingVertical: 12,
+    paddingHorizontal: 12,
     gap: 8,
-    minHeight: 72,
   },
   navButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     paddingVertical: 10,
     borderRadius: 8,
-    gap: 6,
+    gap: 4,
     minHeight: 44,
   },
   navButtonGroup: {

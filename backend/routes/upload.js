@@ -89,18 +89,30 @@ router.post('/chat', auth, upload.single('file'), async (req, res) => {
         const b64 = Buffer.from(req.file.buffer).toString('base64');
         let dataURI = "data:" + req.file.mimetype + ";base64," + b64;
 
-        // Determine resource type
-        let resourceType = 'auto'; // Let Cloudinary decide (image, video, raw)
-        // Note: For PDFs and Docs, 'auto' usually works but sometimes 'raw' is safer for non-images if auto fails.
-        // However, auto is generally best for Images/Videos/PDFs. Cloudinary treats PDFs as images often.
-        // For Excel/Word, it might be 'raw'.
+        // Determine resource type based on mimetype:
+        // - Images → 'image' so Cloudinary can process/serve them correctly
+        // - PDFs, Word docs, Excel → 'raw' so they get a /raw/upload/ URL
+        //   which is a plain file delivery that browsers can open/download without issues.
+        const isImage = req.file.mimetype.startsWith('image/');
+        const uploadResourceType = isImage ? 'image' : 'raw';
+
+        // For raw (non-image) files, we must explicitly include the original file extension
+        // in the public_id. Cloudinary uses the public_id to build the download URL, and
+        // without the extension the downloaded file has no format (e.g. "s9ltu7o2" vs "file.pdf").
+        const nodePath = require('path');
+        const originalExt = nodePath.extname(req.file.originalname);          // e.g. ".pdf"
+        const baseName = nodePath.basename(req.file.originalname, originalExt)
+            .replace(/[^a-zA-Z0-9_-]/g, '_')               // sanitize
+            .substring(0, 60);                              // cap length
+        const publicId = isImage
+            ? undefined                                                        // auto-generate for images
+            : `${baseName}_${Date.now()}${originalExt}`;                       // e.g. "report_1234567890.pdf"
 
         // Upload to Cloudinary
         const result = await cloudinary.uploader.upload(dataURI, {
             folder: 'eyeconic_chat_uploads',
-            resource_type: 'auto',
-            use_filename: true,
-            unique_filename: true
+            resource_type: uploadResourceType,
+            ...(publicId ? { public_id: publicId } : { use_filename: true, unique_filename: true })
         });
 
         res.json({
@@ -119,6 +131,65 @@ router.post('/chat', auth, upload.single('file'), async (req, res) => {
             message: 'File upload failed',
             error: error.message
         });
+    }
+});
+
+// Download proxy - fetches files from Cloudinary using API credentials and streams to client.
+// Android Chrome cannot open direct Cloudinary URLs (ERR_INVALID_RESPONSE),
+// so we fetch server-side with Basic Auth and pipe to the browser.
+router.get('/download-proxy', auth, async (req, res) => {
+    try {
+        const { url, name } = req.query;
+
+        if (!url) {
+            return res.status(400).json({ message: 'Missing url parameter' });
+        }
+
+        // Only allow Cloudinary URLs for security
+        if (!url.startsWith('https://res.cloudinary.com/')) {
+            return res.status(403).json({ message: 'Only Cloudinary URLs are allowed' });
+        }
+
+        const apiKey = process.env.CLOUDINARY_API_KEY;
+        const apiSecret = process.env.CLOUDINARY_API_SECRET;
+
+        // Fetch from Cloudinary with Basic Auth using our API credentials
+        const response = await fetch(url, {
+            headers: {
+                'Authorization': 'Basic ' + Buffer.from(apiKey + ':' + apiSecret).toString('base64')
+            }
+        });
+
+        if (!response.ok) {
+            // If authenticated fetch fails, try without auth (public resources)
+            const publicResponse = await fetch(url);
+            if (!publicResponse.ok) {
+                return res.status(502).json({ message: `Cloudinary returned ${publicResponse.status}` });
+            }
+            // Stream public response
+            const ct = publicResponse.headers.get('content-type') || 'application/octet-stream';
+            const fn = name || 'download';
+            res.setHeader('Content-Type', ct);
+            res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(fn)}"`);
+            const { Readable } = require('stream');
+            Readable.fromWeb(publicResponse.body).pipe(res);
+            return;
+        }
+
+        const contentType = response.headers.get('content-type') || 'application/octet-stream';
+        const fileName = name || 'download';
+
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(fileName)}"`);
+        res.setHeader('Cache-Control', 'private, max-age=3600');
+
+        // Stream body to client
+        const { Readable } = require('stream');
+        Readable.fromWeb(response.body).pipe(res);
+
+    } catch (error) {
+        console.error('Download proxy error:', error);
+        res.status(500).json({ message: 'Download failed', error: error.message });
     }
 });
 

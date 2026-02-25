@@ -7,8 +7,10 @@ import { io, Socket } from 'socket.io-client';
 interface NotificationContextType {
   unreadCounts: { [groupId: string]: number };
   totalUnreadCount: number;
+  unseenQuizCount: number;
   refreshUnreadCounts: () => Promise<void>;
   markAsRead: (groupId: string) => Promise<void>;
+  markQuizzesAsSeen: () => Promise<void>;
   socket: Socket | null;
 }
 
@@ -17,6 +19,7 @@ const NotificationContext = createContext<NotificationContextType | undefined>(u
 export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { user } = useAuth();
   const [unreadCounts, setUnreadCounts] = useState<{ [groupId: string]: number }>({});
+  const [unseenQuizCount, setUnseenQuizCount] = useState<number>(0);
   const [socket, setSocket] = useState<Socket | null>(null);
   const socketRef = useRef<Socket | null>(null);
 
@@ -47,8 +50,20 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
     }
   };
 
+  const markQuizzesAsSeen = async () => {
+    if (!user) return;
+    try {
+      // Optimistically update
+      setUnseenQuizCount(0);
+      await api.post('/quizzes/mark-seen');
+    } catch (error) {
+      console.error('Failed to mark quizzes as seen:', error);
+    }
+  };
+
   useEffect(() => {
     if (user) {
+      setUnseenQuizCount(user.unseenQuizzes?.length || 0);
       refreshUnreadCounts();
 
       const newSocket = io(getSocketURL());
@@ -72,6 +87,15 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
             ...prev,
             [data.group]: (prev[data.group] || 0) + 1
           }));
+        }
+      });
+
+      newSocket.on('new_quiz_assigned', (data: any) => {
+        if (data.assignedStudents) {
+          const studentIds = data.assignedStudents.map((id: any) => id.toString());
+          if (studentIds.includes(user._id.toString())) {
+            setUnseenQuizCount(prev => prev + 1);
+          }
         }
       });
 
@@ -107,7 +131,7 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   const totalUnreadCount = Object.values(unreadCounts).reduce((acc, count) => acc + count, 0);
 
   return (
-    <NotificationContext.Provider value={{ unreadCounts, totalUnreadCount, refreshUnreadCounts, markAsRead, socket }}>
+    <NotificationContext.Provider value={{ unreadCounts, totalUnreadCount, unseenQuizCount, refreshUnreadCounts, markAsRead, markQuizzesAsSeen, socket }}>
       {children}
     </NotificationContext.Provider>
   );

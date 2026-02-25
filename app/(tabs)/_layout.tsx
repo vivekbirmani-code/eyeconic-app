@@ -6,7 +6,7 @@ import { useNotifications } from '@/context/NotificationContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 function TabInner() {
-  const { totalUnreadCount } = useNotifications();
+  const { totalUnreadCount, unseenQuizCount } = useNotifications();
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
 
@@ -114,10 +114,11 @@ function TabInner() {
       <Tabs.Screen
         name="quizzes"
         options={{
-          title: 'Quizzes',
+          title: 'Tests',
           tabBarIcon: ({ color, size }) => (
             <BookOpen color={color} size={22} />
           ),
+          tabBarBadge: unseenQuizCount > 0 ? unseenQuizCount : undefined,
         }}
       />
     </Tabs>

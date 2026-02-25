@@ -312,7 +312,7 @@ export default function Dashboard() {
                     <Text style={styles.quickActionLabel}>Groups</Text>
                   </TouchableOpacity>
 
-                  {/* Quizzes button - all roles */}
+                  {/* Tests button - all roles */}
                   <TouchableOpacity
                     style={styles.quickActionButton}
                     onPress={() => {
@@ -324,7 +324,7 @@ export default function Dashboard() {
                     <View style={[styles.quickActionIcon, { backgroundColor: 'rgba(16, 185, 129, 0.1)' }]}>
                       <BookOpen color="#10B981" size={22} />
                     </View>
-                    <Text style={styles.quickActionLabel}>Quizzes</Text>
+                    <Text style={styles.quickActionLabel}>Tests</Text>
                   </TouchableOpacity>
 
                   {/* My Tasks - student only */}

@@ -91,7 +91,8 @@ router.post('/login', async (req, res) => {
         email: user.email,
         role: user.role,
         isProfileComplete: user.isProfileComplete,
-        studentProfile: user.studentProfile
+        studentProfile: user.studentProfile,
+        unseenQuizzes: user.unseenQuizzes
       },
       linkedAttempts
     });

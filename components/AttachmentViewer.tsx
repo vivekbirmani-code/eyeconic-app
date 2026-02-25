@@ -10,6 +10,7 @@ import {
   Dimensions
 } from 'react-native';
 import { X, FileText, Download, ExternalLink } from 'lucide-react-native';
+import { getApiBaseURL } from '@/services/config';
 
 interface Attachment {
   type: 'image' | 'video' | 'document';
@@ -34,8 +35,25 @@ const formatSize = (bytes?: number) => {
 export const AttachmentViewer: React.FC<AttachmentViewerProps> = ({ attachment, isVisible, onClose }) => {
   if (!attachment) return null;
 
-  const handleOpen = () => {
-    Linking.openURL(attachment.url).catch(err => console.error("Couldn't load page", err));
+  const handleOpen = async () => {
+    try {
+      // Use the backend proxy for documents to avoid ERR_INVALID_RESPONSE
+      // on Android Chrome when opening direct Cloudinary URLs.
+      const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+      const token = await AsyncStorage.getItem('authToken');
+      const base = getApiBaseURL();
+      const encodedUrl = encodeURIComponent(attachment.url);
+      const encodedName = encodeURIComponent(attachment.name || 'document');
+      const proxyUrl = `${base}/upload/download-proxy?url=${encodedUrl}&name=${encodedName}`;
+
+      // If we have a token, attach it to the URL so the request is authenticated
+      const finalUrl = token ? `${proxyUrl}&token=${token}` : proxyUrl;
+      Linking.openURL(finalUrl).catch(err => console.error("Couldn't open file", err));
+    } catch (err) {
+      console.error('handleOpen error', err);
+      // Fallback to direct URL
+      Linking.openURL(attachment.url).catch(e => console.error("Fallback open failed", e));
+    }
   };
 
 

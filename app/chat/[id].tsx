@@ -661,12 +661,14 @@ export default function ChatScreen() {
             </Text>
           )}
         </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.callButton}
-          onPress={() => router.push(`/call/${groupId}` as any)}
-        >
-          <Phone color="#10B981" size={22} />
-        </TouchableOpacity>
+        {user?.role !== 'student' && (
+          <TouchableOpacity
+            style={styles.callButton}
+            onPress={() => router.push(`/call/${groupId}` as any)}
+          >
+            <Phone color="#10B981" size={22} />
+          </TouchableOpacity>
+        )}
       </View>
 
       <KeyboardAvoidingView

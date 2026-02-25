@@ -41,6 +41,18 @@ router.get('/retests/pending', auth, authorize('admin', 'mentor'), async (req, r
   }
 });
 
+// Mark quizzes as seen for the student
+router.post('/mark-seen', auth, authorize('student'), async (req, res) => {
+  try {
+    const User = require('../models/User');
+    await User.findByIdAndUpdate(req.user._id, { $set: { unseenQuizzes: [] } });
+    res.json({ message: 'Quizzes marked as seen' });
+  } catch (error) {
+    console.error('Mark seen error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Get all quizzes (role-based access)
 router.get('/', auth, async (req, res) => {
   try {
@@ -237,6 +249,19 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
 
     await quiz.save();
 
+    if (assignedStudents && assignedStudents.length > 0) {
+      const User = require('../models/User');
+      await User.updateMany(
+        { _id: { $in: assignedStudents } },
+        { $addToSet: { unseenQuizzes: quiz._id } }
+      );
+
+      const io = req.app.get('io');
+      if (io) {
+        io.emit('new_quiz_assigned', { quizId: quiz._id, title: quiz.title, assignedStudents });
+      }
+    }
+
     console.log(`Quiz created: ${quiz._id} with ${questions.length} questions from ${subjectIds.length} subjects`);
 
     res.status(201).json({
@@ -278,6 +303,21 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
     const allSubjects = await Subject.find({});
     allSubjects.forEach(s => subjectsMap[s.name.toLowerCase()] = s._id);
 
+    // Validate subjects before processing
+    const invalidSubjects = new Set();
+    for (const qData of parsedQuestions) {
+      if (!subjectsMap[qData.subjectName.toLowerCase()]) {
+        invalidSubjects.add(qData.subjectName);
+      }
+    }
+
+    if (invalidSubjects.size > 0) {
+      return res.status(400).json({
+        message: 'Unknown subjects found in Excel file',
+        errors: [`Invalid subjects: ${Array.from(invalidSubjects).join(', ')}. Please use standard subject names.`]
+      });
+    }
+
     const questionIds = [];
     const createdQuestions = [];
     let firstSubjectId = subjectId; // Track first subject for quiz creation
@@ -292,18 +332,6 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
     // Create Questions with duplicate detection
     for (const qData of parsedQuestions) {
       let subId = subjectsMap[qData.subjectName.toLowerCase()];
-
-      // If subject not found, create it
-      if (!subId) {
-        const newSub = new Subject({
-          name: qData.subjectName,
-          year: '1st',
-          displayOrder: 99
-        });
-        await newSub.save();
-        subId = newSub._id;
-        subjectsMap[qData.subjectName.toLowerCase()] = subId;
-      }
 
       // Track first subject for quiz creation
       if (!firstSubjectId) {
@@ -534,6 +562,19 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
     }
 
     await quiz.save();
+
+    if (assignedStudents && assignedStudents.length > 0) {
+      const User = require('../models/User');
+      await User.updateMany(
+        { _id: { $in: assignedStudents } },
+        { $addToSet: { unseenQuizzes: quiz._id } }
+      );
+
+      const io = req.app.get('io');
+      if (io) {
+        io.emit('new_quiz_assigned', { quizId: quiz._id, title: quiz.title, assignedStudents });
+      }
+    }
 
     res.json({ message: 'Quiz updated successfully', quiz });
   } catch (error) {

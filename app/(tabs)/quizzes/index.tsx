@@ -14,10 +14,11 @@ import {
   Animated,
   Pressable
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { BookOpen, Clock, CheckCircle, AlertCircle, RotateCcw, ChevronRight, PlayCircle } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
+import { useNotifications } from '@/context/NotificationContext';
 import { QuizCardSkeleton } from '@/components/Skeleton';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -165,6 +166,7 @@ const QuizCard = ({ item, index, onPress }: { item: Quiz; index: number; onPress
 
 function QuizzesContent() {
   const { user } = useAuth();
+  const { markQuizzesAsSeen } = useNotifications();
   const router = useRouter();
   const [quizzes, setQuizzes] = useState<Quiz[]>([]);
   const [loading, setLoading] = useState(true);
@@ -193,6 +195,14 @@ function QuizzesContent() {
       })
     ]).start();
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (user?.role === 'student') {
+        markQuizzesAsSeen();
+      }
+    }, [user, markQuizzesAsSeen])
+  );
 
   const fetchQuizzes = async () => {
     try {
@@ -331,7 +341,7 @@ function QuizzesContent() {
           end={{ x: 1, y: 0 }}
           style={styles.headerGradient}
         >
-          <Text style={styles.title}>My Quizzes</Text>
+          <Text style={styles.title}>My Tests</Text>
           <Text style={styles.subtitle}>
             {availableQuizzes.length} available • {completedQuizzes.length} completed
           </Text>
@@ -403,12 +413,12 @@ function QuizzesContent() {
                   <BookOpen color="#CBD5E1" size={50} />
                 </View>
                 <Text style={styles.emptyTitle}>
-                  {activeTab === 'available' ? 'No Quizzes Yet' : 'No Completed Quizzes'}
+                  {activeTab === 'available' ? 'No Tests Yet' : 'No Completed Tests'}
                 </Text>
                 <Text style={styles.emptySubtext}>
                   {activeTab === 'available'
-                    ? 'Check back later for new quizzes.'
-                    : 'You haven\'t completed any quizzes yet.'}
+                    ? 'Check back later for new tests.'
+                    : 'You haven\'t completed any tests yet.'}
                 </Text>
               </View>
             }

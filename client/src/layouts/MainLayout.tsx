@@ -27,7 +27,7 @@ export default function MainLayout() {
     { name: 'Dashboard', path: '/dashboard', icon: Home },
     ...(user?.role === 'admin' ? [{ name: 'Admin Dashboard', path: '/admin', icon: BarChart3 }] : []),
     { name: 'Groups', path: '/groups', icon: MessageCircle },
-    { name: 'Quizzes', path: '/quizzes', icon: BookOpen },
+    { name: 'Tests', path: '/quizzes', icon: BookOpen },
     ...(user?.role === 'admin' ? [{ name: 'Users', path: '/users', icon: Users }] : []),
   ];
 
