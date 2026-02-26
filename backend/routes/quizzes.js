@@ -303,10 +303,81 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
     const allSubjects = await Subject.find({});
     allSubjects.forEach(s => subjectsMap[s.name.toLowerCase()] = s._id);
 
+    // Subject alias map: common Excel name variants → canonical DB name (lowercase)
+    // This prevents "Unknown subjects" errors when Excel uses long-form names
+    const SUBJECT_ALIASES = {
+      // OBG / Obstetrics & Gynaecology variants
+      'obgyn': 'obgyn',
+      'obg': 'obgyn',
+      'obstetrics & gynaecology': 'obgyn',
+      'obstetrics and gynaecology': 'obgyn',
+      'obstetrics & gynecology': 'obgyn',
+      'obstetrics and gynecology': 'obgyn',
+      'obstetrics gynaecology': 'obgyn',
+      'obstetrics gynecology': 'obgyn',
+      'ob/gyn': 'obgyn',
+      'ob gyn': 'obgyn',
+      // ENT variants
+      'ent': 'ent',
+      'ear nose throat': 'ent',
+      'ear, nose & throat': 'ent',
+      'otorhinolaryngology': 'ent',
+      // FMT / Forensic Medicine variants
+      'fmt': 'fmt',
+      'forensic medicine': 'fmt',
+      'forensic medicine & toxicology': 'fmt',
+      'forensic': 'fmt',
+      // PSM / Community Medicine variants
+      'psm': 'psm',
+      'community medicine': 'psm',
+      'preventive & social medicine': 'psm',
+      'preventive and social medicine': 'psm',
+      'social & preventive medicine': 'psm',
+      // Orthopaedics variants
+      'orthopaedics': 'orthopaedics',
+      'orthopedics': 'orthopaedics',
+      'ortho': 'orthopaedics',
+      // Paediatrics variants
+      'paediatrics': 'paediatrics',
+      'pediatrics': 'paediatrics',
+      'paed': 'paediatrics',
+      'peds': 'paediatrics',
+      // Ophthalmology variants
+      'ophthalmology': 'ophthalmology',
+      'opthalmology': 'ophthalmology',
+      'eye': 'ophthalmology',
+      // Anaesthesia variants
+      'anaesthesia': 'anaesthesia',
+      'anesthesia': 'anaesthesia',
+      'anaesthesiology': 'anaesthesia',
+      'anesthesiology': 'anaesthesia',
+    };
+
+    // Helper: normalize a subject name from Excel to the canonical DB key
+    const normalizeSubjectName = (name) => {
+      const lower = name.trim().toLowerCase();
+      // Direct match in subjectsMap
+      if (subjectsMap[lower]) return lower;
+      // Alias lookup
+      const aliasTarget = SUBJECT_ALIASES[lower];
+      if (aliasTarget && subjectsMap[aliasTarget]) return aliasTarget;
+      // Strip special characters and retry (e.g. "obstetrics & gynaecology" → "obstetrics  gynaecology")
+      const stripped = lower.replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+      if (subjectsMap[stripped]) return stripped;
+      const aliasStripped = SUBJECT_ALIASES[stripped];
+      if (aliasStripped && subjectsMap[aliasStripped]) return aliasStripped;
+      return lower; // return original lowercase (will fail validation if not found)
+    };
+
+    // Pre-normalize all subject names in parsed questions
+    parsedQuestions.forEach(qData => {
+      qData._normalizedSubject = normalizeSubjectName(qData.subjectName);
+    });
+
     // Validate subjects before processing
     const invalidSubjects = new Set();
     for (const qData of parsedQuestions) {
-      if (!subjectsMap[qData.subjectName.toLowerCase()]) {
+      if (!subjectsMap[qData._normalizedSubject]) {
         invalidSubjects.add(qData.subjectName);
       }
     }
@@ -317,6 +388,7 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
         errors: [`Invalid subjects: ${Array.from(invalidSubjects).join(', ')}. Please use standard subject names.`]
       });
     }
+
 
     const questionIds = [];
     const createdQuestions = [];
@@ -331,7 +403,7 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
 
     // Create Questions with duplicate detection
     for (const qData of parsedQuestions) {
-      let subId = subjectsMap[qData.subjectName.toLowerCase()];
+      let subId = subjectsMap[qData._normalizedSubject || qData.subjectName.toLowerCase()];
 
       // Track first subject for quiz creation
       if (!firstSubjectId) {
@@ -417,7 +489,9 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
           correctAnswer: processedQData.correctAnswer,
           explanation: processedQData.explanation,
           explanationImage: processedQData.explanationImage,
-          marks: processedQData.marks,
+          marks: processedQData.positiveMarks || processedQData.marks || 4,
+          positiveMarks: processedQData.positiveMarks !== undefined ? processedQData.positiveMarks : 4,
+          negativeMarks: processedQData.negativeMarks !== undefined ? processedQData.negativeMarks : 0,
           tags: [...qData.tags, 'excel-import', `quiz:${quizTitle}`],
           createdBy: req.user._id,
           isActive: true
@@ -900,7 +974,7 @@ router.get('/:id', auth, async (req, res) => {
       .populate('createdBy', 'name')
       .populate({
         path: 'questions',
-        select: 'question options marks topicName questionImage optionImages subject',
+        select: 'question options marks positiveMarks negativeMarks topicName questionImage optionImages subject correctAnswer',
         populate: {
           path: 'subject',
           select: 'name'

@@ -211,7 +211,7 @@ export default function QuizReview() {
                 <Award color="#2563EB" size={24} />
                 <View>
                   <Text style={styles.summaryLabel}>Score</Text>
-                  <Text style={styles.summaryValue}>{reviewData.score}/{reviewData.quiz.totalMarks}</Text>
+                  <Text style={styles.summaryValue}>{reviewData.marksObtained}/{reviewData.quiz.totalMarks}</Text>
                 </View>
               </View>
               <View style={styles.divider} />
@@ -270,7 +270,7 @@ export default function QuizReview() {
                   fontWeight="bold"
                   fontSize="24"
                 >
-                  {reviewData.score}
+                  {reviewData.marksObtained}
                 </SvgText>
                 <SvgText
                   x="100"

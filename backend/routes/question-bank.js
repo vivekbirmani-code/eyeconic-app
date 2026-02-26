@@ -372,7 +372,9 @@ router.post('/bulk-import-base64', auth, authorize('admin'), async (req, res) =>
                     correctAnswer: correctAnswer,
                     explanation: (row.EXPLANATION || row.explanation || row.EXPLAINATION || row.REASON || '').toString().trim(),
                     explanationImage: convertDriveToDirectLink(row.EX_IMAGE || row.ex_image || ''),
-                    marks: parseInt(row.MARKS || row.marks || '1') || 1,
+                    marks: parseInt(row.MARKS || row.marks || '4') || 4,
+                    positiveMarks: parseFloat(row['POSITIVE MARKS'] || row.POSITIVE_MARKS || row.positive_marks || row.positiveMarks || row.MARKS || row.marks || '4') || 4,
+                    negativeMarks: Math.abs(parseFloat(row['NEGATIVE MARKS'] || row.NEGATIVE_MARKS || row.negative_marks || row.negativeMarks || '0') || 0),
                     marrowCode: (row.MARROW_CODE || row['MARROW CODE'] || row.MARROW || '').toString().trim() || undefined,
                     source: (row.SOURCE || row.source || '').toString().trim() || undefined,
                     createdBy: req.user._id
@@ -457,7 +459,7 @@ router.get('/by-subjects', auth, authorize('admin'), async (req, res) => {
 
         const questions = await QuestionBank.find(filter)
             .populate('subject', 'name')
-            .select('_id qid question subject topicName options marks tags questionImage optionImages correctAnswer explanation explanationImage')
+            .select('_id qid question subject topicName options marks positiveMarks negativeMarks tags questionImage optionImages correctAnswer explanation explanationImage')
             .sort({ subject: 1, createdAt: -1 })
             .limit(500);
 
