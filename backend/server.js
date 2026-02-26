@@ -69,6 +69,9 @@ const io = socketIo(server, {
   }
 });
 
+// Expose io to routes
+app.set('io', io);
+
 // Initialize socket helpers with the io instance
 socketHelpers.setIo(io);
 

@@ -536,6 +536,8 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
       return res.status(404).json({ message: 'Quiz not found' });
     }
 
+    const prevAssigned = quiz.assignedStudents.map(id => id.toString());
+
     // Optional: Check for attempts if modifying critical fields
     // const attempts = await QuizAttempt.countDocuments({ quiz: req.params.id });
     // if (attempts > 0 && (questions || testType)) {
@@ -564,15 +566,19 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
     await quiz.save();
 
     if (assignedStudents && assignedStudents.length > 0) {
-      const User = require('../models/User');
-      await User.updateMany(
-        { _id: { $in: assignedStudents } },
-        { $addToSet: { unseenQuizzes: quiz._id } }
-      );
+      const newlyAssigned = assignedStudents.filter(id => !prevAssigned.includes(id.toString()));
+      
+      if (newlyAssigned.length > 0) {
+        const User = require('../models/User');
+        await User.updateMany(
+          { _id: { $in: newlyAssigned } },
+          { $addToSet: { unseenQuizzes: quiz._id } }
+        );
 
-      const io = req.app.get('io');
-      if (io) {
-        io.emit('new_quiz_assigned', { quizId: quiz._id, title: quiz.title, assignedStudents });
+        const io = req.app.get('io');
+        if (io) {
+          io.emit('new_quiz_assigned', { quizId: quiz._id, title: quiz.title, assignedStudents: newlyAssigned });
+        }
       }
     }
 
@@ -1819,6 +1825,19 @@ router.put('/:id/share', auth, authorize('admin'), async (req, res) => {
 
     quiz.assignedStudents = [...quiz.assignedStudents, ...newStudents];
     await quiz.save();
+
+    if (newStudents.length > 0) {
+      const User = require('../models/User');
+      await User.updateMany(
+        { _id: { $in: newStudents } },
+        { $addToSet: { unseenQuizzes: quiz._id } }
+      );
+
+      const io = req.app.get('io');
+      if (io) {
+        io.emit('new_quiz_assigned', { quizId: quiz._id, title: quiz.title, assignedStudents: newStudents });
+      }
+    }
 
     res.json({
       message: `Quiz shared with ${newStudents.length} additional student(s)`,
