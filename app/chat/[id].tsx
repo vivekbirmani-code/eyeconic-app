@@ -5,7 +5,6 @@ import {
   TextInput,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -19,6 +18,7 @@ import {
   Animated,
   Easing,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowLeft, Send, Users, UserPlus, X, Search, Check, CheckCheck, Edit2, Trash2, Info, Phone } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -368,10 +368,12 @@ export default function ChatScreen() {
       console.log('FormData created with type:', mimeType);
 
       // Use specific content-type header for multipart
+      // timeout is overridden to 60s here only — global api.ts timeout (10s) is unchanged
       const response = await api.post('/upload/chat', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
+        timeout: 60000, // 60s for upload only: backend must receive + upload to Cloudinary
         transformRequest: (data, headers) => {
           // Axios on React Native needs this to not stringify FormData
           return data;
@@ -389,10 +391,17 @@ export default function ChatScreen() {
           publicId: response.data.public_id
         };
 
-        await api.post('/messages', {
+        const msgResponse = await api.post('/messages', {
           content: '',
           groupId,
           attachments: [attachmentData]
+        });
+
+        // Emit socket event so other group members see the file in real-time
+        // (mirrors how text messages are broadcast in sendMessage())
+        socketRef.current?.emit('send_message', {
+          ...msgResponse.data,
+          groupId,
         });
       }
     } catch (error: any) {
@@ -1041,7 +1050,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   header: {
     flexDirection: 'row',
@@ -1417,7 +1425,6 @@ const styles = StyleSheet.create({
   modalContainer: {
     flex: 1,
     backgroundColor: '#FFFFFF',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   modalHeader: {
     flexDirection: 'row',

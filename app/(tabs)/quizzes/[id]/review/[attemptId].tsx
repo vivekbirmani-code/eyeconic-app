@@ -324,7 +324,7 @@ export default function QuizReview() {
                   <Text style={[styles.dropdownText, groupBy === 'subject' && styles.dropdownTextActive]}>By Subject</Text>
                   {groupBy === 'subject' && <Text style={styles.checkmark}>✓</Text>}
                 </TouchableOpacity>
-                <TouchableOpacity
+                {/* <TouchableOpacity
                   style={styles.dropdownItem}
                   onPress={() => {
                     setGroupBy('tag');
@@ -343,7 +343,7 @@ export default function QuizReview() {
                 >
                   <Text style={[styles.dropdownText, groupBy === 'topic' && styles.dropdownTextActive]}>By Topic</Text>
                   {groupBy === 'topic' && <Text style={styles.checkmark}>✓</Text>}
-                </TouchableOpacity>
+                </TouchableOpacity> */}
               </View>
             )}
 
