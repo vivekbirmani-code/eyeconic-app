@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -55,6 +55,7 @@ export default function Groups() {
 
   // Member selection state
   const [searchQuery, setSearchQuery] = useState('');
+  const [groupSearchQuery, setGroupSearchQuery] = useState('');
   const [searchRole, setSearchRole] = useState<'mentor' | 'student' | 'admin'>('student');
   const [searchResults, setSearchResults] = useState<User[]>([]);
   const [selectedMentors, setSelectedMentors] = useState<User[]>([]);
@@ -140,6 +141,24 @@ export default function Groups() {
       socket.off('group_removed', fetchGroups);
     };
   }, [socket, fetchGroups]);
+
+  // Filter and sort groups: notifications first, then alphabetically
+  const filteredAndSortedGroups = useMemo(() => {
+    return groups
+      .filter((g) => 
+        g.name.toLowerCase().includes(groupSearchQuery.toLowerCase()) ||
+        g.description?.toLowerCase().includes(groupSearchQuery.toLowerCase())
+      )
+      .sort((a, b) => {
+        const unreadA = unreadCounts[a._id] || 0;
+        const unreadB = unreadCounts[b._id] || 0;
+
+        if (unreadA > 0 && unreadB === 0) return -1;
+        if (unreadA === 0 && unreadB > 0) return 1;
+
+        return a.name.localeCompare(b.name);
+      });
+  }, [groups, groupSearchQuery, unreadCounts]);
 
   const searchUsers = useCallback(async (query: string, role: string) => {
     if (!query.trim()) {
@@ -446,6 +465,25 @@ export default function Groups() {
         </LinearGradient>
       </Animated.View>
 
+      {/* Group Search Bar */}
+      <View style={styles.groupSearchContainer}>
+        <View style={styles.groupSearchInner}>
+          <Search color="#6B7280" size={18} />
+          <TextInput
+            style={styles.groupSearchInput}
+            placeholder="Search groups..."
+            placeholderTextColor="#9CA3AF"
+            value={groupSearchQuery}
+            onChangeText={setGroupSearchQuery}
+          />
+          {groupSearchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setGroupSearchQuery('')}>
+              <X color="#6B7280" size={18} />
+            </TouchableOpacity>
+          )}
+        </View>
+      </View>
+
       {/* Groups List with Skeleton Loading */}
       {isLoading ? (
         <Animated.View
@@ -470,7 +508,7 @@ export default function Groups() {
           }}
         >
           <FlatList
-            data={groups}
+            data={filteredAndSortedGroups}
             renderItem={renderGroup}
             keyExtractor={(item) => item._id}
             contentContainerStyle={styles.list}
@@ -797,6 +835,28 @@ const styles = StyleSheet.create({
   shimmer: {
     width: '100%',
     height: '100%',
+  },
+  groupSearchContainer: {
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    backgroundColor: '#FFFFFF',
+  },
+  groupSearchInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    height: 44,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  groupSearchInput: {
+    flex: 1,
+    marginLeft: 8,
+    fontSize: 15,
+    color: '#1F2937',
+    paddingVertical: 8,
   },
   skeletonContent: {
     flex: 1,

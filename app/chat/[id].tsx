@@ -44,6 +44,7 @@ interface Message {
   editedAt?: string;
 
   deletedForEveryone?: boolean;
+  isUploading?: boolean;
   attachments?: Array<{
     type: 'image' | 'video' | 'document';
     url: string;
@@ -51,6 +52,7 @@ interface Message {
     size: number;
     mimeType: string;
     publicId: string;
+    localUri?: string;
   }>;
 }
 
@@ -337,51 +339,70 @@ export default function ChatScreen() {
 
   const uploadFile = async (file: any, type: 'image' | 'document') => {
     setIsUploading(true);
+    
+    // 1. Create a temporary message for optimistic UI
+    const tempId = `temp_${Date.now()}`;
+    const uriToUse = Platform.OS === 'android' ? file.uri : file.uri.replace('file://', '');
+    const fileName = file.name || file.fileName || (type === 'image' ? 'image.jpg' : 'document.pdf');
+    
+    let mimeType = file.mimeType;
+    if (!mimeType) {
+      const ext = fileName.split('.').pop()?.toLowerCase();
+      if (ext === 'jpg' || ext === 'jpeg') mimeType = 'image/jpeg';
+      else if (ext === 'png') mimeType = 'image/png';
+      else if (ext === 'pdf') mimeType = 'application/pdf';
+      else if (ext === 'doc') mimeType = 'application/msword';
+      else if (ext === 'docx') mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      else if (ext === 'xls') mimeType = 'application/vnd.ms-excel';
+      else if (ext === 'xlsx') mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      else mimeType = type === 'image' ? 'image/jpeg' : 'application/octet-stream';
+    }
+
+    const tempMessage: Message = {
+      _id: tempId,
+      content: '',
+      sender: { _id: user?._id || '', name: user?.name || '' },
+      createdAt: new Date().toISOString(),
+      status: 'sent',
+      isUploading: true,
+      attachments: [{
+        type: type,
+        url: '', // No URL yet
+        name: fileName,
+        size: file.size || 0,
+        mimeType: mimeType,
+        publicId: '',
+        localUri: uriToUse
+      }]
+    };
+
+    // Append temporary message instantly
+    setMessages(prev => [...prev, tempMessage]);
+    socketRef.current?.emit('send_message', {
+      ...tempMessage,
+      groupId,
+    });
+    setTimeout(scrollToBottom, 100);
+
     try {
-      console.log('Preparing upload:', type, file.uri, file.mimeType);
+      console.log('Preparing upload:', type, file.uri, mimeType);
 
       const formData = new FormData();
-
-      const fileName = file.name || file.fileName || (type === 'image' ? 'image.jpg' : 'document.pdf');
-
-      // Infer valid mimetype if missing
-      let mimeType = file.mimeType;
-      if (!mimeType) {
-        const ext = fileName.split('.').pop()?.toLowerCase();
-        if (ext === 'jpg' || ext === 'jpeg') mimeType = 'image/jpeg';
-        else if (ext === 'png') mimeType = 'image/png';
-        else if (ext === 'pdf') mimeType = 'application/pdf';
-        else if (ext === 'doc') mimeType = 'application/msword';
-        else if (ext === 'docx') mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
-        else if (ext === 'xls') mimeType = 'application/vnd.ms-excel';
-        else if (ext === 'xlsx') mimeType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
-        else mimeType = type === 'image' ? 'image/jpeg' : 'application/octet-stream';
-      }
-
-      // Append file
       formData.append('file', {
-        uri: Platform.OS === 'android' ? file.uri : file.uri.replace('file://', ''),
+        uri: uriToUse,
         name: fileName,
         type: mimeType
       } as any);
 
-      console.log('FormData created with type:', mimeType);
-
-      // Use specific content-type header for multipart
-      // timeout is overridden to 60s here only — global api.ts timeout (10s) is unchanged
       const response = await api.post('/upload/chat', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
-        timeout: 60000, // 60s for upload only: backend must receive + upload to Cloudinary
-        transformRequest: (data, headers) => {
-          // Axios on React Native needs this to not stringify FormData
-          return data;
-        }
+        timeout: 60000,
+        transformRequest: (data) => data
       });
 
       if (response.data.success) {
-        // Send message with attachment
         const attachmentData = {
           type: type,
           url: response.data.url,
@@ -397,24 +418,29 @@ export default function ChatScreen() {
           attachments: [attachmentData]
         });
 
-        // Emit socket event so other group members see the file in real-time
-        // (mirrors how text messages are broadcast in sendMessage())
-        socketRef.current?.emit('send_message', {
+        // 2. Replace temporary message with actual DB message
+        setMessages(prev => prev.map(msg => 
+          msg._id === tempId ? msgResponse.data : msg
+        ));
+
+        // 3. Emit update globally to swap the loading state for the real message
+        socketRef.current?.emit('message_updated', {
           ...msgResponse.data,
           groupId,
         });
       }
     } catch (error: any) {
       console.error('Upload failed details:', error);
-      if (error.response) {
-        console.error('Response data:', error.response.data);
-        console.error('Response status:', error.response.status);
-      }
       Alert.alert('Upload Failed', error?.response?.data?.message || 'Failed to upload file');
+      // On failure, remove the temp message
+      setMessages(prev => prev.filter(msg => msg._id !== tempId));
+      socketRef.current?.emit('message_deleted', {
+        messageId: tempId,
+        deletedForEveryone: true,
+        groupId,
+      });
     } finally {
       setIsUploading(false);
-      // Refresh messages
-      fetchMessages();
     }
   };
 
@@ -623,9 +649,12 @@ export default function ChatScreen() {
               <AttachmentThumbnail
                 key={index}
                 attachment={att as any}
+                isUploading={item.isUploading}
                 onPress={() => {
-                  setViewingAttachment(att);
-                  setIsViewerVisible(true);
+                  if (!item.isUploading) {
+                    setViewingAttachment(att);
+                    setIsViewerVisible(true);
+                  }
                 }}
               />
             ))}

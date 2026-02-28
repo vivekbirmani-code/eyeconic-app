@@ -612,10 +612,6 @@ export default function QuizReview() {
           <Text style={styles.title}>{reviewData.quiz.title}</Text>
           <Text style={styles.subtitle}>Solutions & Explanations</Text>
         </View>
-        <View style={styles.scoreContainer}>
-          <Text style={styles.scoreText}>{reviewData.score}/{reviewData.quiz.totalQuestions}</Text>
-          <Text style={styles.scoreLabel}>Score</Text>
-        </View>
       </View>
 
       {/* Section Tabs */}
@@ -1044,11 +1040,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#6B7280',
   },
-  wrongBadgeText: {
-    color: '#DC2626',
-    fontSize: 12,
-    fontWeight: '600',
-  },
+
   filterButton: {
     flexDirection: 'row',
     alignItems: 'center',

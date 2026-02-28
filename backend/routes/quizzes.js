@@ -641,7 +641,7 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
 
     if (assignedStudents && assignedStudents.length > 0) {
       const newlyAssigned = assignedStudents.filter(id => !prevAssigned.includes(id.toString()));
-      
+
       if (newlyAssigned.length > 0) {
         const User = require('../models/User');
         await User.updateMany(
@@ -773,14 +773,33 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
     // Build CSV
     let csv = 'Rank,Student Name,Email,Correct,Incorrect,Skipped,Marks Obtained,Total Marks,Percentage,Percentile\n';
     sorted.forEach((a, idx) => {
-      const correct = a.score || 0;
-      const incorrect = (a.totalQuestions || 0) - correct - (a.answers?.filter(ans => ans.selectedAnswer === -1).length || 0);
-      const skipped = (a.totalQuestions || 0) - correct - Math.max(0, incorrect);
+      let correct = a.score || 0;
+      let incorrect = 0;
+      let skipped = 0;
+
+      // Extract accurate stats from sectionPerformance if they exist
+      if (a.sectionPerformance && a.sectionPerformance.length > 0) {
+        correct = 0;
+        a.sectionPerformance.forEach(s => {
+          correct += (s.correct || 0);
+          incorrect += (s.incorrect || 0);
+          skipped += (s.skipped || 0);
+        });
+      } else {
+        // Fallback for legacy attempts: compute answered questions strictly
+        // A question is answered if it exists in the answers array and selectedAnswer is not -1
+        const answeredCount = a.answers ? a.answers.filter(ans => ans.selectedAnswer !== undefined && ans.selectedAnswer !== -1).length : 0;
+        incorrect = Math.max(0, answeredCount - correct);
+        skipped = Math.max(0, (a.totalQuestions || 0) - answeredCount);
+      }
+
       const pct = a.totalQuestions > 0 ? Math.round((correct / a.totalQuestions) * 100) : 0;
       const belowCount = sorted.filter(s => (s.marksObtained || 0) < (a.marksObtained || 0)).length;
-      const percentile = total > 1 ? Math.round((belowCount / (total - 1)) * 100) : 100;
 
-      csv += `${idx + 1},"${a.student?.name || 'Unknown'}","${a.student?.email || ''}",${correct},${Math.max(0, incorrect)},${Math.max(0, skipped)},${a.marksObtained || 0},${a.totalMarks || 0},${pct}%,${percentile}\n`;
+      // New Percentile Formula: (Number of Values Below / Total Number of Values) * 100
+      const percentile = total > 0 ? Math.round((belowCount / total) * 100) : 0;
+
+      csv += `${idx + 1},"${a.student?.name || 'Unknown'}","${a.student?.email || ''}",${correct},${incorrect},${skipped},${a.marksObtained || 0},${a.totalMarks || 0},${pct}%,${percentile}\n`;
     });
 
     res.setHeader('Content-Type', 'text/csv');
@@ -1325,6 +1344,21 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
     await attempt.save();
 
     console.log(`[Submit Quiz] Successfully submitted: ${attempt._id}, Score: ${correctCount}/${quiz.questions.length}`);
+
+    // Emit quiz_submitted event back to the student
+    const io = req.app.get('io');
+    if (io) {
+      // Find the socket helper to emit.
+      const socketHelpers = require('../utils/socket-helpers');
+      if (socketHelpers && socketHelpers.emitToUser) {
+        socketHelpers.emitToUser(req.user._id.toString(), 'quiz_submitted', {
+          quizId: attempt.quiz._id,
+          attemptId: attempt._id,
+          score: correctCount,
+          status: attempt.status
+        });
+      }
+    }
 
     res.json({
       message: 'Quiz submitted successfully',

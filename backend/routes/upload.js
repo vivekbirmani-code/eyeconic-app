@@ -106,7 +106,7 @@ router.post('/chat', auth, upload.single('file'), async (req, res) => {
             .substring(0, 60);                              // cap length
         const publicId = isImage
             ? undefined                                                        // auto-generate for images
-            : `${baseName}_${Date.now()}${originalExt}`;                       // e.g. "report_1234567890.pdf"
+            : `${baseName}_${Date.now()}`;                                     // OMIT originalExt to bypass Cloudinary's raw PDF delivery block
 
         // Upload to Cloudinary
         const result = await cloudinary.uploader.upload(dataURI, {
@@ -153,6 +153,8 @@ router.get('/download-proxy', auth, async (req, res) => {
         const apiKey = process.env.CLOUDINARY_API_KEY;
         const apiSecret = process.env.CLOUDINARY_API_SECRET;
 
+        console.log(`[download-proxy] Attempting to fetch URL: ${url}`);
+
         // Fetch from Cloudinary with Basic Auth using our API credentials
         const response = await fetch(url, {
             headers: {
@@ -160,11 +162,26 @@ router.get('/download-proxy', auth, async (req, res) => {
             }
         });
 
+        console.log(`[download-proxy] Auth fetch status: ${response.status}`);
+
         if (!response.ok) {
+            console.log(`[download-proxy] Auth fetch failed. Trying without auth...`);
             // If authenticated fetch fails, try without auth (public resources)
             const publicResponse = await fetch(url);
+            console.log(`[download-proxy] Public fetch status: ${publicResponse.status}`);
+
             if (!publicResponse.ok) {
-                return res.status(502).json({ message: `Cloudinary returned ${publicResponse.status}` });
+                const errorText = await publicResponse.text().catch(() => 'no text');
+                console.error(`[download-proxy] Cloudinary returned ${publicResponse.status}: ${errorText}`);
+
+                let errorMessage = `Cloudinary returned ${publicResponse.status}`;
+                if (publicResponse.status === 401 || publicResponse.status === 400) {
+                    if (url.toLowerCase().endsWith('.pdf') || url.toLowerCase().endsWith('.zip')) {
+                        errorMessage = "Cloudinary blocked this PDF/ZIP file. To fix this for previously uploaded files, please enable 'Allow delivery of PDF and ZIP files' in your Cloudinary Security settings. (Note: New uploads will now work automatically without this setting).";
+                    }
+                }
+
+                return res.status(502).json({ message: errorMessage });
             }
             // Stream public response
             const ct = publicResponse.headers.get('content-type') || 'application/octet-stream';

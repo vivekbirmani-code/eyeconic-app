@@ -204,6 +204,26 @@ function QuizzesContent() {
     }, [user, markQuizzesAsSeen])
   );
 
+  const { socket } = useNotifications();
+
+  // Listen to socket events for real-time quiz updates
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleQuizUpdate = () => {
+      console.log('Real-time quiz update received. Fetching new data...');
+      fetchQuizzes();
+    };
+
+    socket.on('new_quiz_assigned', handleQuizUpdate);
+    socket.on('quiz_submitted', handleQuizUpdate);
+
+    return () => {
+      socket.off('new_quiz_assigned', handleQuizUpdate);
+      socket.off('quiz_submitted', handleQuizUpdate);
+    };
+  }, [socket]);
+
   const fetchQuizzes = async () => {
     try {
       setError(null);

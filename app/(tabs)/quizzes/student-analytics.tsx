@@ -14,6 +14,7 @@ import {
   Linking,
   Alert
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import {
   Search,
@@ -271,10 +272,14 @@ export default function Analytics() {
     if (!selectedTest) return;
     try {
       const baseURL = api.defaults.baseURL || '';
-      // Extract the bearer token from the axios instance
-      const authHeader = api.defaults.headers.common['Authorization'] as string;
-      const token = authHeader ? authHeader.replace('Bearer ', '') : '';
+      // Read token from AsyncStorage safely to guarantee it works on both web and native
+      const token = await AsyncStorage.getItem('authToken');
       
+      if (!token) {
+        Alert.alert('Error', 'Authentication token missing. Please log in again.');
+        return;
+      }
+
       // Append the token as a query parameter so the backend auth middleware can read it
       const url = `${baseURL}/quizzes/analytics/test-report/${selectedTest._id}/csv?token=${token}`;
       

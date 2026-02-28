@@ -7,7 +7,8 @@ import {
   Image,
   Modal,
   Linking,
-  Dimensions
+  Dimensions,
+  ActivityIndicator
 } from 'react-native';
 import { X, FileText, Download, ExternalLink } from 'lucide-react-native';
 import { getApiBaseURL } from '@/services/config';
@@ -19,6 +20,7 @@ interface Attachment {
   size?: number;
   mimeType?: string;
   publicId?: string;
+  localUri?: string;
 }
 
 interface AttachmentViewerProps {
@@ -117,20 +119,30 @@ export const AttachmentViewer: React.FC<AttachmentViewerProps> = ({ attachment, 
 };
 
 // Thumbnail Component for Chat List
-export const AttachmentThumbnail: React.FC<{ attachment: Attachment, onPress: () => void }> = ({ attachment, onPress }) => {
-    if (attachment.type === 'image') {
+export const AttachmentThumbnail: React.FC<{ attachment: Attachment, isUploading?: boolean, onPress: () => void }> = ({ attachment, isUploading, onPress }) => {
+    const isImage = attachment.type === 'image';
+    const sourceUri = attachment.localUri || attachment.url;
+
+    if (isImage) {
         return (
-            <TouchableOpacity onPress={onPress}>
-                <Image 
-                    source={{ uri: attachment.url }} 
-                    style={styles.thumbnailImage} 
-                />
+            <TouchableOpacity onPress={onPress} disabled={isUploading}>
+                <View style={styles.thumbnailContainer}>
+                    <Image 
+                        source={{ uri: sourceUri }} 
+                        style={[styles.thumbnailImage, isUploading && styles.uploadingOpacity]} 
+                    />
+                    {isUploading && (
+                        <View style={styles.uploadingOverlay}>
+                            <ActivityIndicator size="small" color="#FFFFFF" />
+                        </View>
+                    )}
+                </View>
             </TouchableOpacity>
         );
     }
 
     return (
-        <TouchableOpacity style={styles.docThumbnail} onPress={onPress}>
+        <TouchableOpacity style={styles.docThumbnail} onPress={onPress} disabled={isUploading}>
             <View style={styles.docIcon}>
                 <FileText color="#2563EB" size={24} />
             </View>
@@ -138,7 +150,11 @@ export const AttachmentThumbnail: React.FC<{ attachment: Attachment, onPress: ()
                 <Text style={styles.docName} numberOfLines={1}>{attachment.name || 'Document'}</Text>
                 <Text style={styles.docSize}>{formatSize(attachment.size)} • {attachment.type === 'document' ? 'DOC' : 'FILE'}</Text>
             </View>
-             <Download color="#6B7280" size={20} />
+            {isUploading ? (
+                <ActivityIndicator size="small" color="#6B7280" />
+            ) : (
+                <Download color="#6B7280" size={20} />
+            )}
         </TouchableOpacity>
     );
 };
@@ -250,12 +266,29 @@ const styles = StyleSheet.create({
       textAlign: 'center',
   },
   // Thumbnail styles
+  thumbnailContainer: {
+    position: 'relative',
+    marginBottom: 4,
+  },
   thumbnailImage: {
       width: 200,
       height: 150,
       borderRadius: 8,
       backgroundColor: '#E5E7EB',
-      marginBottom: 4,
+  },
+  uploadingOpacity: {
+      opacity: 0.6,
+  },
+  uploadingOverlay: {
+      position: 'absolute',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: 'rgba(0,0,0,0.2)',
+      borderRadius: 8,
   },
   docThumbnail: {
       flexDirection: 'row',

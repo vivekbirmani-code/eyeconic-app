@@ -339,11 +339,13 @@ export default function PastTests() {
                   ]}>
                     <Text style={styles.typeBadgeText}>{quiz.testType}</Text>
                   </View>
-                  {(quiz.subjectNames?.length ? quiz.subjectNames.join(', ') : quiz.subject?.name) && (
+                  {(quiz.subjectNames?.length || quiz.subject?.name) ? (
                     <Text style={styles.subjectText}>
-                      {quiz.subjectNames?.length ? quiz.subjectNames.join(', ') : quiz.subject?.name}
+                      {quiz.subjectNames && quiz.subjectNames.length > 1 
+                        ? 'Mixed bag' 
+                        : `${quiz.subjectNames?.length === 1 ? quiz.subjectNames[0] : quiz.subject?.name} test`}
                     </Text>
-                  )}
+                  ) : null}
                 </View>
                 <View style={styles.quizStats}>
                   <View style={styles.statItem}>
