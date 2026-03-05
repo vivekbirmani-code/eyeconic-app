@@ -1,11 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { View, Text as RNText, TouchableOpacity as RNTouchable } from 'react-native';
+import { View, Text as RNText, TouchableOpacity as RNTouchable, Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Linking from 'expo-linking';
 import * as SplashScreen from 'expo-splash-screen';
-import * as ScreenCapture from 'expo-screen-capture';
 import { useFrameworkReady } from '@/hooks/useFrameworkReady';
 import { AuthProvider } from '@/context/AuthContext';
 import { NotificationProvider } from '@/context/NotificationContext';
@@ -25,13 +24,13 @@ function AppContent() {
   const router = useRouter();
   const [showPermissions, setShowPermissions] = useState(false);
   const [isCheckingPermissions, setIsCheckingPermissions] = useState(true);
-  
+
   // Register for push notifications
   usePushNotifications();
 
   useEffect(() => {
     checkPermissionsStatus();
-    
+
     // Handle deep links
     const handleDeepLink = async (event: { url: string }) => {
       const parsed = Linking.parse(event.url);
@@ -47,7 +46,7 @@ function AppContent() {
               const API_URL = getApiBaseURL();
               const response = await fetch(`${API_URL}/public/quiz/${shareToken}`);
               const data = await response.json();
-              
+
               if (data.success && data.quiz._id) {
                 // Navigate to normal quiz instructions
                 router.replace(`/quiz/${data.quiz._id}/instructions` as any);
@@ -108,11 +107,11 @@ function AppContent() {
   // Render audio elements for remote streams - must have actual size for audio on Android
   const renderAudioStreams = () => {
     const streams: React.ReactNode[] = [];
-    
+
     // Try to import RTCView
     try {
       const { RTCView } = require('react-native-webrtc');
-      
+
       if (!RTCView) return null;
 
       remoteStreams.forEach((stream, odId) => {
@@ -123,11 +122,11 @@ function AppContent() {
             <RTCView
               key={odId}
               streamURL={stream.toURL()}
-              style={{ 
-                position: 'absolute', 
-                top: -200, 
-                left: -200, 
-                width: 50, 
+              style={{
+                position: 'absolute',
+                top: -200,
+                left: -200,
+                width: 50,
                 height: 50,
                 opacity: 0
               }}
@@ -141,7 +140,7 @@ function AppContent() {
       // WebRTC not available - strict safe fail
       return null;
     }
-    
+
     return streams;
   };
 
@@ -152,7 +151,7 @@ function AppContent() {
 
   // Show permissions screen on first launch
   if (showPermissions) {
-    SplashScreen.hideAsync().catch(() => {});
+    SplashScreen.hideAsync().catch(() => { });
     return <PermissionsScreen onComplete={handlePermissionsComplete} />;
   }
 
@@ -160,10 +159,10 @@ function AppContent() {
     <View style={{ flex: 1 }}>
       {/* RTCView audio streams - positioned off-screen but NOT in hidden container */}
       {renderAudioStreams()}
-      
+
       {/* Floating call bar when minimized */}
       <FloatingCallBar />
-      
+
       {/* Incoming call full-screen UI */}
       {incomingCall && (
         <IncomingCallScreen
@@ -173,7 +172,7 @@ function AppContent() {
           onDecline={declineIncomingCall}
         />
       )}
-      
+
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="index" />
         <Stack.Screen name="login" />
@@ -242,7 +241,16 @@ export default function RootLayout() {
   useFrameworkReady();
 
   useEffect(() => {
-    ScreenCapture.preventScreenCaptureAsync().catch(console.warn);
+    if (Platform.OS !== 'web') {
+      try {
+        const ScreenCapture = require('expo-screen-capture');
+        if (ScreenCapture && ScreenCapture.preventScreenCaptureAsync) {
+          ScreenCapture.preventScreenCaptureAsync().catch(console.warn);
+        }
+      } catch (e) {
+        console.warn('Failed to load expo-screen-capture', e);
+      }
+    }
   }, []);
 
   return (
