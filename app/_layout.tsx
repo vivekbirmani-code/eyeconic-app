@@ -5,6 +5,7 @@ import { View, Text as RNText, TouchableOpacity as RNTouchable } from 'react-nat
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Linking from 'expo-linking';
 import * as SplashScreen from 'expo-splash-screen';
+import * as ScreenCapture from 'expo-screen-capture';
 import { useFrameworkReady } from '@/hooks/useFrameworkReady';
 import { AuthProvider } from '@/context/AuthContext';
 import { NotificationProvider } from '@/context/NotificationContext';
@@ -239,6 +240,10 @@ class ErrorBoundary extends React.Component<
 
 export default function RootLayout() {
   useFrameworkReady();
+
+  useEffect(() => {
+    ScreenCapture.preventScreenCaptureAsync().catch(console.warn);
+  }, []);
 
   return (
     <ErrorBoundary>

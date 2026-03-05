@@ -35,21 +35,26 @@ export function usePushNotifications() {
     useEffect(() => {
         // Skip push notification setup in Expo Go
         if (isExpoGo || !Notifications) {
-            console.log('Push notifications skipped - isExpoGo:', isExpoGo, 'Notifications:', !!Notifications);
+            console.log('Push notifications skipped - isExpoGo:', isExpoGo);
             return;
         }
 
         console.log('Registering for push notifications, user:', user?._id);
-        registerForPushNotificationsAsync().then(token => {
-            if (token) {
-                console.log('Push token obtained:', token);
-                setExpoPushToken(token);
-                // Save token to backend
+        registerForPushNotificationsAsync().then(({ expoToken, fcmToken }) => {
+            if (expoToken) {
+                console.log('Expo Push Token:', expoToken);
+                setExpoPushToken(expoToken);
+                // Save Expo push token to backend
                 if (user?._id) {
-                    savePushTokenToBackend(token);
+                    savePushTokenToBackend(expoToken);
                 }
-            } else {
-                console.log('No push token obtained');
+            }
+            if (fcmToken) {
+                console.log('Raw FCM Token:', fcmToken.substring(0, 30) + '...');
+                // Save raw FCM token to backend — this is what enables direct FCM delivery
+                if (user?._id) {
+                    saveFcmTokenToBackend(fcmToken);
+                }
             }
         }).catch(err => {
             console.error('Push notification registration failed:', err);
@@ -85,19 +90,29 @@ export function usePushNotifications() {
     const savePushTokenToBackend = async (token: string) => {
         try {
             await api.post('/users/push-token', { pushToken: token });
-            console.log('Push token saved to backend');
+            console.log('Expo push token saved to backend');
         } catch (error) {
-            console.error('Error saving push token:', error);
+            console.error('Error saving Expo push token:', error);
+        }
+    };
+
+    const saveFcmTokenToBackend = async (token: string) => {
+        try {
+            await api.post('/users/fcm-token', { fcmToken: token });
+            console.log('Raw FCM token saved to backend');
+        } catch (error) {
+            console.error('Error saving raw FCM token:', error);
         }
     };
 
     return { expoPushToken };
 }
 
-async function registerForPushNotificationsAsync(): Promise<string | null> {
-    if (!Notifications) return null;
+async function registerForPushNotificationsAsync(): Promise<{ expoToken: string | null; fcmToken: string | null }> {
+    if (!Notifications) return { expoToken: null, fcmToken: null };
 
-    let token: string | null = null;
+    let expoToken: string | null = null;
+    let fcmToken: string | null = null;
 
     if (Platform.OS === 'android') {
         await Notifications.setNotificationChannelAsync('calls', {
@@ -126,18 +141,28 @@ async function registerForPushNotificationsAsync(): Promise<string | null> {
 
     if (finalStatus !== 'granted') {
         console.log('Failed to get push notification permission');
-        return null;
+        return { expoToken: null, fcmToken: null };
     }
 
+    // Get Expo push token
     try {
         const tokenData = await Notifications.getExpoPushTokenAsync({
             projectId: 'b339dc67-5b70-425b-acd0-585b6954dd02',
         });
-        token = tokenData.data;
-        console.log('Expo Push Token:', token);
+        expoToken = tokenData.data;
     } catch (error) {
-        console.error('Error getting push token:', error);
+        console.error('Error getting Expo push token:', error);
     }
 
-    return token;
+    // Get the raw FCM device token — this is what we use for direct Firebase Admin delivery
+    if (Platform.OS === 'android') {
+        try {
+            const fcmTokenData = await Notifications.getDevicePushTokenAsync();
+            fcmToken = fcmTokenData.data;
+        } catch (error) {
+            console.error('Error getting raw FCM device token:', error);
+        }
+    }
+
+    return { expoToken, fcmToken };
 }

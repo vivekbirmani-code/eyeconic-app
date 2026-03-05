@@ -224,7 +224,7 @@ router.post('/:id/reset-password', auth, authorize('admin'), async (req, res) =>
   }
 });
 
-// Save push token for user
+// Save Expo push token for user
 router.post('/push-token', auth, async (req, res) => {
   try {
     const { pushToken } = req.body;
@@ -238,6 +238,25 @@ router.post('/push-token', auth, async (req, res) => {
     res.json({ message: 'Push token saved successfully' });
   } catch (error) {
     console.error('Error saving push token:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Save raw FCM device token for direct notification delivery
+router.post('/fcm-token', auth, async (req, res) => {
+  try {
+    const { fcmToken } = req.body;
+
+    if (!fcmToken) {
+      return res.status(400).json({ message: 'FCM token is required' });
+    }
+
+    await User.findByIdAndUpdate(req.user._id, { fcmToken });
+    console.log(`FCM token saved for user ${req.user._id}`);
+
+    res.json({ message: 'FCM token saved successfully' });
+  } catch (error) {
+    console.error('Error saving FCM token:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

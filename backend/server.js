@@ -26,22 +26,26 @@ const { cleanupExpiredMedia } = require('./utils/media-cleanup');
 const Call = require('./models/Call');
 const User = require('./models/User');
 
-// Schedule media cleanup (moved to DB connection success callback)
-// cleanupExpiredMedia(); 
-// setInterval(cleanupExpiredMedia, 24 * 60 * 60 * 1000); 
-
-// Send push notification using Expo's push service
+// Force Expo Push API to send a "data-only" FCM message by NOT providing a top-level `title` or `body`.
+// If `title` or `body` are provided at the root, Android OS intercepts the FCM payload when the app is killed 
+// and NEVER calls our custom MyFirebaseMessagingService.
+// By placing them inside the `data` payload, the Kotlin service receives the raw data even when killed, 
+// and can manually trigger CallForegroundService or native NotificationCompat.Builder.
 async function sendPushNotification(expoPushToken, title, body, data = {}) {
   if (!expoPushToken) return;
 
+  // We explicitly move title and body INSIDE the data object
+  const customData = {
+    ...data,
+    title,
+    message: body, // Map body to message internally to avoid Expo confusion
+  };
+
   const message = {
     to: expoPushToken,
-    sound: 'default',
-    title,
-    body,
-    data,
     priority: 'high',
-    channelId: 'calls',
+    data: customData,
+    // NO top-level title, body, or sound! This ensures a 100% data-only FCM payload on Android.
   };
 
   try {
@@ -54,9 +58,9 @@ async function sendPushNotification(expoPushToken, title, body, data = {}) {
       body: JSON.stringify(message),
     });
     const result = await response.json();
-    console.log('Push notification sent:', result);
+    console.log('Expo data-only push sent:', result);
   } catch (error) {
-    console.error('Error sending push notification:', error);
+    console.error('Error sending Expo push notification:', error);
   }
 }
 
