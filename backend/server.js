@@ -37,14 +37,18 @@ async function sendPushNotification(expoPushToken, title, body, data = {}) {
   // We explicitly move title and body INSIDE the data object
   const customData = {
     ...data,
-    title,
-    message: body, // Map body to message internally to avoid Expo confusion
+    type: data.type || 'incoming_call', // Ensure type is present in root of data
+    title: title || 'Eyeconic',
+    message: body || '', // Map body to message internally to avoid Expo confusion
+    categoryId: 'calls',
+    _displayInForeground: true
   };
 
   const message = {
     to: expoPushToken,
     priority: 'high',
     data: customData,
+    channelId: 'calls',
     // NO top-level title, body, or sound! This ensures a 100% data-only FCM payload on Android.
   };
 

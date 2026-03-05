@@ -33,6 +33,7 @@ const withWakeUpFiles = (config) => {
                 'WakeUpModule.kt',
                 'WakeUpPackage.kt',
                 'MyFirebaseMessagingService.kt',
+                'FcmDirectReceiver.kt',
                 'CallForegroundService.kt',
                 'BootReceiver.kt',
                 'BatteryOptimizationModule.kt',
@@ -128,14 +129,14 @@ const withWakeUpManifest = (config) => {
         if (!mainApplication.receiver) {
             mainApplication.receiver = [];
         }
-        const receiverName = '.BootReceiver';
-        const existingReceiver = mainApplication.receiver.find(
-            r => r.$['android:name'] === receiverName
+        const bootReceiverName = '.BootReceiver';
+        const existingBootReceiver = mainApplication.receiver.find(
+            r => r.$['android:name'] === bootReceiverName
         );
-        if (!existingReceiver) {
+        if (!existingBootReceiver) {
             mainApplication.receiver.push({
                 $: {
-                    'android:name': receiverName,
+                    'android:name': bootReceiverName,
                     'android:enabled': 'true',
                     'android:exported': 'false',
                 },
@@ -147,6 +148,30 @@ const withWakeUpManifest = (config) => {
                         ],
                         category: [
                             { $: { 'android:name': 'android.intent.category.DEFAULT' } },
+                        ],
+                    },
+                ],
+            });
+        }
+
+        // --- FcmDirectReceiver (Intercept FCM before Expo service) ---
+        const fcmReceiverName = '.FcmDirectReceiver';
+        const existingFcmReceiver = mainApplication.receiver.find(
+            r => r.$['android:name'] === fcmReceiverName
+        );
+        if (!existingFcmReceiver) {
+            mainApplication.receiver.push({
+                $: {
+                    'android:name': fcmReceiverName,
+                    'android:enabled': 'true',
+                    'android:exported': 'true',
+                    'android:permission': 'com.google.android.c2dm.permission.SEND',
+                },
+                'intent-filter': [
+                    {
+                        $: { 'android:priority': '999' },
+                        action: [
+                            { $: { 'android:name': 'com.google.android.c2dm.intent.RECEIVE' } },
                         ],
                     },
                 ],
