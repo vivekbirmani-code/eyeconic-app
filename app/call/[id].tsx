@@ -36,12 +36,12 @@ export default function CallScreen() {
   const { id: groupId, callId } = useLocalSearchParams<{ id: string; callId?: string }>();
   const router = useRouter();
   const { user } = useAuth();
-  const { 
-    callState, 
-    initiateCall, 
-    joinCall, 
-    leaveCall, 
-    endCall, 
+  const {
+    callState,
+    initiateCall,
+    joinCall,
+    leaveCall,
+    endCall,
     toggleMute,
     toggleSpeaker,
     minimizeCall,
@@ -49,12 +49,13 @@ export default function CallScreen() {
     remoteStreams,
     debugStats
   } = useCall();
-  
+
   const [groupMembers, setGroupMembers] = useState<Member[]>([]);
   const [groupName, setGroupName] = useState('');
   const [isAddMemberVisible, setIsAddMemberVisible] = useState(false);
   const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
   const [isStartingCall, setIsStartingCall] = useState(false);
+  const [showWebCallModal, setShowWebCallModal] = useState(false);
 
   useEffect(() => {
     fetchGroupDetails();
@@ -79,6 +80,11 @@ export default function CallScreen() {
   };
 
   const handleStartCall = () => {
+    // On web, show informational modal instead of initiating the call
+    if (Platform.OS === 'web') {
+      setShowWebCallModal(true);
+      return;
+    }
     if (selectedMembers.length === 0) {
       // Call all members
       const memberIds = groupMembers
@@ -114,7 +120,7 @@ export default function CallScreen() {
   };
 
   const toggleMemberSelection = (memberId: string) => {
-    setSelectedMembers(prev => 
+    setSelectedMembers(prev =>
       prev.includes(memberId)
         ? prev.filter(id => id !== memberId)
         : [...prev, memberId]
@@ -176,13 +182,35 @@ export default function CallScreen() {
           <TouchableOpacity style={styles.startCallButton} onPress={handleStartCall}>
             <Phone color="#FFFFFF" size={24} />
             <Text style={styles.startCallButtonText}>
-              {selectedMembers.length > 0 
+              {selectedMembers.length > 0
                 ? `Call ${selectedMembers.length} selected`
                 : 'Call All Members'
               }
             </Text>
           </TouchableOpacity>
         </View>
+
+        {/* Web-only: Calling not available modal */}
+        <Modal visible={showWebCallModal} animationType="fade" transparent>
+          <View style={styles.webModalOverlay}>
+            <View style={styles.webModalContainer}>
+              <View style={styles.webModalIconContainer}>
+                <Phone color="#10B981" size={36} />
+              </View>
+              <Text style={styles.webModalTitle}>Calling Not Available on Web</Text>
+              <Text style={styles.webModalMessage}>
+                {'Calling is currently available only on our mobile application.\n\nTo access features like voice and group calling, please download the app from the Google Play Store or Apple App Store.'}
+              </Text>
+              <View style={styles.webModalDivider} />
+              <TouchableOpacity
+                style={styles.webModalButton}
+                onPress={() => setShowWebCallModal(false)}
+              >
+                <Text style={styles.webModalButtonText}>Got it</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
       </SafeAreaView>
     );
   }
@@ -191,7 +219,7 @@ export default function CallScreen() {
   // Render audio elements for each remote stream - must have size for audio to work on Android
   const renderAudioStreams = () => {
     if (!RTCView) return null;
-    
+
     const streams: React.ReactNode[] = [];
     remoteStreams.forEach((stream, odId) => {
       console.log('Rendering RTCView for remote stream:', odId);
@@ -199,11 +227,11 @@ export default function CallScreen() {
         <RTCView
           key={odId}
           streamURL={stream.toURL()}
-          style={{ 
-            position: 'absolute', 
-            top: -100, 
-            left: -100, 
-            width: 50, 
+          style={{
+            position: 'absolute',
+            top: -100,
+            left: -100,
+            width: 50,
             height: 50,
             opacity: 0
           }}
@@ -219,7 +247,7 @@ export default function CallScreen() {
     <SafeAreaView style={styles.callContainer}>
       {/* RTCView components for remote audio - positioned off-screen but NOT hidden */}
       {renderAudioStreams()}
-      
+
       <View style={styles.callHeader}>
         <TouchableOpacity onPress={handleBack} style={styles.backButton}>
           <ArrowLeft color="#FFFFFF" size={24} />
@@ -228,7 +256,7 @@ export default function CallScreen() {
           <Text style={styles.callGroupName}>{callState.groupName || groupName}</Text>
           <Text style={styles.callDuration}>{formatDuration(callState.callDuration)}</Text>
         </View>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.addButton}
           onPress={() => setIsAddMemberVisible(true)}
         >
@@ -572,5 +600,67 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     textAlign: 'center',
     padding: 20,
+  },
+  // Web-only modal styles
+  webModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  webModalContainer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 20,
+    padding: 32,
+    width: '100%',
+    maxWidth: 460,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.18,
+    shadowRadius: 24,
+    elevation: 10,
+  },
+  webModalIconContainer: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: '#ECFDF5',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  webModalTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111827',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  webModalMessage: {
+    fontSize: 15,
+    color: '#6B7280',
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: 24,
+  },
+  webModalDivider: {
+    width: '100%',
+    height: 1,
+    backgroundColor: '#E5E7EB',
+    marginBottom: 20,
+  },
+  webModalButton: {
+    backgroundColor: '#10B981',
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 48,
+    alignItems: 'center',
+  },
+  webModalButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
