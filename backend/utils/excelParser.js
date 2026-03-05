@@ -46,16 +46,6 @@ const parseExcel = async (buffer) => {
             SOLUTION: 'explanation',
             SOLUTIONIMAGE: 'explanationImage',
             SOLUTION_IMAGE: 'explanationImage', // alias
-            MARKS: 'marks',
-            // Positive / Negative marks (Issue 2 fix)
-            POSITIVEMARKS: 'positiveMarks',
-            POSITIVEMARK: 'positiveMarks',
-            POSITIVE_MARKS: 'positiveMarks',
-            POSITIVEMARKS_: 'positiveMarks',
-            NEGATIVEMARKS: 'negativeMarks',
-            NEGATIVEMARK: 'negativeMarks',
-            NEGATIVE_MARKS: 'negativeMarks',
-            NEGATIVEMARKS_: 'negativeMarks',
             // Aliases or leftovers supported for robustness
             EXPLANATION: 'explanation',
             EXIMAGE: 'explanationImage',
@@ -86,9 +76,6 @@ const parseExcel = async (buffer) => {
                 else if ((normalized.includes('OIMAGE4') || (normalized.includes('OPTION4') && normalized.includes('IMAGE')) || (normalized.includes('O') && normalized.includes('IMAGE') && normalized.includes('4')))) rowData.option4Image = row[key];
                 else if (normalized.includes('CORRECT')) rowData.correctAnswer = row[key];
                 else if ((normalized.includes('SOLUTION') && normalized.includes('IMAGE')) || normalized.includes('EXIMAGE')) rowData.explanationImage = row[key];
-                // Issue 2 fix: detect POSITIVE MARKS / NEGATIVE MARKS columns
-                else if (normalized.includes('POSITIVE') && normalized.includes('MARK')) rowData.positiveMarks = row[key];
-                else if (normalized.includes('NEGATIVE') && normalized.includes('MARK')) rowData.negativeMarks = row[key];
             });
 
             // Validation
@@ -144,14 +131,6 @@ const parseExcel = async (buffer) => {
                 rowData.option4Image
             ].slice(0, options.length).map(img => img || '');
 
-            // Parse positive/negative marks with safe defaults (Issue 2 fix)
-            const positiveMarks = rowData.positiveMarks !== undefined
-                ? (parseFloat(rowData.positiveMarks) || 4)
-                : 4;
-            const negativeMarks = rowData.negativeMarks !== undefined
-                ? Math.abs(parseFloat(rowData.negativeMarks) || 0)
-                : 0;
-
             questions.push({
                 subjectName: String(rowData.subject).trim(),
                 topicName: rowData.topicName ? String(rowData.topicName).trim() : '',
@@ -162,9 +141,6 @@ const parseExcel = async (buffer) => {
                 correctAnswer: correctIndex,
                 explanation: rowData.explanation ? String(rowData.explanation).trim() : '',
                 explanationImage: rowData.explanationImage || null,
-                marks: positiveMarks, // sync marks with positiveMarks for backward compat
-                positiveMarks,
-                negativeMarks,
                 tags,
                 source: 'excel_import'
             });

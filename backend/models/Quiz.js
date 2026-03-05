@@ -31,6 +31,14 @@ const quizSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  positiveMarks: {
+    type: Number,
+    default: 4
+  },
+  negativeMarks: {
+    type: Number,
+    default: 1
+  },
   assignedStudents: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
@@ -74,10 +82,9 @@ const quizSchema = new mongoose.Schema({
 
 // Auto-calculate total marks before saving
 quizSchema.pre('save', async function (next) {
-  if (this.isModified('questions')) {
-    const QuestionBank = mongoose.model('QuestionBank');
-    const questions = await QuestionBank.find({ _id: { $in: this.questions } });
-    this.totalMarks = questions.reduce((sum, q) => sum + (q.marks || 1), 0);
+  if (this.isModified('questions') || this.isModified('positiveMarks')) {
+    const questionCount = this.questions ? this.questions.length : 0;
+    this.totalMarks = questionCount * (this.positiveMarks || 4);
   }
   next();
 });

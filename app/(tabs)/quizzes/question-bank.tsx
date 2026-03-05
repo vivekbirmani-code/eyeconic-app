@@ -455,9 +455,6 @@ export default function QuestionBankManagement() {
               <Text style={styles.topicBadgeText}>{item.topicName}</Text>
             </View>
           )}
-          <View style={[styles.badgeContainer, styles.marksBadge]}>
-            <Text style={styles.marksBadgeText}>+{item.positiveMarks ?? item.marks} / {item.negativeMarks ?? 0}</Text>
-          </View>
         </View>
       </View>
 
@@ -788,36 +785,7 @@ export default function QuestionBankManagement() {
               </View>
             ))}
 
-            <View style={{ flexDirection: 'row', gap: 12 }}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.label}>Positive Marks (+)</Text>
-                <TextInput
-                  style={styles.input}
-                  value={newQuestion.positiveMarks?.toString() || ''}
-                  keyboardType="numeric"
-                  placeholder="+4"
-                  onChangeText={text => {
-                    // Update state with raw text to allow easy editing
-                    setNewQuestion({ ...newQuestion, positiveMarks: text });
-                  }}
-                />
-                <Text style={styles.helperText}>Marks for correct answer</Text>
-              </View>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.label}>Negative Marks (-)</Text>
-                <TextInput
-                  style={styles.input}
-                  value={newQuestion.negativeMarks?.toString() || ''}
-                  keyboardType="numeric"
-                  placeholder="-1"
-                  onChangeText={text => {
-                    // Update state with raw text to allow easy editing
-                    setNewQuestion({ ...newQuestion, negativeMarks: text });
-                  }}
-                />
-                <Text style={styles.helperText}>Deduction for incorrect answer</Text>
-              </View>
-            </View>
+
 
             {/* Tags Input */}
             <View>

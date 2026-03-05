@@ -62,6 +62,8 @@ export default function ImportQuiz() {
   const [title, setTitle] = useState('');
   const [testType, setTestType] = useState('daily');
   const [duration, setDuration] = useState('30');
+  const [positiveMarks, setPositiveMarks] = useState('4');
+  const [negativeMarks, setNegativeMarks] = useState('1');
   const [subjectId, setSubjectId] = useState('');
   const [file, setFile] = useState<any>(null);
 
@@ -136,6 +138,8 @@ export default function ImportQuiz() {
       formData.append('quizTitle', title);
       formData.append('testType', testType);
       formData.append('duration', duration);
+      formData.append('positiveMarks', positiveMarks);
+      formData.append('negativeMarks', negativeMarks);
       if (subjectId) {
         formData.append('subjectId', subjectId);
       }
@@ -232,6 +236,29 @@ export default function ImportQuiz() {
                 onChangeText={setDuration}
                 keyboardType="numeric"
                 placeholder="30"
+              />
+            </View>
+          </View>
+
+          <View style={styles.row}>
+            <View style={{ flex: 1, marginRight: 8 }}>
+              <Text style={styles.label}>Positive Marks</Text>
+              <TextInput
+                style={styles.input}
+                value={positiveMarks}
+                onChangeText={setPositiveMarks}
+                keyboardType="numeric"
+                placeholder="4"
+              />
+            </View>
+            <View style={{ flex: 1, marginLeft: 8 }}>
+              <Text style={styles.label}>Negative Marks</Text>
+              <TextInput
+                style={styles.input}
+                value={negativeMarks}
+                onChangeText={setNegativeMarks}
+                keyboardType="numeric"
+                placeholder="1"
               />
             </View>
           </View>

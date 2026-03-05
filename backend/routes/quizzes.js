@@ -169,6 +169,8 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
       assignedStudents,
       selectedQuestionIds,  // NEW: optional array of specific question IDs for manual selection
       shareSolution,  // NEW: whether to share solutions with students (defaults to true)
+      positiveMarks,
+      negativeMarks,
       scheduledDate,
       expiryDate
     } = req.body;
@@ -229,7 +231,7 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
     }
 
     // Calculate total marks
-    const totalMarks = questions.reduce((sum, q) => sum + (q.marks || 1), 0);
+    const totalMarks = questions.length * (positiveMarks !== undefined ? positiveMarks : 4);
 
     // Create quiz - use first subject if multiple
     const quiz = new Quiz({
@@ -240,6 +242,8 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
       instructions: instructions || [],
       questions: questions.map(q => q._id),
       totalMarks,
+      positiveMarks: positiveMarks !== undefined ? positiveMarks : 4,
+      negativeMarks: negativeMarks !== undefined ? negativeMarks : 1,
       assignedStudents: assignedStudents || [],
       createdBy: req.user._id,
       shareSolution: shareSolution !== undefined ? shareSolution : true,  // Default to true
@@ -282,7 +286,7 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
       return res.status(400).json({ message: 'No file uploaded' });
     }
 
-    const { quizTitle, testType, duration, subjectId, instructions, scheduledDate, expiryDate } = req.body;
+    const { quizTitle, testType, duration, subjectId, instructions, scheduledDate, expiryDate, positiveMarks, negativeMarks } = req.body;
 
     // Parse Excel
     const { questions: parsedQuestions, errors } = await parseExcel(req.file.buffer);
@@ -489,9 +493,6 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
           correctAnswer: processedQData.correctAnswer,
           explanation: processedQData.explanation,
           explanationImage: processedQData.explanationImage,
-          marks: processedQData.positiveMarks || processedQData.marks || 4,
-          positiveMarks: processedQData.positiveMarks !== undefined ? processedQData.positiveMarks : 4,
-          negativeMarks: processedQData.negativeMarks !== undefined ? processedQData.negativeMarks : 0,
           tags: [...qData.tags, 'excel-import', `quiz:${quizTitle}`],
           createdBy: req.user._id,
           isActive: true
@@ -539,6 +540,8 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
       duration: parseInt(duration) || 30,
       instructions: instructions ? JSON.parse(instructions) : [],
       questions: questionIds,
+      positiveMarks: positiveMarks !== undefined ? parseFloat(positiveMarks) : 4,
+      negativeMarks: negativeMarks !== undefined ? parseFloat(negativeMarks) : 1,
       assignedStudents: [],
       createdBy: req.user._id,
       scheduledDate: scheduledDate ? new Date(scheduledDate) : undefined,
@@ -602,7 +605,7 @@ router.post('/:id/duplicate', auth, authorize('admin'), async (req, res) => {
 // Update Quiz
 router.put('/:id', auth, authorize('admin'), async (req, res) => {
   try {
-    const { title, duration, instructions, questions, testType, subject, assignedStudents, shareSolution, scheduledDate, expiryDate } = req.body;
+    const { title, duration, instructions, questions, testType, subject, assignedStudents, shareSolution, scheduledDate, expiryDate, positiveMarks, negativeMarks } = req.body;
 
     // Check if quiz exists
     const quiz = await Quiz.findById(req.params.id);
@@ -627,14 +630,14 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
     if (shareSolution !== undefined) quiz.shareSolution = shareSolution;  // Allow toggling solution sharing
     if (scheduledDate) quiz.scheduledDate = new Date(scheduledDate);
     if (expiryDate) quiz.expiryDate = new Date(expiryDate);
+    if (positiveMarks !== undefined) quiz.positiveMarks = positiveMarks;
+    if (negativeMarks !== undefined) quiz.negativeMarks = negativeMarks;
 
     if (questions && questions.length > 0) {
       quiz.questions = questions;
 
       // Recalculate total marks (optional if we want to be precise)
-      const QuestionBank = require('../models/QuestionBank');
-      const qs = await QuestionBank.find({ _id: { $in: questions } });
-      quiz.totalMarks = qs.reduce((sum, q) => sum + (q.marks || 1), 0);
+      quiz.totalMarks = questions.length * (quiz.positiveMarks || 4);
     }
 
     await quiz.save();
@@ -993,7 +996,7 @@ router.get('/:id', auth, async (req, res) => {
       .populate('createdBy', 'name')
       .populate({
         path: 'questions',
-        select: 'question options marks positiveMarks negativeMarks topicName questionImage optionImages subject correctAnswer',
+        select: 'question options topicName questionImage optionImages subject correctAnswer',
         populate: {
           path: 'subject',
           select: 'name'
@@ -1294,8 +1297,7 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
       } else if (answer.selectedAnswer === question.correctAnswer) {
         // Correct answer
         correctCount++;
-        // Use positiveMarks if available, otherwise fallback to marks or 1
-        const points = question.positiveMarks !== undefined ? question.positiveMarks : (question.marks || 1);
+        const points = quiz.positiveMarks !== undefined ? quiz.positiveMarks : 4;
         marksObtained += points;
         sectionPerformance[section].correct++;
         answer.isCorrect = true;
@@ -1306,8 +1308,7 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
         answer.isCorrect = false;
 
         // Deduct negative marks (if any)
-        // Default to 0 if not set (safe migration for old questions)
-        const deduction = question.negativeMarks !== undefined ? Math.abs(question.negativeMarks) : 0;
+        const deduction = quiz.negativeMarks !== undefined ? Math.abs(quiz.negativeMarks) : 1;
         marksObtained -= deduction;
       }
 

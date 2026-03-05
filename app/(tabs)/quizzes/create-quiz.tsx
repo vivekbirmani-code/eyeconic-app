@@ -83,6 +83,8 @@ export default function CreateQuiz() {
   const [showDurationDropdown, setShowDurationDropdown] = useState(false);
   const [numberOfQuestions, setNumberOfQuestions] = useState('10');
   const [duration, setDuration] = useState('30');
+  const [positiveMarks, setPositiveMarks] = useState('4');
+  const [negativeMarks, setNegativeMarks] = useState('1');
   const [availableQuestions, setAvailableQuestions] = useState(0);
   const [shareSolution, setShareSolution] = useState(true);  // NEW: Share solutions with students
 
@@ -142,6 +144,8 @@ export default function CreateQuiz() {
       setTitle(isClone ? `Copy of ${quiz.title}` : quiz.title);
       setTestType(quiz.testType);
       setDuration(quiz.duration.toString());
+      if (quiz.positiveMarks !== undefined) setPositiveMarks(quiz.positiveMarks.toString());
+      if (quiz.negativeMarks !== undefined) setNegativeMarks(quiz.negativeMarks.toString());
       setInstructions(quiz.instructions ? quiz.instructions.join('\n') : defaultInstructions.join('\n'));
 
       // Load shareSolution setting (defaults to true if not present)
@@ -394,6 +398,8 @@ export default function CreateQuiz() {
           numberOfQuestions: selectedQuestions.length,
           questions: selectedQuestions,
           duration: parseInt(duration),
+          positiveMarks: parseFloat(positiveMarks) || 4,
+          negativeMarks: parseFloat(negativeMarks) || 0,
           instructions: instructions.split('\n').filter(i => i.trim()),
           assignedStudents: selectedStudents,
           shareSolution,  // NEW: Include shareSolution setting
@@ -410,6 +416,8 @@ export default function CreateQuiz() {
           numberOfQuestions: selectedQuestions.length,
           selectedQuestionIds: selectedQuestions,
           duration: parseInt(duration),
+          positiveMarks: parseFloat(positiveMarks) || 4,
+          negativeMarks: parseFloat(negativeMarks) || 0,
           instructions: instructions.split('\n').filter(i => i.trim()),
           assignedStudents: selectedStudents,
           shareSolution,  // NEW: Include shareSolution setting
@@ -558,6 +566,29 @@ export default function CreateQuiz() {
         onChangeText={setTitle}
         placeholder="Enter quiz title"
       />
+
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+        <View style={{ flex: 1, marginRight: 8 }}>
+          <Text style={styles.inputLabel}>Positive Marks</Text>
+          <TextInput
+            style={styles.input}
+            value={positiveMarks}
+            onChangeText={setPositiveMarks}
+            keyboardType="numeric"
+            placeholder="4"
+          />
+        </View>
+        <View style={{ flex: 1, marginLeft: 8 }}>
+          <Text style={styles.inputLabel}>Negative Marks</Text>
+          <TextInput
+            style={styles.input}
+            value={negativeMarks}
+            onChangeText={setNegativeMarks}
+            keyboardType="numeric"
+            placeholder="1"
+          />
+        </View>
+      </View>
 
       <Text style={styles.inputLabel}>Duration (minutes)</Text>
       <View style={{ position: 'relative', zIndex: 10 }}>

@@ -51,18 +51,6 @@ const questionBankSchema = new mongoose.Schema({
     explanationImage: {
         type: String // URL or file path
     },
-    marks: {
-        type: Number,
-        default: 1 // Deprecated: Synced with positiveMarks for backward compatibility
-    },
-    positiveMarks: {
-        type: Number,
-        default: 4
-    },
-    negativeMarks: {
-        type: Number,
-        default: 0 // Default for existing questions (safe migration)
-    },
     difficulty: {
         type: String,
         enum: ['easy', 'medium', 'hard'],
