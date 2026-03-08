@@ -8,6 +8,9 @@ const multer = require('multer');
 const { parseExcel } = require('../utils/excelParser');
 const { processQuestionImages } = require('../utils/imageUploader');
 const Subject = require('../models/Subject');
+const MentorStudentAssignment = require('../models/MentorStudentAssignment');
+const User = require('../models/User');
+const { sendPushNotification } = require('../utils/notifications');
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -666,29 +669,55 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
   }
 });
 
-// Get quiz analytics list
+// Get quiz analytics list (already has mentor auth but no filtering)
 router.get('/analytics/list', auth, authorize('admin', 'mentor'), async (req, res) => {
   try {
     const quizzes = await Quiz.find({ isActive: true })
       .select('title testType assignedStudents')
       .sort({ createdAt: -1 });
 
+    let mentorStudentIds = [];
+    if (req.user.role === 'mentor') {
+      const assignments = await MentorStudentAssignment.find({ mentor: req.user._id, isActive: true }).select('student');
+      mentorStudentIds = assignments.map(a => a.student.toString());
+    }
+
     const analyticsList = await Promise.all(quizzes.map(async (quiz) => {
-      const attemptCount = await QuizAttempt.countDocuments({
+      let attemptQuery = {
         quiz: quiz._id,
         status: { $in: ['completed', 'auto_submitted'] }
-      });
+      };
+
+      if (req.user.role === 'mentor') {
+        attemptQuery.student = { $in: mentorStudentIds };
+      }
+
+      const attemptCount = await QuizAttempt.countDocuments(attemptQuery);
+
+      let assignedCount = quiz.assignedStudents?.length || 0;
+      if (req.user.role === 'mentor') {
+        if (quiz.assignedStudents && quiz.assignedStudents.length > 0) {
+          assignedCount = quiz.assignedStudents.filter(id => mentorStudentIds.includes(id.toString())).length;
+        } else {
+          assignedCount = mentorStudentIds.length;
+        }
+      }
 
       return {
         _id: quiz._id,
         title: quiz.title,
         testType: quiz.testType,
-        assignedCount: quiz.assignedStudents.length,
+        assignedCount,
         attemptCount
       };
     }));
 
-    res.json(analyticsList);
+    let resultAnalytics = analyticsList;
+    if (req.user.role === 'mentor') {
+      resultAnalytics = analyticsList.filter(t => t.assignedCount > 0 || t.attemptCount > 0);
+    }
+
+    res.json(resultAnalytics);
   } catch (error) {
     console.error('Analytics list error:', error);
     res.status(500).json({ message: 'Server error' });
@@ -765,10 +794,18 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
       .populate('questions');
     if (!quiz) return res.status(404).json({ message: 'Test not found' });
 
-    const attempts = await QuizAttempt.find({
+    let attemptQuery = {
       quiz: req.params.testId,
       status: { $in: ['completed', 'auto_submitted'] }
-    }).populate('student', 'name email');
+    };
+
+    if (req.user.role === 'mentor') {
+      const assignments = await MentorStudentAssignment.find({ mentor: req.user._id, isActive: true }).select('student');
+      const mentorStudentIds = assignments.map(a => a.student.toString());
+      attemptQuery.student = { $in: mentorStudentIds };
+    }
+
+    const attempts = await QuizAttempt.find(attemptQuery).populate('student', 'name email');
 
     const sorted = [...attempts].sort((a, b) => (b.marksObtained || 0) - (a.marksObtained || 0));
     const total = sorted.length;
@@ -817,6 +854,19 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
 // Student subject-wise performance report
 router.get('/analytics/student/:studentId/subjects', auth, authorize('admin', 'mentor'), async (req, res) => {
   try {
+    // If mentor, verify student is assigned to them
+    if (req.user.role === 'mentor') {
+      const assignment = await MentorStudentAssignment.findOne({
+        mentor: req.user._id,
+        student: req.params.studentId,
+        isActive: true
+      });
+
+      if (!assignment) {
+        return res.status(403).json({ message: 'Not authorized to view this student\'s analytics' });
+      }
+    }
+
     const { subject } = req.query; // optional filter
     const filter = {
       student: req.params.studentId,
@@ -882,8 +932,8 @@ router.get('/analytics/student/:studentId/subjects', auth, authorize('admin', 'm
   }
 });
 
-// Heatmap data: students × tests matrix with % scores
-router.get('/analytics/heatmap', auth, authorize('admin'), async (req, res) => {
+// Heatmap data: students × tests matrix with % scores (admin, mentor)
+router.get('/analytics/heatmap', auth, authorize('admin', 'mentor'), async (req, res) => {
   try {
     const { subject, limit: lim } = req.query;
 
@@ -898,11 +948,21 @@ router.get('/analytics/heatmap', auth, authorize('admin'), async (req, res) => {
 
     const quizIds = quizzes.map(q => q._id);
 
-    // Get all attempts for these quizzes
-    const attempts = await QuizAttempt.find({
+    // Default filter for all students
+    let attemptFilter = {
       quiz: { $in: quizIds },
       status: { $in: ['completed', 'auto_submitted'] }
-    }).populate('student', 'name email');
+    };
+
+    // If mentor, only fetch attempts for their assigned students
+    if (req.user.role === 'mentor') {
+      const assignments = await MentorStudentAssignment.find({ mentor: req.user._id, isActive: true }).select('student');
+      const mentorStudentIds = assignments.map(a => a.student.toString());
+      attemptFilter.student = { $in: mentorStudentIds };
+    }
+
+    // Get all attempts for these quizzes
+    const attempts = await QuizAttempt.find(attemptFilter).populate('student', 'name email');
 
     // Build student → quiz → % map
     const studentMap = {};
@@ -938,10 +998,18 @@ router.get('/analytics/heatmap', auth, authorize('admin'), async (req, res) => {
 router.get('/analytics/:id', auth, authorize('admin', 'mentor'), async (req, res) => {
   try {
     const quizId = req.params.id;
-    const attempts = await QuizAttempt.find({
+    let attemptQuery = {
       quiz: quizId,
       status: { $in: ['completed', 'auto_submitted'] }
-    }).populate('student', 'name email');
+    };
+
+    if (req.user.role === 'mentor') {
+      const assignments = await MentorStudentAssignment.find({ mentor: req.user._id, isActive: true }).select('student');
+      const mentorStudentIds = assignments.map(a => a.student.toString());
+      attemptQuery.student = { $in: mentorStudentIds };
+    }
+
+    const attempts = await QuizAttempt.find(attemptQuery).populate('student', 'name email');
 
     if (attempts.length === 0) {
       return res.json({
@@ -996,7 +1064,7 @@ router.get('/:id', auth, async (req, res) => {
       .populate('createdBy', 'name')
       .populate({
         path: 'questions',
-        select: 'question options topicName questionImage optionImages subject correctAnswer',
+        select: 'question options topicName questionImage optionImages subject correctAnswer explanation explanationImage',
         populate: {
           path: 'subject',
           select: 'name'
@@ -1359,6 +1427,44 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
           status: attempt.status
         });
       }
+
+      // --- NEW FOR MENTOR/ADMIN REMINDERS ---
+      try {
+        const studentObj = await User.findById(req.user._id).select('name');
+        const studentName = studentObj ? studentObj.name : 'A student';
+        const attemptDetails = {
+          quizId: attempt.quiz._id,
+          quizTitle: quiz.title,
+          studentId: req.user._id,
+          studentName: studentName,
+          score: correctCount,
+          totalQuestions: quiz.questions.length
+        };
+
+        // 1. Notify Admins
+        const admins = await User.find({ role: 'admin' }).select('_id pushToken');
+        if (socketHelpers && socketHelpers.emitToAdmins) {
+          socketHelpers.emitToAdmins('quiz_completed_alert', attemptDetails);
+        }
+        for (const admin of admins) {
+          if (admin.pushToken) {
+            sendPushNotification(admin.pushToken, 'Quiz Completed', `${studentName} completed ${quiz.title}`, { type: 'quiz_completed', ...attemptDetails });
+          }
+        }
+
+        // 2. Notify specific Mentor
+        const assignment = await MentorStudentAssignment.findOne({ student: req.user._id, isActive: true }).populate('mentor', '_id pushToken');
+        if (assignment && assignment.mentor) {
+          if (socketHelpers && socketHelpers.emitToUser) {
+            socketHelpers.emitToUser(assignment.mentor._id.toString(), 'quiz_completed_alert', attemptDetails);
+          }
+          if (assignment.mentor.pushToken) {
+            sendPushNotification(assignment.mentor.pushToken, 'Student Quiz Completed', `${studentName} completed ${quiz.title}`, { type: 'quiz_completed', ...attemptDetails });
+          }
+        }
+      } catch (notifyErr) {
+        console.error('[Submit Quiz] Error sending mentor/admin notifications:', notifyErr);
+      }
     }
 
     res.json({
@@ -1668,8 +1774,8 @@ router.put('/attempt/:attemptId/retest-decision', auth, authorize('admin'), asyn
   }
 });
 
-// Get test list for analytics (admin)
-router.get('/analytics/tests/list', auth, authorize('admin'), async (req, res) => {
+// Get test list for analytics (admin, mentor)
+router.get('/analytics/tests/list', auth, authorize('admin', 'mentor'), async (req, res) => {
   try {
     const { search, type } = req.query;
 
@@ -1690,19 +1796,41 @@ router.get('/analytics/tests/list', auth, authorize('admin'), async (req, res) =
       .sort({ createdAt: -1 })
       .lean();
 
+    // If mentor, fetch their assigned students
+    let mentorStudentIds = [];
+    if (req.user.role === 'mentor') {
+      const assignments = await MentorStudentAssignment.find({ mentor: req.user._id, isActive: true }).select('student');
+      mentorStudentIds = assignments.map(a => a.student.toString());
+    }
+
     // Get attempt counts for each test
     const testsWithStats = await Promise.all(
       tests.map(async (test) => {
-        const attemptCount = await QuizAttempt.countDocuments({
+        let attemptQuery = {
           quiz: test._id,
           status: { $in: ['completed', 'auto_submitted'] }
-        });
+        };
+
+        let assignedCount = test.assignedStudents?.length || 0;
+
+        // Apply mentor filtering
+        if (req.user.role === 'mentor') {
+          attemptQuery.student = { $in: mentorStudentIds };
+          // Calculate mentor's assigned students that are also assigned to this test (or just mentor's stds if test is global)
+          if (test.assignedStudents && test.assignedStudents.length > 0) {
+            assignedCount = test.assignedStudents.filter(id => mentorStudentIds.includes(id.toString())).length;
+          } else {
+            assignedCount = mentorStudentIds.length;
+          }
+        }
+
+        const attemptCount = await QuizAttempt.countDocuments(attemptQuery);
 
         return {
           _id: test._id,
           title: test.title,
           testType: test.testType,
-          assignedCount: test.assignedStudents?.length || 0,
+          assignedCount: assignedCount,
           attemptCount,
           totalMarks: test.totalMarks,
           createdAt: test.createdAt
@@ -1710,15 +1838,20 @@ router.get('/analytics/tests/list', auth, authorize('admin'), async (req, res) =
       })
     );
 
-    res.json({ tests: testsWithStats });
+    let resultTests = testsWithStats;
+    if (req.user.role === 'mentor') {
+      resultTests = testsWithStats.filter(t => t.assignedCount > 0 || t.attemptCount > 0);
+    }
+
+    res.json({ tests: resultTests });
   } catch (error) {
     console.error('Get test list error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-// Get comprehensive test analytics (admin)
-router.get('/analytics/test/:testId', auth, authorize('admin'), async (req, res) => {
+// Get comprehensive test analytics (admin, mentor)
+router.get('/analytics/test/:testId', auth, authorize('admin', 'mentor'), async (req, res) => {
   try {
     const quiz = await Quiz.findById(req.params.testId)
       .populate('subject', 'name')
@@ -1728,15 +1861,31 @@ router.get('/analytics/test/:testId', auth, authorize('admin'), async (req, res)
       return res.status(404).json({ message: 'Test not found' });
     }
 
-    // Get all attempts for this test
-    const attempts = await QuizAttempt.find({
+    let attemptQuery = {
       quiz: req.params.testId,
       status: { $in: ['completed', 'auto_submitted'] }
-    })
+    };
+
+    let totalAssigned = quiz.assignedStudents?.length || 0;
+
+    // Mentor filtering
+    if (req.user.role === 'mentor') {
+      const assignments = await MentorStudentAssignment.find({ mentor: req.user._id, isActive: true }).select('student');
+      const mentorStudentIds = assignments.map(a => a.student.toString());
+      attemptQuery.student = { $in: mentorStudentIds };
+
+      if (quiz.assignedStudents && quiz.assignedStudents.length > 0) {
+        totalAssigned = quiz.assignedStudents.filter(id => mentorStudentIds.includes(id.toString())).length;
+      } else {
+        totalAssigned = mentorStudentIds.length;
+      }
+    }
+
+    // Get all attempts for this test
+    const attempts = await QuizAttempt.find(attemptQuery)
       .populate('student', 'name email')
       .sort({ marksObtained: -1 });
 
-    const totalAssigned = quiz.assignedStudents?.length || 0;
     const totalAttempted = attempts.length;
     const completionRate = totalAssigned > 0 ? Math.round((totalAttempted / totalAssigned) * 100) : 0;
 
@@ -1848,10 +1997,22 @@ router.get('/analytics/test/:testId', auth, authorize('admin'), async (req, res)
   }
 });
 
-// Get student analytics (admin)
-router.get('/analytics/student/:studentId', auth, authorize('admin'), async (req, res) => {
+// Get student analytics (admin, mentor)
+router.get('/analytics/student/:studentId', auth, authorize('admin', 'mentor'), async (req, res) => {
 
   try {
+    // If mentor, verify student is assigned to them
+    if (req.user.role === 'mentor') {
+      const assignment = await MentorStudentAssignment.findOne({
+        mentor: req.user._id,
+        student: req.params.studentId,
+        isActive: true
+      });
+
+      if (!assignment) {
+        return res.status(403).json({ message: 'Not authorized to view this student\'s analytics' });
+      }
+    }
     const attempts = await QuizAttempt.find({
       student: req.params.studentId,
       status: { $in: ['completed', 'auto_submitted'] }

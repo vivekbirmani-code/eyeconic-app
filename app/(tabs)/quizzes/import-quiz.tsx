@@ -425,9 +425,9 @@ export default function ImportQuiz() {
                 <Text style={[styles.statValue, { color: '#D97706' }]}>{importStats.duplicatesUpdated}</Text>
                 <Text style={styles.statLabel}>Updated</Text>
               </View>
-              <View style={[styles.statBox, { backgroundColor: '#E5E7EB' }]}>
-                <Text style={[styles.statValue, { color: '#6B7280' }]}>{importStats.duplicatesSkipped}</Text>
-                <Text style={styles.statLabel}>Skipped</Text>
+              <View style={[styles.statBox, { backgroundColor: '#F3E8FF' }]}>
+                <Text style={[styles.statValue, { color: '#9333EA' }]}>{importStats.duplicatesSkipped}</Text>
+                <Text style={styles.statLabel}>Reused</Text>
               </View>
               <View style={[styles.statBox, { backgroundColor: '#DBEAFE' }]}>
                 <Text style={[styles.statValue, { color: '#2563EB' }]}>{importStats.questionsWithImages}</Text>
@@ -445,7 +445,7 @@ export default function ImportQuiz() {
                 styles.previewItem,
                 item.status === 'created' && { borderLeftColor: '#10B981' },
                 item.status === 'updated' && { borderLeftColor: '#F59E0B' },
-                item.status === 'skipped' && { borderLeftColor: '#9CA3AF' }
+                item.status === 'skipped' && { borderLeftColor: '#9333EA' }
               ]}>
                 <View style={styles.previewContent}>
                   <Text style={styles.previewNumber}>Q{index + 1}</Text>
@@ -459,7 +459,7 @@ export default function ImportQuiz() {
                     item.status === 'created' && styles.statusCreated,
                     item.status === 'updated' && styles.statusUpdated,
                     item.status === 'skipped' && styles.statusSkipped
-                  ]}>{item.status}</Text>
+                  ]}>{item.status === 'skipped' ? 'REUSED' : item.status}</Text>
                 </View>
               </View>
             )}
@@ -746,8 +746,8 @@ const styles = StyleSheet.create({
     color: '#D97706',
   },
   statusSkipped: {
-    backgroundColor: '#E5E7EB',
-    color: '#6B7280',
+    backgroundColor: '#F3E8FF',
+    color: '#9333EA',
   },
   doneButton: {
     backgroundColor: '#2563EB',

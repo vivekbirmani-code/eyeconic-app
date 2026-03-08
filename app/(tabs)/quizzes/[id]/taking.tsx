@@ -14,10 +14,11 @@ import {
   Animated,
   Dimensions,
   AccessibilityInfo,
-  Image
+  Image,
+  Modal
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { ChevronLeft, ChevronRight, Flag, AlertCircle } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, Flag, AlertCircle, X } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { useQuiz } from '@/context/QuizContext';
 import { QuizTimer } from '@/components/QuizTimer';
@@ -70,6 +71,7 @@ function QuizTakingContent() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(false);
   const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
+  const [showReviewModal, setShowReviewModal] = useState(false);
 
   // Animations
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -317,6 +319,10 @@ function QuizTakingContent() {
   }, []);
 
   const handleSubmitQuiz = useCallback(() => {
+    setShowReviewModal(true);
+  }, []);
+
+  const handleFinalSubmit = useCallback(() => {
     Alert.alert(
       'Submit Quiz',
       'Are you sure you want to submit? You cannot change your answers after submission.',
@@ -328,6 +334,7 @@ function QuizTakingContent() {
           onPress: async () => {
             try {
               const result = await submitQuiz(false);
+              setShowReviewModal(false);
               router.replace(`/quizzes/${id}/result/${result.attemptId || currentAttempt?.attemptId}`);
             } catch (error) {
               Alert.alert('Error', 'Failed to submit quiz. Please try again.');
@@ -472,7 +479,6 @@ function QuizTakingContent() {
           <AlertCircle color="#EF4444" size={64} />
           <Text style={styles.errorText}>{error || 'Failed to load quiz'}</Text>
           <TouchableOpacity style={styles.retryButton} onPress={fetchQuizDetails}>
-            <Text style={styles.retryButtonText}>Retry</Text>
           </TouchableOpacity>
         </View>
       </SafeAreaView>
@@ -480,6 +486,29 @@ function QuizTakingContent() {
   }
 
   const currentQuestion = quiz.questions[currentQuestionIndex];
+
+  // Calculate actual duration based on expiry format
+  const getActualDuration = () => {
+    if (!quiz || !currentAttempt) return 0;
+    
+    let defaultDuration = quiz.duration; // in minutes
+    
+    // If quiz has an expiry date, enforce it as a hard deadline
+    if (quiz.expiryDate) {
+      const startTime = new Date(currentAttempt.startTime).getTime();
+      const expiryTime = new Date(quiz.expiryDate).getTime();
+      
+      // Calculate how many minutes from startTime until expiryTime
+      const maxMinutesAllowed = Math.floor((expiryTime - startTime) / 60000);
+      
+      // The student gets whichever is shorter: the normal test duration, or the time until it expires
+      if (maxMinutesAllowed > 0 && maxMinutesAllowed < defaultDuration) {
+        defaultDuration = maxMinutesAllowed;
+      }
+    }
+    
+    return defaultDuration;
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -502,7 +531,7 @@ function QuizTakingContent() {
         <View style={styles.headerRight}>
           {currentAttempt && (
             <QuizTimer
-              duration={quiz.duration}
+              duration={getActualDuration()}
               startTime={currentAttempt.startTime}
               onTimeUp={handleTimeUp}
             />
@@ -707,6 +736,111 @@ function QuizTakingContent() {
             </TouchableOpacity>
           </View>
       </View>
+
+      {/* Review Modal */}
+      <Modal
+        visible={showReviewModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowReviewModal(false)}
+      >
+        <SafeAreaView style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Review Before Submission</Text>
+              <TouchableOpacity onPress={() => setShowReviewModal(false)}>
+                <X color="#4B5563" size={24} />
+              </TouchableOpacity>
+            </View>
+            
+            <View style={styles.modalSummaryBox}>
+              <View style={styles.summaryItem}>
+                <Text style={styles.summaryValue}>{quiz.questions.length}</Text>
+                <Text style={styles.summaryLabel}>Total</Text>
+              </View>
+              <View style={styles.summaryItem}>
+                <Text style={[styles.summaryValue, { color: '#10B981' }]}>
+                  {questionStatuses.filter(s => s.answered).length}
+                </Text>
+                <Text style={styles.summaryLabel}>Answered</Text>
+              </View>
+              <View style={styles.summaryItem}>
+                <Text style={[styles.summaryValue, { color: '#A855F7' }]}>
+                  {questionStatuses.filter(s => s.markedForReview).length}
+                </Text>
+                <Text style={styles.summaryLabel}>Marked</Text>
+              </View>
+              <View style={styles.summaryItem}>
+                <Text style={[styles.summaryValue, { color: '#EF4444' }]}>
+                  {questionStatuses.filter(s => !s.answered).length}
+                </Text>
+                <Text style={styles.summaryLabel}>Unanswered</Text>
+              </View>
+            </View>
+
+            <Text style={styles.modalSubtitle}>Questions ({quiz.questions.length})</Text>
+            <ScrollView style={styles.modalQuestionsGrid} showsVerticalScrollIndicator={false}>
+              <View style={styles.gridContainer}>
+                {questionStatuses.map((status, index) => {
+                  let bgColor = '#FFFFFF';
+                  let borderColor = '#D1D5DB';
+                  let textColor = '#4B5563';
+
+                  if (status.answered) {
+                    bgColor = '#10B981';
+                    borderColor = '#10B981';
+                    textColor = '#FFFFFF';
+                  }
+
+                  if (status.markedForReview) {
+                    bgColor = '#A855F7';
+                    borderColor = '#A855F7';
+                    textColor = '#FFFFFF';
+                  }
+
+                  return (
+                    <TouchableOpacity
+                      key={index}
+                      style={[
+                        styles.gridItem,
+                        { backgroundColor: bgColor, borderColor: borderColor }
+                      ]}
+                      onPress={() => {
+                        handleQuestionSelect(index);
+                        setShowReviewModal(false);
+                      }}
+                    >
+                      <Text style={[styles.gridItemText, { color: textColor }]}>
+                        {index + 1}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+            </ScrollView>
+
+            <View style={styles.modalFooter}>
+              <TouchableOpacity 
+                style={styles.modalReturnBtn}
+                onPress={() => setShowReviewModal(false)}
+              >
+                <Text style={styles.modalReturnBtnText}>Return to Quiz</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.modalFinalSubmitBtn}
+                onPress={handleFinalSubmit}
+                disabled={quizLoading}
+              >
+                {quizLoading ? (
+                  <ActivityIndicator color="#FFFFFF" />
+                ) : (
+                  <Text style={styles.modalFinalSubmitBtnText}>Final Submit</Text>
+                )}
+              </TouchableOpacity>
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
     </SafeAreaView>
   );
 }
@@ -1020,5 +1154,111 @@ const styles = StyleSheet.create({
     marginTop: 8,
     borderRadius: 8,
     backgroundColor: '#F3F4F6',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalContent: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    height: '85%',
+    padding: 24,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#1F2937',
+  },
+  modalSummaryBox: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 24,
+  },
+  summaryItem: {
+    alignItems: 'center',
+  },
+  summaryValue: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#1F2937',
+    marginBottom: 4,
+  },
+  summaryLabel: {
+    fontSize: 12,
+    color: '#6B7280',
+    fontWeight: '500',
+  },
+  modalSubtitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 16,
+  },
+  modalQuestionsGrid: {
+    flex: 1,
+  },
+  gridContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    paddingBottom: 24,
+  },
+  gridItem: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+    borderWidth: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  gridItemText: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  modalFooter: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#E5E7EB',
+  },
+  modalReturnBtn: {
+    flex: 1,
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  modalReturnBtnText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  modalFinalSubmitBtn: {
+    flex: 1,
+    padding: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    backgroundColor: '#10B981',
+  },
+  modalFinalSubmitBtnText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
 });

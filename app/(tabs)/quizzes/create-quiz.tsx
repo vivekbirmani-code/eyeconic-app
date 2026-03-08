@@ -843,33 +843,47 @@ export default function CreateQuiz() {
         ) : filteredQuestions.length === 0 ? (
           <Text style={styles.emptyText}>No questions found</Text>
         ) : (
-          filteredQuestions.map(item => (
-            <TouchableOpacity
-              key={item._id}
-              style={[
-                styles.questionItem,
-                selectedQuestions.includes(item._id) && styles.questionItemSelected
-              ]}
-              onPress={() => toggleQuestion(item._id)}
-            >
-              <View style={[styles.checkbox, selectedQuestions.includes(item._id) && styles.checkboxSelected]}>
-                {selectedQuestions.includes(item._id) && <Check color="#FFF" size={14} />}
-              </View>
-              <View style={styles.questionInfo}>
-                <Text style={styles.questionText} numberOfLines={2}>{item.question}</Text>
-                <View style={styles.questionMeta}>
-                  <Text style={styles.questionSubject}>{item.subject?.name}</Text>
-                  {item.topicName && <Text style={styles.questionTopic}> • {item.topicName}</Text>}
-                </View>
-              </View>
-              <TouchableOpacity
-                style={styles.viewButton}
-                onPress={() => setSelectedQuestion(item)}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-              >
-                <Eye color="#2563EB" size={20} />
-              </TouchableOpacity>
-            </TouchableOpacity>
+          Object.entries(
+            filteredQuestions.reduce((acc, q) => {
+              const sec = q.subject?.name || 'Uncategorized';
+              if (!acc[sec]) acc[sec] = [];
+              acc[sec].push(q);
+              return acc;
+            }, {} as Record<string, typeof filteredQuestions>)
+          ).map(([sectionName, questionsData]) => (
+            <View key={sectionName} style={styles.sectionContainer}>
+              <Text style={styles.sectionHeader}>
+                {sectionName} ({questionsData.length} questions)
+              </Text>
+              {questionsData.map(item => (
+                <TouchableOpacity
+                  key={item._id}
+                  style={[
+                    styles.questionItem,
+                    selectedQuestions.includes(item._id) && styles.questionItemSelected
+                  ]}
+                  onPress={() => toggleQuestion(item._id)}
+                >
+                  <View style={[styles.checkbox, selectedQuestions.includes(item._id) && styles.checkboxSelected]}>
+                    {selectedQuestions.includes(item._id) && <Check color="#FFF" size={14} />}
+                  </View>
+                  <View style={styles.questionInfo}>
+                    <Text style={styles.questionText} numberOfLines={2}>{item.question}</Text>
+                    <View style={styles.questionMeta}>
+                      <Text style={styles.questionSubject}>{item.subject?.name}</Text>
+                      {item.topicName && <Text style={styles.questionTopic}> • {item.topicName}</Text>}
+                    </View>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.viewButton}
+                    onPress={() => setSelectedQuestion(item)}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  >
+                    <Eye color="#2563EB" size={20} />
+                  </TouchableOpacity>
+                </TouchableOpacity>
+              ))}
+            </View>
           ))
         )}
       </View>
@@ -1702,5 +1716,25 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#1F2937',
     flex: 1,
+  },
+  sectionContainer: {
+    marginBottom: 20,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    overflow: 'hidden',
+  },
+  sectionHeader: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#374151',
+    backgroundColor: '#F3F4F6',
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
 });

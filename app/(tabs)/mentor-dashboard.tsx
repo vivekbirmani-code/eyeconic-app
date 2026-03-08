@@ -69,9 +69,12 @@ interface Assignment {
   createdAt: string;
 }
 
-type TabType = 'students' | 'create' | 'thisWeek' | 'verify';
+type TabType = 'students' | 'create' | 'thisWeek' | 'verify' | 'analytics';
+
+import { useRouter } from 'expo-router';
 
 export default function MentorDashboard() {
+  const router = useRouter();
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<TabType>('students');
   const [students, setStudents] = useState<Student[]>([]);
@@ -363,7 +366,7 @@ export default function MentorDashboard() {
                   { text: 'Cancel', style: 'cancel' },
                   {
                     text: 'Send for Redo',
-                    onPress: (reason) => {
+                    onPress: (reason?: string) => {
                       setVerifyComment(reason || '');
                       verifyAssignment(item._id, 'redo');
                     }
@@ -451,6 +454,19 @@ export default function MentorDashboard() {
               <Text style={styles.badgeText}>{pendingVerification.length}</Text>
             </View>
           )}
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.tab}
+          onPress={() => {
+            Haptics.selectionAsync();
+            router.push('/quizzes/student-analytics');
+          }}
+        >
+          <TrendingUp color="#6B7280" size={20} />
+          <Text style={styles.tabText}>
+            Analytics
+          </Text>
         </TouchableOpacity>
       </View>
 

@@ -134,7 +134,7 @@ export default function QuizInstructions() {
           </View>
           <Text style={styles.title}>{quiz.title}</Text>
           <Text style={styles.subject}>
-            {quiz.subjectNames && quiz.subjectNames.length > 1
+            {sections.length > 1
               ? 'MIXED'
               : (quiz.subjectNames?.[0] || (typeof quiz.subject === 'object' ? quiz.subject?.name : quiz.subject) || 'General').toUpperCase()}
           </Text>

@@ -71,3 +71,4 @@ Find your APK:
 
 android\app\build\outputs\apk\release\app-release.apk
 Would you like me to set up patch-package for you to automatically preserve these fixes?
+

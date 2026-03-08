@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   View,
   Text,
@@ -139,6 +139,27 @@ export default function SubjectSelectionModal({
     }
   };
 
+  const allAvailableSubjectIds = useMemo(() => {
+    const ids: string[] = [];
+    Object.values(subjects).forEach(yearSubjects => {
+      yearSubjects.forEach((subject: Subject) => {
+        ids.push(subject._id);
+      });
+    });
+    return ids;
+  }, [subjects]);
+
+  const isAllSelected = allAvailableSubjectIds.length > 0 && selectedSubjects.size === allAvailableSubjectIds.length;
+
+  const toggleAllSubjects = () => {
+    Haptics.selectionAsync();
+    if (isAllSelected) {
+      setSelectedSubjects(new Set()); // Deselect all
+    } else {
+      setSelectedSubjects(new Set(allAvailableSubjectIds)); // Select all
+    }
+  };
+
   const toggleSubject = (subjectId: string) => {
     Haptics.selectionAsync();
     setSelectedSubjects(prev => {
@@ -250,6 +271,38 @@ export default function SubjectSelectionModal({
               <Text style={styles.instruction}>
                 Select subjects for this student. Tap to select/deselect.
               </Text>
+              
+              {/* Select All Row */}
+              {allAvailableSubjectIds.length > 0 && (
+                <View style={styles.selectAllContainer}>
+                  <TouchableOpacity
+                    style={[
+                      styles.subjectCard,
+                      styles.selectAllCard,
+                      isAllSelected && styles.subjectCardSelected
+                    ]}
+                    onPress={toggleAllSubjects}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.subjectCardContent}>
+                      <Text style={[
+                        styles.selectAllText,
+                        isAllSelected && styles.subjectNameSelected
+                      ]}>
+                        Select All Subjects
+                      </Text>
+                      <View style={styles.checkboxIcon}>
+                        {isAllSelected ? (
+                          <CheckSquare color="#01b4ae" size={22} />
+                        ) : (
+                          <Square color="#9CA3AF" size={22} />
+                        )}
+                      </View>
+                    </View>
+                  </TouchableOpacity>
+                </View>
+              )}
+
               {renderYearSection('1st', subjects['1st'])}
               {renderYearSection('2nd', subjects['2nd'])}
               {renderYearSection('3rd', subjects['3rd'])}
@@ -367,6 +420,24 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#374151',
     fontWeight: '600'
+  },
+  selectAllContainer: {
+    marginBottom: 20,
+    width: '100%',
+  },
+  selectAllCard: {
+    width: '100%',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: '#F3F4F6',
+    borderWidth: 2,
+    borderColor: '#D1D5DB'
+  },
+  selectAllText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1F2937',
+    flex: 1
   },
   subjectsGrid: {
     flexDirection: 'row',

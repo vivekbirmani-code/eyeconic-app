@@ -205,11 +205,19 @@ export default function Analytics() {
   const fetchStudents = async () => {
     setLoadingStudents(true);
     try {
-      const response = await api.get('/users?role=student');
-      const data = Array.isArray(response.data) ? response.data : [];
-      const studentsOnly = data.filter((u: any) => u.role === 'student');
-      setStudents(studentsOnly);
-      setFilteredStudents(studentsOnly);
+      if (user?.role === 'mentor') {
+        const response = await api.get(`/assignments/mentor/${user._id}/students`);
+        // Endpoint returns array of student objects (name, email, etc.)
+        const mentorStudents = response.data || [];
+        setStudents(mentorStudents);
+        setFilteredStudents(mentorStudents);
+      } else {
+        const response = await api.get('/users?role=student');
+        const data = Array.isArray(response.data) ? response.data : [];
+        const studentsOnly = data.filter((u: any) => u.role === 'student');
+        setStudents(studentsOnly);
+        setFilteredStudents(studentsOnly);
+      }
     } catch (error) {
       console.error('Error fetching students:', error);
       setStudents([]);
@@ -297,10 +305,10 @@ export default function Analytics() {
     fetchSubjectReport(student._id);
   };
 
-  if (user?.role !== 'admin') {
+  if (user?.role !== 'admin' && user?.role !== 'mentor') {
     return (
       <SafeAreaView style={styles.container}>
-        <Text style={styles.errorText}>Admin access required</Text>
+        <Text style={styles.errorText}>Admin or Mentor access required</Text>
       </SafeAreaView>
     );
   }
@@ -308,8 +316,11 @@ export default function Analytics() {
   const tabs = [
     { key: 'test', label: 'Test Analytics' },
     { key: 'student', label: 'Student Analytics' },
-    { key: 'heatmap', label: 'Heat Map' }
   ];
+
+  if (user?.role === 'admin') {
+    tabs.push({ key: 'heatmap', label: 'Heat Map' });
+  }
 
   return (
     <SafeAreaView style={styles.container}>
