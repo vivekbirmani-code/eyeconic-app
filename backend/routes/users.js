@@ -8,7 +8,12 @@ const router = express.Router();
 // Get all users (Admin only)
 router.get('/', auth, authorize('admin'), async (req, res) => {
   try {
-    const users = await User.find().select('-password');
+    const { role } = req.query;
+    let query = {};
+    if (role) {
+      query.role = role;
+    }
+    const users = await User.find(query).select('-password');
     res.json(users);
   } catch (error) {
     console.error(error);
@@ -146,6 +151,21 @@ router.post('/', auth, authorize('admin'), async (req, res) => {
     });
   } catch (error) {
     console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get users by role (Admin only) - MUST be before /:id
+router.get('/role/:role', auth, authorize('admin'), async (req, res) => {
+  try {
+    const { role } = req.params;
+    if (!['mentor', 'student', 'admin'].includes(role)) {
+      return res.status(400).json({ message: 'Invalid role' });
+    }
+    const users = await User.find({ role }).select('_id name email role').sort({ name: 1 });
+    res.json(users);
+  } catch (error) {
+    console.error('Error fetching users by role:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

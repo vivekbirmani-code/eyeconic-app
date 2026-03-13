@@ -130,7 +130,6 @@ export default function CreateQuiz() {
   const [filteredStudents, setFilteredStudents] = useState<Student[]>([]);
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
   const [studentSearch, setStudentSearch] = useState('');
-  const [subjectFilter, setSubjectFilter] = useState('');
 
   // Mentor Selection
   const [mentors, setMentors] = useState<Mentor[]>([]);
@@ -174,10 +173,14 @@ export default function CreateQuiz() {
 
   const fetchMentors = async () => {
     try {
+      setLoadingQuestions(true);
       const response = await api.get('/users/role/mentor');
+      console.log('Fetched mentors:', response.data?.length);
       setMentors(response.data);
     } catch (error) {
       console.error('Error fetching mentors:', error);
+    } finally {
+      setLoadingQuestions(false);
     }
   };
 
@@ -299,15 +302,8 @@ export default function CreateQuiz() {
       );
     }
 
-    // Filter by subject if selected
-    if (subjectFilter) {
-      filtered = filtered.filter(s =>
-        s.subjects?.some(sub => sub._id === subjectFilter)
-      );
-    }
-
     setFilteredStudents(filtered);
-  }, [studentSearch, students, subjectFilter]);
+  }, [studentSearch, students]);
 
   const fetchSubjects = async () => {
     try {
@@ -321,7 +317,7 @@ export default function CreateQuiz() {
 
   const fetchStudents = async () => {
     try {
-      const response = await api.get('/users?role=student');
+      const response = await api.get('/users/role/student');
       const data = Array.isArray(response.data) ? response.data : [];
       setStudents(data);
       setFilteredStudents(data);
@@ -1141,7 +1137,7 @@ export default function CreateQuiz() {
           onPress={() => setAssignmentTab('students')}
         >
           <Text style={[styles.assignmentTabText, assignmentTab === 'students' && styles.assignmentTabTextActive]}>
-            Students ({selectedStudents.length})
+            Students ({students.length})
           </Text>
         </TouchableOpacity>
         <TouchableOpacity 
@@ -1149,7 +1145,7 @@ export default function CreateQuiz() {
           onPress={() => setAssignmentTab('mentors')}
         >
           <Text style={[styles.assignmentTabText, assignmentTab === 'mentors' && styles.assignmentTabTextActive]}>
-            Mentors ({selectedMentors.length})
+            Mentors ({mentors.length})
           </Text>
         </TouchableOpacity>
       </View>
@@ -1177,31 +1173,10 @@ export default function CreateQuiz() {
             />
           </View>
 
-          <View style={styles.filterRow}>
-            <Text style={styles.filterLabel}>Filter by subject:</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <TouchableOpacity
-                style={[styles.filterChip, !subjectFilter && styles.filterChipActive]}
-                onPress={() => setSubjectFilter('')}
-              >
-                <Text style={[styles.filterChipText, !subjectFilter && styles.filterChipTextActive]}>All</Text>
-              </TouchableOpacity>
-              {subjects.map(sub => (
-                <TouchableOpacity
-                  key={sub._id}
-                  style={[styles.filterChip, subjectFilter === sub._id && styles.filterChipActive]}
-                  onPress={() => setSubjectFilter(sub._id)}
-                >
-                  <Text style={[styles.filterChipText, subjectFilter === sub._id && styles.filterChipTextActive]}>
-                    {sub.name}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-
           <View style={styles.studentList}>
-            {filteredStudents.length === 0 ? (
+            {loadingQuestions ? (
+              <ActivityIndicator color="#2563EB" style={{ marginTop: 20 }} />
+            ) : filteredStudents.length === 0 ? (
               <Text style={styles.emptyText}>No students found</Text>
             ) : (
               filteredStudents.map(item => (
@@ -1242,7 +1217,9 @@ export default function CreateQuiz() {
           </View>
 
           <View style={styles.studentList}>
-            {mentors.length === 0 ? (
+            {loadingQuestions ? (
+              <ActivityIndicator color="#2563EB" style={{ marginTop: 20 }} />
+            ) : mentors.length === 0 ? (
               <Text style={styles.emptyText}>No mentors found</Text>
             ) : (
               mentors.map(item => (
@@ -1588,33 +1565,34 @@ const styles = StyleSheet.create({
   },
   assignmentTabs: {
     flexDirection: 'row',
-    backgroundColor: '#F3F4F6',
-    borderRadius: 8,
-    padding: 4,
-    marginBottom: 20,
+    backgroundColor: '#E5E7EB',
+    borderRadius: 10,
+    padding: 2,
+    marginBottom: 24,
+    width: '100%',
   },
   assignmentTab: {
     flex: 1,
-    paddingVertical: 8,
+    paddingVertical: 10,
     alignItems: 'center',
-    borderRadius: 6,
+    justifyContent: 'center',
+    borderRadius: 8,
   },
   assignmentTabActive: {
     backgroundColor: '#FFF',
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.1,
-    shadowRadius: 2,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 3.84,
+    elevation: 5,
   },
   assignmentTabText: {
     fontSize: 14,
-    color: '#6B7280',
-    fontWeight: '500',
+    color: '#4B5563',
+    fontWeight: '600',
   },
   assignmentTabTextActive: {
     color: '#2563EB',
-    fontWeight: 'bold',
   },
   testTypeIcon: {
     width: 48,
