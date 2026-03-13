@@ -13,7 +13,8 @@ import {
   StatusBar,
   Modal,
   Image,
-  Switch
+  Switch,
+  FlatList
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
@@ -44,6 +45,12 @@ interface Student {
   subjects?: Subject[];
 }
 
+interface Mentor {
+  _id: string;
+  name: string;
+  email: string;
+}
+
 interface Question {
   _id: string;
   qid?: string;
@@ -58,6 +65,13 @@ interface Question {
   explanationImage?: string;
   marks?: number;
   tags?: string[];
+}
+
+interface QuizSection {
+  name: string;
+  duration: number; // minutes
+  selectionType: 'mixed' | 'manual';
+  questions: string[]; // IDs
 }
 
 type TestType = 'daily' | 'weekly' | 'grand';
@@ -106,6 +120,10 @@ export default function CreateQuiz() {
   const [tagFilter, setTagFilter] = useState('');
   const [loadingQuestions, setLoadingQuestions] = useState(false);
   const [selectedQuestion, setSelectedQuestion] = useState<Question | null>(null);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(true);
+  const [totalQuestions, setTotalQuestions] = useState(0);
+  const [loadingMore, setLoadingMore] = useState(false);
 
   // Step 4: Student Selection
   const [students, setStudents] = useState<Student[]>([]);
@@ -113,6 +131,14 @@ export default function CreateQuiz() {
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
   const [studentSearch, setStudentSearch] = useState('');
   const [subjectFilter, setSubjectFilter] = useState('');
+
+  // Mentor Selection
+  const [mentors, setMentors] = useState<Mentor[]>([]);
+  const [selectedMentors, setSelectedMentors] = useState<string[]>([]);
+  const [assignmentTab, setAssignmentTab] = useState<'students' | 'mentors'>('students');
+
+  // Step 4: Sections (NEW)
+  const [quizSections, setQuizSections] = useState<QuizSection[]>([]);
 
   // Instructions
   const defaultInstructions = [
@@ -127,6 +153,7 @@ export default function CreateQuiz() {
   useEffect(() => {
     fetchSubjects();
     fetchStudents();
+    fetchMentors();
 
     if (cloneId) {
       loadQuiz(cloneId as string, true);
@@ -134,6 +161,25 @@ export default function CreateQuiz() {
       loadQuiz(editId as string, false);
     }
   }, [cloneId, editId]);
+
+  // Debounced search/filters for Step 3
+  useEffect(() => {
+    if (step === 3) {
+      const timer = setTimeout(() => {
+        fetchQuestions(true);
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [questionSearch, topicFilter, tagFilter, questionSubjectFilter, step]);
+
+  const fetchMentors = async () => {
+    try {
+      const response = await api.get('/users/role/mentor');
+      setMentors(response.data);
+    } catch (error) {
+      console.error('Error fetching mentors:', error);
+    }
+  };
 
   const loadQuiz = async (id: string, isClone: boolean) => {
     try {
@@ -168,6 +214,20 @@ export default function CreateQuiz() {
 
       if (!isClone && quiz.assignedStudents) {
         setSelectedStudents(quiz.assignedStudents.map((s: any) => s._id || s));
+      }
+
+      if (!isClone && quiz.assignedMentors) {
+        setSelectedMentors(quiz.assignedMentors.map((m: any) => m._id || m));
+      }
+
+      // Load sections
+      if (quiz.sections && quiz.sections.length > 0) {
+        setQuizSections(quiz.sections.map((s: any) => ({
+          name: s.name,
+          duration: s.duration,
+          selectionType: s.selectionType || 'manual',
+          questions: s.questions?.map((q: any) => q._id || q) || []
+        })));
       }
 
     } catch (error) {
@@ -291,24 +351,55 @@ export default function CreateQuiz() {
     }
   };
 
-  const fetchQuestions = async () => {
+  const fetchQuestions = async (reset = false) => {
     if (selectedSubjects.length === 0) return;
 
-    setLoadingQuestions(true);
-    try {
-      const params = new URLSearchParams();
-      selectedSubjects.forEach(id => params.append('subjects', id));
-
-      const response = await api.get(`/question-bank/by-subjects?${params}`);
-      const questions = Array.isArray(response.data) ? response.data : [];
-      setAvailableQuestionsList(questions);
-      setFilteredQuestions(questions);
-    } catch (error) {
-      console.error('Error fetching questions:', error);
+    if (reset) {
+      setPage(1);
       setAvailableQuestionsList([]);
       setFilteredQuestions([]);
+      setHasMore(true);
+      setLoadingQuestions(true);
+    } else {
+      setLoadingMore(true);
+    }
+
+    try {
+      const currentPage = reset ? 1 : page;
+      const params = new URLSearchParams();
+      selectedSubjects.forEach(id => params.append('subjects', id));
+      params.append('page', currentPage.toString());
+      params.append('limit', '50');
+      if (questionSearch) params.append('search', questionSearch);
+      if (questionSubjectFilter) params.append('subjects', questionSubjectFilter);
+      if (topicFilter) params.append('topic', topicFilter);
+      if (tagFilter) params.append('tag', tagFilter);
+
+      const response = await api.get(`/question-bank/by-subjects?${params}`);
+      const { questions, total, pages } = response.data;
+
+      const newQuestions = Array.isArray(questions) ? questions : [];
+      
+      if (reset) {
+        setAvailableQuestionsList(newQuestions);
+        setFilteredQuestions(newQuestions);
+      } else {
+        setAvailableQuestionsList(prev => [...prev, ...newQuestions]);
+        setFilteredQuestions(prev => [...prev, ...newQuestions]);
+      }
+
+      setTotalQuestions(total);
+      setHasMore(currentPage < pages);
+      setPage(currentPage + 1);
+    } catch (error) {
+      console.error('Error fetching questions:', error);
+      if (reset) {
+        setAvailableQuestionsList([]);
+        setFilteredQuestions([]);
+      }
     } finally {
       setLoadingQuestions(false);
+      setLoadingMore(false);
     }
   };
 
@@ -340,11 +431,27 @@ export default function CreateQuiz() {
     }
   };
 
+  const handleSelectAllMentors = () => {
+    if (selectedMentors.length === mentors.length) {
+      setSelectedMentors([]);
+    } else {
+      setSelectedMentors(mentors.map(m => m._id));
+    }
+  };
+
   const toggleStudent = (studentId: string) => {
     if (selectedStudents.includes(studentId)) {
       setSelectedStudents(selectedStudents.filter(id => id !== studentId));
     } else {
       setSelectedStudents([...selectedStudents, studentId]);
+    }
+  };
+
+  const toggleMentor = (mentorId: string) => {
+    if (selectedMentors.includes(mentorId)) {
+      setSelectedMentors(selectedMentors.filter(id => id !== mentorId));
+    } else {
+      setSelectedMentors([...selectedMentors, mentorId]);
     }
   };
 
@@ -377,8 +484,8 @@ export default function CreateQuiz() {
       Alert.alert('Error', 'Please select at least one question');
       return;
     }
-    if (selectedStudents.length === 0) {
-      Alert.alert('Error', 'Please select at least one student');
+    if (selectedStudents.length === 0 && selectedMentors.length === 0) {
+      Alert.alert('Error', 'Please select at least one student or mentor');
       return;
     }
     if (scheduledDate && expiryDate && expiryDate <= scheduledDate) {
@@ -402,9 +509,11 @@ export default function CreateQuiz() {
           negativeMarks: parseFloat(negativeMarks) || 0,
           instructions: instructions.split('\n').filter(i => i.trim()),
           assignedStudents: selectedStudents,
-          shareSolution,  // NEW: Include shareSolution setting
+          assignedMentors: selectedMentors,
+          shareSolution,
           scheduledDate: scheduledDate?.toISOString(),
-          expiryDate: expiryDate?.toISOString()
+          expiryDate: expiryDate?.toISOString(),
+          sections: quizSections
         });
         Alert.alert('Success', 'Quiz updated successfully!', [{ text: 'OK', onPress: () => router.back() }]);
       } else {
@@ -420,13 +529,15 @@ export default function CreateQuiz() {
           negativeMarks: parseFloat(negativeMarks) || 0,
           instructions: instructions.split('\n').filter(i => i.trim()),
           assignedStudents: selectedStudents,
-          shareSolution,  // NEW: Include shareSolution setting
+          assignedMentors: selectedMentors,
+          shareSolution,
           scheduledDate: scheduledDate?.toISOString(),
-          expiryDate: expiryDate?.toISOString()
+          expiryDate: expiryDate?.toISOString(),
+          sections: quizSections
         });
         Alert.alert(
           'Success',
-          `Quiz ${cloneId ? 'cloned' : 'created'} and assigned to ${selectedStudents.length} students!`,
+          `Quiz ${cloneId ? 'cloned' : 'created'} and assigned successfully!`,
           [{ text: 'OK', onPress: () => router.back() }]
         );
       }
@@ -837,137 +948,328 @@ export default function CreateQuiz() {
       </View>
 
       {/* Question list */}
-      <View style={styles.studentList}>
-        {loadingQuestions ? (
+      <View style={[styles.studentList, { flex: 1 }]}>
+        {loadingQuestions && page === 1 ? (
           <ActivityIndicator color="#2563EB" style={{ marginTop: 20 }} />
         ) : filteredQuestions.length === 0 ? (
           <Text style={styles.emptyText}>No questions found</Text>
         ) : (
-          Object.entries(
-            filteredQuestions.reduce((acc, q) => {
-              const sec = q.subject?.name || 'Uncategorized';
-              if (!acc[sec]) acc[sec] = [];
-              acc[sec].push(q);
-              return acc;
-            }, {} as Record<string, typeof filteredQuestions>)
-          ).map(([sectionName, questionsData]) => (
-            <View key={sectionName} style={styles.sectionContainer}>
-              <Text style={styles.sectionHeader}>
-                {sectionName} ({questionsData.length} questions)
-              </Text>
-              {questionsData.map(item => (
+          <FlatList
+            data={filteredQuestions}
+            keyExtractor={(item: Question) => item._id}
+            renderItem={({ item }: { item: Question }) => (
+              <TouchableOpacity
+                style={[
+                  styles.questionItem,
+                  selectedQuestions.includes(item._id) && styles.questionItemSelected
+                ]}
+                onPress={() => toggleQuestion(item._id)}
+              >
+                <View style={[styles.checkbox, selectedQuestions.includes(item._id) && styles.checkboxSelected]}>
+                  {selectedQuestions.includes(item._id) && <Check color="#FFF" size={14} />}
+                </View>
+                <View style={styles.questionInfo}>
+                  <Text style={styles.questionText} numberOfLines={2}>{item.question}</Text>
+                  <View style={styles.questionMeta}>
+                    <Text style={styles.questionSubject}>{item.subject?.name}</Text>
+                    {item.topicName && <Text style={styles.questionTopic}> • {item.topicName}</Text>}
+                  </View>
+                </View>
                 <TouchableOpacity
-                  key={item._id}
-                  style={[
-                    styles.questionItem,
-                    selectedQuestions.includes(item._id) && styles.questionItemSelected
-                  ]}
-                  onPress={() => toggleQuestion(item._id)}
+                  style={styles.viewButton}
+                  onPress={() => setSelectedQuestion(item)}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                 >
-                  <View style={[styles.checkbox, selectedQuestions.includes(item._id) && styles.checkboxSelected]}>
-                    {selectedQuestions.includes(item._id) && <Check color="#FFF" size={14} />}
-                  </View>
-                  <View style={styles.questionInfo}>
-                    <Text style={styles.questionText} numberOfLines={2}>{item.question}</Text>
-                    <View style={styles.questionMeta}>
-                      <Text style={styles.questionSubject}>{item.subject?.name}</Text>
-                      {item.topicName && <Text style={styles.questionTopic}> • {item.topicName}</Text>}
-                    </View>
-                  </View>
-                  <TouchableOpacity
-                    style={styles.viewButton}
-                    onPress={() => setSelectedQuestion(item)}
-                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                  >
-                    <Eye color="#2563EB" size={20} />
-                  </TouchableOpacity>
+                  <Eye color="#2563EB" size={20} />
                 </TouchableOpacity>
-              ))}
-            </View>
-          ))
+              </TouchableOpacity>
+            )}
+            onEndReached={() => {
+              if (hasMore && !loadingMore) {
+                fetchQuestions(false);
+              }
+            }}
+            onEndReachedThreshold={0.5}
+            ListFooterComponent={() => (
+              loadingMore ? (
+                <ActivityIndicator color="#2563EB" style={{ marginVertical: 20 }} />
+              ) : null
+            )}
+            contentContainerStyle={{ paddingBottom: 20 }}
+          />
         )}
       </View>
     </View>
   );
 
-  // Step 4 - Student Selection
-  const renderStep4 = () => (
-    <View style={styles.stepContent}>
-      <Text style={styles.stepTitle}>Assign Students</Text>
+  // Step 4 - Section Configuration (NEW)
+  const renderStep4 = () => {
+    const totalTime = parseInt(duration) || 0;
+    const allocatedTime = quizSections.reduce((sum, s) => sum + s.duration, 0);
 
-      <View style={styles.selectionHeader}>
-        <Text style={styles.selectionCount}>
-          {selectedStudents.length} of {filteredStudents.length} selected
-        </Text>
-        <TouchableOpacity onPress={handleSelectAll}>
-          <Text style={styles.selectAllText}>
-            {selectedStudents.length === filteredStudents.length ? 'Deselect All' : 'Select All'}
+    const initializeSections = (count: number) => {
+      const newSections: QuizSection[] = [];
+      const equalTime = Math.floor(totalTime / count);
+      for (let i = 0; i < count; i++) {
+        newSections.push({
+          name: `Section ${i + 1}`,
+          duration: i === count - 1 ? totalTime - (equalTime * (count - 1)) : equalTime,
+          selectionType: 'mixed',
+          questions: []
+        });
+      }
+      setQuizSections(newSections);
+    };
+
+    const updateSection = (index: number, updates: Partial<QuizSection>) => {
+      const updated = [...quizSections];
+      updated[index] = { ...updated[index], ...updates };
+      setQuizSections(updated);
+    };
+
+    return (
+      <View style={styles.stepContent}>
+        <Text style={styles.stepTitle}>Configure Sections</Text>
+
+        <View style={styles.infoBox}>
+          <Text style={styles.infoText}>
+            ⏱️ Total Duration: {totalTime} mins | Allocated: {allocatedTime} mins
+          </Text>
+          {allocatedTime !== totalTime && (
+             <Text style={{color: '#EF4444', fontSize: 12, marginTop: 4}}>
+               ⚠️ Allocated time ({allocatedTime}) does not match total duration ({totalTime})
+             </Text>
+          )}
+        </View>
+
+        <View style={styles.sectionSetupHeader}>
+          <Text style={styles.inputLabel}>Number of Sections</Text>
+          <View style={{flexDirection: 'row', gap: 8, marginTop: 8}}>
+            {[1, 2, 3, 4, 5].map(n => (
+              <TouchableOpacity 
+                key={n} 
+                style={[styles.smallChip, quizSections.length === n && styles.smallChipActive]}
+                onPress={() => initializeSections(n)}
+              >
+                <Text style={[styles.smallChipText, quizSections.length === n && styles.smallChipTextActive]}>{n}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+        </View>
+
+        <ScrollView style={{marginTop: 16}}>
+          {quizSections.map((section, idx) => (
+            <View key={idx} style={styles.sectionConfigCard}>
+              <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}}>
+                <TextInput
+                  style={[styles.input, {flex: 2, marginRight: 8}]}
+                  value={section.name}
+                  onChangeText={(val) => updateSection(idx, { name: val })}
+                  placeholder="Section Name"
+                />
+                <View style={{flex: 1}}>
+                  <TextInput
+                    style={styles.input}
+                    value={section.duration.toString()}
+                    onChangeText={(val) => updateSection(idx, { duration: parseInt(val) || 0 })}
+                    keyboardType="numeric"
+                    placeholder="Mins"
+                  />
+                </View>
+              </View>
+
+              <View style={{flexDirection: 'row', gap: 8, marginTop: 12}}>
+                <TouchableOpacity 
+                  style={[styles.typeButton, section.selectionType === 'mixed' && styles.typeButtonActive]}
+                  onPress={() => updateSection(idx, { selectionType: 'mixed', questions: [] })}
+                >
+                  <Text style={[styles.typeButtonText, section.selectionType === 'mixed' && styles.typeButtonTextActive]}>Mixed</Text>
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={[styles.typeButton, section.selectionType === 'manual' && styles.typeButtonActive]}
+                  onPress={() => updateSection(idx, { selectionType: 'manual' })}
+                >
+                  <Text style={[styles.typeButtonText, section.selectionType === 'manual' && styles.typeButtonTextActive]}>Manual</Text>
+                </TouchableOpacity>
+              </View>
+
+              {section.selectionType === 'manual' && (
+                <View style={{marginTop: 12}}>
+                   <Text style={{fontSize: 12, color: '#6B7280', marginBottom: 4}}>
+                     Questions: {section.questions.length} assigned
+                   </Text>
+                   <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{paddingBottom: 8}}>
+                      {selectedQuestions.map(qId => {
+                         const q = availableQuestionsList.find(aq => aq._id === qId);
+                         if (!q) return null;
+                         const isAssigned = section.questions.includes(qId);
+                         return (
+                           <TouchableOpacity 
+                            key={qId} 
+                            style={[styles.qTinyChip, isAssigned && styles.qTinyChipActive]}
+                            onPress={() => {
+                               const newQs = isAssigned 
+                                ? section.questions.filter(id => id !== qId)
+                                : [...section.questions, qId];
+                               updateSection(idx, { questions: newQs });
+                            }}
+                           >
+                             <Text style={[styles.qTinyChipText, isAssigned && styles.qTinyChipTextActive]} numberOfLines={1}>
+                               {q.question.substring(0, 20)}...
+                             </Text>
+                           </TouchableOpacity>
+                         );
+                      })}
+                   </ScrollView>
+                </View>
+              )}
+            </View>
+          ))}
+        </ScrollView>
+      </View>
+    );
+  };
+
+  // Step 5 - Assignments (Students & Mentors)
+  const renderStep5 = () => (
+    <View style={styles.stepContent}>
+      <Text style={styles.stepTitle}>Assign Quiz</Text>
+
+      <View style={styles.assignmentTabs}>
+        <TouchableOpacity 
+          style={[styles.assignmentTab, assignmentTab === 'students' && styles.assignmentTabActive]}
+          onPress={() => setAssignmentTab('students')}
+        >
+          <Text style={[styles.assignmentTabText, assignmentTab === 'students' && styles.assignmentTabTextActive]}>
+            Students ({selectedStudents.length})
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity 
+          style={[styles.assignmentTab, assignmentTab === 'mentors' && styles.assignmentTabActive]}
+          onPress={() => setAssignmentTab('mentors')}
+        >
+          <Text style={[styles.assignmentTabText, assignmentTab === 'mentors' && styles.assignmentTabTextActive]}>
+            Mentors ({selectedMentors.length})
           </Text>
         </TouchableOpacity>
       </View>
 
-      <View style={styles.searchInput}>
-        <Search color="#6B7280" size={20} />
-        <TextInput
-          style={styles.searchTextInput}
-          placeholder="Search students..."
-          value={studentSearch}
-          onChangeText={setStudentSearch}
-        />
-      </View>
-
-      {/* Subject filter for students */}
-      <View style={styles.filterRow}>
-        <Text style={styles.filterLabel}>Filter by subject:</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <TouchableOpacity
-            style={[styles.filterChip, !subjectFilter && styles.filterChipActive]}
-            onPress={() => setSubjectFilter('')}
-          >
-            <Text style={[styles.filterChipText, !subjectFilter && styles.filterChipTextActive]}>All</Text>
-          </TouchableOpacity>
-          {subjects.map(sub => (
-            <TouchableOpacity
-              key={sub._id}
-              style={[styles.filterChip, subjectFilter === sub._id && styles.filterChipActive]}
-              onPress={() => setSubjectFilter(sub._id)}
-            >
-              <Text style={[styles.filterChipText, subjectFilter === sub._id && styles.filterChipTextActive]}>
-                {sub.name}
+      {assignmentTab === 'students' ? (
+        <>
+          <View style={styles.selectionHeader}>
+            <Text style={styles.selectionCount}>
+              {selectedStudents.length} of {filteredStudents.length} selected
+            </Text>
+            <TouchableOpacity onPress={handleSelectAll}>
+              <Text style={styles.selectAllText}>
+                {selectedStudents.length === filteredStudents.length ? 'Deselect All' : 'Select All'}
               </Text>
             </TouchableOpacity>
-          ))}
-        </ScrollView>
-      </View>
+          </View>
 
-      {/* Student list using map instead of FlatList */}
-      <View style={styles.studentList}>
-        {filteredStudents.length === 0 ? (
-          <Text style={styles.emptyText}>No students found</Text>
-        ) : (
-          filteredStudents.map(item => (
-            <TouchableOpacity
-              key={item._id}
-              style={[
-                styles.studentItem,
-                selectedStudents.includes(item._id) && styles.studentItemSelected
-              ]}
-              onPress={() => toggleStudent(item._id)}
-            >
-              <View style={[
-                styles.checkbox,
-                selectedStudents.includes(item._id) && styles.checkboxSelected
-              ]}>
-                {selectedStudents.includes(item._id) && <Check color="#FFF" size={14} />}
-              </View>
-              <View style={styles.studentInfo}>
-                <Text style={styles.studentName}>{item.name}</Text>
-                <Text style={styles.studentEmail}>{item.email}</Text>
-              </View>
+          <View style={styles.searchInput}>
+            <Search color="#6B7280" size={20} />
+            <TextInput
+              style={styles.searchTextInput}
+              placeholder="Search students..."
+              value={studentSearch}
+              onChangeText={setStudentSearch}
+            />
+          </View>
+
+          <View style={styles.filterRow}>
+            <Text style={styles.filterLabel}>Filter by subject:</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <TouchableOpacity
+                style={[styles.filterChip, !subjectFilter && styles.filterChipActive]}
+                onPress={() => setSubjectFilter('')}
+              >
+                <Text style={[styles.filterChipText, !subjectFilter && styles.filterChipTextActive]}>All</Text>
+              </TouchableOpacity>
+              {subjects.map(sub => (
+                <TouchableOpacity
+                  key={sub._id}
+                  style={[styles.filterChip, subjectFilter === sub._id && styles.filterChipActive]}
+                  onPress={() => setSubjectFilter(sub._id)}
+                >
+                  <Text style={[styles.filterChipText, subjectFilter === sub._id && styles.filterChipTextActive]}>
+                    {sub.name}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+
+          <View style={styles.studentList}>
+            {filteredStudents.length === 0 ? (
+              <Text style={styles.emptyText}>No students found</Text>
+            ) : (
+              filteredStudents.map(item => (
+                <TouchableOpacity
+                  key={item._id}
+                  style={[
+                    styles.studentItem,
+                    selectedStudents.includes(item._id) && styles.studentItemSelected
+                  ]}
+                  onPress={() => toggleStudent(item._id)}
+                >
+                  <View style={[
+                    styles.checkbox,
+                    selectedStudents.includes(item._id) && styles.checkboxSelected
+                  ]}>
+                    {selectedStudents.includes(item._id) && <Check color="#FFF" size={14} />}
+                  </View>
+                  <View style={styles.studentInfo}>
+                    <Text style={styles.studentName}>{item.name}</Text>
+                    <Text style={styles.studentEmail}>{item.email}</Text>
+                  </View>
+                </TouchableOpacity>
+              ))
+            )}
+          </View>
+        </>
+      ) : (
+        <>
+          <View style={styles.selectionHeader}>
+            <Text style={styles.selectionCount}>
+              {selectedMentors.length} of {mentors.length} mentors selected
+            </Text>
+            <TouchableOpacity onPress={handleSelectAllMentors}>
+              <Text style={styles.selectAllText}>
+                {selectedMentors.length === mentors.length ? 'Deselect All' : 'Select All'}
+              </Text>
             </TouchableOpacity>
-          ))
-        )}
-      </View>
+          </View>
+
+          <View style={styles.studentList}>
+            {mentors.length === 0 ? (
+              <Text style={styles.emptyText}>No mentors found</Text>
+            ) : (
+              mentors.map(item => (
+                <TouchableOpacity
+                  key={item._id}
+                  style={[
+                    styles.studentItem,
+                    selectedMentors.includes(item._id) && styles.studentItemSelected
+                  ]}
+                  onPress={() => toggleMentor(item._id)}
+                >
+                  <View style={[
+                    styles.checkbox,
+                    selectedMentors.includes(item._id) && styles.checkboxSelected
+                  ]}>
+                    {selectedMentors.includes(item._id) && <Check color="#FFF" size={14} />}
+                  </View>
+                  <View style={styles.studentInfo}>
+                    <Text style={styles.studentName}>{item.name}</Text>
+                    <Text style={styles.studentEmail}>{item.email}</Text>
+                  </View>
+                </TouchableOpacity>
+              ))
+            )}
+          </View>
+        </>
+      )}
     </View>
   );
 
@@ -992,37 +1294,51 @@ export default function CreateQuiz() {
 
       {/* Progress Steps */}
       <View style={styles.progressContainer}>
-        {[1, 2, 3, 4].map(s => (
-          <View key={s} style={styles.progressStep}>
-            <View style={[
-              styles.progressCircle,
-              step >= s && styles.progressCircleActive
-            ]}>
-              <Text style={[
-                styles.progressNumber,
-                step >= s && styles.progressNumberActive
+        {[1, 2, 3, 4, 5].map(s => (
+          <React.Fragment key={s}>
+            <View style={styles.progressStep}>
+              <View style={[
+                styles.progressCircle,
+                step >= s && styles.progressCircleActive
               ]}>
-                {s}
+                <Text style={[
+                  styles.progressNumber,
+                  step >= s && styles.progressNumberActive
+                ]}>
+                  {s}
+                </Text>
+              </View>
+              <Text style={styles.progressLabel}>
+                {s === 1 ? 'Type' : s === 2 ? 'Settings' : s === 3 ? 'Questions' : s === 4 ? 'Sections' : 'Assign'}
               </Text>
             </View>
-            <Text style={styles.progressLabel}>
-              {s === 1 ? 'Type' : s === 2 ? 'Settings' : s === 3 ? 'Questions' : 'Students'}
-            </Text>
-          </View>
+            {s < 5 && (
+              <View style={[
+                styles.progressLine,
+                step > s && styles.progressLineActive
+              ]} />
+            )}
+          </React.Fragment>
         ))}
       </View>
 
       {/* Step Content */}
-      <ScrollView
-        style={styles.content}
-        showsVerticalScrollIndicator={false}
-        nestedScrollEnabled={true}
-      >
-        {step === 1 && renderStep1()}
-        {step === 2 && renderStep2()}
-        {step === 3 && renderStep3()}
-        {step === 4 && renderStep4()}
-      </ScrollView>
+      {step === 3 ? (
+        <View style={styles.content}>
+          {renderStep3()}
+        </View>
+      ) : (
+        <ScrollView
+          style={styles.content}
+          showsVerticalScrollIndicator={false}
+          nestedScrollEnabled={true}
+        >
+          {step === 1 && renderStep1()}
+          {step === 2 && renderStep2()}
+          {step === 4 && renderStep4()}
+          {step === 5 && renderStep5()}
+        </ScrollView>
+      )}
 
       {/* Bottom Navigation */}
       <View style={styles.bottomNav}>
@@ -1035,15 +1351,20 @@ export default function CreateQuiz() {
           </TouchableOpacity>
         )}
 
-        {step < 4 ? (
+        {step < 5 ? (
           <TouchableOpacity
             style={[styles.nextButton,
             (step === 1 && selectedSubjects.length === 0) && styles.buttonDisabled,
-            (step === 3 && selectedQuestions.length === 0) && styles.buttonDisabled
+            (step === 3 && selectedQuestions.length === 0) && styles.buttonDisabled,
+            (step === 4 && quizSections.length === 0) && styles.buttonDisabled
             ]}
             onPress={() => {
               if (step === 1 && selectedSubjects.length === 0) return;
               if (step === 3 && selectedQuestions.length === 0) return;
+              if (step === 4 && quizSections.length === 0) {
+                 Alert.alert('Error', 'Please define at least one section');
+                 return;
+              }
               setStep(step + 1);
             }}
             disabled={(step === 1 && selectedSubjects.length === 0) || (step === 3 && selectedQuestions.length === 0)}
@@ -1059,7 +1380,7 @@ export default function CreateQuiz() {
             {creating ? (
               <ActivityIndicator color="#FFF" />
             ) : (
-              <Text style={styles.createButtonText}>Create & Assign Quiz</Text>
+              <Text style={styles.createButtonText}>{editId ? 'Update Quiz' : 'Create & Assign Quiz'}</Text>
             )}
           </TouchableOpacity>
         )}
@@ -1189,11 +1510,13 @@ const styles = StyleSheet.create({
   },
   progressContainer: {
     flexDirection: 'row',
-    justifyContent: 'center',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    padding: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     backgroundColor: '#FFF',
-    gap: 40,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
   },
   progressStep: {
     alignItems: 'center',
@@ -1218,9 +1541,20 @@ const styles = StyleSheet.create({
     color: '#FFF',
   },
   progressLabel: {
-    fontSize: 12,
+    fontSize: 10,
     color: '#6B7280',
     marginTop: 4,
+  },
+  progressLine: {
+    flex: 1,
+    height: 2,
+    backgroundColor: '#E5E7EB',
+    marginTop: -16, // Align with center of circle
+    marginHorizontal: -10,
+    zIndex: -1,
+  },
+  progressLineActive: {
+    backgroundColor: '#2563EB',
   },
   content: {
     flex: 1,
@@ -1252,6 +1586,36 @@ const styles = StyleSheet.create({
     borderColor: '#2563EB',
     backgroundColor: '#EBF5FF',
   },
+  assignmentTabs: {
+    flexDirection: 'row',
+    backgroundColor: '#F3F4F6',
+    borderRadius: 8,
+    padding: 4,
+    marginBottom: 20,
+  },
+  assignmentTab: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: 'center',
+    borderRadius: 6,
+  },
+  assignmentTabActive: {
+    backgroundColor: '#FFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  assignmentTabText: {
+    fontSize: 14,
+    color: '#6B7280',
+    fontWeight: '500',
+  },
+  assignmentTabTextActive: {
+    color: '#2563EB',
+    fontWeight: 'bold',
+  },
   testTypeIcon: {
     width: 48,
     height: 48,
@@ -1269,6 +1633,97 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: '#374151',
     marginBottom: 4,
+  },
+  infoBox: {
+    backgroundColor: '#EBF5FF',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  infoText: {
+    fontSize: 14,
+    color: '#1E40AF',
+    fontWeight: '600',
+  },
+  sectionSetupHeader: {
+    marginBottom: 8,
+  },
+  smallChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+  },
+  smallChipActive: {
+    backgroundColor: '#2563EB',
+    borderColor: '#2563EB',
+  },
+  smallChipText: {
+    fontSize: 12,
+    color: '#4B5563',
+  },
+  smallChipTextActive: {
+    color: '#FFF',
+    fontWeight: 'bold',
+  },
+  sectionConfigCard: {
+    backgroundColor: '#FFF',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  typeButton: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+  },
+  typeButtonActive: {
+    borderColor: '#2563EB',
+    backgroundColor: '#EBF5FF',
+  },
+  typeButtonText: {
+    fontSize: 13,
+    color: '#4B5563',
+  },
+  typeButtonTextActive: {
+    color: '#2563EB',
+    fontWeight: '600',
+  },
+  qTinyChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: '#F3F4F6',
+    marginRight: 6,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    maxWidth: 150,
+  },
+  qTinyChipActive: {
+    backgroundColor: '#2563EB',
+    borderColor: '#2563EB',
+  },
+  qTinyChipText: {
+    fontSize: 11,
+    color: '#6B7280',
+  },
+  qTinyChipTextActive: {
+    color: '#FFF',
   },
   testTypeNameActive: {
     color: '#2563EB',
@@ -1339,16 +1794,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#1F2937',
   },
-  infoBox: {
-    backgroundColor: '#EBF5FF',
-    borderRadius: 8,
-    padding: 12,
-    marginTop: 16,
-  },
-  infoText: {
-    fontSize: 14,
-    color: '#2563EB',
-  },
   row: {
     flexDirection: 'row',
     gap: 16,
@@ -1416,6 +1861,7 @@ const styles = StyleSheet.create({
     color: '#FFF',
   },
   studentList: {
+    flex: 1,
     minHeight: 200,
   },
   studentItem: {

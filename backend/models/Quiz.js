@@ -43,6 +43,10 @@ const quizSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   }],
+  assignedMentors: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }],
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -74,8 +78,28 @@ const quizSchema = new mongoose.Schema({
   // Solution sharing control
   shareSolution: {
     type: Boolean,
-    default: true  // Default to true to maintain current behavior and backward compatibility
-  }
+    default: true
+  },
+  // Quiz Sections (NEET style)
+  sections: [{
+    name: {
+      type: String,
+      required: true
+    },
+    duration: {
+      type: Number, // duration in minutes for this specific section
+      required: true
+    },
+    selectionType: {
+      type: String,
+      enum: ['mixed', 'manual'],
+      default: 'manual'
+    },
+    questions: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'QuestionBank'
+    }]
+  }]
 }, {
   timestamps: true
 });
@@ -92,6 +116,7 @@ quizSchema.pre('save', async function (next) {
 // Indexes
 quizSchema.index({ subject: 1, testType: 1 });
 quizSchema.index({ assignedStudents: 1, isActive: 1 });
+quizSchema.index({ assignedMentors: 1, isActive: 1 });
 quizSchema.index({ createdBy: 1 });
 
 module.exports = mongoose.model('Quiz', quizSchema);

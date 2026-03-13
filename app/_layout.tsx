@@ -240,18 +240,18 @@ class ErrorBoundary extends React.Component<
 export default function RootLayout() {
   useFrameworkReady();
 
-  useEffect(() => {
-    if (Platform.OS !== 'web') {
-      try {
-        const ScreenCapture = require('expo-screen-capture');
-        if (ScreenCapture && ScreenCapture.preventScreenCaptureAsync) {
-          ScreenCapture.preventScreenCaptureAsync().catch(console.warn);
-        }
-      } catch (e) {
-        console.warn('Failed to load expo-screen-capture', e);
-      }
-    }
-  }, []);
+  // useEffect(() => {
+  //   if (Platform.OS !== 'web') {
+  //     try {
+  //       const ScreenCapture = require('expo-screen-capture');
+  //       if (ScreenCapture && ScreenCapture.preventScreenCaptureAsync) {
+  //         ScreenCapture.preventScreenCaptureAsync().catch(console.warn);
+  //       }
+  //     } catch (e) {
+  //       console.warn('Failed to load expo-screen-capture', e);
+  //     }
+  //   }
+  // }, []);
 
   return (
     <ErrorBoundary>

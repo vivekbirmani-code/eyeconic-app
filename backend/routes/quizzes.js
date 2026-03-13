@@ -83,8 +83,14 @@ router.get('/', auth, async (req, res) => {
         return qObj;
       });
     } else if (req.user.role === 'mentor') {
-      // Mentor sees all quizzes for now
-      quizzes = await Quiz.find({ isActive: true })
+      // Mentor sees quizzes they created OR are assigned to
+      quizzes = await Quiz.find({ 
+        isActive: true,
+        $or: [
+          { createdBy: req.user._id },
+          { assignedMentors: req.user._id }
+        ]
+      })
         .populate('subject', 'name')
         .populate('createdBy', 'name')
         .populate({ path: 'questions', select: 'subject', populate: { path: 'subject', select: 'name' } })
@@ -175,7 +181,9 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
       positiveMarks,
       negativeMarks,
       scheduledDate,
-      expiryDate
+      expiryDate,
+      sections,
+      assignedMentors
     } = req.body;
 
     console.log('Creating quiz from bank:', { title, subject, subjects, testType, numberOfQuestions, selectedQuestionIds: selectedQuestionIds?.length, shareSolution });
@@ -251,7 +259,9 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
       createdBy: req.user._id,
       shareSolution: shareSolution !== undefined ? shareSolution : true,  // Default to true
       scheduledDate: scheduledDate ? new Date(scheduledDate) : undefined,
-      expiryDate: expiryDate ? new Date(expiryDate) : undefined
+      expiryDate: expiryDate ? new Date(expiryDate) : undefined,
+      sections: sections || [],
+      assignedMentors: assignedMentors || []
     });
 
     await quiz.save();
@@ -267,6 +277,14 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
       if (io) {
         io.emit('new_quiz_assigned', { quizId: quiz._id, title: quiz.title, assignedStudents });
       }
+    }
+
+    if (assignedMentors && assignedMentors.length > 0) {
+      const User = require('../models/User');
+      await User.updateMany(
+        { _id: { $in: assignedMentors } },
+        { $addToSet: { unseenQuizzes: quiz._id } }
+      );
     }
 
     console.log(`Quiz created: ${quiz._id} with ${questions.length} questions from ${subjectIds.length} subjects`);
@@ -608,7 +626,7 @@ router.post('/:id/duplicate', auth, authorize('admin'), async (req, res) => {
 // Update Quiz
 router.put('/:id', auth, authorize('admin'), async (req, res) => {
   try {
-    const { title, duration, instructions, questions, testType, subject, assignedStudents, shareSolution, scheduledDate, expiryDate, positiveMarks, negativeMarks } = req.body;
+    const { title, duration, instructions, questions, testType, subject, assignedStudents, assignedMentors, shareSolution, scheduledDate, expiryDate, positiveMarks, negativeMarks, sections } = req.body;
 
     // Check if quiz exists
     const quiz = await Quiz.findById(req.params.id);
@@ -617,6 +635,7 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
     }
 
     const prevAssigned = quiz.assignedStudents.map(id => id.toString());
+    const prevAssignedMentors = quiz.assignedMentors.map(id => id.toString());
 
     // Optional: Check for attempts if modifying critical fields
     // const attempts = await QuizAttempt.countDocuments({ quiz: req.params.id });
@@ -630,11 +649,13 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
     if (testType) quiz.testType = testType;
     if (subject) quiz.subject = subject; // Expecting single subject ID or handled by frontend
     if (assignedStudents) quiz.assignedStudents = assignedStudents;
+    if (assignedMentors) quiz.assignedMentors = assignedMentors;
     if (shareSolution !== undefined) quiz.shareSolution = shareSolution;  // Allow toggling solution sharing
     if (scheduledDate) quiz.scheduledDate = new Date(scheduledDate);
     if (expiryDate) quiz.expiryDate = new Date(expiryDate);
     if (positiveMarks !== undefined) quiz.positiveMarks = positiveMarks;
     if (negativeMarks !== undefined) quiz.negativeMarks = negativeMarks;
+    if (sections) quiz.sections = sections;
 
     if (questions && questions.length > 0) {
       quiz.questions = questions;
@@ -659,6 +680,18 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
         if (io) {
           io.emit('new_quiz_assigned', { quizId: quiz._id, title: quiz.title, assignedStudents: newlyAssigned });
         }
+      }
+    }
+
+    if (assignedMentors && assignedMentors.length > 0) {
+      const newlyAssignedMentors = assignedMentors.filter(id => !prevAssignedMentors.includes(id.toString()));
+
+      if (newlyAssignedMentors.length > 0) {
+        const User = require('../models/User');
+        await User.updateMany(
+          { _id: { $in: newlyAssignedMentors } },
+          { $addToSet: { unseenQuizzes: quiz._id } }
+        );
       }
     }
 
@@ -1069,16 +1102,29 @@ router.get('/:id', auth, async (req, res) => {
           path: 'subject',
           select: 'name'
         }
-      });
+      })
+      .populate({
+        path: 'sections.questions',
+        model: 'QuestionBank',
+        populate: {
+          path: 'subject',
+          select: 'name'
+        }
+      })
+      .populate('assignedMentors', 'name email');
 
     if (!quiz) {
       return res.status(404).json({ message: 'Quiz not found' });
     }
 
-    // Log any questions with missing subject data for debugging
-    const questionsWithoutSubject = quiz.questions.filter(q => !q.subject);
-    if (questionsWithoutSubject.length > 0) {
-      console.warn(`Quiz ${quiz._id}: ${questionsWithoutSubject.length} questions without subject data`);
+    // Check access for mentors
+    if (req.user.role === 'mentor') {
+        const isCreator = quiz.createdBy && quiz.createdBy.toString() === req.user._id.toString();
+        const isAssigned = quiz.assignedMentors.some(m => m._id.toString() === req.user._id.toString());
+        
+        if (!isCreator && !isAssigned) {
+            return res.status(403).json({ message: 'Access denied. You are not assigned to this quiz.' });
+        }
     }
 
     // Check access for students

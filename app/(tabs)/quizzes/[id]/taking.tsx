@@ -50,6 +50,12 @@ interface Quiz {
   totalMarks: number;
   questions: Question[];
   expiryDate?: string;
+  sections?: {
+    name: string;
+    duration: number;
+    selectionType: 'mixed' | 'manual';
+    questions: string[] | Question[];
+  }[];
 }
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -107,14 +113,31 @@ function QuizTakingContent() {
   // Memoize filtered questions for performance
   const filteredQuestions = useMemo(() => {
     if (!quiz) return [];
-    return currentSection === 'All'
-      ? quiz.questions
-      : quiz.questions.filter(q => getSubjectName(q) === currentSection);
+    if (currentSection === 'All') return quiz.questions;
+
+    // Use explicitly defined sections if available
+    if (quiz.sections && quiz.sections.length > 0) {
+      const sectionData = quiz.sections.find(s => s.name === currentSection);
+      if (sectionData) {
+        return quiz.questions.filter(q => {
+          const qId = typeof q === 'string' ? q : q._id;
+          return sectionData.questions.some((sq: any) => (sq._id || sq) === qId);
+        });
+      }
+    }
+
+    return quiz.questions.filter(q => getSubjectName(q) === currentSection);
   }, [quiz, currentSection, getSubjectName]);
 
   // Memoize sections to avoid recalculation
   const sections = useMemo(() => {
     if (!quiz) return [];
+    
+    // Prioritize defined sections
+    if (quiz.sections && quiz.sections.length > 0) {
+      return ['All', ...quiz.sections.map(s => s.name)];
+    }
+
     const subjects = quiz.questions.map(q => getSubjectName(q));
     return ['All', ...Array.from(new Set(subjects))];
   }, [quiz, getSubjectName]);
@@ -138,6 +161,9 @@ function QuizTakingContent() {
     return sections.reduce((acc, section) => {
       if (section === 'All') {
         acc[section] = quiz.questions.length;
+      } else if (quiz.sections && quiz.sections.length > 0) {
+        const sData = quiz.sections.find(s => s.name === section);
+        acc[section] = sData ? sData.questions.length : 0;
       } else {
         acc[section] = quiz.questions.filter(q => getSubjectName(q) === section).length;
       }

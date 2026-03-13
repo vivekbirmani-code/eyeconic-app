@@ -29,6 +29,12 @@ interface Quiz {
   attemptStatus?: any;
   scheduledDate?: string;
   expiryDate?: string;
+  sections?: {
+    name: string;
+    duration: number;
+    selectionType: 'mixed' | 'manual';
+    questions: any[];
+  }[];
 }
 
 export default function QuizInstructions() {
@@ -66,7 +72,7 @@ export default function QuizInstructions() {
           { text: 'Cancel', style: 'cancel' },
           {
             text: 'Request Retest',
-            onPress: () => router.push(`/quizzes/${id}/retest-request`)
+            onPress: () => router.push(`/quizzes/${id}/retest-request` as any)
           }
         ]
       );
@@ -110,7 +116,9 @@ export default function QuizInstructions() {
   }
 
   // Get unique sections
-  const sections = Array.from(new Set(quiz.questions.map(q => q.section || 'General')));
+  const sections = quiz.sections && quiz.sections.length > 0
+    ? quiz.sections.map(s => s.name)
+    : Array.from(new Set(quiz.questions.map(q => q.subject?.name || 'General')));
 
   const defaultInstructions = [
     'Read each question carefully before answering.',
@@ -134,7 +142,7 @@ export default function QuizInstructions() {
           </View>
           <Text style={styles.title}>{quiz.title}</Text>
           <Text style={styles.subject}>
-            {sections.length > 1
+            {(quiz.subjectNames && quiz.subjectNames.length > 1) || sections.length > 1
               ? 'MIXED'
               : (quiz.subjectNames?.[0] || (typeof quiz.subject === 'object' ? quiz.subject?.name : quiz.subject) || 'General').toUpperCase()}
           </Text>
@@ -187,12 +195,22 @@ export default function QuizInstructions() {
               📚 Number of Sections: <Text style={styles.bold}>{sections.length}</Text>
             </Text>
             {sections.map((section, index) => {
-              const sectionQuestions = quiz.questions.filter(q =>
-                (q.section || 'General') === section
-              );
+              let count = 0;
+              let secDuration = 0;
+
+              if (quiz.sections && quiz.sections.length > 0) {
+                const sData = quiz.sections.find(s => s.name === section);
+                count = sData ? sData.questions.length : 0;
+                secDuration = sData ? sData.duration : 0;
+              } else {
+                count = quiz.questions.filter(q =>
+                  (q.subject?.name || 'General') === section
+                ).length;
+              }
+
               return (
                 <Text key={index} style={styles.structureText}>
-                  • {section}: {sectionQuestions.length} questions
+                  • {section}: {count} questions {secDuration > 0 ? `(${secDuration} mins)` : ''}
                 </Text>
               );
             })}

@@ -432,7 +432,7 @@ router.post('/bulk-import-base64', auth, authorize('admin'), async (req, res) =>
 // Get questions by multiple subjects (for quiz creation - manual selection)
 router.get('/by-subjects', auth, authorize('admin'), async (req, res) => {
     try {
-        let { subjects, search } = req.query;
+        let { subjects, search, page = 1, limit = 50, topic, tag } = req.query;
 
         if (!subjects) {
             return res.status(400).json({ message: 'Subjects parameter is required' });
@@ -440,6 +440,7 @@ router.get('/by-subjects', auth, authorize('admin'), async (req, res) => {
 
         // Convert to array if single value
         const subjectIds = Array.isArray(subjects) ? subjects : [subjects];
+        const skip = (parseInt(page) - 1) * parseInt(limit);
 
         const mongoose = require('mongoose');
         const objectIdSubjects = subjectIds.map(id => new mongoose.Types.ObjectId(id));
@@ -457,13 +458,28 @@ router.get('/by-subjects', auth, authorize('admin'), async (req, res) => {
             ];
         }
 
+        if (topic) {
+            filter.topicName = { $regex: topic, $options: 'i' };
+        }
+
+        if (tag) {
+            filter.tags = { $in: [new RegExp(tag, 'i')] };
+        }
+
+        const total = await QuestionBank.countDocuments(filter);
         const questions = await QuestionBank.find(filter)
             .populate('subject', 'name')
             .select('_id qid question subject topicName options marks positiveMarks negativeMarks tags questionImage optionImages correctAnswer explanation explanationImage')
             .sort({ subject: 1, createdAt: -1 })
-            .limit(500);
+            .skip(skip)
+            .limit(parseInt(limit));
 
-        res.json(questions);
+        res.json({
+            questions,
+            total,
+            page: parseInt(page),
+            pages: Math.ceil(total / limit)
+        });
     } catch (error) {
         console.error('Error fetching questions by subjects:', error);
         res.status(500).json({ message: 'Server error', error: error.message });
