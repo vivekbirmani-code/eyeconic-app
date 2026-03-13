@@ -23,13 +23,12 @@ export default function MainLayout() {
     navigate('/login');
   };
 
-  const navItems = [
-    { name: 'Dashboard', path: '/dashboard', icon: Home },
-    ...(user?.role === 'admin' ? [{ name: 'Admin Dashboard', path: '/admin', icon: BarChart3 }] : []),
-    { name: 'Groups', path: '/groups', icon: MessageCircle },
-    { name: 'Tests', path: '/quizzes', icon: BookOpen },
-    ...(user?.role === 'admin' ? [{ name: 'Users', path: '/users', icon: Users }] : []),
-  ];
+ const navItems = [
+  { name: 'Dashboard', path: '/dashboard', icon: Home },
+  { name: 'Groups', path: '/groups', icon: MessageCircle },
+  { name: 'Tests', path: '/quizzes', icon: BookOpen },
+  ...(user?.role === 'admin' ? [{ name: 'Users', path: '/users', icon: Users }] : []),
+];
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden font-sans">
