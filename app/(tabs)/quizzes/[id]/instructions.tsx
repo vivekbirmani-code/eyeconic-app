@@ -37,6 +37,12 @@ interface Quiz {
   }[];
 }
 
+const getQuestionId = (question: any): string => {
+  if (!question) return '';
+  if (typeof question === 'string') return question;
+  return question._id || '';
+};
+
 export default function QuizInstructions() {
   const { id } = useLocalSearchParams();
   const router = useRouter();
@@ -132,6 +138,35 @@ export default function QuizInstructions() {
     ? quiz.instructions
     : defaultInstructions;
 
+  const sectionQuestionCounts = (() => {
+    const counts: Record<string, number> = {};
+    if (!quiz.sections || quiz.sections.length === 0) return counts;
+
+    const allQuestionIds = (quiz.questions || []).map(q => getQuestionId(q)).filter(Boolean);
+    const allQuestionIdSet = new Set(allQuestionIds);
+    const mixedSectionNames: string[] = [];
+    const assignedIds = new Set<string>();
+
+    quiz.sections.forEach(section => {
+      const ids = (section.questions || [])
+        .map(q => getQuestionId(q))
+        .filter(qid => qid && allQuestionIdSet.has(qid));
+      counts[section.name] = [...new Set(ids)].length;
+      ids.forEach(id => assignedIds.add(id));
+      if (section.selectionType === 'mixed') mixedSectionNames.push(section.name);
+    });
+
+    const unassignedIds = allQuestionIds.filter(id => !assignedIds.has(id));
+    if (mixedSectionNames.length > 0 && unassignedIds.length > 0) {
+      unassignedIds.forEach((_, index) => {
+        const sectionName = mixedSectionNames[index % mixedSectionNames.length];
+        counts[sectionName] = (counts[sectionName] || 0) + 1;
+      });
+    }
+
+    return counts;
+  })();
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
@@ -200,7 +235,7 @@ export default function QuizInstructions() {
 
               if (quiz.sections && quiz.sections.length > 0) {
                 const sData = quiz.sections.find(s => s.name === section);
-                count = sData ? sData.questions.length : 0;
+                count = sData ? (sectionQuestionCounts[section] ?? sData.questions.length) : 0;
                 secDuration = sData ? sData.duration : 0;
               } else {
                 count = quiz.questions.filter(q =>

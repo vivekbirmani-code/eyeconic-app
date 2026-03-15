@@ -16,6 +16,98 @@ const upload = multer({ storage: multer.memoryStorage() });
 
 const router = express.Router();
 
+const toIdString = (value) => {
+  if (!value) return null;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object' && value._id) return String(value._id);
+  return String(value);
+};
+
+const roundTo2 = (value) => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return 0;
+  return Math.round((num + Number.EPSILON) * 100) / 100;
+};
+
+const csvEscape = (value) => {
+  if (value === null || value === undefined) return '';
+  const str = String(value).replace(/\r?\n/g, ' ').trim();
+  if (/[",\n]/.test(str)) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+};
+
+const toCsvRow = (values) => values.map(csvEscape).join(',');
+
+// Normalizes sections and ensures question assignment exists for mixed sections.
+const deriveSectionsForQuestions = (rawSections, rawQuestionIds, totalDuration, options = {}) => {
+  const { strictDuration = true } = options;
+
+  if (rawSections === undefined || rawSections === null || rawSections === '') {
+    return { sections: [] };
+  }
+
+  let parsedSections = rawSections;
+  if (typeof parsedSections === 'string') {
+    try {
+      parsedSections = JSON.parse(parsedSections);
+    } catch {
+      return { error: 'Invalid sections payload' };
+    }
+  }
+
+  if (!Array.isArray(parsedSections)) {
+    return { error: 'Sections must be an array' };
+  }
+
+  const questionIds = (rawQuestionIds || []).map(toIdString).filter(Boolean);
+  const questionIdSet = new Set(questionIds);
+
+  const sections = parsedSections.map((section, index) => ({
+    name: String(section?.name || `Section ${index + 1}`).trim(),
+    duration: Number(section?.duration) || 0,
+    selectionType: section?.selectionType === 'manual' ? 'manual' : 'mixed',
+    questions: Array.isArray(section?.questions)
+      ? section.questions.map(toIdString).filter(id => id && questionIdSet.has(id))
+      : []
+  }));
+
+  const invalidSection = sections.find(section => !section.name || section.duration <= 0);
+  if (invalidSection) {
+    return { error: 'Each section needs a valid name and duration' };
+  }
+
+  if (strictDuration && Number.isFinite(totalDuration) && totalDuration > 0) {
+    const allocated = sections.reduce((sum, section) => sum + section.duration, 0);
+    if (allocated !== totalDuration) {
+      return {
+        error: `Section duration total (${allocated}) must match quiz duration (${totalDuration})`
+      };
+    }
+  }
+
+  const mixedSections = sections.filter(section => section.selectionType === 'mixed');
+  const assignedIds = new Set(
+    sections.flatMap(section => section.questions).filter(id => questionIdSet.has(id))
+  );
+  const unassignedIds = questionIds.filter(id => !assignedIds.has(id));
+
+  if (mixedSections.length > 0) {
+    unassignedIds.forEach((qid, idx) => {
+      mixedSections[idx % mixedSections.length].questions.push(qid);
+    });
+  } else if (sections.length > 0 && unassignedIds.length > 0) {
+    sections[0].questions = [...sections[0].questions, ...unassignedIds];
+  }
+
+  sections.forEach(section => {
+    section.questions = [...new Set(section.questions)];
+  });
+
+  return { sections };
+};
+
 // Get quiz stats
 router.get('/stats', auth, authorize('admin', 'mentor'), async (req, res) => {
   try {
@@ -241,6 +333,17 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
       console.log(`Only ${questions.length} questions available, requested ${numberOfQuestions}`);
     }
 
+    const questionIds = questions.map(q => q._id);
+
+    const sectionResult = deriveSectionsForQuestions(
+      sections,
+      questionIds,
+      parseInt(duration)
+    );
+    if (sectionResult.error) {
+      return res.status(400).json({ message: sectionResult.error });
+    }
+
     // Calculate total marks
     const totalMarks = questions.length * (positiveMarks !== undefined ? positiveMarks : 4);
 
@@ -251,7 +354,7 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
       testType,
       duration: parseInt(duration),
       instructions: instructions || [],
-      questions: questions.map(q => q._id),
+      questions: questionIds,
       totalMarks,
       positiveMarks: positiveMarks !== undefined ? positiveMarks : 4,
       negativeMarks: negativeMarks !== undefined ? negativeMarks : 1,
@@ -260,7 +363,7 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
       shareSolution: shareSolution !== undefined ? shareSolution : true,  // Default to true
       scheduledDate: scheduledDate ? new Date(scheduledDate) : undefined,
       expiryDate: expiryDate ? new Date(expiryDate) : undefined,
-      sections: sections || [],
+      sections: sectionResult.sections,
       assignedMentors: assignedMentors || []
     });
 
@@ -307,7 +410,7 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
       return res.status(400).json({ message: 'No file uploaded' });
     }
 
-    const { quizTitle, testType, duration, subjectId, instructions, scheduledDate, expiryDate, positiveMarks, negativeMarks } = req.body;
+    const { quizTitle, testType, duration, subjectId, instructions, scheduledDate, expiryDate, positiveMarks, negativeMarks, sections } = req.body;
 
     // Parse Excel
     const { questions: parsedQuestions, errors } = await parseExcel(req.file.buffer);
@@ -551,6 +654,15 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
       createdQuestions.map(q => q.subject?.toString()).filter(Boolean)
     )];
 
+    const sectionResult = deriveSectionsForQuestions(
+      sections,
+      questionIds,
+      parseInt(duration) || 30
+    );
+    if (sectionResult.error) {
+      return res.status(400).json({ message: sectionResult.error });
+    }
+
     // Create Quiz — use user-selected subject if provided, otherwise first question's subject
     const primarySubjectId = subjectId || firstSubjectId || createdQuestions[0]?.subject;
 
@@ -566,7 +678,8 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
       assignedStudents: [],
       createdBy: req.user._id,
       scheduledDate: scheduledDate ? new Date(scheduledDate) : undefined,
-      expiryDate: expiryDate ? new Date(expiryDate) : undefined
+      expiryDate: expiryDate ? new Date(expiryDate) : undefined,
+      sections: sectionResult.sections
     });
 
     await quiz.save();
@@ -655,13 +768,27 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
     if (expiryDate) quiz.expiryDate = new Date(expiryDate);
     if (positiveMarks !== undefined) quiz.positiveMarks = positiveMarks;
     if (negativeMarks !== undefined) quiz.negativeMarks = negativeMarks;
-    if (sections) quiz.sections = sections;
 
     if (questions && questions.length > 0) {
       quiz.questions = questions;
 
       // Recalculate total marks (optional if we want to be precise)
       quiz.totalMarks = questions.length * (quiz.positiveMarks || 4);
+    }
+
+    if (sections !== undefined) {
+      const activeQuestionIds = (questions && questions.length > 0)
+        ? questions
+        : (quiz.questions || []).map(id => toIdString(id));
+      const sectionResult = deriveSectionsForQuestions(
+        sections,
+        activeQuestionIds,
+        quiz.duration
+      );
+      if (sectionResult.error) {
+        return res.status(400).json({ message: sectionResult.error });
+      }
+      quiz.sections = sectionResult.sections;
     }
 
     await quiz.save();
@@ -827,57 +954,262 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
       .populate('questions');
     if (!quiz) return res.status(404).json({ message: 'Test not found' });
 
-    let attemptQuery = {
+    const attemptQuery = {
       quiz: req.params.testId,
       status: { $in: ['completed', 'auto_submitted'] }
     };
+
+    let totalAssigned = quiz.assignedStudents?.length || 0;
 
     if (req.user.role === 'mentor') {
       const assignments = await MentorStudentAssignment.find({ mentor: req.user._id, isActive: true }).select('student');
       const mentorStudentIds = assignments.map(a => a.student.toString());
       attemptQuery.student = { $in: mentorStudentIds };
+
+      if (quiz.assignedStudents && quiz.assignedStudents.length > 0) {
+        totalAssigned = quiz.assignedStudents.filter(id => mentorStudentIds.includes(id.toString())).length;
+      } else {
+        totalAssigned = mentorStudentIds.length;
+      }
     }
 
     const attempts = await QuizAttempt.find(attemptQuery).populate('student', 'name email');
-
     const sorted = [...attempts].sort((a, b) => (b.marksObtained || 0) - (a.marksObtained || 0));
     const total = sorted.length;
+    const quizQuestionCount = quiz.questions.length || 0;
+    const completionRate = totalAssigned > 0 ? Math.round((total / totalAssigned) * 100) : 0;
+    const marksList = sorted.map(a => Number(a.marksObtained || 0));
+    const avgScore = marksList.length > 0 ? roundTo2(marksList.reduce((sum, val) => sum + val, 0) / marksList.length) : 0;
+    const highestScore = marksList.length > 0 ? roundTo2(Math.max(...marksList)) : 0;
+    const lowestScore = marksList.length > 0 ? roundTo2(Math.min(...marksList)) : 0;
 
-    // Build CSV
-    let csv = 'Rank,Student Name,Email,Correct,Incorrect,Skipped,Marks Obtained,Total Marks,Percentage,Percentile\n';
-    sorted.forEach((a, idx) => {
-      let correct = a.score || 0;
+    const getAttemptStats = (attempt) => {
+      let correct = Number(attempt.score || 0);
       let incorrect = 0;
       let skipped = 0;
+      const totalQuestions = Number(attempt.totalQuestions || quizQuestionCount || 0);
 
-      // Extract accurate stats from sectionPerformance if they exist
-      if (a.sectionPerformance && a.sectionPerformance.length > 0) {
+      if (Array.isArray(attempt.sectionPerformance) && attempt.sectionPerformance.length > 0) {
         correct = 0;
-        a.sectionPerformance.forEach(s => {
-          correct += (s.correct || 0);
-          incorrect += (s.incorrect || 0);
-          skipped += (s.skipped || 0);
+        attempt.sectionPerformance.forEach((section) => {
+          correct += Number(section.correct || 0);
+          incorrect += Number(section.incorrect || 0);
+          skipped += Number(section.skipped || 0);
         });
       } else {
-        // Fallback for legacy attempts: compute answered questions strictly
-        // A question is answered if it exists in the answers array and selectedAnswer is not -1
-        const answeredCount = a.answers ? a.answers.filter(ans => ans.selectedAnswer !== undefined && ans.selectedAnswer !== -1).length : 0;
+        const answeredCount = Array.isArray(attempt.answers)
+          ? attempt.answers.filter(ans => ans.selectedAnswer !== undefined && ans.selectedAnswer !== -1).length
+          : 0;
         incorrect = Math.max(0, answeredCount - correct);
-        skipped = Math.max(0, (a.totalQuestions || 0) - answeredCount);
+        skipped = Math.max(0, totalQuestions - answeredCount);
       }
 
-      const pct = a.totalQuestions > 0 ? Math.round((correct / a.totalQuestions) * 100) : 0;
-      const belowCount = sorted.filter(s => (s.marksObtained || 0) < (a.marksObtained || 0)).length;
+      const answered = Math.max(0, totalQuestions - skipped);
+      const accuracy = answered > 0 ? roundTo2((correct / answered) * 100) : 0;
 
-      // New Percentile Formula: (Number of Values Below / Total Number of Values) * 100
-      const percentile = total > 0 ? Math.round((belowCount / total) * 100) : 0;
+      return {
+        correct: Math.max(0, correct),
+        incorrect: Math.max(0, incorrect),
+        skipped: Math.max(0, skipped),
+        answered,
+        totalQuestions,
+        accuracy
+      };
+    };
 
-      csv += `${idx + 1},"${a.student?.name || 'Unknown'}","${a.student?.email || ''}",${correct},${incorrect},${skipped},${a.marksObtained || 0},${a.totalMarks || 0},${pct}%,${percentile}\n`;
+    let sumCorrect = 0;
+    let sumWrong = 0;
+    let sumSkipped = 0;
+    let sumTimeMinutes = 0;
+
+    sorted.forEach((attempt) => {
+      const stats = getAttemptStats(attempt);
+      sumCorrect += stats.correct;
+      sumWrong += stats.incorrect;
+      sumSkipped += stats.skipped;
+
+      if (attempt.startTime && attempt.endTime) {
+        sumTimeMinutes += Math.max(0, (new Date(attempt.endTime) - new Date(attempt.startTime)) / 1000 / 60);
+      }
+    });
+
+    const avgCorrect = total > 0 ? roundTo2(sumCorrect / total) : 0;
+    const avgWrong = total > 0 ? roundTo2(sumWrong / total) : 0;
+    const avgSkipped = total > 0 ? roundTo2(sumSkipped / total) : 0;
+    const avgTime = total > 0 ? roundTo2(sumTimeMinutes / total) : 0;
+
+    const questionAnalytics = quiz.questions.map((question, index) => {
+      let correctCount = 0;
+      let wrongCount = 0;
+      let skippedCount = 0;
+
+      sorted.forEach((attempt) => {
+        const answer = Array.isArray(attempt.answers)
+          ? attempt.answers.find(a => a.questionIndex === index)
+          : null;
+
+        if (!answer || answer.selectedAnswer === -1 || answer.selectedAnswer === undefined) {
+          skippedCount++;
+        } else if (answer.selectedAnswer === question.correctAnswer) {
+          correctCount++;
+        } else {
+          wrongCount++;
+        }
+      });
+
+      const attemptCount = sorted.length || 1;
+      return {
+        questionNumber: index + 1,
+        topicName: question.topicName || '',
+        questionText: question.question || '',
+        correctCount,
+        wrongCount,
+        skippedCount,
+        percentCorrect: roundTo2((correctCount / attemptCount) * 100),
+        percentWrong: roundTo2((wrongCount / attemptCount) * 100),
+        percentSkipped: roundTo2((skippedCount / attemptCount) * 100)
+      };
+    });
+
+    const csvLines = [];
+    const generatedAt = new Date().toISOString();
+    const subjectName = quiz.subject?.name || 'General';
+    const testType = quiz.testType || 'N/A';
+
+    csvLines.push(toCsvRow(['Test Report']));
+    csvLines.push(toCsvRow(['Generated At', generatedAt]));
+    csvLines.push('');
+
+    csvLines.push(toCsvRow(['Test Details']));
+    csvLines.push(toCsvRow(['Test ID', 'Title', 'Subject', 'Test Type', 'Total Questions', 'Total Marks']));
+    csvLines.push(toCsvRow([
+      String(quiz._id),
+      quiz.title || '',
+      subjectName,
+      testType,
+      quizQuestionCount,
+      roundTo2(quiz.totalMarks || 0)
+    ]));
+    csvLines.push('');
+
+    csvLines.push(toCsvRow(['Overview']));
+    csvLines.push(toCsvRow(['Total Assigned', 'Total Attempted', 'Completion Rate (%)', 'Avg Score', 'Highest Score', 'Lowest Score']));
+    csvLines.push(toCsvRow([
+      totalAssigned,
+      total,
+      completionRate,
+      avgScore,
+      highestScore,
+      lowestScore
+    ]));
+    csvLines.push('');
+
+    csvLines.push(toCsvRow(['Performance Metrics']));
+    csvLines.push(toCsvRow(['Avg Correct', 'Avg Wrong', 'Avg Skipped', 'Avg Time (min)']));
+    csvLines.push(toCsvRow([avgCorrect, avgWrong, avgSkipped, avgTime]));
+    csvLines.push('');
+
+    csvLines.push(toCsvRow(['Student Performance']));
+    csvLines.push(toCsvRow([
+      'Rank',
+      'Attempt ID',
+      'Student ID',
+      'Student Name',
+      'Student Email',
+      'Correct',
+      'Incorrect',
+      'Skipped',
+      'Answered',
+      'Accuracy (%)',
+      'Score',
+      'Total Questions',
+      'Marks Obtained',
+      'Total Marks',
+      'Percentage (%)',
+      'Percentile',
+      'Time Spent (min)',
+      'Tab Switch Count',
+      'Status',
+      'Started At',
+      'Completed At',
+      'Section Breakdown'
+    ]));
+
+    sorted.forEach((attempt, idx) => {
+      const stats = getAttemptStats(attempt);
+      const marksObtained = roundTo2(attempt.marksObtained || 0);
+      const totalMarks = roundTo2(attempt.totalMarks || 0);
+      const percentage = totalMarks > 0 ? roundTo2((marksObtained / totalMarks) * 100) : 0;
+      const belowCount = sorted.filter(s => (s.marksObtained || 0) < (attempt.marksObtained || 0)).length;
+      const percentile = total > 0 ? roundTo2((belowCount / total) * 100) : 0;
+      const timeSpentMinutes = (attempt.startTime && attempt.endTime)
+        ? roundTo2((new Date(attempt.endTime) - new Date(attempt.startTime)) / 1000 / 60)
+        : 0;
+
+      const sectionBreakdown = Array.isArray(attempt.sectionPerformance) && attempt.sectionPerformance.length > 0
+        ? attempt.sectionPerformance.map((section) => {
+          const sectionName = section.sectionName || 'Section';
+          return `${sectionName} (C:${section.correct || 0}, W:${section.incorrect || 0}, S:${section.skipped || 0}, Acc:${roundTo2(section.accuracy || 0)}%)`;
+        }).join(' | ')
+        : '';
+
+      csvLines.push(toCsvRow([
+        idx + 1,
+        String(attempt._id),
+        attempt.student?._id ? String(attempt.student._id) : '',
+        attempt.student?.name || 'Unknown',
+        attempt.student?.email || '',
+        stats.correct,
+        stats.incorrect,
+        stats.skipped,
+        stats.answered,
+        stats.accuracy,
+        roundTo2(attempt.score || 0),
+        stats.totalQuestions,
+        marksObtained,
+        totalMarks,
+        percentage,
+        percentile,
+        timeSpentMinutes,
+        attempt.tabSwitchCount || 0,
+        attempt.status || '',
+        attempt.startTime ? new Date(attempt.startTime).toISOString() : '',
+        attempt.endTime ? new Date(attempt.endTime).toISOString() : '',
+        sectionBreakdown
+      ]));
+    });
+
+    csvLines.push('');
+    csvLines.push(toCsvRow(['Question-wise Analytics']));
+    csvLines.push(toCsvRow([
+      'Question Number',
+      'Topic',
+      'Question Text',
+      'Correct Count',
+      'Wrong Count',
+      'Skipped Count',
+      'Correct (%)',
+      'Wrong (%)',
+      'Skipped (%)'
+    ]));
+
+    questionAnalytics.forEach((question) => {
+      csvLines.push(toCsvRow([
+        question.questionNumber,
+        question.topicName,
+        question.questionText,
+        question.correctCount,
+        question.wrongCount,
+        question.skippedCount,
+        question.percentCorrect,
+        question.percentWrong,
+        question.percentSkipped
+      ]));
     });
 
     res.setHeader('Content-Type', 'text/csv');
     res.setHeader('Content-Disposition', `attachment; filename="${quiz.title.replace(/"/g, '')}_report.csv"`);
-    res.send(csv);
+    res.send(csvLines.join('\n'));
   } catch (error) {
     console.error('CSV export error:', error);
     res.status(500).json({ message: 'Server error' });
@@ -1155,6 +1487,18 @@ router.get('/:id', auth, async (req, res) => {
         .filter(Boolean)
     )];
     qObj.subjectNames = names.length > 0 ? names : (qObj.subject?.name ? [qObj.subject.name] : []);
+
+    if (Array.isArray(qObj.sections) && qObj.sections.length > 0) {
+      const sectionResult = deriveSectionsForQuestions(
+        qObj.sections,
+        (qObj.questions || []).map(qu => qu._id || qu),
+        qObj.duration,
+        { strictDuration: false }
+      );
+      if (!sectionResult.error) {
+        qObj.sections = sectionResult.sections;
+      }
+    }
 
     res.json(qObj);
   } catch (error) {
@@ -1444,6 +1788,8 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
       };
     });
 
+    marksObtained = roundTo2(marksObtained);
+
     // Update attempt
     attempt.status = isAutoSubmit ? 'auto_submitted' : 'completed';
     attempt.endTime = new Date();
@@ -1518,9 +1864,9 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
       attemptId: attempt._id,
       score: correctCount,
       totalQuestions: quiz.questions.length,
-      marksObtained,
+      marksObtained: roundTo2(marksObtained),
       totalMarks: quiz.totalMarks,
-      percentage: Math.round((marksObtained / quiz.totalMarks) * 100),
+      percentage: quiz.totalMarks > 0 ? Math.round((marksObtained / quiz.totalMarks) * 100) : 0,
       correctCount,
       incorrectCount,
       skippedCount
@@ -1682,7 +2028,7 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
         endTime: attempt.endTime,
         score: attempt.score,
         totalQuestions: attempt.totalQuestions,
-        marksObtained: attempt.marksObtained,
+        marksObtained: roundTo2(attempt.marksObtained),
         totalMarks: attempt.totalMarks,
         sectionPerformance: sectionPerformanceArray,
         tabSwitchCount: attempt.tabSwitchCount

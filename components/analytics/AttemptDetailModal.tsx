@@ -111,6 +111,12 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
         return `${minutes}m ${secs}s`;
     };
 
+    const formatMarks = (value: number) => {
+        const num = Number(value);
+        if (!Number.isFinite(num)) return '0';
+        return Number(num.toFixed(2)).toString();
+    };
+
     const calculateStats = () => {
         if (!attemptData) return null;
 
@@ -230,7 +236,9 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
                                         {stats.percentage}%
                                     </Text>
                                 </View>
-                                <Text style={styles.marksText}>{attemptData.attempt.marksObtained} / {attemptData.attempt.totalMarks} Marks</Text>
+                                <Text style={styles.marksText}>
+                                    {formatMarks(attemptData.attempt.marksObtained)} / {formatMarks(attemptData.attempt.totalMarks)} Marks
+                                </Text>
                             </View>
 
                             {/* Metrics Grid 1: Counts */}

@@ -78,7 +78,7 @@ app.use('/api/upload', uploadRoutes);
 app.use('/api/public', publicQuizRoutes);
 app.use('/api/student-analytics', studentAnalyticsRoutes);
 
-// Track socket to user mapping (socket.id → userId)
+// Track socket to user mapping (socket.id -> userId)
 const socketUserMap = new Map();
 const Group = require('./models/Group');
 const Message = require('./models/Message');
@@ -292,7 +292,7 @@ io.on('connection', (socket) => {
           }
         }
       } else {
-        // Fallback: no targets specified → ring the whole group (original behavior for "call all")
+        // Fallback: no targets specified -> ring the whole group (original behavior for "call all")
         socket.to(groupId).emit('incoming_call', callPayload);
       }
 
@@ -302,7 +302,7 @@ io.on('connection', (socket) => {
         senderId: initiatorId,
         senderName: initiatorName,
         messageType: 'call_start',
-        content: `📞 ${initiatorName} started a call`,
+        content: `${initiatorName} started a call`,
         callId: call._id,
         callDurationSeconds: 0
       });
@@ -466,7 +466,7 @@ io.on('connection', (socket) => {
               groupId: call.groupId,
               callId,
               finalMessageType: 'call_end',
-              content: `📞 Call ended • Duration: ${durationStr}`,
+              content: `Call ended - Duration: ${durationStr}`,
               callDurationSeconds: durationSeconds,
               fallbackSenderId: leaver?._id || userId,
               fallbackSenderName: leaverName
@@ -478,7 +478,7 @@ io.on('connection', (socket) => {
               groupId: call.groupId,
               callId,
               finalMessageType: 'call_missed',
-              content: `📞 ${initiatorName} missed a call`,
+              content: `${initiatorName} missed a call`,
               callDurationSeconds: durationSeconds,
               fallbackSenderId: call.initiator,
               fallbackSenderName: initiatorName
@@ -535,15 +535,33 @@ io.on('connection', (socket) => {
         const durationSeconds = getCallDurationSeconds(call.startTime, call.endTime);
         const durationStr = formatCallDurationLabel(durationSeconds);
 
-        await finalizeCallEventMessage({
-          groupId: call.groupId,
-          callId: call._id,
-          finalMessageType: 'call_end',
-          content: `📞 Call ended • Duration: ${durationStr}`,
-          callDurationSeconds: durationSeconds,
-          fallbackSenderId: endedBy || call.initiator,
-          fallbackSenderName: endedByName || 'Unknown'
-        });
+        const hasOtherParticipants = call.participants.some(
+          p => p.userId.toString() !== call.initiator.toString()
+        );
+
+        if (hasOtherParticipants) {
+          await finalizeCallEventMessage({
+            groupId: call.groupId,
+            callId: call._id,
+            finalMessageType: 'call_end',
+            content: `Call ended - Duration: ${durationStr}`,
+            callDurationSeconds: durationSeconds,
+            fallbackSenderId: endedBy || call.initiator,
+            fallbackSenderName: endedByName || 'Unknown'
+          });
+        } else {
+          const initiatorUser = await User.findById(call.initiator);
+          const initiatorName = initiatorUser?.name || endedByName || 'Unknown';
+          await finalizeCallEventMessage({
+            groupId: call.groupId,
+            callId: call._id,
+            finalMessageType: 'call_missed',
+            content: `${initiatorName} missed a call`,
+            callDurationSeconds: durationSeconds,
+            fallbackSenderId: call.initiator,
+            fallbackSenderName: initiatorName
+          });
+        }
 
         socket.to(call.groupId.toString()).emit('call_ended', { callId });
         socket.emit('call_ended', { callId });
@@ -583,3 +601,4 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
+

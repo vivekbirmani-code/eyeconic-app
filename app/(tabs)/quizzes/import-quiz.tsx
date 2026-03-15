@@ -50,6 +50,12 @@ interface ImportStats {
   questionsWithImages: number;
 }
 
+interface QuizSection {
+  name: string;
+  duration: number;
+  selectionType: 'mixed' | 'manual';
+}
+
 export default function ImportQuiz() {
   const { user } = useAuth();
   const router = useRouter();
@@ -66,6 +72,7 @@ export default function ImportQuiz() {
   const [negativeMarks, setNegativeMarks] = useState('1');
   const [subjectId, setSubjectId] = useState('');
   const [file, setFile] = useState<any>(null);
+  const [quizSections, setQuizSections] = useState<QuizSection[]>([]);
 
   // Time Window
   const [scheduledDate, setScheduledDate] = useState<Date | null>(null);
@@ -91,6 +98,40 @@ export default function ImportQuiz() {
     } catch (error) {
       console.error('Error fetching subjects:', error);
     }
+  };
+
+  const initializeSections = (count: number) => {
+    const totalDuration = parseInt(duration, 10) || 0;
+    const equalTime = count > 0 ? Math.floor(totalDuration / count) : 0;
+    const nextSections: QuizSection[] = [];
+
+    for (let i = 0; i < count; i++) {
+      nextSections.push({
+        name: `Section ${i + 1}`,
+        duration: i === count - 1 ? totalDuration - (equalTime * (count - 1)) : equalTime,
+        selectionType: 'mixed'
+      });
+    }
+
+    setQuizSections(nextSections);
+  };
+
+  const updateSection = (index: number, updates: Partial<QuizSection>) => {
+    setQuizSections(prev =>
+      prev.map((section, i) => (i === index ? { ...section, ...updates } : section))
+    );
+  };
+
+  const addSection = () => {
+    const nextIndex = quizSections.length + 1;
+    setQuizSections(prev => [
+      ...prev,
+      { name: `Section ${nextIndex}`, duration: 0, selectionType: 'mixed' }
+    ]);
+  };
+
+  const removeSection = (index: number) => {
+    setQuizSections(prev => prev.filter((_, i) => i !== index));
   };
 
   const pickFile = async () => {
@@ -125,6 +166,36 @@ export default function ImportQuiz() {
       return;
     }
 
+    const totalDuration = parseInt(duration, 10) || 0;
+    if (totalDuration <= 0) {
+      Alert.alert('Error', 'Duration must be greater than 0');
+      return;
+    }
+
+    let sectionPayload: Array<{ name: string; duration: number; selectionType: 'mixed' }> = [];
+    if (quizSections.length > 0) {
+      sectionPayload = quizSections.map(section => ({
+        name: section.name.trim(),
+        duration: Number(section.duration) || 0,
+        selectionType: 'mixed'
+      }));
+
+      const invalidSection = sectionPayload.find(section => !section.name || section.duration <= 0);
+      if (invalidSection) {
+        Alert.alert('Error', 'Each section must have a valid name and duration');
+        return;
+      }
+
+      const allocated = sectionPayload.reduce((sum, section) => sum + section.duration, 0);
+      if (allocated !== totalDuration) {
+        Alert.alert(
+          'Error',
+          `Section duration total (${allocated} mins) must match quiz duration (${totalDuration} mins)`
+        );
+        return;
+      }
+    }
+
     setLoading(true);
     setProgressMessage('Uploading file and processing images...');
     try {
@@ -148,6 +219,9 @@ export default function ImportQuiz() {
       }
       if (expiryDate) {
         formData.append('expiryDate', expiryDate.toISOString());
+      }
+      if (sectionPayload.length > 0) {
+        formData.append('sections', JSON.stringify(sectionPayload));
       }
       // Instructions can be added if needed, defaulted by backend for now
 
@@ -262,6 +336,56 @@ export default function ImportQuiz() {
               />
             </View>
           </View>
+
+          <Text style={styles.label}>Sections (Optional)</Text>
+          <View style={styles.infoBox}>
+            <Text style={styles.infoText}>
+              Total Duration: {parseInt(duration, 10) || 0} mins | Allocated: {quizSections.reduce((sum, s) => sum + (Number(s.duration) || 0), 0)} mins
+            </Text>
+            <Text style={styles.infoHint}>
+              Imported questions are auto-distributed across sections when you set sections.
+            </Text>
+          </View>
+
+          <View style={styles.quickCountRow}>
+            {[1, 2, 3, 4, 5].map(n => (
+              <TouchableOpacity
+                key={n}
+                style={[styles.smallChip, quizSections.length === n && styles.smallChipActive]}
+                onPress={() => initializeSections(n)}
+              >
+                <Text style={[styles.smallChipText, quizSections.length === n && styles.smallChipTextActive]}>
+                  {n}
+                </Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity style={styles.addSectionButton} onPress={addSection}>
+              <Text style={styles.addSectionButtonText}>+ Add</Text>
+            </TouchableOpacity>
+          </View>
+
+          {quizSections.map((section, idx) => (
+            <View key={`${section.name}-${idx}`} style={styles.sectionConfigCard}>
+              <View style={styles.sectionRow}>
+                <TextInput
+                  style={[styles.input, { flex: 2, marginRight: 8 }]}
+                  value={section.name}
+                  onChangeText={(val) => updateSection(idx, { name: val })}
+                  placeholder="Section Name"
+                />
+                <TextInput
+                  style={[styles.input, { flex: 1 }]}
+                  value={String(section.duration || '')}
+                  onChangeText={(val) => updateSection(idx, { duration: parseInt(val, 10) || 0 })}
+                  keyboardType="numeric"
+                  placeholder="Mins"
+                />
+                <TouchableOpacity style={styles.sectionDeleteButton} onPress={() => removeSection(idx)}>
+                  <X color="#EF4444" size={16} />
+                </TouchableOpacity>
+              </View>
+            </View>
+          ))}
 
           <Text style={styles.label}>Primary Subject (Optional)</Text>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.subjectScroll}>
@@ -542,6 +666,80 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+  },
+  infoBox: {
+    backgroundColor: '#EBF5FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 10,
+  },
+  infoText: {
+    fontSize: 13,
+    color: '#1E40AF',
+    fontWeight: '600',
+  },
+  infoHint: {
+    marginTop: 4,
+    fontSize: 12,
+    color: '#1E40AF',
+  },
+  quickCountRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+    gap: 8,
+  },
+  smallChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+  },
+  smallChipActive: {
+    backgroundColor: '#2563EB',
+    borderColor: '#2563EB',
+  },
+  smallChipText: {
+    fontSize: 12,
+    color: '#4B5563',
+  },
+  smallChipTextActive: {
+    color: '#FFF',
+    fontWeight: '700',
+  },
+  addSectionButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#2563EB',
+    marginLeft: 'auto',
+  },
+  addSectionButtonText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  sectionConfigCard: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    padding: 10,
+    marginBottom: 8,
+  },
+  sectionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  sectionDeleteButton: {
+    marginLeft: 8,
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: '#FEE2E2',
   },
   typeContainer: {
     flexDirection: 'row',

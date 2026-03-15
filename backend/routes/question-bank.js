@@ -438,12 +438,27 @@ router.get('/by-subjects', auth, authorize('admin'), async (req, res) => {
             return res.status(400).json({ message: 'Subjects parameter is required' });
         }
 
-        // Convert to array if single value
-        const subjectIds = Array.isArray(subjects) ? subjects : [subjects];
+        // Normalize: supports repeated query params and comma-separated values.
+        const subjectIds = (Array.isArray(subjects) ? subjects : [subjects])
+            .flatMap(s => String(s).split(','))
+            .map(s => s.trim())
+            .filter(Boolean);
+        const uniqueSubjectIds = [...new Set(subjectIds)];
         const skip = (parseInt(page) - 1) * parseInt(limit);
 
         const mongoose = require('mongoose');
-        const objectIdSubjects = subjectIds.map(id => new mongoose.Types.ObjectId(id));
+        const objectIdSubjects = uniqueSubjectIds
+            .filter(id => mongoose.Types.ObjectId.isValid(id))
+            .map(id => new mongoose.Types.ObjectId(id));
+
+        if (objectIdSubjects.length === 0) {
+            return res.status(200).json({
+                questions: [],
+                total: 0,
+                page: parseInt(page),
+                pages: 0
+            });
+        }
 
         const filter = {
             isActive: true,

@@ -118,6 +118,12 @@ export default function Analytics() {
   const { user } = useAuth();
   const router = useRouter();
 
+  const formatMarks = (value: number) => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return '0';
+    return Number(num.toFixed(2)).toString();
+  };
+
   // Tab state
   const [activeTab, setActiveTab] = useState<'test' | 'student' | 'heatmap'>('test');
 
@@ -475,7 +481,7 @@ export default function Analytics() {
                     </View>
                     <View style={styles.summaryCard}>
                       <Text style={[styles.summaryNumber, { fontSize: 20 }]}>
-                        {studentAnalytics.summary.obtainedMarks}/{studentAnalytics.summary.totalMarks}
+                        {formatMarks(studentAnalytics.summary.obtainedMarks)}/{formatMarks(studentAnalytics.summary.totalMarks)}
                       </Text>
                       <Text style={styles.summaryLabel}>Total Marks</Text>
                     </View>
@@ -575,7 +581,7 @@ export default function Analytics() {
                           <View style={styles.attemptStat}>
                             <Text style={styles.attemptStatLabel}>Marks</Text>
                             <Text style={styles.attemptStatValue}>
-                              {attempt.marksObtained}/{attempt.totalMarks}
+                              {formatMarks(attempt.marksObtained)}/{formatMarks(attempt.totalMarks)}
                             </Text>
                           </View>
                           <View style={styles.attemptStat}>

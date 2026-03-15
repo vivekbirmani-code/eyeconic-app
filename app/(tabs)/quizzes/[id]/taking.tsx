@@ -58,6 +58,12 @@ interface Quiz {
   }[];
 }
 
+const getQuestionId = (question: any): string => {
+  if (!question) return '';
+  if (typeof question === 'string') return question;
+  return question._id || '';
+};
+
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
 function QuizTakingContent() {
@@ -110,25 +116,6 @@ function QuizTakingContent() {
     return question.subject?.name || question.subjectName || 'Uncategorized';
   }, []);
 
-  // Memoize filtered questions for performance
-  const filteredQuestions = useMemo(() => {
-    if (!quiz) return [];
-    if (currentSection === 'All') return quiz.questions;
-
-    // Use explicitly defined sections if available
-    if (quiz.sections && quiz.sections.length > 0) {
-      const sectionData = quiz.sections.find(s => s.name === currentSection);
-      if (sectionData) {
-        return quiz.questions.filter(q => {
-          const qId = typeof q === 'string' ? q : q._id;
-          return sectionData.questions.some((sq: any) => (sq._id || sq) === qId);
-        });
-      }
-    }
-
-    return quiz.questions.filter(q => getSubjectName(q) === currentSection);
-  }, [quiz, currentSection, getSubjectName]);
-
   // Memoize sections to avoid recalculation
   const sections = useMemo(() => {
     if (!quiz) return [];
@@ -141,6 +128,61 @@ function QuizTakingContent() {
     const subjects = quiz.questions.map(q => getSubjectName(q));
     return ['All', ...Array.from(new Set(subjects))];
   }, [quiz, getSubjectName]);
+
+  const sectionQuestionIdsMap = useMemo(() => {
+    if (!quiz || !quiz.sections || quiz.sections.length === 0) return {} as Record<string, string[]>;
+
+    const allQuestionIds = quiz.questions.map(q => getQuestionId(q)).filter(Boolean);
+    const allQuestionIdSet = new Set(allQuestionIds);
+
+    const map: Record<string, string[]> = {};
+    const mixedSectionNames: string[] = [];
+    const assignedQuestionIds = new Set<string>();
+
+    quiz.sections.forEach(section => {
+      const normalizedIds = (section.questions || [])
+        .map(q => getQuestionId(q))
+        .filter(qid => qid && allQuestionIdSet.has(qid));
+
+      map[section.name] = [...new Set(normalizedIds)];
+      map[section.name].forEach(qid => assignedQuestionIds.add(qid));
+
+      if (section.selectionType === 'mixed') {
+        mixedSectionNames.push(section.name);
+      }
+    });
+
+    const unassignedQuestionIds = allQuestionIds.filter(qid => !assignedQuestionIds.has(qid));
+    if (mixedSectionNames.length > 0 && unassignedQuestionIds.length > 0) {
+      unassignedQuestionIds.forEach((qid, index) => {
+        const sectionName = mixedSectionNames[index % mixedSectionNames.length];
+        map[sectionName] = [...new Set([...(map[sectionName] || []), qid])];
+      });
+    }
+
+    return map;
+  }, [quiz]);
+
+  const activeQuestionIndexes = useMemo(() => {
+    if (!quiz) return [];
+    if (currentSection === 'All') return quiz.questions.map((_, index) => index);
+
+    if (quiz.sections && quiz.sections.length > 0) {
+      const sectionQuestionIds = new Set(sectionQuestionIdsMap[currentSection] || []);
+      return quiz.questions
+        .map((question, index) => (sectionQuestionIds.has(getQuestionId(question)) ? index : -1))
+        .filter(index => index !== -1);
+    }
+
+    return quiz.questions
+      .map((question, index) => (getSubjectName(question) === currentSection ? index : -1))
+      .filter(index => index !== -1);
+  }, [quiz, currentSection, getSubjectName, sectionQuestionIdsMap]);
+
+  const currentQuestionPosition = useMemo(
+    () => activeQuestionIndexes.indexOf(currentQuestionIndex),
+    [activeQuestionIndexes, currentQuestionIndex]
+  );
 
   // Memoize question statuses
   const questionStatuses = useMemo(() => {
@@ -162,14 +204,13 @@ function QuizTakingContent() {
       if (section === 'All') {
         acc[section] = quiz.questions.length;
       } else if (quiz.sections && quiz.sections.length > 0) {
-        const sData = quiz.sections.find(s => s.name === section);
-        acc[section] = sData ? sData.questions.length : 0;
+        acc[section] = sectionQuestionIdsMap[section]?.length || 0;
       } else {
         acc[section] = quiz.questions.filter(q => getSubjectName(q) === section).length;
       }
       return acc;
     }, {} as { [key: string]: number });
-  }, [quiz, sections, getSubjectName]);
+  }, [quiz, sections, getSubjectName, sectionQuestionIdsMap]);
 
 
 
@@ -204,18 +245,6 @@ function QuizTakingContent() {
     setQuestionStartTime(Date.now());
     setSaveError(false);
 
-    // Auto-update section tab based on current question
-    if (quiz) {
-      const question = quiz.questions[currentQuestionIndex];
-      const subject = getSubjectName(question);
-      if (subject !== 'Uncategorized' && subject !== currentSection) {
-        setCurrentSection(subject);
-      } else if (subject === 'Uncategorized' && currentSection !== 'All') {
-        // If question is uncategorized and we are in a section, might want to stay or go to All
-        // Decided: stay in current section if navigating manually, but usually they follow order.
-      }
-    }
-
     // Animate question change
     Animated.sequence([
       Animated.timing(fadeAnim, {
@@ -230,6 +259,19 @@ function QuizTakingContent() {
       }),
     ]).start();
   }, [currentQuestionIndex, currentAttempt, quiz]);
+
+  useEffect(() => {
+    if (activeQuestionIndexes.length === 0) return;
+    if (!activeQuestionIndexes.includes(currentQuestionIndex)) {
+      setCurrentQuestionIndex(activeQuestionIndexes[0]);
+    }
+  }, [activeQuestionIndexes, currentQuestionIndex]);
+
+  useEffect(() => {
+    if (currentSection !== 'All' && activeQuestionIndexes.length === 0) {
+      setCurrentSection('All');
+    }
+  }, [currentSection, activeQuestionIndexes]);
 
   const fetchQuizDetails = async () => {
     try {
@@ -310,7 +352,8 @@ function QuizTakingContent() {
   }, [markedForReview, currentQuestionIndex, selectedAnswer, questionStartTime, saveAnswer]);
 
   const handleNextQuestion = useCallback(async () => {
-    if (quiz && currentQuestionIndex < quiz.questions.length - 1) {
+    const activeIndex = activeQuestionIndexes.indexOf(currentQuestionIndex);
+    if (quiz && activeIndex !== -1 && activeIndex < activeQuestionIndexes.length - 1) {
       // Save current progress/time before moving
       const timeSpent = Math.floor((Date.now() - questionStartTime) / 1000);
       try {
@@ -319,13 +362,14 @@ function QuizTakingContent() {
         console.error('Save failed on skip:', err);
       }
 
-      setCurrentQuestionIndex(prev => prev + 1);
+      setCurrentQuestionIndex(activeQuestionIndexes[activeIndex + 1]);
       scrollViewRef.current?.scrollTo({ y: 0, animated: false });
     }
-  }, [quiz, currentQuestionIndex, questionStartTime, selectedAnswer, markedForReview, saveAnswer]);
+  }, [quiz, currentQuestionIndex, activeQuestionIndexes, questionStartTime, selectedAnswer, markedForReview, saveAnswer]);
 
   const handlePreviousQuestion = useCallback(async () => {
-    if (currentQuestionIndex > 0) {
+    const activeIndex = activeQuestionIndexes.indexOf(currentQuestionIndex);
+    if (activeIndex > 0) {
       // Save current progress/time before moving
       const timeSpent = Math.floor((Date.now() - questionStartTime) / 1000);
       try {
@@ -334,10 +378,10 @@ function QuizTakingContent() {
         console.error('Save failed on skip back:', err);
       }
 
-      setCurrentQuestionIndex(prev => prev - 1);
+      setCurrentQuestionIndex(activeQuestionIndexes[activeIndex - 1]);
       scrollViewRef.current?.scrollTo({ y: 0, animated: false });
     }
-  }, [currentQuestionIndex, questionStartTime, selectedAnswer, markedForReview, saveAnswer]);
+  }, [currentQuestionIndex, activeQuestionIndexes, questionStartTime, selectedAnswer, markedForReview, saveAnswer]);
 
   const handleQuestionSelect = useCallback((index: number) => {
     setCurrentQuestionIndex(index);
@@ -431,15 +475,26 @@ function QuizTakingContent() {
   const handleSectionChange = useCallback((section: string) => {
     setCurrentSection(section);
 
-    if (section !== 'All' && quiz) {
-      const firstQuestionInSection = quiz.questions.findIndex(
-        q => getSubjectName(q) === section
-      );
-      if (firstQuestionInSection !== -1) {
-        setCurrentQuestionIndex(firstQuestionInSection);
+    if (!quiz) return;
+    if (section === 'All') {
+      if (currentQuestionIndex < 0 || currentQuestionIndex >= quiz.questions.length) {
+        setCurrentQuestionIndex(0);
       }
+      return;
     }
-  }, [quiz, getSubjectName]);
+
+    let firstQuestionInSection = -1;
+    if (quiz.sections && quiz.sections.length > 0) {
+      const sectionIds = new Set(sectionQuestionIdsMap[section] || []);
+      firstQuestionInSection = quiz.questions.findIndex(q => sectionIds.has(getQuestionId(q)));
+    } else {
+      firstQuestionInSection = quiz.questions.findIndex(q => getSubjectName(q) === section);
+    }
+
+    if (firstQuestionInSection !== -1) {
+      setCurrentQuestionIndex(firstQuestionInSection);
+    }
+  }, [quiz, getSubjectName, sectionQuestionIdsMap, currentQuestionIndex]);
 
   useEffect(() => {
     // Fetch quiz details only on mount/id change
@@ -600,7 +655,7 @@ function QuizTakingContent() {
               {/* Question Header */}
               <View style={styles.questionHeader}>
                 <Text style={styles.questionNumber}>
-                  Question {currentQuestionIndex + 1} of {quiz.questions.length}
+                  Question {Math.max(currentQuestionPosition, 0) + 1} of {activeQuestionIndexes.length || quiz.questions.length}
                 </Text>
                 <View style={styles.badges}>
                   <View style={styles.sectionBadge}>
@@ -724,12 +779,12 @@ function QuizTakingContent() {
               <TouchableOpacity
                 style={[styles.navButton, styles.prevButton]}
                 onPress={handlePreviousQuestion}
-                disabled={currentQuestionIndex === 0}
+                disabled={currentQuestionPosition <= 0}
               >
-                <ChevronLeft color={currentQuestionIndex === 0 ? '#9CA3AF' : '#2563EB'} size={20} />
+                <ChevronLeft color={currentQuestionPosition <= 0 ? '#9CA3AF' : '#2563EB'} size={20} />
                 <Text style={[
                   styles.navButtonText,
-                  currentQuestionIndex === 0 && styles.disabledText
+                  currentQuestionPosition <= 0 && styles.disabledText
                 ]}>
                   Prev
                 </Text>
@@ -738,16 +793,16 @@ function QuizTakingContent() {
               <TouchableOpacity
                 style={[styles.navButton, styles.nextButton]}
                 onPress={handleNextQuestion}
-                disabled={currentQuestionIndex === quiz.questions.length - 1}
+                disabled={currentQuestionPosition === -1 || currentQuestionPosition >= activeQuestionIndexes.length - 1}
               >
                 <Text style={[
                   styles.navButtonText,
-                  currentQuestionIndex === quiz.questions.length - 1 && styles.disabledText
+                  (currentQuestionPosition === -1 || currentQuestionPosition >= activeQuestionIndexes.length - 1) && styles.disabledText
                 ]}>
                   Next
                 </Text>
                 <ChevronRight
-                  color={currentQuestionIndex === quiz.questions.length - 1 ? '#9CA3AF' : '#2563EB'}
+                  color={(currentQuestionPosition === -1 || currentQuestionPosition >= activeQuestionIndexes.length - 1) ? '#9CA3AF' : '#2563EB'}
                   size={20}
                 />
               </TouchableOpacity>

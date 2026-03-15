@@ -17,12 +17,14 @@ router.get('/', auth, async (req, res) => {
     if (req.user.role === 'admin') {
       groups = await Group.find()
         .populate('members', 'name email role')
+        .populate('mentors', 'name email role')
         .populate('createdBy', 'name');
     } else {
       groups = await Group.find({
         members: req.user._id
       })
         .populate('members', 'name email role')
+        .populate('mentors', 'name email role')
         .populate('createdBy', 'name');
     }
 

@@ -64,6 +64,12 @@ export default function QuizReview() {
   const [groupBy, setGroupBy] = useState<'subject' | 'tag' | 'topic'>('subject');
   const [showGroupByDropdown, setShowGroupByDropdown] = useState(false);
 
+  const formatMarks = (value: number) => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return '0';
+    return Number(num.toFixed(2)).toString();
+  };
+
   useEffect(() => {
     fetchReviewData();
   }, [groupBy]);
@@ -211,7 +217,9 @@ export default function QuizReview() {
                 <Award color="#2563EB" size={24} />
                 <View>
                   <Text style={styles.summaryLabel}>Score</Text>
-                  <Text style={styles.summaryValue}>{reviewData.marksObtained}/{reviewData.quiz.totalMarks}</Text>
+                  <Text style={styles.summaryValue}>
+                    {formatMarks(reviewData.marksObtained)}/{formatMarks(reviewData.quiz.totalMarks)}
+                  </Text>
                 </View>
               </View>
               <View style={styles.divider} />
@@ -270,7 +278,7 @@ export default function QuizReview() {
                   fontWeight="bold"
                   fontSize="24"
                 >
-                  {reviewData.marksObtained}
+                  {formatMarks(reviewData.marksObtained)}
                 </SvgText>
                 <SvgText
                   x="100"

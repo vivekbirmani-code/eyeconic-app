@@ -18,7 +18,7 @@ import {
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
-import { Plus, MessageCircle, Users, Search, X, Check, ChevronDown, ChevronUp, Pencil } from 'lucide-react-native';
+import { Plus, MessageCircle, Users, Search, X, Check, ChevronDown, ChevronUp, Pencil, Folder } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from '@/utils/haptics';
 import { useAuth } from '@/context/AuthContext';
@@ -36,9 +36,18 @@ interface User {
 interface Group {
   _id: string;
   name: string;
-  description: string;
+  description?: string;
+  type?: 'general' | 'mentors' | 'admin';
   members: User[];
+  mentors?: User[];
   createdBy: { name: string };
+}
+
+interface MentorFolder {
+  key: string;
+  title: string;
+  mentorEmail: string;
+  groups: Group[];
 }
 
 export default function Groups() {
@@ -64,6 +73,7 @@ export default function Groups() {
   const [isSearching, setIsSearching] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
 
   // Edit group state
   const [editGroup, setEditGroup] = useState<Group | null>(null);
@@ -142,23 +152,129 @@ export default function Groups() {
     };
   }, [socket, fetchGroups]);
 
-  // Filter and sort groups: notifications first, then alphabetically
+  const normalizedGroupSearchQuery = groupSearchQuery.trim().toLowerCase();
+
+  const sortGroupsByPriority = useCallback((groupList: Group[]) => {
+    return [...groupList].sort((a, b) => {
+      const unreadA = unreadCounts[a._id] || 0;
+      const unreadB = unreadCounts[b._id] || 0;
+
+      if (unreadA > 0 && unreadB === 0) return -1;
+      if (unreadA === 0 && unreadB > 0) return 1;
+
+      return a.name.localeCompare(b.name);
+    });
+  }, [unreadCounts]);
+
+  const matchesGroupSearch = useCallback((group: Group) => {
+    if (!normalizedGroupSearchQuery) return true;
+    return (
+      group.name.toLowerCase().includes(normalizedGroupSearchQuery) ||
+      group.description?.toLowerCase().includes(normalizedGroupSearchQuery)
+    );
+  }, [normalizedGroupSearchQuery]);
+
+  // Non-admin list behavior
   const filteredAndSortedGroups = useMemo(() => {
-    return groups
-      .filter((g) => 
-        g.name.toLowerCase().includes(groupSearchQuery.toLowerCase()) ||
-        g.description?.toLowerCase().includes(groupSearchQuery.toLowerCase())
-      )
-      .sort((a, b) => {
-        const unreadA = unreadCounts[a._id] || 0;
-        const unreadB = unreadCounts[b._id] || 0;
+    return sortGroupsByPriority(groups.filter(matchesGroupSearch));
+  }, [groups, matchesGroupSearch, sortGroupsByPriority]);
 
-        if (unreadA > 0 && unreadB === 0) return -1;
-        if (unreadA === 0 && unreadB > 0) return 1;
+  // Admin view: show student groups in mentor-wise folders
+  const { mentorFolders, otherGroups } = useMemo(() => {
+    if (user?.role !== 'admin') {
+      return {
+        mentorFolders: [] as MentorFolder[],
+        otherGroups: [] as Group[],
+      };
+    }
 
-        return a.name.localeCompare(b.name);
+    const studentGroups: Group[] = [];
+    const nonStudentGroups: Group[] = [];
+
+    groups.forEach((group) => {
+      const hasStudent = group.members?.some((member) => member.role === 'student');
+      if ((group.type || 'general') === 'general' && hasStudent) {
+        studentGroups.push(group);
+      } else {
+        nonStudentGroups.push(group);
+      }
+    });
+
+    const foldersMap = new Map<string, MentorFolder>();
+
+    const ensureFolder = (key: string, title: string, mentorEmail = '') => {
+      if (!foldersMap.has(key)) {
+        foldersMap.set(key, { key, title, mentorEmail, groups: [] });
+      }
+      return foldersMap.get(key)!;
+    };
+
+    studentGroups.forEach((group) => {
+      const mentorsForGroup = new Map<string, User>();
+
+      if (Array.isArray(group.mentors)) {
+        group.mentors.forEach((mentor: any) => {
+          if (mentor && typeof mentor === 'object' && mentor._id) {
+            mentorsForGroup.set(String(mentor._id), mentor as User);
+          }
+        });
+      }
+
+      group.members?.forEach((member) => {
+        if (member.role === 'mentor') {
+          mentorsForGroup.set(member._id, member);
+        }
       });
-  }, [groups, groupSearchQuery, unreadCounts]);
+
+      if (mentorsForGroup.size === 0) {
+        ensureFolder('unassigned', 'Unassigned').groups.push(group);
+        return;
+      }
+
+      mentorsForGroup.forEach((mentor) => {
+        ensureFolder(mentor._id, mentor.name, mentor.email || '').groups.push(group);
+      });
+    });
+
+    const folders = Array.from(foldersMap.values())
+      .map((folder) => {
+        const mentorMatches = !!normalizedGroupSearchQuery && (
+          folder.title.toLowerCase().includes(normalizedGroupSearchQuery) ||
+          folder.mentorEmail.toLowerCase().includes(normalizedGroupSearchQuery)
+        );
+
+        const visibleGroups = sortGroupsByPriority(
+          folder.groups.filter((group) => mentorMatches || matchesGroupSearch(group))
+        );
+
+        return {
+          ...folder,
+          groups: visibleGroups,
+        };
+      })
+      .filter((folder) => folder.groups.length > 0)
+      .sort((a, b) => {
+        if (a.key === 'unassigned') return 1;
+        if (b.key === 'unassigned') return -1;
+        return a.title.localeCompare(b.title);
+      });
+
+    return {
+      mentorFolders: folders,
+      otherGroups: sortGroupsByPriority(nonStudentGroups.filter(matchesGroupSearch)),
+    };
+  }, [groups, matchesGroupSearch, normalizedGroupSearchQuery, sortGroupsByPriority, user?.role]);
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    setCollapsedFolders((prev) => {
+      const next: Record<string, boolean> = {};
+      mentorFolders.forEach((folder) => {
+        next[folder.key] = prev[folder.key] ?? false;
+      });
+      return next;
+    });
+  }, [mentorFolders, user?.role]);
 
   const searchUsers = useCallback(async (query: string, role: string) => {
     if (!query.trim()) {
@@ -408,6 +524,50 @@ export default function Groups() {
     );
   };
 
+  const toggleFolder = (folderKey: string) => {
+    setCollapsedFolders((prev) => ({
+      ...prev,
+      [folderKey]: !prev[folderKey],
+    }));
+  };
+
+  const renderMentorFolder = ({ item }: { item: MentorFolder }) => {
+    const isCollapsed = !!collapsedFolders[item.key];
+
+    return (
+      <View style={styles.mentorFolderCard}>
+        <TouchableOpacity
+          style={styles.mentorFolderHeader}
+          onPress={() => toggleFolder(item.key)}
+          activeOpacity={0.85}
+        >
+          <View style={styles.mentorFolderHeaderLeft}>
+            <View style={styles.mentorFolderIcon}>
+              <Folder color="#01b4ae" size={18} />
+            </View>
+            <View>
+              <Text style={styles.mentorFolderTitle}>{item.title}</Text>
+              <Text style={styles.mentorFolderSubtitle}>
+                {item.groups.length} student group{item.groups.length === 1 ? '' : 's'}
+              </Text>
+            </View>
+          </View>
+          {isCollapsed ? <ChevronDown color="#6B7280" size={18} /> : <ChevronUp color="#6B7280" size={18} />}
+        </TouchableOpacity>
+
+        {!isCollapsed && (
+          <View style={styles.mentorFolderContent}>
+            {item.groups.map((group) => (
+              <View key={group._id} style={styles.mentorFolderGroupItem}>
+                {renderGroup({ item: group })}
+              </View>
+            ))}
+          </View>
+        )}
+      </View>
+    );
+  };
+
   /* eslint-disable react/display-name */
   const renderSelectedUser = (userItem: User, onRemove: () => void) => (
     <View key={userItem._id} style={styles.selectedChip}>
@@ -471,7 +631,7 @@ export default function Groups() {
           <Search color="#6B7280" size={18} />
           <TextInput
             style={styles.groupSearchInput}
-            placeholder="Search groups..."
+            placeholder={user?.role === 'admin' ? 'Search groups or mentors...' : 'Search groups...'}
             placeholderTextColor="#9CA3AF"
             value={groupSearchQuery}
             onChangeText={setGroupSearchQuery}
@@ -507,22 +667,42 @@ export default function Groups() {
             transform: [{ translateY: cardsSlideY }],
           }}
         >
-          <FlatList
-            data={filteredAndSortedGroups}
-            renderItem={renderGroup}
-            keyExtractor={(item) => item._id}
-            contentContainerStyle={styles.list}
-            showsVerticalScrollIndicator={false}
-            ListEmptyComponent={
-              <View style={styles.emptyContainer}>
-                <View style={styles.emptyIconContainer}>
-                  <MessageCircle color="#01b4ae" size={48} />
+          {user?.role === 'admin' ? (
+            <ScrollView
+              contentContainerStyle={[styles.list, styles.adminScrollContent]}
+              showsVerticalScrollIndicator={false}
+              scrollIndicatorInsets={{ bottom: 120 }}
+            >
+              {mentorFolders.map((folder) => (
+                <View key={folder.key}>
+                  {renderMentorFolder({ item: folder })}
                 </View>
-                <Text style={styles.emptyTitle}>No groups yet</Text>
-                <Text style={styles.emptySubtext}>
-                  Create your first group to get started
-                </Text>
-                {user?.role === 'admin' && (
+              ))}
+
+              {otherGroups.length > 0 && (
+                <View style={styles.otherGroupsSection}>
+                  <Text style={styles.otherGroupsTitle}>Other Groups</Text>
+                  {otherGroups.map((group) => (
+                    <View key={group._id}>
+                      {renderGroup({ item: group })}
+                    </View>
+                  ))}
+                </View>
+              )}
+
+              {mentorFolders.length === 0 && otherGroups.length === 0 && (
+                <View style={styles.emptyContainer}>
+                  <View style={styles.emptyIconContainer}>
+                    <MessageCircle color="#01b4ae" size={48} />
+                  </View>
+                  <Text style={styles.emptyTitle}>
+                    {groupSearchQuery.trim() ? 'No matching groups' : 'No groups yet'}
+                  </Text>
+                  <Text style={styles.emptySubtext}>
+                    {groupSearchQuery.trim()
+                      ? 'Try changing search text'
+                      : 'Create your first group to get started'}
+                  </Text>
                   <TouchableOpacity
                     style={styles.emptyCreateButton}
                     onPress={() => setIsModalVisible(true)}
@@ -530,10 +710,29 @@ export default function Groups() {
                     <Plus color="#FFFFFF" size={20} />
                     <Text style={styles.emptyCreateButtonText}>Create Group</Text>
                   </TouchableOpacity>
-                )}
-              </View>
-            }
-          />
+                </View>
+              )}
+            </ScrollView>
+          ) : (
+            <FlatList
+              data={filteredAndSortedGroups}
+              renderItem={renderGroup}
+              keyExtractor={(item) => item._id}
+              contentContainerStyle={styles.list}
+              showsVerticalScrollIndicator={false}
+              ListEmptyComponent={
+                <View style={styles.emptyContainer}>
+                  <View style={styles.emptyIconContainer}>
+                    <MessageCircle color="#01b4ae" size={48} />
+                  </View>
+                  <Text style={styles.emptyTitle}>No groups yet</Text>
+                  <Text style={styles.emptySubtext}>
+                    Create your first group to get started
+                  </Text>
+                </View>
+              }
+            />
+          )}
         </Animated.View>
       )}
 
@@ -813,6 +1012,63 @@ const styles = StyleSheet.create({
   list: {
     padding: 20,
     gap: 12,
+  },
+  adminScrollContent: {
+    paddingBottom: 140,
+  },
+  mentorFolderCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    padding: 12,
+    marginBottom: 12,
+  },
+  mentorFolderHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+  },
+  mentorFolderHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+  mentorFolderIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#E0F7F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  mentorFolderTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1F2937',
+  },
+  mentorFolderSubtitle: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 2,
+  },
+  mentorFolderContent: {
+    marginTop: 10,
+  },
+  mentorFolderGroupItem: {
+    marginBottom: 0,
+  },
+  otherGroupsSection: {
+    marginTop: 6,
+  },
+  otherGroupsTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#374151',
+    marginBottom: 10,
   },
   // Skeleton loading styles
   skeletonCard: {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -51,17 +51,57 @@ interface Quiz {
   _id: string;
   title: string;
   subject: { _id: string; name: string };
+  subjectNames?: string[];
   testType: string;
   duration: number;
   instructions: string[];
   questions: Question[];
   totalMarks: number;
+  scheduledDate?: string;
+  expiryDate?: string;
+  sections?: Array<{
+    name: string;
+    duration: number;
+    selectionType?: 'mixed' | 'manual';
+    questions?: Array<Question | string>;
+  }>;
 }
 
 interface Subject {
   _id: string;
   name: string;
 }
+
+interface QuizSection {
+  name: string;
+  duration: number;
+  selectionType: 'mixed' | 'manual';
+  questions: string[];
+}
+
+const getUniqueSubjectNames = (quizData: Quiz | null, questions: Question[]): string[] => {
+  const fromApi = Array.isArray(quizData?.subjectNames)
+    ? quizData.subjectNames.filter(Boolean)
+    : [];
+  if (fromApi.length > 0) return [...new Set(fromApi)];
+
+  const fromQuestions = (questions || [])
+    .map(q => q.subject?.name)
+    .filter(Boolean) as string[];
+  if (fromQuestions.length > 0) return [...new Set(fromQuestions)];
+
+  if (quizData?.subject?.name) return [quizData.subject.name];
+  return [];
+};
+
+const normalizeMixedQuizTitle = (rawTitle: string, subjectNames: string[]): string => {
+  if (!rawTitle || subjectNames.length <= 1) return rawTitle;
+  if (/^\s*mixed\b/i.test(rawTitle)) return rawTitle;
+
+  const generatedTitleMatch = rawTitle.match(/^\s*.+?\s+((?:Daily|Weekly|Grand)\s+Test\s+-\s+.+)$/i);
+  if (!generatedTitleMatch) return rawTitle;
+  return `Mixed ${generatedTitleMatch[1]}`;
+};
 
 export default function EditQuiz() {
   const { user } = useAuth();
@@ -99,6 +139,14 @@ export default function EditQuiz() {
   // Question Preview Modal
   const [previewQuestion, setPreviewQuestion] = useState<Question | null>(null);
 
+  // Section Management
+  const [quizSections, setQuizSections] = useState<QuizSection[]>([]);
+  const [showSectionQuestionPicker, setShowSectionQuestionPicker] = useState(false);
+  const [activeSectionIndex, setActiveSectionIndex] = useState<number | null>(null);
+  const [sectionQuestionSelections, setSectionQuestionSelections] = useState<Set<string>>(new Set());
+  const [sectionQuestionSearch, setSectionQuestionSearch] = useState('');
+  const [sectionFilterSubjectId, setSectionFilterSubjectId] = useState<string>('all');
+
   useEffect(() => {
     if (id) {
       loadQuiz();
@@ -109,13 +157,25 @@ export default function EditQuiz() {
     try {
       setLoading(true);
       const response = await api.get(`/quizzes/${id}`);
-      const quizData = response.data;
+      const quizData: Quiz = response.data;
+      const fetchedQuestions = quizData.questions || [];
+      const subjectNames = getUniqueSubjectNames(quizData, fetchedQuestions);
       
       setQuiz(quizData);
-      setTitle(quizData.title);
+      setTitle(normalizeMixedQuizTitle(quizData.title, subjectNames));
       setDuration(quizData.duration.toString());
       setInstructions(quizData.instructions?.join('\n') || '');
-      setSelectedQuestions(quizData.questions || []);
+      setSelectedQuestions(fetchedQuestions);
+      setQuizSections(
+        (quizData.sections || []).map(section => ({
+          name: section.name || '',
+          duration: Number(section.duration) || 0,
+          selectionType: section.selectionType === 'mixed' ? 'mixed' : 'manual',
+          questions: (section.questions || [])
+            .map((q: any) => (typeof q === 'string' ? q : q?._id))
+            .filter(Boolean)
+        }))
+      );
 
       // Load time window
       if (quizData.scheduledDate) setScheduledDate(new Date(quizData.scheduledDate));
@@ -206,6 +266,74 @@ export default function EditQuiz() {
     setSelectedQuestions(selectedQuestions.filter(q => q._id !== questionId));
   };
 
+  const updateSection = (index: number, updates: Partial<QuizSection>) => {
+    setQuizSections(prev =>
+      prev.map((section, i) => (i === index ? { ...section, ...updates } : section))
+    );
+  };
+
+  const initializeSections = (count: number) => {
+    const totalDuration = parseInt(duration, 10) || 0;
+    const equalTime = count > 0 ? Math.floor(totalDuration / count) : 0;
+    const nextSections: QuizSection[] = [];
+
+    for (let i = 0; i < count; i++) {
+      nextSections.push({
+        name: `Section ${i + 1}`,
+        duration: i === count - 1 ? totalDuration - (equalTime * (count - 1)) : equalTime,
+        selectionType: 'mixed',
+        questions: []
+      });
+    }
+
+    setQuizSections(nextSections);
+  };
+
+  const addSection = () => {
+    const nextIndex = quizSections.length + 1;
+    setQuizSections(prev => [
+      ...prev,
+      { name: `Section ${nextIndex}`, duration: 0, selectionType: 'mixed', questions: [] }
+    ]);
+  };
+
+  const removeSection = (index: number) => {
+    setQuizSections(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const openSectionQuestionPicker = (sectionIndex: number) => {
+    const section = quizSections[sectionIndex];
+    if (!section) return;
+    setActiveSectionIndex(sectionIndex);
+    setSectionQuestionSelections(new Set(section.questions));
+    setSectionQuestionSearch('');
+    setSectionFilterSubjectId('all');
+    setShowSectionQuestionPicker(true);
+  };
+
+  const closeSectionQuestionPicker = () => {
+    setShowSectionQuestionPicker(false);
+    setActiveSectionIndex(null);
+    setSectionQuestionSelections(new Set());
+    setSectionQuestionSearch('');
+    setSectionFilterSubjectId('all');
+  };
+
+  const saveSectionQuestionPicker = () => {
+    if (activeSectionIndex === null) return;
+    updateSection(activeSectionIndex, { questions: Array.from(sectionQuestionSelections) });
+    closeSectionQuestionPicker();
+  };
+
+  const toggleSectionQuestionSelection = (questionId: string) => {
+    setSectionQuestionSelections(prev => {
+      const next = new Set(prev);
+      if (next.has(questionId)) next.delete(questionId);
+      else next.add(questionId);
+      return next;
+    });
+  };
+
   const handleSave = async () => {
     if (!title.trim()) {
       Alert.alert('Error', 'Please enter a title');
@@ -217,6 +345,42 @@ export default function EditQuiz() {
       return;
     }
 
+    const totalDuration = parseInt(duration, 10) || 0;
+    const validQuestionIds = new Set(selectedQuestions.map(q => q._id));
+    const sectionPayload = quizSections.map(section => ({
+      name: section.name.trim(),
+      duration: Number(section.duration) || 0,
+      selectionType: section.selectionType,
+      questions: section.selectionType === 'manual'
+        ? section.questions.filter(qid => validQuestionIds.has(qid))
+        : []
+    }));
+
+    const invalidSection = sectionPayload.find(section => !section.name || section.duration <= 0);
+    if (invalidSection) {
+      Alert.alert('Error', 'Each section must have a name and duration greater than 0');
+      return;
+    }
+
+    const manualSectionWithoutQuestions = sectionPayload.find(
+      section => section.selectionType === 'manual' && section.questions.length === 0
+    );
+    if (manualSectionWithoutQuestions) {
+      Alert.alert('Error', 'Manual sections must have at least one assigned question');
+      return;
+    }
+
+    if (sectionPayload.length > 0) {
+      const allocated = sectionPayload.reduce((sum, section) => sum + section.duration, 0);
+      if (allocated !== totalDuration) {
+        Alert.alert(
+          'Error',
+          `Section time allocation (${allocated} mins) must match quiz duration (${totalDuration} mins)`
+        );
+        return;
+      }
+    }
+
     try {
       setSaving(true);
       await api.put(`/quizzes/${id}`, {
@@ -224,6 +388,7 @@ export default function EditQuiz() {
         duration: parseInt(duration) || 30,
         instructions: instructions.split('\n').filter(line => line.trim()),
         questions: selectedQuestions.map(q => q._id),
+        sections: sectionPayload,
         scheduledDate: scheduledDate?.toISOString(),
         expiryDate: expiryDate?.toISOString()
       });
@@ -257,9 +422,59 @@ export default function EditQuiz() {
     return true;
   });
 
-  const isQuestionSelected = (questionId: string) => {
-    return selectedQuestions.some(q => q._id === questionId);
-  };
+  useEffect(() => {
+    const selectedQuestionIds = new Set(selectedQuestions.map(q => q._id));
+    let changed = false;
+
+    const prunedSections = quizSections.map(section => {
+      const kept = section.questions.filter(qid => selectedQuestionIds.has(qid));
+      if (kept.length !== section.questions.length) {
+        changed = true;
+        return { ...section, questions: kept };
+      }
+      return section;
+    });
+
+    if (changed) {
+      setQuizSections(prunedSections);
+    }
+  }, [selectedQuestions, quizSections]);
+
+  const sectionPickerSubjects = useMemo(() => {
+    const map = new Map<string, Subject>();
+    selectedQuestions.forEach(q => {
+      const sid = q.subject?._id;
+      if (sid && !map.has(sid)) {
+        map.set(sid, { _id: sid, name: q.subject?.name || 'General' });
+      }
+    });
+    return Array.from(map.values());
+  }, [selectedQuestions]);
+
+  useEffect(() => {
+    if (sectionFilterSubjectId !== 'all' && !sectionPickerSubjects.some(s => s._id === sectionFilterSubjectId)) {
+      setSectionFilterSubjectId('all');
+    }
+  }, [sectionFilterSubjectId, sectionPickerSubjects]);
+
+  const filteredSectionQuestions = useMemo(() => {
+    const search = sectionQuestionSearch.trim().toLowerCase();
+    return selectedQuestions.filter(q => {
+      if (sectionFilterSubjectId !== 'all' && q.subject?._id !== sectionFilterSubjectId) {
+        return false;
+      }
+      if (!search) return true;
+      return q.question.toLowerCase().includes(search) ||
+        (q.qid?.toLowerCase() ?? '').includes(search) ||
+        (q.topicName?.toLowerCase() ?? '').includes(search);
+    });
+  }, [selectedQuestions, sectionFilterSubjectId, sectionQuestionSearch]);
+
+  const subjectNames = useMemo(
+    () => getUniqueSubjectNames(quiz, selectedQuestions),
+    [quiz, selectedQuestions]
+  );
+  const subjectLabel = subjectNames.length > 1 ? 'Mixed' : (subjectNames[0] || 'General');
 
   if (user?.role !== 'admin') {
     return (
@@ -344,7 +559,7 @@ export default function EditQuiz() {
           <View style={styles.inputGroup}>
             <Text style={styles.label}>Subject</Text>
             <View style={styles.readOnlyField}>
-              <Text style={styles.readOnlyText}>{quiz?.subject?.name}</Text>
+              <Text style={styles.readOnlyText}>{subjectLabel}</Text>
             </View>
           </View>
 
@@ -501,6 +716,125 @@ export default function EditQuiz() {
           )}
         </View>
 
+        {/* Sections Card */}
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <Text style={styles.cardTitle}>Sections ({quizSections.length})</Text>
+            <TouchableOpacity style={styles.addButton} onPress={addSection}>
+              <Plus color="#FFF" size={18} />
+              <Text style={styles.addButtonText}>Add</Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.infoBox}>
+            <Text style={styles.infoText}>
+              Total Duration: {parseInt(duration, 10) || 0} mins | Allocated: {quizSections.reduce((sum, s) => sum + (Number(s.duration) || 0), 0)} mins
+            </Text>
+            <Text style={styles.infoHint}>Use Manual to assign specific questions to each section.</Text>
+          </View>
+
+          <View style={styles.sectionSetupHeader}>
+            <Text style={styles.label}>Quick Section Count</Text>
+            <View style={styles.quickCountRow}>
+              {[1, 2, 3, 4, 5].map(n => (
+                <TouchableOpacity
+                  key={n}
+                  style={[styles.smallChip, quizSections.length === n && styles.smallChipActive]}
+                  onPress={() => initializeSections(n)}
+                >
+                  <Text style={[styles.smallChipText, quizSections.length === n && styles.smallChipTextActive]}>{n}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </View>
+
+          {quizSections.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyText}>No sections configured</Text>
+              <Text style={styles.emptySubtext}>Add a section or set quick count above</Text>
+            </View>
+          ) : (
+            quizSections.map((section, idx) => (
+              <View key={`${section.name}-${idx}`} style={styles.sectionConfigCard}>
+                <View style={styles.sectionRow}>
+                  <TextInput
+                    style={[styles.input, { flex: 2, marginRight: 8 }]}
+                    value={section.name}
+                    onChangeText={(val) => updateSection(idx, { name: val })}
+                    placeholder="Section Name"
+                    placeholderTextColor="#9CA3AF"
+                  />
+                  <TextInput
+                    style={[styles.input, { flex: 1 }]}
+                    value={String(section.duration || '')}
+                    onChangeText={(val) => updateSection(idx, { duration: parseInt(val, 10) || 0 })}
+                    keyboardType="numeric"
+                    placeholder="Mins"
+                    placeholderTextColor="#9CA3AF"
+                  />
+                  <TouchableOpacity
+                    style={styles.sectionDeleteButton}
+                    onPress={() => removeSection(idx)}
+                  >
+                    <Trash2 color="#EF4444" size={18} />
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.sectionTypeRow}>
+                  <TouchableOpacity
+                    style={[styles.typeButton, section.selectionType === 'mixed' && styles.typeButtonActive]}
+                    onPress={() => updateSection(idx, { selectionType: 'mixed', questions: [] })}
+                  >
+                    <Text style={[styles.typeButtonText, section.selectionType === 'mixed' && styles.typeButtonTextActive]}>
+                      Mixed
+                    </Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.typeButton, section.selectionType === 'manual' && styles.typeButtonActive]}
+                    onPress={() => updateSection(idx, { selectionType: 'manual' })}
+                  >
+                    <Text style={[styles.typeButtonText, section.selectionType === 'manual' && styles.typeButtonTextActive]}>
+                      Manual
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {section.selectionType === 'manual' && (
+                  <View style={{ marginTop: 12 }}>
+                    <View style={styles.manualHeaderRow}>
+                      <Text style={styles.manualCountText}>Questions assigned: {section.questions.length}</Text>
+                      <TouchableOpacity
+                        style={styles.manualSelectButton}
+                        onPress={() => openSectionQuestionPicker(idx)}
+                      >
+                        <Text style={styles.manualSelectButtonText}>Select Questions</Text>
+                      </TouchableOpacity>
+                    </View>
+
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8 }}>
+                      {section.questions.length === 0 ? (
+                        <Text style={styles.emptySubtext}>No questions selected</Text>
+                      ) : (
+                        section.questions.map(qid => {
+                          const q = selectedQuestions.find(item => item._id === qid);
+                          if (!q) return null;
+                          return (
+                            <View key={qid} style={styles.qTinyChip}>
+                              <Text style={styles.qTinyChipText} numberOfLines={1}>
+                                {q.question}
+                              </Text>
+                            </View>
+                          );
+                        })
+                      )}
+                    </ScrollView>
+                  </View>
+                )}
+              </View>
+            ))
+          )}
+        </View>
+
         <View style={{ height: 40 }} />
       </ScrollView>
 
@@ -614,6 +948,104 @@ export default function EditQuiz() {
               style={styles.pickerSaveButton}
               onPress={handleSavePickerSelections}
             >
+              <Check color="#FFF" size={18} />
+              <Text style={styles.pickerSaveButtonText}>Save Selection</Text>
+            </TouchableOpacity>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
+      {/* Section Question Picker Modal */}
+      <Modal
+        visible={showSectionQuestionPicker}
+        animationType="slide"
+        onRequestClose={closeSectionQuestionPicker}
+      >
+        <SafeAreaView style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>
+              {activeSectionIndex !== null ? `Section ${activeSectionIndex + 1} Questions` : 'Section Questions'}
+            </Text>
+            <TouchableOpacity onPress={closeSectionQuestionPicker}>
+              <X color="#FFF" size={24} />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.searchContainer}>
+            <Search color="#6B7280" size={20} />
+            <TextInput
+              style={styles.searchInput}
+              value={sectionQuestionSearch}
+              onChangeText={setSectionQuestionSearch}
+              placeholder="Search selected quiz questions..."
+              placeholderTextColor="#9CA3AF"
+            />
+          </View>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.subjectFilterContainer}
+            contentContainerStyle={styles.subjectFilterContent}
+          >
+            <TouchableOpacity
+              style={[styles.subjectChip, sectionFilterSubjectId === 'all' && styles.subjectChipActive]}
+              onPress={() => setSectionFilterSubjectId('all')}
+            >
+              <Text style={[styles.subjectChipText, sectionFilterSubjectId === 'all' && styles.subjectChipTextActive]}>
+                All
+              </Text>
+            </TouchableOpacity>
+            {sectionPickerSubjects.map(sub => (
+              <TouchableOpacity
+                key={sub._id}
+                style={[styles.subjectChip, sectionFilterSubjectId === sub._id && styles.subjectChipActive]}
+                onPress={() => setSectionFilterSubjectId(sub._id)}
+              >
+                <Text style={[styles.subjectChipText, sectionFilterSubjectId === sub._id && styles.subjectChipTextActive]}>
+                  {sub.name}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+
+          <FlatList
+            data={filteredSectionQuestions}
+            keyExtractor={(item) => item._id}
+            contentContainerStyle={[styles.listContent, { paddingBottom: 90 }]}
+            renderItem={({ item }) => {
+              const selected = sectionQuestionSelections.has(item._id);
+              return (
+                <TouchableOpacity
+                  style={[styles.pickerItem, selected && styles.pickerItemSelected]}
+                  onPress={() => toggleSectionQuestionSelection(item._id)}
+                >
+                  <View style={[styles.pickerCheckbox, selected && styles.pickerCheckboxSelected]}>
+                    {selected && <Check color="#FFF" size={14} />}
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.pickerQuestionText} numberOfLines={2}>
+                      {item.question}
+                    </Text>
+                    <Text style={styles.pickerMeta}>
+                      {item.subject?.name || 'General'}{item.topicName ? ` • ${item.topicName}` : ''} • {item.marks}M
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            }}
+            ListEmptyComponent={
+              <View style={styles.emptyState}>
+                <Text style={styles.emptyText}>No questions found</Text>
+              </View>
+            }
+          />
+
+          <View style={styles.pickerSaveBar}>
+            <Text style={styles.pickerSelectionCount}>
+              {sectionQuestionSelections.size} question{sectionQuestionSelections.size !== 1 ? 's' : ''} selected
+            </Text>
+            <TouchableOpacity style={styles.pickerSaveButton} onPress={saveSectionQuestionPicker}>
               <Check color="#FFF" size={18} />
               <Text style={styles.pickerSaveButtonText}>Save Selection</Text>
             </TouchableOpacity>
@@ -823,6 +1255,130 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#6B7280',
     textTransform: 'capitalize',
+  },
+  infoBox: {
+    backgroundColor: '#EBF5FF',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  infoText: {
+    fontSize: 14,
+    color: '#1E40AF',
+    fontWeight: '600',
+  },
+  infoHint: {
+    marginTop: 6,
+    fontSize: 12,
+    color: '#1E40AF',
+  },
+  sectionSetupHeader: {
+    marginBottom: 12,
+  },
+  quickCountRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
+  smallChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+  },
+  smallChipActive: {
+    backgroundColor: '#2563EB',
+    borderColor: '#2563EB',
+  },
+  smallChipText: {
+    fontSize: 12,
+    color: '#4B5563',
+  },
+  smallChipTextActive: {
+    color: '#FFF',
+    fontWeight: '700',
+  },
+  sectionConfigCard: {
+    backgroundColor: '#FFF',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  sectionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  sectionDeleteButton: {
+    marginLeft: 8,
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: '#FEE2E2',
+  },
+  sectionTypeRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+  },
+  typeButton: {
+    flex: 1,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    alignItems: 'center',
+    backgroundColor: '#F9FAFB',
+  },
+  typeButtonActive: {
+    borderColor: '#2563EB',
+    backgroundColor: '#EBF5FF',
+  },
+  typeButtonText: {
+    fontSize: 13,
+    color: '#4B5563',
+  },
+  typeButtonTextActive: {
+    color: '#2563EB',
+    fontWeight: '600',
+  },
+  manualHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  manualCountText: {
+    fontSize: 12,
+    color: '#6B7280',
+  },
+  manualSelectButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: '#2563EB',
+  },
+  manualSelectButtonText: {
+    fontSize: 12,
+    color: '#FFF',
+    fontWeight: '600',
+  },
+  qTinyChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: '#F3F4F6',
+    marginRight: 6,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    maxWidth: 180,
+  },
+  qTinyChipText: {
+    fontSize: 11,
+    color: '#6B7280',
   },
   addButton: {
     flexDirection: 'row',

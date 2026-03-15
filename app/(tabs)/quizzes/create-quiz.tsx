@@ -206,7 +206,17 @@ export default function CreateQuiz() {
       if (quiz.scheduledDate) setScheduledDate(new Date(quiz.scheduledDate));
       if (quiz.expiryDate) setExpiryDate(new Date(quiz.expiryDate));
 
-      if (quiz.subject) {
+      // Prefer subject IDs from quiz questions so mixed quizzes stay mixed in edit mode.
+      const questionSubjectIds = Array.from(
+        new Set(
+          (quiz.questions || [])
+            .map((q: any) => (typeof q.subject === 'object' ? q.subject?._id : q.subject))
+            .filter(Boolean)
+        )
+      ) as string[];
+      if (questionSubjectIds.length > 0) {
+        setSelectedSubjects(questionSubjectIds);
+      } else if (quiz.subject?._id) {
         setSelectedSubjects([quiz.subject._id]);
       }
 
@@ -272,10 +282,6 @@ export default function CreateQuiz() {
       filtered = filtered.filter(q => q.subject._id === questionSubjectFilter);
     }
 
-    if (questionSubjectFilter) {
-      filtered = filtered.filter(q => q.subject._id === questionSubjectFilter);
-    }
-
     // Client-side topic filtering
     if (topicFilter) {
       filtered = filtered.filter(q => q.topicName?.toLowerCase().includes(topicFilter.toLowerCase()));
@@ -304,6 +310,13 @@ export default function CreateQuiz() {
 
     setFilteredStudents(filtered);
   }, [studentSearch, students]);
+
+  useEffect(() => {
+    // If user changed selected subjects in Step 1, ensure Step 3 chip filter stays valid.
+    if (questionSubjectFilter && !selectedSubjects.includes(questionSubjectFilter)) {
+      setQuestionSubjectFilter('');
+    }
+  }, [selectedSubjects, questionSubjectFilter]);
 
   const fetchSubjects = async () => {
     try {
@@ -350,6 +363,13 @@ export default function CreateQuiz() {
   const fetchQuestions = async (reset = false) => {
     if (selectedSubjects.length === 0) return;
 
+    const effectiveSubjectIds =
+      questionSubjectFilter && selectedSubjects.includes(questionSubjectFilter)
+        ? [questionSubjectFilter]
+        : selectedSubjects;
+
+    if (effectiveSubjectIds.length === 0) return;
+
     if (reset) {
       setPage(1);
       setAvailableQuestionsList([]);
@@ -363,11 +383,10 @@ export default function CreateQuiz() {
     try {
       const currentPage = reset ? 1 : page;
       const params = new URLSearchParams();
-      selectedSubjects.forEach(id => params.append('subjects', id));
+      effectiveSubjectIds.forEach(id => params.append('subjects', id));
       params.append('page', currentPage.toString());
       params.append('limit', '50');
       if (questionSearch) params.append('search', questionSearch);
-      if (questionSubjectFilter) params.append('subjects', questionSubjectFilter);
       if (topicFilter) params.append('topic', topicFilter);
       if (tagFilter) params.append('tag', tagFilter);
 
@@ -412,11 +431,11 @@ export default function CreateQuiz() {
     const subjectsArray = Array.isArray(subjects) ? subjects : [];
     const selectedNames = selectedSubjects
       .map(id => subjectsArray.find(s => s._id === id)?.name)
-      .filter(Boolean)
-      .join(', ');
+      .filter(Boolean);
+    const subjectLabel = selectedNames.length > 1 ? 'Mixed' : (selectedNames[0] || '');
     const typeLabel = testType === 'daily' ? 'Daily' : testType === 'weekly' ? 'Weekly' : 'Grand';
     const date = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-    setTitle(`${selectedNames || ''} ${typeLabel} Test - ${date}`);
+    setTitle(`${subjectLabel} ${typeLabel} Test - ${date}`.trim());
   };
 
   const handleSelectAll = () => {
