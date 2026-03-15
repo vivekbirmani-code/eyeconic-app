@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -56,6 +56,7 @@ export default function CallScreen() {
   const [selectedMembers, setSelectedMembers] = useState<string[]>([]);
   const [isStartingCall, setIsStartingCall] = useState(false);
   const [showWebCallModal, setShowWebCallModal] = useState(false);
+  const wasInCallRef = useRef(false);
 
   useEffect(() => {
     fetchGroupDetails();
@@ -68,6 +69,19 @@ export default function CallScreen() {
       joinCall(callId, groupId, groupName);
     }
   }, [callId, groupName]);
+
+  useEffect(() => {
+    if (callState.isInCall) {
+      wasInCallRef.current = true;
+      return;
+    }
+
+    // If this screen had an active call and it ended/disconnected, return to previous screen.
+    if (wasInCallRef.current) {
+      wasInCallRef.current = false;
+      router.back();
+    }
+  }, [callState.isInCall, router]);
 
   const fetchGroupDetails = async () => {
     try {
@@ -110,7 +124,6 @@ export default function CallScreen() {
     } else {
       leaveCall();
     }
-    router.back();
   };
 
   const formatDuration = (seconds: number) => {
@@ -320,7 +333,7 @@ export default function CallScreen() {
 
         <TouchableOpacity
           style={[styles.controlButton, styles.endCallButton]}
-          onPress={leaveCall}
+          onPress={handleEndCall}
         >
           <PhoneOff color="#FFFFFF" size={28} />
         </TouchableOpacity>

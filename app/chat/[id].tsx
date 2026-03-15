@@ -20,7 +20,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ArrowLeft, Send, Users, UserPlus, X, Search, Check, CheckCheck, Edit2, Trash2, Info, Phone } from 'lucide-react-native';
+import { ArrowLeft, Send, Users, UserPlus, X, Search, Check, CheckCheck, Edit2, Trash2, Info, Phone, PhoneOff } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from '@/utils/haptics';
 import { useAuth } from '@/context/AuthContext';
@@ -54,6 +54,9 @@ interface Message {
     publicId: string;
     localUri?: string;
   }>;
+  messageType?: 'text' | 'image' | 'file' | 'call_start' | 'call_end' | 'call_missed';
+  callDurationSeconds?: number;
+  callId?: string;
 }
 
 interface User {
@@ -449,10 +452,71 @@ export default function ChatScreen() {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  const formatCallDuration = (seconds?: number) => {
+    const duration = seconds ?? 0;
+    const mins = Math.floor(duration / 60);
+    const secs = duration % 60;
+    return `${mins} min ${secs} sec`;
+  };
+
   // Message action handlers
   const handleMessageLongPress = (message: Message) => {
     setSelectedMessage(message);
     setIsMessageMenuVisible(true);
+  };
+
+  const isCallEvent = (message: Message) => {
+    return ['call_start', 'call_end', 'call_missed'].includes(message.messageType || '');
+  };
+
+  const renderCallMessage = (message: Message, isOwnMessage: boolean) => {
+    const callType = message.messageType;
+    const durationLabel = callType === 'call_end'
+      ? formatCallDuration(message.callDurationSeconds)
+      : callType === 'call_missed'
+        ? 'No answer'
+        : 'Calling...';
+    const iconBackground = callType === 'call_missed' ? '#DC2626' : '#10B981';
+    const title = callType === 'call_missed' ? 'Missed call' : 'Voice call';
+    const containerStyle = [
+      styles.callMessageContainer,
+      isOwnMessage ? styles.callOwnMessage : styles.callOtherMessage
+    ];
+    const titleStyle = [
+      styles.callTitle,
+      isOwnMessage ? styles.callTitleLight : styles.callTitleDark
+    ];
+    const durationStyle = [
+      styles.callDurationText,
+      isOwnMessage ? styles.callDurationLight : styles.callDurationDark
+    ];
+    const timeStyle = [
+      styles.callMetaTime,
+      isOwnMessage ? styles.callTimeLight : styles.callTimeDark
+    ];
+
+    return (
+      <Pressable
+        onLongPress={() => handleMessageLongPress(message)}
+        delayLongPress={300}
+        style={containerStyle}
+      >
+        <View style={styles.callMessageRow}>
+          <View style={[styles.callIconCircle, { backgroundColor: iconBackground }]}>
+            {callType === 'call_missed' ? (
+              <PhoneOff color="#FFFFFF" size={20} />
+            ) : (
+              <Phone color="#FFFFFF" size={20} />
+            )}
+          </View>
+          <Text style={titleStyle}>{title}</Text>
+        </View>
+        <View style={styles.callMeta}>
+          <Text style={durationStyle}>{durationLabel}</Text>
+          <Text style={timeStyle}>{formatTime(message.createdAt)}</Text>
+        </View>
+      </Pressable>
+    );
   };
 
   const fetchReadByUsers = async (messageId: string) => {
@@ -574,6 +638,10 @@ export default function ChatScreen() {
 
   const renderMessage = ({ item }: { item: Message }) => {
     const isOwnMessage = item.sender._id === user?._id;
+
+    if (isCallEvent(item)) {
+      return renderCallMessage(item, isOwnMessage);
+    }
 
     // Deleted message placeholder
     if (item.deletedForEveryone) {
@@ -1220,6 +1288,72 @@ const styles = StyleSheet.create({
   },
   otherMessageTime: {
     color: '#9CA3AF',
+  },
+  callMessageContainer: {
+    maxWidth: '78%',
+    marginBottom: 10,
+    padding: 14,
+    borderRadius: 20,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 8,
+  },
+  callOwnMessage: {
+    alignSelf: 'flex-end',
+    backgroundColor: '#0F766E',
+  },
+  callOtherMessage: {
+    alignSelf: 'flex-start',
+    backgroundColor: '#ECFDF5',
+  },
+  callMessageRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  callIconCircle: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  callTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  callTitleLight: {
+    color: '#FFFFFF',
+  },
+  callTitleDark: {
+    color: '#0F172A',
+  },
+  callMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 10,
+  },
+  callDurationText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  callDurationLight: {
+    color: 'rgba(255, 255, 255, 0.85)',
+  },
+  callDurationDark: {
+    color: '#065F46',
+  },
+  callMetaTime: {
+    fontSize: 12,
+  },
+  callTimeLight: {
+    color: 'rgba(255, 255, 255, 0.75)',
+  },
+  callTimeDark: {
+    color: '#065F46',
   },
   emptyContainer: {
     flex: 1,

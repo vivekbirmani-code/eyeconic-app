@@ -83,6 +83,120 @@ const socketUserMap = new Map();
 const Group = require('./models/Group');
 const Message = require('./models/Message');
 
+const formatCallDurationLabel = (seconds = 0) => {
+  const mins = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${mins} min ${secs} sec`;
+};
+
+const getCallDurationSeconds = (startTime, endTime) => {
+  if (!startTime || !endTime) return 0;
+  const durationMs = new Date(endTime).getTime() - new Date(startTime).getTime();
+  return Math.max(0, Math.floor(durationMs / 1000));
+};
+
+const emitCallEventMessage = async ({
+  groupId,
+  senderId,
+  senderName,
+  messageType,
+  content,
+  callId,
+  callDurationSeconds = 0
+}) => {
+  if (!groupId || !senderId) return;
+  try {
+    const callMessage = new Message({
+      group: groupId,
+      sender: senderId,
+      content,
+      messageType,
+      callId,
+      callDurationSeconds
+    });
+    await callMessage.save();
+
+    const payload = {
+      _id: callMessage._id,
+      group: callMessage.group,
+      sender: { _id: senderId, name: senderName || 'Unknown' },
+      content: callMessage.content,
+      messageType,
+      callId,
+      callDurationSeconds,
+      createdAt: callMessage.createdAt
+    };
+
+    io.to(groupId.toString()).emit('receive_message', payload);
+  } catch (error) {
+    console.error('Error saving call message:', error);
+  }
+};
+
+const emitCallMessageUpdate = (groupId, message) => {
+  if (!groupId || !message) return;
+
+  const sender =
+    message.sender && message.sender._id
+      ? { _id: message.sender._id, name: message.sender.name || 'Unknown' }
+      : message.sender;
+
+  io.to(groupId.toString()).emit('message_updated', {
+    _id: message._id,
+    group: message.group,
+    sender,
+    content: message.content,
+    messageType: message.messageType,
+    callId: message.callId,
+    callDurationSeconds: message.callDurationSeconds,
+    createdAt: message.createdAt,
+    updatedAt: message.updatedAt
+  });
+};
+
+const finalizeCallEventMessage = async ({
+  groupId,
+  callId,
+  finalMessageType,
+  content,
+  callDurationSeconds = 0,
+  fallbackSenderId,
+  fallbackSenderName
+}) => {
+  if (!groupId || !callId || !finalMessageType) return;
+
+  try {
+    const callStartMessage = await Message.findOne({
+      group: groupId,
+      callId,
+      messageType: 'call_start'
+    })
+      .sort({ createdAt: -1 })
+      .populate('sender', 'name');
+
+    if (callStartMessage) {
+      callStartMessage.messageType = finalMessageType;
+      callStartMessage.content = content;
+      callStartMessage.callDurationSeconds = callDurationSeconds;
+      await callStartMessage.save();
+      emitCallMessageUpdate(groupId, callStartMessage);
+      return;
+    }
+
+    await emitCallEventMessage({
+      groupId,
+      senderId: fallbackSenderId,
+      senderName: fallbackSenderName,
+      messageType: finalMessageType,
+      content,
+      callId,
+      callDurationSeconds
+    });
+  } catch (error) {
+    console.error('Error finalizing call message:', error);
+  }
+};
+
 // Socket.IO for real-time chat and calls
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
@@ -183,30 +297,15 @@ io.on('connection', (socket) => {
       }
 
 
-      // Save call started message to chat history
-      try {
-        const callMessage = new Message({
-          group: groupId,
-          sender: initiatorId,
-          content: `📞 ${initiatorName} started a call`,
-          messageType: 'call_start',
-          callId: call._id
-        });
-        await callMessage.save();
-
-        // Emit the call message to the group
-        io.to(groupId).emit('receive_message', {
-          _id: callMessage._id,
-          group: groupId,
-          sender: { _id: initiatorId, name: initiatorName },
-          content: callMessage.content,
-          messageType: 'call_start',
-          callId: call._id,
-          createdAt: callMessage.createdAt
-        });
-      } catch (msgError) {
-        console.error('Error saving call message:', msgError);
-      }
+      await emitCallEventMessage({
+        groupId,
+        senderId: initiatorId,
+        senderName: initiatorName,
+        messageType: 'call_start',
+        content: `📞 ${initiatorName} started a call`,
+        callId: call._id,
+        callDurationSeconds: 0
+      });
 
       // Send push notifications to all target users (for when app is closed)
       if (targetUserIds && targetUserIds.length > 0) {
@@ -347,12 +446,44 @@ io.on('connection', (socket) => {
         });
 
         // Check if call is empty
+        const wasActiveCall = call.status === 'active';
         const activeParticipants = call.participants.filter(p => !p.leftAt);
-        if (activeParticipants.length === 0) {
+        if (wasActiveCall && activeParticipants.length === 0) {
           call.status = 'ended';
           call.endTime = new Date();
           await call.save();
 
+          const durationSeconds = getCallDurationSeconds(call.startTime, call.endTime);
+          const durationStr = formatCallDurationLabel(durationSeconds);
+          const hasOtherParticipants = call.participants.some(
+            p => p.userId.toString() !== call.initiator.toString()
+          );
+
+          if (hasOtherParticipants) {
+            const leaver = await User.findById(userId);
+            const leaverName = leaver?.name || 'Unknown';
+            await finalizeCallEventMessage({
+              groupId: call.groupId,
+              callId,
+              finalMessageType: 'call_end',
+              content: `📞 Call ended • Duration: ${durationStr}`,
+              callDurationSeconds: durationSeconds,
+              fallbackSenderId: leaver?._id || userId,
+              fallbackSenderName: leaverName
+            });
+          } else {
+            const initiatorUser = await User.findById(call.initiator);
+            const initiatorName = initiatorUser?.name || 'Unknown';
+            await finalizeCallEventMessage({
+              groupId: call.groupId,
+              callId,
+              finalMessageType: 'call_missed',
+              content: `📞 ${initiatorName} missed a call`,
+              callDurationSeconds: durationSeconds,
+              fallbackSenderId: call.initiator,
+              fallbackSenderName: initiatorName
+            });
+          }
           socket.to(call.groupId.toString()).emit('call_ended', { callId });
         }
       }
@@ -401,38 +532,18 @@ io.on('connection', (socket) => {
         });
         await call.save();
 
-        // Calculate call duration
-        const durationMs = call.endTime - call.startTime;
-        const durationSec = Math.floor(durationMs / 1000);
-        const minutes = Math.floor(durationSec / 60);
-        const seconds = durationSec % 60;
-        const durationStr = minutes > 0
-          ? `${minutes}m ${seconds}s`
-          : `${seconds}s`;
+        const durationSeconds = getCallDurationSeconds(call.startTime, call.endTime);
+        const durationStr = formatCallDurationLabel(durationSeconds);
 
-        // Save call ended message
-        try {
-          const callEndMessage = new Message({
-            group: call.groupId,
-            sender: endedBy || call.initiator,
-            content: `📞 Call ended • Duration: ${durationStr}`,
-            messageType: 'call_end',
-            callId: call._id
-          });
-          await callEndMessage.save();
-
-          io.to(call.groupId.toString()).emit('receive_message', {
-            _id: callEndMessage._id,
-            group: call.groupId,
-            sender: { _id: endedBy || call.initiator, name: endedByName || 'Unknown' },
-            content: callEndMessage.content,
-            messageType: 'call_end',
-            callId: call._id,
-            createdAt: callEndMessage.createdAt
-          });
-        } catch (msgError) {
-          console.error('Error saving call end message:', msgError);
-        }
+        await finalizeCallEventMessage({
+          groupId: call.groupId,
+          callId: call._id,
+          finalMessageType: 'call_end',
+          content: `📞 Call ended • Duration: ${durationStr}`,
+          callDurationSeconds: durationSeconds,
+          fallbackSenderId: endedBy || call.initiator,
+          fallbackSenderName: endedByName || 'Unknown'
+        });
 
         socket.to(call.groupId.toString()).emit('call_ended', { callId });
         socket.emit('call_ended', { callId });

@@ -18,12 +18,16 @@ const messageSchema = new mongoose.Schema({
   },
   messageType: {
     type: String,
-    enum: ['text', 'image', 'file', 'call_start', 'call_end'],
+    enum: ['text', 'image', 'file', 'call_start', 'call_end', 'call_missed'],
     default: 'text'
   },
   callId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Call'
+  },
+  callDurationSeconds: {
+    type: Number,
+    default: 0
   },
   attachments: [{
     type: {

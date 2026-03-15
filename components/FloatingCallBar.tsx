@@ -5,7 +5,7 @@ import { useCall } from '@/context/CallContext';
 import { useRouter } from 'expo-router';
 
 export default function FloatingCallBar() {
-  const { callState, leaveCall, toggleMute, maximizeCall } = useCall();
+  const { callState, leaveCall, endCall, toggleMute, maximizeCall } = useCall();
   const router = useRouter();
 
   if (!callState.isInCall || !callState.isMinimized) {
@@ -23,6 +23,14 @@ export default function FloatingCallBar() {
     if (callState.groupId) {
       router.push(`/call/${callState.groupId}?callId=${callState.callId}` as any);
     }
+  };
+
+  const handleEndCall = () => {
+    if (callState.isInitiator) {
+      endCall();
+      return;
+    }
+    leaveCall();
   };
 
   return (
@@ -57,7 +65,7 @@ export default function FloatingCallBar() {
 
         <TouchableOpacity 
           style={[styles.actionButton, styles.endButton]}
-          onPress={leaveCall}
+          onPress={handleEndCall}
         >
           <PhoneOff color="#FFFFFF" size={16} />
         </TouchableOpacity>
