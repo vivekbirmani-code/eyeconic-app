@@ -41,6 +41,12 @@ export function usePushNotifications() {
 
         console.log('Registering for push notifications, user:', user?._id);
         registerForPushNotificationsAsync().then(({ expoToken, fcmToken }) => {
+            if (!expoToken && !fcmToken) {
+                console.warn(
+                    'Push token registration returned no tokens. Ensure notification permission is granted and Android FCM setup is configured.'
+                );
+            }
+
             if (expoToken) {
                 console.log('Expo Push Token:', expoToken);
                 setExpoPushToken(expoToken);
@@ -58,6 +64,7 @@ export function usePushNotifications() {
             }
         }).catch(err => {
             console.error('Push notification registration failed:', err);
+            console.error('If this is Android, verify FCM setup (google-services.json / EAS credentials).');
         });
 
         // Listen for incoming notifications
@@ -128,6 +135,13 @@ async function registerForPushNotificationsAsync(): Promise<{ expoToken: string 
             importance: Notifications.AndroidImportance.HIGH,
             vibrationPattern: [0, 100, 100, 100],
             lightColor: '#3B82F6',
+        });
+
+        await Notifications.setNotificationChannelAsync('tests', {
+            name: 'Test Notifications',
+            importance: Notifications.AndroidImportance.HIGH,
+            vibrationPattern: [0, 200, 200, 200],
+            lightColor: '#10B981',
         });
     }
 

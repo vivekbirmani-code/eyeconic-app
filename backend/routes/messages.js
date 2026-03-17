@@ -2,7 +2,9 @@ const express = require('express');
 const Message = require('../models/Message');
 const MessageReadStatus = require('../models/MessageReadStatus');
 const Group = require('../models/Group');
+const User = require('../models/User');
 const { auth } = require('../middleware/auth');
+const { sendPushNotification } = require('../utils/notifications');
 
 const router = express.Router();
 
@@ -76,6 +78,44 @@ router.post('/', auth, async (req, res) => {
 
     await message.save();
     await message.populate('sender', 'name');
+
+    // Push notifications for users not currently active in-app.
+    // We send to every group member except the sender.
+    try {
+      const recipientUsers = await User.find({
+        _id: { $in: group.members, $ne: req.user._id },
+        pushToken: { $ne: null }
+      }).select('pushToken');
+
+      if (recipientUsers.length > 0) {
+        const senderName = req.user.name || 'New message';
+        const hasText = Boolean(content && String(content).trim());
+        const hasAttachments = Array.isArray(attachments) && attachments.length > 0;
+        const preview = hasText
+          ? String(content).trim().slice(0, 140)
+          : (hasAttachments ? 'Sent an attachment' : 'Sent a message');
+
+        await Promise.allSettled(
+          recipientUsers.map((recipient) =>
+            sendPushNotification(
+              recipient.pushToken,
+              `${senderName} • ${group.name}`,
+              preview,
+              {
+                type: 'group_message',
+                groupId: group._id.toString(),
+                groupName: group.name,
+                messageId: message._id.toString(),
+                senderId: req.user._id.toString(),
+                senderName,
+              }
+            )
+          )
+        );
+      }
+    } catch (notifyErr) {
+      console.error('Failed to send group message push notifications:', notifyErr);
+    }
 
     res.status(201).json(message);
   } catch (error) {

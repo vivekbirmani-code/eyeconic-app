@@ -54,6 +54,38 @@ const optionTextFromIndex = (options, index) => {
   return options[idx] || '';
 };
 
+const notifyQuizAssignedToStudents = async ({ studentIds, quiz, assignedByName = 'Admin' }) => {
+  if (!Array.isArray(studentIds) || studentIds.length === 0 || !quiz?._id) return;
+
+  try {
+    const recipients = await User.find({
+      _id: { $in: studentIds },
+      pushToken: { $ne: null }
+    }).select('_id pushToken');
+
+    if (!recipients.length) return;
+
+    await Promise.allSettled(
+      recipients.map((student) =>
+        sendPushNotification(
+          student.pushToken,
+          'New Test Assigned',
+          `${quiz.title} has been assigned to you`,
+          {
+            type: 'quiz_assigned',
+            quizId: quiz._id.toString(),
+            quizTitle: quiz.title,
+            testType: quiz.testType || 'daily',
+            assignedBy: assignedByName,
+          }
+        )
+      )
+    );
+  } catch (error) {
+    console.error('Failed to send quiz assignment push notifications:', error);
+  }
+};
+
 // Normalizes sections and ensures question assignment exists for mixed sections.
 const deriveSectionsForQuestions = (rawSections, rawQuestionIds, totalDuration, options = {}) => {
   const { strictDuration = true } = options;
@@ -413,6 +445,12 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
       if (io) {
         io.emit('new_quiz_assigned', { quizId: quiz._id, title: quiz.title, assignedStudents });
       }
+
+      await notifyQuizAssignedToStudents({
+        studentIds: assignedStudents,
+        quiz,
+        assignedByName: req.user?.name || 'Admin'
+      });
     }
 
     if (assignedMentors && assignedMentors.length > 0) {
@@ -846,6 +884,12 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
         if (io) {
           io.emit('new_quiz_assigned', { quizId: quiz._id, title: quiz.title, assignedStudents: newlyAssigned });
         }
+
+        await notifyQuizAssignedToStudents({
+          studentIds: newlyAssigned,
+          quiz,
+          assignedByName: req.user?.name || 'Admin'
+        });
       }
     }
 
@@ -2757,6 +2801,12 @@ router.put('/:id/share', auth, authorize('admin'), async (req, res) => {
       if (io) {
         io.emit('new_quiz_assigned', { quizId: quiz._id, title: quiz.title, assignedStudents: newStudents });
       }
+
+      await notifyQuizAssignedToStudents({
+        studentIds: newStudents,
+        quiz,
+        assignedByName: req.user?.name || 'Admin'
+      });
     }
 
     res.json({

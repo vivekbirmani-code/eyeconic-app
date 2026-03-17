@@ -7,11 +7,14 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.media.RingtoneManager
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 
 class CallForegroundService : Service() {
 
@@ -27,10 +30,14 @@ class CallForegroundService : Service() {
             val intent = Intent(context, CallForegroundService::class.java).apply {
                 putExtra(EXTRA_CALLER_NAME, callerName)
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent)
-            } else {
-                context.startService(intent)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    ContextCompat.startForegroundService(context, intent)
+                } else {
+                    context.startService(intent)
+                }
+            } catch (e: Exception) {
+                Log.e("Eyeconic", "CallForegroundService.start failed", e)
             }
         }
 
@@ -39,6 +46,60 @@ class CallForegroundService : Service() {
                 action = ACTION_STOP
             }
             context.startService(intent)
+        }
+
+        fun postIncomingCallNotification(context: Context, callerName: String = "Incoming Call") {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                if (manager.getNotificationChannel(CHANNEL_ID) == null) {
+                    val channel = NotificationChannel(
+                        CHANNEL_ID,
+                        "Incoming Calls",
+                        NotificationManager.IMPORTANCE_HIGH
+                    ).apply {
+                        description = "Notifications for incoming voice and video calls"
+                        lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                        enableVibration(true)
+                        vibrationPattern = longArrayOf(0, 1000, 500, 1000)
+                        setSound(
+                            RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE),
+                            null
+                        )
+                    }
+                    manager.createNotificationChannel(channel)
+                }
+            }
+
+            val openAppIntent = Intent(context, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                putExtra("incoming_call", true)
+            }
+            val fullScreenPendingIntent = PendingIntent.getActivity(
+                context,
+                0,
+                openAppIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setContentTitle("Incoming Call")
+                .setContentText(callerName)
+                .setCategory(NotificationCompat.CATEGORY_CALL)
+                .setPriority(NotificationCompat.PRIORITY_MAX)
+                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                .setOngoing(true)
+                .setAutoCancel(false)
+                .setFullScreenIntent(fullScreenPendingIntent, true)
+                .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE))
+                .setVibrate(longArrayOf(0, 1000, 500, 1000))
+                .build()
+
+            try {
+                NotificationManagerCompat.from(context).notify(NOTIFICATION_ID, notification)
+            } catch (e: SecurityException) {
+                Log.e("Eyeconic", "Failed to post fallback call notification", e)
+            }
         }
     }
 
@@ -49,31 +110,23 @@ class CallForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Handle stop action (called when call is answered/declined from JS side)
         if (intent?.action == ACTION_STOP) {
-            Log.d("Eyeconic", "CallForegroundService: Stop action received")
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
         }
 
         val callerName = intent?.getStringExtra(EXTRA_CALLER_NAME) ?: "Incoming Call"
-        Log.d("Eyeconic", "CallForegroundService: Starting for caller=$callerName")
-
         val notification = buildCallNotification(callerName)
         startForeground(NOTIFICATION_ID, notification)
 
-        // Auto-cancel after 60 seconds if not answered
+        // Auto-cancel after 60 seconds if not answered.
         Thread {
             Thread.sleep(60_000)
-            if (isRunning()) {
-                Log.d("Eyeconic", "CallForegroundService: Auto-stopping after timeout")
-                stopForeground(STOP_FOREGROUND_REMOVE)
-                stopSelf()
-            }
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
         }.start()
 
-        // START_STICKY = system will restart this service if killed, re-delivering last intent
         return START_STICKY
     }
 
@@ -83,10 +136,6 @@ class CallForegroundService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
-
-    // ------------------------------------------------------------------
-    // Private helpers
-    // ------------------------------------------------------------------
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -100,9 +149,12 @@ class CallForegroundService : Service() {
                 ).apply {
                     description = "Notifications for incoming voice and video calls"
                     lockscreenVisibility = Notification.VISIBILITY_PUBLIC
-                    setBypassDnd(true)
                     enableVibration(true)
                     vibrationPattern = longArrayOf(0, 1000, 500, 1000)
+                    setSound(
+                        RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE),
+                        null
+                    )
                 }
                 manager.createNotificationChannel(channel)
             }
@@ -110,22 +162,24 @@ class CallForegroundService : Service() {
     }
 
     private fun buildCallNotification(callerName: String): Notification {
-        // Full-screen intent — opens MainActivity when notification is tapped
         val openAppIntent = Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             putExtra("incoming_call", true)
         }
         val fullScreenPendingIntent = PendingIntent.getActivity(
-            this, 0, openAppIntent,
+            this,
+            0,
+            openAppIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        // Decline action
         val declineIntent = Intent(this, CallForegroundService::class.java).apply {
             action = ACTION_STOP
         }
         val declinePendingIntent = PendingIntent.getService(
-            this, 1, declineIntent,
+            this,
+            1,
+            declineIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -133,12 +187,14 @@ class CallForegroundService : Service() {
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("Incoming Call")
             .setContentText(callerName)
-            .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_CALL)
-            .setFullScreenIntent(fullScreenPendingIntent, true)
-            .setAutoCancel(false)
-            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .setFullScreenIntent(fullScreenPendingIntent, true)
+            .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE))
+            .setVibrate(longArrayOf(0, 1000, 500, 1000))
             .addAction(0, "Decline", declinePendingIntent)
             .addAction(0, "Answer", fullScreenPendingIntent)
             .build()
@@ -149,7 +205,7 @@ class CallForegroundService : Service() {
         wakeLock = pm.newWakeLock(
             PowerManager.PARTIAL_WAKE_LOCK,
             "Eyeconic:CallWakeLock"
-        ).also { it.acquire(65_000L) } // 65 seconds max — slightly more than auto-cancel
+        ).also { it.acquire(65_000L) }
     }
 
     private fun releaseWakeLock() {
@@ -160,6 +216,4 @@ class CallForegroundService : Service() {
         }
         wakeLock = null
     }
-
-    private fun isRunning(): Boolean = true // simple flag; service is still alive if this runs
 }

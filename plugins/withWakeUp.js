@@ -73,8 +73,8 @@ const withWakeUpManifest = (config) => {
             'android.permission.WAKE_LOCK',
             // Android 13+ required to post notifications
             'android.permission.POST_NOTIFICATIONS',
-            // Android 14+ required for call-type foreground services
-            'android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE',
+            // Android 14+ foreground service permission for ringing call notification service
+            'android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK',
             // Required for battery optimization exemption dialog
             'android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS',
         ];
@@ -118,7 +118,7 @@ const withWakeUpManifest = (config) => {
             '.CallForegroundService',
             {
                 'android:exported': 'false',
-                'android:foregroundServiceType': 'connectedDevice',
+                'android:foregroundServiceType': 'mediaPlayback',
                 'android:stopWithTask': 'false',
             }
         );

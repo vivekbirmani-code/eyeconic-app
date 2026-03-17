@@ -15,6 +15,7 @@ import FloatingCallBar from '@/components/FloatingCallBar';
 import IncomingCallScreen from '@/components/IncomingCallScreen';
 import PermissionsScreen from '@/components/PermissionsScreen';
 import { usePushNotifications } from '@/hooks/usePushNotifications';
+import { requestBatteryOptimizationExemption } from '@/utils/notificationService';
 import { useRouter } from 'expo-router';
 import { getApiBaseURL } from '@/services/config';
 
@@ -78,6 +79,25 @@ function AppContent() {
       subscription.remove();
     };
   }, []);
+
+  useEffect(() => {
+    if (isCheckingPermissions || showPermissions) return;
+    if (Platform.OS !== 'android') return;
+
+    const maybeRequestBatteryOptimizationExemption = async () => {
+      try {
+        const hasPrompted = await AsyncStorage.getItem('battery_optimization_prompted');
+        if (hasPrompted) return;
+
+        await AsyncStorage.setItem('battery_optimization_prompted', 'true');
+        await requestBatteryOptimizationExemption();
+      } catch (error) {
+        console.error('Error requesting battery optimization exemption:', error);
+      }
+    };
+
+    maybeRequestBatteryOptimizationExemption();
+  }, [isCheckingPermissions, showPermissions]);
 
   const checkPermissionsStatus = async () => {
     try {

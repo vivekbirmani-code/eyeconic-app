@@ -1,31 +1,39 @@
-// Force Expo Push API to send a "data-only" FCM message by NOT providing a top-level `title` or `body`.
-// If `title` or `body` are provided at the root, Android OS intercepts the FCM payload when the app is killed 
-// and NEVER calls our custom MyFirebaseMessagingService.
-// By placing them inside the `data` payload, the Kotlin service receives the raw data even when killed, 
-// and can manually trigger CallForegroundService or native NotificationCompat.Builder.
+const EXPO_PUSH_API = 'https://exp.host/--/api/v2/push/send';
+
+const getChannelFromType = (type) => {
+    const normalized = String(type || '').toLowerCase();
+    if (normalized === 'incoming_call' || normalized === 'call') return 'calls';
+    if (normalized === 'group' || normalized === 'message' || normalized === 'group_message') return 'messages';
+    if (normalized.startsWith('quiz') || normalized === 'test') return 'tests';
+    return 'messages';
+};
+
+// Send Expo data-only push notifications so Android native handlers work in background/killed states.
 async function sendPushNotification(expoPushToken, title, body, data = {}) {
     if (!expoPushToken) return;
 
-    // We explicitly move title and body INSIDE the data object
+    const type = data.type || 'notification';
+    const channelId = data.channelId || getChannelFromType(type);
     const customData = {
         ...data,
-        type: data.type || 'incoming_call', // Ensure type is present in root of data
+        type,
         title: title || 'Eyeconic',
-        message: body || '', // Map body to message internally to avoid Expo confusion
-        categoryId: 'calls',
-        _displayInForeground: true
+        message: body || '',
+        channelId,
+        _displayInForeground: true,
     };
 
     const message = {
         to: expoPushToken,
         priority: 'high',
+        ttl: 0,
+        channelId,
         data: customData,
-        channelId: 'calls',
-        // NO top-level title, body, or sound! This ensures a 100% data-only FCM payload on Android.
+        // Keep title/body out of root payload to preserve data-only delivery behavior.
     };
 
     try {
-        const response = await fetch('https://exp.host/--/api/v2/push/send', {
+        const response = await fetch(EXPO_PUSH_API, {
             method: 'POST',
             headers: {
                 Accept: 'application/json',
@@ -33,8 +41,11 @@ async function sendPushNotification(expoPushToken, title, body, data = {}) {
             },
             body: JSON.stringify(message),
         });
+
         const result = await response.json();
-        console.log('Expo data-only push sent:', result);
+        if (result?.data?.status === 'error') {
+            console.error('Expo push rejected:', result);
+        }
     } catch (error) {
         console.error('Error sending Expo push notification:', error);
     }
