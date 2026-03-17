@@ -40,6 +40,20 @@ const csvEscape = (value) => {
 
 const toCsvRow = (values) => values.map(csvEscape).join(',');
 
+const optionLabelFromIndex = (index) => {
+  const idx = Number(index);
+  if (!Number.isInteger(idx) || idx < 0) return '';
+  return String.fromCharCode(65 + idx); // 0 -> A, 1 -> B, ...
+};
+
+const optionTextFromIndex = (options, index) => {
+  const idx = Number(index);
+  if (!Array.isArray(options) || !Number.isInteger(idx) || idx < 0 || idx >= options.length) {
+    return '';
+  }
+  return options[idx] || '';
+};
+
 // Normalizes sections and ensures question assignment exists for mixed sections.
 const deriveSectionsForQuestions = (rawSections, rawQuestionIds, totalDuration, options = {}) => {
   const { strictDuration = true } = options;
@@ -73,6 +87,23 @@ const deriveSectionsForQuestions = (rawSections, rawQuestionIds, totalDuration, 
       : []
   }));
 
+  // Prevent duplicate question assignment across sections.
+  const questionOwners = new Map();
+  for (const section of sections) {
+    const uniqueInSection = [...new Set(section.questions)];
+    section.questions = uniqueInSection;
+
+    for (const qid of uniqueInSection) {
+      const owner = questionOwners.get(qid);
+      if (owner) {
+        return {
+          error: `Question ${qid} is assigned to multiple sections (${owner} and ${section.name}).`
+        };
+      }
+      questionOwners.set(qid, section.name);
+    }
+  }
+
   const invalidSection = sections.find(section => !section.name || section.duration <= 0);
   if (invalidSection) {
     return { error: 'Each section needs a valid name and duration' };
@@ -98,7 +129,9 @@ const deriveSectionsForQuestions = (rawSections, rawQuestionIds, totalDuration, 
       mixedSections[idx % mixedSections.length].questions.push(qid);
     });
   } else if (sections.length > 0 && unassignedIds.length > 0) {
-    sections[0].questions = [...sections[0].questions, ...unassignedIds];
+    return {
+      error: `All quiz questions must be assigned to sections. ${unassignedIds.length} question(s) are unassigned.`
+    };
   }
 
   sections.forEach(section => {
@@ -757,7 +790,13 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
     // }
 
     if (title) quiz.title = title;
-    if (duration) quiz.duration = parseInt(duration);
+    if (duration !== undefined) {
+      const parsedDuration = parseInt(duration, 10);
+      if (!Number.isFinite(parsedDuration) || parsedDuration <= 0) {
+        return res.status(400).json({ message: 'Quiz duration must be greater than 0 minutes' });
+      }
+      quiz.duration = parsedDuration;
+    }
     if (instructions) quiz.instructions = instructions;
     if (testType) quiz.testType = testType;
     if (subject) quiz.subject = subject; // Expecting single subject ID or handled by frontend
@@ -1058,10 +1097,18 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
       });
 
       const attemptCount = sorted.length || 1;
+      const options = Array.isArray(question.options) ? question.options : [];
       return {
         questionNumber: index + 1,
+        subjectName: question.subject?.name || quiz.subject?.name || 'General',
         topicName: question.topicName || '',
         questionText: question.question || '',
+        optionA: options[0] || '',
+        optionB: options[1] || '',
+        optionC: options[2] || '',
+        optionD: options[3] || '',
+        correctOptionLabel: optionLabelFromIndex(question.correctAnswer),
+        correctOptionText: optionTextFromIndex(options, question.correctAnswer),
         correctCount,
         wrongCount,
         skippedCount,
@@ -1183,8 +1230,15 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
     csvLines.push(toCsvRow(['Question-wise Analytics']));
     csvLines.push(toCsvRow([
       'Question Number',
+      'Subject',
       'Topic',
       'Question Text',
+      'Option A',
+      'Option B',
+      'Option C',
+      'Option D',
+      'Correct Option',
+      'Correct Option Text',
       'Correct Count',
       'Wrong Count',
       'Skipped Count',
@@ -1196,8 +1250,15 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
     questionAnalytics.forEach((question) => {
       csvLines.push(toCsvRow([
         question.questionNumber,
+        question.subjectName,
         question.topicName,
         question.questionText,
+        question.optionA,
+        question.optionB,
+        question.optionC,
+        question.optionD,
+        question.correctOptionLabel,
+        question.correctOptionText,
         question.correctCount,
         question.wrongCount,
         question.skippedCount,
@@ -1212,6 +1273,203 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
     res.send(csvLines.join('\n'));
   } catch (error) {
     console.error('CSV export error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// CSV download of per-student analytics report (admin only)
+router.get('/analytics/student/:studentId/csv', auth, authorize('admin'), async (req, res) => {
+  try {
+    const student = await User.findById(req.params.studentId).select('name email role');
+    if (!student || student.role !== 'student') {
+      return res.status(404).json({ message: 'Student not found' });
+    }
+
+    const attempts = await QuizAttempt.find({
+      student: req.params.studentId,
+      status: { $in: ['completed', 'auto_submitted'] }
+    })
+      .populate({
+        path: 'quiz',
+        select: 'title subject testType totalMarks positiveMarks negativeMarks questions',
+        populate: [
+          { path: 'subject', select: 'name' },
+          {
+            path: 'questions',
+            select: 'qid question options correctAnswer topicName subject',
+            populate: { path: 'subject', select: 'name' }
+          }
+        ]
+      })
+      .sort({ endTime: -1 });
+
+    const totalTests = attempts.length;
+    const totalMarks = roundTo2(attempts.reduce((sum, a) => sum + Number(a.totalMarks || 0), 0));
+    const obtainedMarks = roundTo2(attempts.reduce((sum, a) => sum + Number(a.marksObtained || 0), 0));
+    const avgPercentage = totalMarks > 0 ? roundTo2((obtainedMarks / totalMarks) * 100) : 0;
+
+    const csvLines = [];
+    const generatedAt = new Date().toISOString();
+
+    csvLines.push(toCsvRow(['Student Analytics Report']));
+    csvLines.push(toCsvRow(['Generated At', generatedAt]));
+    csvLines.push('');
+
+    csvLines.push(toCsvRow(['Student Details']));
+    csvLines.push(toCsvRow(['Student ID', 'Student Name', 'Student Email']));
+    csvLines.push(toCsvRow([String(student._id), student.name || '', student.email || '']));
+    csvLines.push('');
+
+    csvLines.push(toCsvRow(['Summary']));
+    csvLines.push(toCsvRow(['Total Tests', 'Total Marks', 'Obtained Marks', 'Average Percentage (%)']));
+    csvLines.push(toCsvRow([totalTests, totalMarks, obtainedMarks, avgPercentage]));
+    csvLines.push('');
+
+    csvLines.push(toCsvRow(['Attempt Summary']));
+    csvLines.push(toCsvRow([
+      'Attempt ID',
+      'Quiz ID',
+      'Quiz Title',
+      'Quiz Subject',
+      'Test Type',
+      'Score',
+      'Total Questions',
+      'Marks Obtained',
+      'Total Marks',
+      'Percentage (%)',
+      'Status',
+      'Tab Switch Count',
+      'Started At',
+      'Completed At'
+    ]));
+
+    attempts.forEach((attempt) => {
+      const quiz = attempt.quiz;
+      const quizSubject = quiz?.subject?.name || 'General';
+      const percentage = attempt.totalMarks > 0
+        ? roundTo2((Number(attempt.marksObtained || 0) / Number(attempt.totalMarks || 0)) * 100)
+        : 0;
+
+      csvLines.push(toCsvRow([
+        String(attempt._id),
+        quiz?._id ? String(quiz._id) : '',
+        quiz?.title || '',
+        quizSubject,
+        quiz?.testType || '',
+        roundTo2(attempt.score || 0),
+        attempt.totalQuestions || 0,
+        roundTo2(attempt.marksObtained || 0),
+        roundTo2(attempt.totalMarks || 0),
+        percentage,
+        attempt.status || '',
+        attempt.tabSwitchCount || 0,
+        attempt.startTime ? new Date(attempt.startTime).toISOString() : '',
+        attempt.endTime ? new Date(attempt.endTime).toISOString() : ''
+      ]));
+    });
+
+    csvLines.push('');
+    csvLines.push(toCsvRow(['Question-level Response Details']));
+    csvLines.push(toCsvRow([
+      'Student ID',
+      'Student Name',
+      'Student Email',
+      'Attempt ID',
+      'Quiz ID',
+      'Quiz Title',
+      'Test Type',
+      'Attempt Status',
+      'Attempt Start',
+      'Attempt End',
+      'Question Number',
+      'Question ID',
+      'Question QID',
+      'Question Subject',
+      'Question Topic',
+      'Question Text',
+      'Option A',
+      'Option B',
+      'Option C',
+      'Option D',
+      'Correct Option',
+      'Correct Option Text',
+      'Selected Option',
+      'Selected Option Text',
+      'Answered',
+      'Skipped',
+      'Is Correct',
+      'Time Spent (sec)',
+      'Marks Awarded',
+      'Positive Marks',
+      'Negative Marks'
+    ]));
+
+    attempts.forEach((attempt) => {
+      const quiz = attempt.quiz;
+      if (!quiz || !Array.isArray(quiz.questions)) return;
+
+      const positiveMarks = Number(quiz.positiveMarks || 0);
+      const negativeMarks = Number(quiz.negativeMarks || 0);
+      const answerByQuestionIndex = new Map();
+
+      if (Array.isArray(attempt.answers)) {
+        attempt.answers.forEach((ans) => {
+          answerByQuestionIndex.set(Number(ans.questionIndex), ans);
+        });
+      }
+
+      quiz.questions.forEach((question, questionIndex) => {
+        const answer = answerByQuestionIndex.get(questionIndex);
+        const options = Array.isArray(question.options) ? question.options : [];
+        const selectedAnswer = answer?.selectedAnswer;
+        const isSkipped = selectedAnswer === undefined || selectedAnswer === null || Number(selectedAnswer) === -1;
+        const isCorrect = !isSkipped && Number(selectedAnswer) === Number(question.correctAnswer);
+        const marksAwarded = isSkipped ? 0 : (isCorrect ? positiveMarks : -negativeMarks);
+
+        csvLines.push(toCsvRow([
+          String(student._id),
+          student.name || '',
+          student.email || '',
+          String(attempt._id),
+          quiz._id ? String(quiz._id) : '',
+          quiz.title || '',
+          quiz.testType || '',
+          attempt.status || '',
+          attempt.startTime ? new Date(attempt.startTime).toISOString() : '',
+          attempt.endTime ? new Date(attempt.endTime).toISOString() : '',
+          questionIndex + 1,
+          question._id ? String(question._id) : '',
+          question.qid || '',
+          question.subject?.name || quiz.subject?.name || 'General',
+          question.topicName || '',
+          question.question || '',
+          options[0] || '',
+          options[1] || '',
+          options[2] || '',
+          options[3] || '',
+          optionLabelFromIndex(question.correctAnswer),
+          optionTextFromIndex(options, question.correctAnswer),
+          isSkipped ? '' : optionLabelFromIndex(selectedAnswer),
+          isSkipped ? '' : optionTextFromIndex(options, selectedAnswer),
+          isSkipped ? 'No' : 'Yes',
+          isSkipped ? 'Yes' : 'No',
+          isSkipped ? '' : (isCorrect ? 'Yes' : 'No'),
+          Number(answer?.timeSpent || 0),
+          roundTo2(marksAwarded),
+          roundTo2(positiveMarks),
+          roundTo2(negativeMarks)
+        ]));
+      });
+    });
+
+    const sanitizedName = (student.name || 'student').replace(/[^a-zA-Z0-9-_ ]/g, '').trim() || 'student';
+    const fileName = `${sanitizedName}_${student._id}_analytics.csv`;
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.send(csvLines.join('\n'));
+  } catch (error) {
+    console.error('Student CSV export error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

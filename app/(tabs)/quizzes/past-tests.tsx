@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -50,6 +50,17 @@ interface Student {
   email: string;
 }
 
+interface Group {
+  _id: string;
+  name: string;
+  description?: string;
+  members?: Array<{
+    _id: string;
+    role?: string;
+  }>;
+  students?: Array<string | { _id: string }>;
+}
+
 export default function PastTests() {
   const { user } = useAuth();
   const router = useRouter();
@@ -65,6 +76,9 @@ export default function PastTests() {
   const [students, setStudents] = useState<Student[]>([]);
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
   const [studentSearch, setStudentSearch] = useState('');
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [groupSearch, setGroupSearch] = useState('');
+  const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
   const [sharing, setSharing] = useState(false);
   
   // External share state
@@ -74,9 +88,107 @@ export default function PastTests() {
   const [generatingLink, setGeneratingLink] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  const studentIdSet = useMemo(() => {
+    return new Set(students.map(student => student._id));
+  }, [students]);
+
+  const groupStudentMap = useMemo(() => {
+    const map: Record<string, string[]> = {};
+
+    groups.forEach(group => {
+      const studentIds = new Set<string>();
+
+      if (Array.isArray(group.members)) {
+        group.members.forEach(member => {
+          if (!member?._id) return;
+          if (member.role === 'student' || studentIdSet.has(member._id)) {
+            studentIds.add(member._id);
+          }
+        });
+      }
+
+      if (Array.isArray(group.students)) {
+        group.students.forEach(student => {
+          const studentId = typeof student === 'string' ? student : student?._id;
+          if (studentId && studentIdSet.has(studentId)) {
+            studentIds.add(studentId);
+          }
+        });
+      }
+
+      map[group._id] = Array.from(studentIds);
+    });
+
+    return map;
+  }, [groups, studentIdSet]);
+
+  const filteredGroups = useMemo(() => {
+    const query = groupSearch.trim().toLowerCase();
+
+    return groups.filter(group => {
+      const hasStudents = (groupStudentMap[group._id]?.length || 0) > 0;
+      if (!hasStudents) return false;
+
+      if (!query) return true;
+
+      return (
+        group.name.toLowerCase().includes(query) ||
+        (group.description || '').toLowerCase().includes(query)
+      );
+    });
+  }, [groupSearch, groups, groupStudentMap]);
+
+  const selectedGroupStudentIdSet = useMemo(() => {
+    const ids = new Set<string>();
+
+    selectedGroupIds.forEach(groupId => {
+      (groupStudentMap[groupId] || []).forEach(studentId => ids.add(studentId));
+    });
+
+    return ids;
+  }, [selectedGroupIds, groupStudentMap]);
+
+  const availableStudents = useMemo(() => {
+    if (!selectedQuiz) return [];
+
+    const query = studentSearch.toLowerCase();
+
+    return students.filter(student => {
+      const alreadyAssigned = selectedQuiz.assignedStudents.includes(student._id);
+      if (alreadyAssigned) return false;
+
+      if (selectedGroupIds.length > 0 && !selectedGroupStudentIdSet.has(student._id)) {
+        return false;
+      }
+
+      if (query) {
+        return (
+          student.name.toLowerCase().includes(query) ||
+          student.email.toLowerCase().includes(query)
+        );
+      }
+
+      return true;
+    });
+  }, [selectedQuiz, studentSearch, students, selectedGroupIds, selectedGroupStudentIdSet]);
+
+  const selectedFilteredStudentCount = useMemo(() => {
+    return availableStudents.filter(student => selectedStudents.includes(student._id)).length;
+  }, [availableStudents, selectedStudents]);
+
+  const allFilteredStudentsSelected = useMemo(() => {
+    return availableStudents.length > 0 && selectedFilteredStudentCount === availableStudents.length;
+  }, [availableStudents.length, selectedFilteredStudentCount]);
+
+  const allFilteredGroupsSelected = useMemo(() => {
+    return filteredGroups.length > 0
+      && filteredGroups.every(group => selectedGroupIds.includes(group._id));
+  }, [filteredGroups, selectedGroupIds]);
+
   useEffect(() => {
     fetchQuizzes();
     fetchStudents();
+    fetchGroups();
   }, []);
 
   useEffect(() => {
@@ -93,6 +205,10 @@ export default function PastTests() {
       );
     }
   }, [searchQuery, quizzes]);
+
+  useEffect(() => {
+    setSelectedGroupIds(prev => prev.filter(groupId => groups.some(group => group._id === groupId)));
+  }, [groups]);
 
   const fetchQuizzes = async () => {
     try {
@@ -120,11 +236,23 @@ export default function PastTests() {
     }
   };
 
+  const fetchGroups = async () => {
+    try {
+      const response = await api.get('/groups');
+      setGroups(Array.isArray(response.data) ? response.data : []);
+    } catch (error) {
+      console.error('Error fetching groups:', error);
+      setGroups([]);
+    }
+  };
+
   const openShareModal = (quiz: Quiz) => {
     setSelectedQuiz(quiz);
     // Pre-filter out already assigned students
     setSelectedStudents([]);
     setStudentSearch('');
+    setGroupSearch('');
+    setSelectedGroupIds([]);
     setShareMode('internal');
     setPublicShareUrl(null);
     setShareExpiry(null);
@@ -147,11 +275,39 @@ export default function PastTests() {
   };
 
   const toggleStudent = (studentId: string) => {
-    if (selectedStudents.includes(studentId)) {
-      setSelectedStudents(selectedStudents.filter(id => id !== studentId));
-    } else {
-      setSelectedStudents([...selectedStudents, studentId]);
+    setSelectedStudents(prev =>
+      prev.includes(studentId) ? prev.filter(id => id !== studentId) : [...prev, studentId]
+    );
+  };
+
+  const toggleGroupFilter = (groupId: string) => {
+    setSelectedGroupIds(prev =>
+      prev.includes(groupId) ? prev.filter(id => id !== groupId) : [...prev, groupId]
+    );
+  };
+
+  const handleSelectAllFilteredGroups = () => {
+    const filteredGroupIds = filteredGroups.map(group => group._id);
+    if (filteredGroupIds.length === 0) return;
+
+    if (allFilteredGroupsSelected) {
+      setSelectedGroupIds(prev => prev.filter(id => !filteredGroupIds.includes(id)));
+      return;
     }
+
+    setSelectedGroupIds(prev => Array.from(new Set([...prev, ...filteredGroupIds])));
+  };
+
+  const handleSelectAllFilteredStudents = () => {
+    const filteredStudentIds = new Set(availableStudents.map(student => student._id));
+    if (filteredStudentIds.size === 0) return;
+
+    if (allFilteredStudentsSelected) {
+      setSelectedStudents(prev => prev.filter(id => !filteredStudentIds.has(id)));
+      return;
+    }
+
+    setSelectedStudents(prev => Array.from(new Set([...prev, ...Array.from(filteredStudentIds)])));
   };
 
   const handleShare = async () => {
@@ -252,21 +408,6 @@ export default function PastTests() {
         }
       ]
     );
-  };
-
-  const getAvailableStudents = () => {
-    if (!selectedQuiz) return [];
-    const query = studentSearch.toLowerCase();
-    return students.filter(s => {
-      // Filter out already assigned students
-      const alreadyAssigned = selectedQuiz.assignedStudents.includes(s._id);
-      if (alreadyAssigned) return false;
-      // Filter by search
-      if (query) {
-        return s.name.toLowerCase().includes(query) || s.email.toLowerCase().includes(query);
-      }
-      return true;
-    });
   };
 
   const formatDate = (dateStr: string) => {
@@ -439,26 +580,104 @@ export default function PastTests() {
               // Internal sharing (existing student assignment)
               <>
                 <View style={styles.modalSearchInput}>
+                  <Users color="#6B7280" size={18} />
+                  <TextInput
+                    style={styles.modalSearchTextInput}
+                    placeholder="Filter groups by name..."
+                    value={groupSearch}
+                    onChangeText={setGroupSearch}
+                  />
+                  {groupSearch.length > 0 && (
+                    <TouchableOpacity onPress={() => setGroupSearch('')}>
+                      <X color="#9CA3AF" size={16} />
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                <View style={styles.selectionActionRow}>
+                  <Text style={styles.selectedCount}>
+                    {selectedGroupIds.length} group filter(s) active
+                  </Text>
+                  <TouchableOpacity
+                    onPress={handleSelectAllFilteredGroups}
+                    disabled={filteredGroups.length === 0}
+                  >
+                    <Text style={[styles.selectAllActionText, filteredGroups.length === 0 && styles.selectAllActionTextDisabled]}>
+                      {allFilteredGroupsSelected ? 'Deselect Filtered Groups' : 'Select Filtered Groups'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                <ScrollView
+                  horizontal
+                  style={styles.groupFilterList}
+                  contentContainerStyle={styles.groupFilterListContent}
+                  showsHorizontalScrollIndicator={false}
+                >
+                  {filteredGroups.length === 0 ? (
+                    <Text style={styles.noGroupsText}>No matching groups</Text>
+                  ) : (
+                    filteredGroups.map(group => (
+                      <TouchableOpacity
+                        key={group._id}
+                        style={[
+                          styles.groupFilterChip,
+                          selectedGroupIds.includes(group._id) && styles.groupFilterChipSelected
+                        ]}
+                        onPress={() => toggleGroupFilter(group._id)}
+                      >
+                        <Text
+                          style={[
+                            styles.groupFilterChipText,
+                            selectedGroupIds.includes(group._id) && styles.groupFilterChipTextSelected
+                          ]}
+                        >
+                          {group.name} ({groupStudentMap[group._id]?.length || 0})
+                        </Text>
+                      </TouchableOpacity>
+                    ))
+                  )}
+                </ScrollView>
+
+                {selectedGroupIds.length > 0 && (
+                  <TouchableOpacity onPress={() => setSelectedGroupIds([])}>
+                    <Text style={styles.clearFilterText}>Clear Group Filters</Text>
+                  </TouchableOpacity>
+                )}
+
+                <View style={styles.modalSearchInput}>
                   <Search color="#6B7280" size={18} />
                   <TextInput
                     style={styles.modalSearchTextInput}
-                    placeholder="Search students..."
+                    placeholder={selectedGroupIds.length > 0 ? 'Search students in selected groups...' : 'Search students...'}
                     value={studentSearch}
                     onChangeText={setStudentSearch}
                   />
                 </View>
 
-                <Text style={styles.selectedCount}>
-                  {selectedStudents.length} student(s) selected
-                </Text>
+                <View style={styles.selectionActionRow}>
+                  <Text style={styles.selectedCount}>
+                    {selectedFilteredStudentCount} of {availableStudents.length} filtered selected ({selectedStudents.length} total)
+                  </Text>
+                  <TouchableOpacity
+                    onPress={handleSelectAllFilteredStudents}
+                    disabled={availableStudents.length === 0}
+                  >
+                    <Text style={[styles.selectAllActionText, availableStudents.length === 0 && styles.selectAllActionTextDisabled]}>
+                      {allFilteredStudentsSelected ? 'Deselect Filtered' : 'Select Filtered'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
 
                 <ScrollView style={styles.studentList}>
-                  {getAvailableStudents().length === 0 ? (
+                  {availableStudents.length === 0 ? (
                     <Text style={styles.noStudentsText}>
-                      {studentSearch ? 'No matching students' : 'All students already have access'}
+                      {studentSearch || selectedGroupIds.length > 0
+                        ? 'No matching students'
+                        : 'All students already have access'}
                     </Text>
                   ) : (
-                    getAvailableStudents().map(student => (
+                    availableStudents.map(student => (
                       <TouchableOpacity
                         key={student._id}
                         style={[
@@ -767,6 +986,61 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#2563EB',
     fontWeight: '500',
+    marginBottom: 12,
+  },
+  selectionActionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
+    gap: 12,
+  },
+  selectAllActionText: {
+    fontSize: 13,
+    color: '#2563EB',
+    fontWeight: '600',
+  },
+  selectAllActionTextDisabled: {
+    color: '#9CA3AF',
+  },
+  groupFilterList: {
+    maxHeight: 48,
+    marginBottom: 10,
+  },
+  groupFilterListContent: {
+    gap: 8,
+    paddingRight: 12,
+  },
+  noGroupsText: {
+    fontSize: 13,
+    color: '#9CA3AF',
+    paddingVertical: 10,
+  },
+  groupFilterChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#F9FAFB',
+  },
+  groupFilterChipSelected: {
+    borderColor: '#2563EB',
+    backgroundColor: '#EBF5FF',
+  },
+  groupFilterChipText: {
+    fontSize: 12,
+    color: '#4B5563',
+    fontWeight: '500',
+  },
+  groupFilterChipTextSelected: {
+    color: '#1D4ED8',
+    fontWeight: '600',
+  },
+  clearFilterText: {
+    fontSize: 13,
+    color: '#2563EB',
+    fontWeight: '600',
     marginBottom: 12,
   },
   studentList: {

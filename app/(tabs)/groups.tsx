@@ -74,6 +74,7 @@ export default function Groups() {
   const [isLoading, setIsLoading] = useState(true);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
+  const [activeFolderKey, setActiveFolderKey] = useState<string>('all');
 
   // Edit group state
   const [editGroup, setEditGroup] = useState<Group | null>(null);
@@ -275,6 +276,20 @@ export default function Groups() {
       return next;
     });
   }, [mentorFolders, user?.role]);
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    if (activeFolderKey === 'all') return;
+    const exists = mentorFolders.some((folder) => folder.key === activeFolderKey);
+    if (!exists) {
+      setActiveFolderKey('all');
+    }
+  }, [mentorFolders, activeFolderKey, user?.role]);
+
+  const visibleMentorFolders = useMemo(() => {
+    if (activeFolderKey === 'all') return mentorFolders;
+    return mentorFolders.filter((folder) => folder.key === activeFolderKey);
+  }, [mentorFolders, activeFolderKey]);
 
   const searchUsers = useCallback(async (query: string, role: string) => {
     if (!query.trim()) {
@@ -644,6 +659,53 @@ export default function Groups() {
         </View>
       </View>
 
+      {user?.role === 'admin' && mentorFolders.length > 0 && (
+        <View style={styles.folderTopStrip}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.folderTopStripContent}
+          >
+            <TouchableOpacity
+              style={[
+                styles.folderTopChip,
+                activeFolderKey === 'all' && styles.folderTopChipActive
+              ]}
+              onPress={() => setActiveFolderKey('all')}
+            >
+              <Text
+                style={[
+                  styles.folderTopChipText,
+                  activeFolderKey === 'all' && styles.folderTopChipTextActive
+                ]}
+              >
+                All Folders ({mentorFolders.length})
+              </Text>
+            </TouchableOpacity>
+
+            {mentorFolders.map((folder) => (
+              <TouchableOpacity
+                key={folder.key}
+                style={[
+                  styles.folderTopChip,
+                  activeFolderKey === folder.key && styles.folderTopChipActive
+                ]}
+                onPress={() => setActiveFolderKey(folder.key)}
+              >
+                <Text
+                  style={[
+                    styles.folderTopChipText,
+                    activeFolderKey === folder.key && styles.folderTopChipTextActive
+                  ]}
+                >
+                  {folder.title} ({folder.groups.length})
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
       {/* Groups List with Skeleton Loading */}
       {isLoading ? (
         <Animated.View
@@ -673,13 +735,13 @@ export default function Groups() {
               showsVerticalScrollIndicator={false}
               scrollIndicatorInsets={{ bottom: 120 }}
             >
-              {mentorFolders.map((folder) => (
+              {visibleMentorFolders.map((folder) => (
                 <View key={folder.key}>
                   {renderMentorFolder({ item: folder })}
                 </View>
               ))}
 
-              {otherGroups.length > 0 && (
+              {activeFolderKey === 'all' && otherGroups.length > 0 && (
                 <View style={styles.otherGroupsSection}>
                   <Text style={styles.otherGroupsTitle}>Other Groups</Text>
                   {otherGroups.map((group) => (
@@ -690,7 +752,7 @@ export default function Groups() {
                 </View>
               )}
 
-              {mentorFolders.length === 0 && otherGroups.length === 0 && (
+              {visibleMentorFolders.length === 0 && otherGroups.length === 0 && (
                 <View style={styles.emptyContainer}>
                   <View style={styles.emptyIconContainer}>
                     <MessageCircle color="#01b4ae" size={48} />
@@ -1015,6 +1077,36 @@ const styles = StyleSheet.create({
   },
   adminScrollContent: {
     paddingBottom: 140,
+  },
+  folderTopStrip: {
+    backgroundColor: '#FFFFFF',
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+    paddingVertical: 10,
+  },
+  folderTopStripContent: {
+    paddingHorizontal: 16,
+    gap: 8,
+  },
+  folderTopChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#F9FAFB',
+  },
+  folderTopChipActive: {
+    borderColor: '#01b4ae',
+    backgroundColor: '#E6FFFB',
+  },
+  folderTopChipText: {
+    fontSize: 13,
+    color: '#4B5563',
+    fontWeight: '600',
+  },
+  folderTopChipTextActive: {
+    color: '#0f766e',
   },
   mentorFolderCard: {
     backgroundColor: '#F8FAFC',

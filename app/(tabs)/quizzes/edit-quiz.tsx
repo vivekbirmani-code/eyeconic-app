@@ -103,6 +103,11 @@ const normalizeMixedQuizTitle = (rawTitle: string, subjectNames: string[]): stri
   return `Mixed ${generatedTitleMatch[1]}`;
 };
 
+const parseNonNegativeInt = (value: string): number => {
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
+};
+
 export default function EditQuiz() {
   const { user } = useAuth();
   const router = useRouter();
@@ -346,10 +351,15 @@ export default function EditQuiz() {
     }
 
     const totalDuration = parseInt(duration, 10) || 0;
+    if (totalDuration <= 0) {
+      Alert.alert('Error', 'Quiz duration must be greater than 0 minutes');
+      return;
+    }
+
     const validQuestionIds = new Set(selectedQuestions.map(q => q._id));
     const sectionPayload = quizSections.map(section => ({
       name: section.name.trim(),
-      duration: Number(section.duration) || 0,
+      duration: parseNonNegativeInt(String(section.duration)),
       selectionType: section.selectionType,
       questions: section.selectionType === 'manual'
         ? section.questions.filter(qid => validQuestionIds.has(qid))
@@ -370,6 +380,31 @@ export default function EditQuiz() {
       return;
     }
 
+    const questionOwnerBySection = new Map<string, string>();
+    for (const section of sectionPayload) {
+      if (section.selectionType !== 'manual') continue;
+      for (const qid of section.questions) {
+        const owner = questionOwnerBySection.get(qid);
+        if (owner) {
+          Alert.alert(
+            'Error',
+            `A question is assigned to multiple sections (${owner} and ${section.name}). Assign each question to only one section.`
+          );
+          return;
+        }
+        questionOwnerBySection.set(qid, section.name);
+      }
+    }
+
+    const hasMixedSection = sectionPayload.some(section => section.selectionType === 'mixed');
+    if (!hasMixedSection && sectionPayload.length > 0 && questionOwnerBySection.size < selectedQuestions.length) {
+      Alert.alert(
+        'Error',
+        `All questions must be assigned when sections are Manual only. ${selectedQuestions.length - questionOwnerBySection.size} question(s) are unassigned.`
+      );
+      return;
+    }
+
     if (sectionPayload.length > 0) {
       const allocated = sectionPayload.reduce((sum, section) => sum + section.duration, 0);
       if (allocated !== totalDuration) {
@@ -385,7 +420,7 @@ export default function EditQuiz() {
       setSaving(true);
       await api.put(`/quizzes/${id}`, {
         title: title.trim(),
-        duration: parseInt(duration) || 30,
+        duration: totalDuration,
         instructions: instructions.split('\n').filter(line => line.trim()),
         questions: selectedQuestions.map(q => q._id),
         sections: sectionPayload,
@@ -470,6 +505,38 @@ export default function EditQuiz() {
     });
   }, [selectedQuestions, sectionFilterSubjectId, sectionQuestionSearch]);
 
+  const sectionQuestionStats = useMemo(() => {
+    const selectedIds = new Set(selectedQuestions.map(q => q._id));
+    const manualOwners = new Map<string, string>();
+    let duplicateAssignments = 0;
+
+    quizSections.forEach(section => {
+      if (section.selectionType !== 'manual') return;
+
+      const uniqueWithinSection = [...new Set(section.questions.filter(qid => selectedIds.has(qid)))];
+      uniqueWithinSection.forEach(qid => {
+        if (manualOwners.has(qid)) {
+          duplicateAssignments += 1;
+        } else {
+          manualOwners.set(qid, section.name || 'Unnamed');
+        }
+      });
+    });
+
+    const hasMixedSection = quizSections.some(section => section.selectionType === 'mixed');
+    const uniqueManualAssigned = manualOwners.size;
+    const unassignedWithoutMixed = hasMixedSection
+      ? 0
+      : Math.max(0, selectedQuestions.length - uniqueManualAssigned);
+
+    return {
+      hasMixedSection,
+      uniqueManualAssigned,
+      duplicateAssignments,
+      unassignedWithoutMixed
+    };
+  }, [quizSections, selectedQuestions]);
+
   const subjectNames = useMemo(
     () => getUniqueSubjectNames(quiz, selectedQuestions),
     [quiz, selectedQuestions]
@@ -541,7 +608,7 @@ export default function EditQuiz() {
               <TextInput
                 style={styles.input}
                 value={duration}
-                onChangeText={setDuration}
+                onChangeText={(val) => setDuration(val.replace(/[^0-9]/g, ''))}
                 placeholder="30"
                 keyboardType="numeric"
                 placeholderTextColor="#9CA3AF"
@@ -730,11 +797,24 @@ export default function EditQuiz() {
             <Text style={styles.infoText}>
               Total Duration: {parseInt(duration, 10) || 0} mins | Allocated: {quizSections.reduce((sum, s) => sum + (Number(s.duration) || 0), 0)} mins
             </Text>
+            <Text style={styles.infoText}>
+              Question Pool: {selectedQuestions.length} | Manual Assigned (unique): {sectionQuestionStats.uniqueManualAssigned}
+            </Text>
+            {sectionQuestionStats.duplicateAssignments > 0 && (
+              <Text style={styles.infoWarningText}>
+                Duplicate question assignment detected across sections.
+              </Text>
+            )}
+            {!sectionQuestionStats.hasMixedSection && sectionQuestionStats.unassignedWithoutMixed > 0 && (
+              <Text style={styles.infoWarningText}>
+                {sectionQuestionStats.unassignedWithoutMixed} question(s) are not assigned to any section.
+              </Text>
+            )}
             <Text style={styles.infoHint}>Use Manual to assign specific questions to each section.</Text>
           </View>
 
           <View style={styles.sectionSetupHeader}>
-            <Text style={styles.label}>Quick Section Count</Text>
+            <Text style={styles.label}>Quick Section Count (No. of sections)</Text>
             <View style={styles.quickCountRow}>
               {[1, 2, 3, 4, 5].map(n => (
                 <TouchableOpacity
@@ -767,7 +847,7 @@ export default function EditQuiz() {
                   <TextInput
                     style={[styles.input, { flex: 1 }]}
                     value={String(section.duration || '')}
-                    onChangeText={(val) => updateSection(idx, { duration: parseInt(val, 10) || 0 })}
+                    onChangeText={(val) => updateSection(idx, { duration: parseNonNegativeInt(val) })}
                     keyboardType="numeric"
                     placeholder="Mins"
                     placeholderTextColor="#9CA3AF"
@@ -1267,6 +1347,12 @@ const styles = StyleSheet.create({
   infoText: {
     fontSize: 14,
     color: '#1E40AF',
+    fontWeight: '600',
+  },
+  infoWarningText: {
+    marginTop: 6,
+    fontSize: 12,
+    color: '#B91C1C',
     fontWeight: '600',
   },
   infoHint: {

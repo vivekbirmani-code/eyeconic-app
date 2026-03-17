@@ -304,6 +304,24 @@ export default function Analytics() {
     }
   };
 
+  const handleDownloadStudentCSV = async () => {
+    if (!selectedStudent) return;
+    try {
+      const baseURL = api.defaults.baseURL || '';
+      const token = await AsyncStorage.getItem('authToken');
+
+      if (!token) {
+        Alert.alert('Error', 'Authentication token missing. Please log in again.');
+        return;
+      }
+
+      const url = `${baseURL}/quizzes/analytics/student/${selectedStudent._id}/csv?token=${token}`;
+      Linking.openURL(url);
+    } catch (error) {
+      Alert.alert('Error', 'Failed to download student CSV');
+    }
+  };
+
   // When selecting a student, also fetch their subject report
   const handleSelectStudentEnhanced = (student: Student) => {
     setSelectedStudent(student);
@@ -463,6 +481,16 @@ export default function Analytics() {
                   <Text style={styles.changeButtonText}>Change</Text>
                 </TouchableOpacity>
               </View>
+
+              {user?.role === 'admin' && (
+                <TouchableOpacity
+                  style={[styles.downloadButton, styles.studentDownloadButton]}
+                  onPress={handleDownloadStudentCSV}
+                >
+                  <Download color="#FFF" size={18} />
+                  <Text style={styles.downloadButtonText}>Download Student CSV</Text>
+                </TouchableOpacity>
+              )}
 
               {loadingStudentAnalytics ? (
                 <ActivityIndicator color="#01b4ae" style={{ marginTop: 40 }} />
@@ -990,6 +1018,11 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     marginVertical: 12,
     gap: 8,
+  },
+  studentDownloadButton: {
+    marginHorizontal: 0,
+    marginTop: 0,
+    marginBottom: 16,
   },
   downloadButtonText: {
     color: '#FFF',

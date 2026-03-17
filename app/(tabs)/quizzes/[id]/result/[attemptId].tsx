@@ -72,9 +72,9 @@ export default function QuizResult() {
         },
         score: data.attempt.score,
         marksObtained: data.attempt.marksObtained,
-        // Accuracy = correct questions / total questions (not marks/totalMarks which can exceed 100%)
-        percentage: data.attempt.totalQuestions > 0
-          ? Math.round((data.attempt.score / data.attempt.totalQuestions) * 100)
+        // Accuracy = marks / totalMarks to match the admin panel
+        percentage: data.attempt.totalMarks > 0
+          ? Math.round((data.attempt.marksObtained / data.attempt.totalMarks) * 100)
           : 0,
         startTime: data.attempt.startTime,
         endTime: data.attempt.endTime,

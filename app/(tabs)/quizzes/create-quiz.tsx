@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -49,6 +49,17 @@ interface Mentor {
   _id: string;
   name: string;
   email: string;
+}
+
+interface Group {
+  _id: string;
+  name: string;
+  description?: string;
+  members?: Array<{
+    _id: string;
+    role?: string;
+  }>;
+  students?: Array<string | { _id: string }>;
 }
 
 interface Question {
@@ -130,6 +141,9 @@ export default function CreateQuiz() {
   const [filteredStudents, setFilteredStudents] = useState<Student[]>([]);
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
   const [studentSearch, setStudentSearch] = useState('');
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [groupSearch, setGroupSearch] = useState('');
+  const [selectedGroupIds, setSelectedGroupIds] = useState<string[]>([]);
 
   // Mentor Selection
   const [mentors, setMentors] = useState<Mentor[]>([]);
@@ -149,9 +163,70 @@ export default function CreateQuiz() {
   ];
   const [instructions, setInstructions] = useState(defaultInstructions.join('\n'));
 
+  const studentIdSet = useMemo(() => {
+    return new Set(students.map(student => student._id));
+  }, [students]);
+
+  const groupStudentMap = useMemo(() => {
+    const map: Record<string, string[]> = {};
+
+    groups.forEach(group => {
+      const studentIds = new Set<string>();
+
+      if (Array.isArray(group.members)) {
+        group.members.forEach(member => {
+          if (!member?._id) return;
+          if (member.role === 'student' || studentIdSet.has(member._id)) {
+            studentIds.add(member._id);
+          }
+        });
+      }
+
+      if (Array.isArray(group.students)) {
+        group.students.forEach(student => {
+          const studentId = typeof student === 'string' ? student : student?._id;
+          if (studentId && studentIdSet.has(studentId)) {
+            studentIds.add(studentId);
+          }
+        });
+      }
+
+      map[group._id] = Array.from(studentIds);
+    });
+
+    return map;
+  }, [groups, studentIdSet]);
+
+  const filteredGroups = useMemo(() => {
+    const query = groupSearch.trim().toLowerCase();
+
+    return groups.filter(group => {
+      const hasStudents = (groupStudentMap[group._id]?.length || 0) > 0;
+      if (!hasStudents) return false;
+
+      if (!query) return true;
+
+      return (
+        group.name.toLowerCase().includes(query) ||
+        (group.description || '').toLowerCase().includes(query)
+      );
+    });
+  }, [groupSearch, groups, groupStudentMap]);
+
+  const selectedGroupStudentIdSet = useMemo(() => {
+    const ids = new Set<string>();
+
+    selectedGroupIds.forEach(groupId => {
+      (groupStudentMap[groupId] || []).forEach(studentId => ids.add(studentId));
+    });
+
+    return ids;
+  }, [selectedGroupIds, groupStudentMap]);
+
   useEffect(() => {
     fetchSubjects();
     fetchStudents();
+    fetchGroups();
     fetchMentors();
 
     if (cloneId) {
@@ -300,6 +375,10 @@ export default function CreateQuiz() {
     // Filter students by search query and subject
     let filtered = students;
 
+    if (selectedGroupIds.length > 0) {
+      filtered = filtered.filter(student => selectedGroupStudentIdSet.has(student._id));
+    }
+
     const query = studentSearch.toLowerCase();
     if (query) {
       filtered = filtered.filter(s =>
@@ -309,7 +388,12 @@ export default function CreateQuiz() {
     }
 
     setFilteredStudents(filtered);
-  }, [studentSearch, students]);
+  }, [studentSearch, students, selectedGroupIds, selectedGroupStudentIdSet]);
+
+  useEffect(() => {
+    // Remove stale selected group IDs if groups list changes.
+    setSelectedGroupIds(prev => prev.filter(groupId => groups.some(group => group._id === groupId)));
+  }, [groups]);
 
   useEffect(() => {
     // If user changed selected subjects in Step 1, ensure Step 3 chip filter stays valid.
@@ -338,6 +422,16 @@ export default function CreateQuiz() {
       console.error('Error fetching students:', error);
       setStudents([]);
       setFilteredStudents([]);
+    }
+  };
+
+  const fetchGroups = async () => {
+    try {
+      const response = await api.get('/groups');
+      setGroups(Array.isArray(response.data) ? response.data : []);
+    } catch (error) {
+      console.error('Error fetching groups:', error);
+      setGroups([]);
     }
   };
 
@@ -438,12 +532,42 @@ export default function CreateQuiz() {
     setTitle(`${subjectLabel} ${typeLabel} Test - ${date}`.trim());
   };
 
+  const selectedFilteredStudentCount = filteredStudents.filter(student =>
+    selectedStudents.includes(student._id)
+  ).length;
+
+  const allFilteredStudentsSelected = filteredStudents.length > 0
+    && selectedFilteredStudentCount === filteredStudents.length;
+
+  const allFilteredGroupsSelected = filteredGroups.length > 0
+    && filteredGroups.every(group => selectedGroupIds.includes(group._id));
+
   const handleSelectAll = () => {
-    if (selectedStudents.length === filteredStudents.length) {
-      setSelectedStudents([]);
-    } else {
-      setSelectedStudents(filteredStudents.map(s => s._id));
+    const filteredIds = new Set(filteredStudents.map(student => student._id));
+    if (allFilteredStudentsSelected) {
+      setSelectedStudents(prev => prev.filter(studentId => !filteredIds.has(studentId)));
+      return;
     }
+
+    setSelectedStudents(prev => Array.from(new Set([...prev, ...Array.from(filteredIds)])));
+  };
+
+  const toggleGroupFilter = (groupId: string) => {
+    setSelectedGroupIds(prev =>
+      prev.includes(groupId) ? prev.filter(id => id !== groupId) : [...prev, groupId]
+    );
+  };
+
+  const handleSelectAllFilteredGroups = () => {
+    const filteredGroupIds = filteredGroups.map(group => group._id);
+    if (filteredGroupIds.length === 0) return;
+
+    if (allFilteredGroupsSelected) {
+      setSelectedGroupIds(prev => prev.filter(id => !filteredGroupIds.includes(id)));
+      return;
+    }
+
+    setSelectedGroupIds(prev => Array.from(new Set([...prev, ...filteredGroupIds])));
   };
 
   const handleSelectAllMentors = () => {
@@ -455,11 +579,9 @@ export default function CreateQuiz() {
   };
 
   const toggleStudent = (studentId: string) => {
-    if (selectedStudents.includes(studentId)) {
-      setSelectedStudents(selectedStudents.filter(id => id !== studentId));
-    } else {
-      setSelectedStudents([...selectedStudents, studentId]);
-    }
+    setSelectedStudents(prev =>
+      prev.includes(studentId) ? prev.filter(id => id !== studentId) : [...prev, studentId]
+    );
   };
 
   const toggleMentor = (mentorId: string) => {
@@ -1173,11 +1295,77 @@ export default function CreateQuiz() {
         <>
           <View style={styles.selectionHeader}>
             <Text style={styles.selectionCount}>
-              {selectedStudents.length} of {filteredStudents.length} selected
+              {selectedGroupIds.length} group filter(s) active
+            </Text>
+            <TouchableOpacity
+              onPress={handleSelectAllFilteredGroups}
+              disabled={filteredGroups.length === 0}
+            >
+              <Text style={[styles.selectAllText, filteredGroups.length === 0 && styles.selectAllTextDisabled]}>
+                {allFilteredGroupsSelected ? 'Deselect Filtered Groups' : 'Select Filtered Groups'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.searchInput}>
+            <Users color="#6B7280" size={20} />
+            <TextInput
+              style={styles.searchTextInput}
+              placeholder="Filter groups by name..."
+              value={groupSearch}
+              onChangeText={setGroupSearch}
+            />
+            {groupSearch.length > 0 && (
+              <TouchableOpacity onPress={() => setGroupSearch('')}>
+                <X color="#9CA3AF" size={16} />
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.groupChipScroll}
+            contentContainerStyle={styles.groupChipScrollContent}
+          >
+            {filteredGroups.length === 0 ? (
+              <Text style={styles.groupFilterEmpty}>No matching groups</Text>
+            ) : (
+              filteredGroups.map(group => (
+                <TouchableOpacity
+                  key={group._id}
+                  style={[
+                    styles.groupChip,
+                    selectedGroupIds.includes(group._id) && styles.groupChipActive
+                  ]}
+                  onPress={() => toggleGroupFilter(group._id)}
+                >
+                  <Text
+                    style={[
+                      styles.groupChipText,
+                      selectedGroupIds.includes(group._id) && styles.groupChipTextActive
+                    ]}
+                  >
+                    {group.name} ({groupStudentMap[group._id]?.length || 0})
+                  </Text>
+                </TouchableOpacity>
+              ))
+            )}
+          </ScrollView>
+
+          {selectedGroupIds.length > 0 && (
+            <TouchableOpacity onPress={() => setSelectedGroupIds([])}>
+              <Text style={styles.clearGroupFilterText}>Clear Group Filters</Text>
+            </TouchableOpacity>
+          )}
+
+          <View style={styles.selectionHeader}>
+            <Text style={styles.selectionCount}>
+              {selectedFilteredStudentCount} of {filteredStudents.length} filtered selected ({selectedStudents.length} total)
             </Text>
             <TouchableOpacity onPress={handleSelectAll}>
               <Text style={styles.selectAllText}>
-                {selectedStudents.length === filteredStudents.length ? 'Deselect All' : 'Select All'}
+                {allFilteredStudentsSelected ? 'Deselect Filtered' : 'Select Filtered'}
               </Text>
             </TouchableOpacity>
           </View>
@@ -1186,7 +1374,7 @@ export default function CreateQuiz() {
             <Search color="#6B7280" size={20} />
             <TextInput
               style={styles.searchTextInput}
-              placeholder="Search students..."
+              placeholder={selectedGroupIds.length > 0 ? 'Search students in selected groups...' : 'Search students...'}
               value={studentSearch}
               onChangeText={setStudentSearch}
             />
@@ -1818,6 +2006,9 @@ const styles = StyleSheet.create({
     color: '#2563EB',
     fontWeight: '600',
   },
+  selectAllTextDisabled: {
+    color: '#9CA3AF',
+  },
   searchInput: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1831,6 +2022,45 @@ const styles = StyleSheet.create({
     flex: 1,
     paddingVertical: 12,
     fontSize: 16,
+  },
+  groupChipScroll: {
+    marginBottom: 8,
+  },
+  groupChipScrollContent: {
+    paddingRight: 12,
+    gap: 8,
+  },
+  groupFilterEmpty: {
+    fontSize: 13,
+    color: '#9CA3AF',
+    paddingVertical: 10,
+  },
+  groupChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 16,
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  groupChipActive: {
+    backgroundColor: '#EBF5FF',
+    borderColor: '#2563EB',
+  },
+  groupChipText: {
+    fontSize: 12,
+    color: '#4B5563',
+    fontWeight: '500',
+  },
+  groupChipTextActive: {
+    color: '#1D4ED8',
+    fontWeight: '600',
+  },
+  clearGroupFilterText: {
+    fontSize: 13,
+    color: '#2563EB',
+    fontWeight: '600',
+    marginBottom: 12,
   },
   filterRow: {
     marginBottom: 12,

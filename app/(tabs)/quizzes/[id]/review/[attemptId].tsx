@@ -91,9 +91,9 @@ export default function QuizReview() {
         },
         score: data.attempt.score,
         marksObtained: data.attempt.marksObtained,
-        // Accuracy = correctCount/totalQuestions (not marks/totalMarks which can exceed 100%)
-        percentage: data.attempt.totalQuestions > 0
-          ? Math.round((data.attempt.score / data.attempt.totalQuestions) * 100)
+        // Accuracy = marks/totalMarks to match the admin panel
+        percentage: data.attempt.totalMarks > 0
+          ? Math.round((data.attempt.marksObtained / data.attempt.totalMarks) * 100)
           : 0,
         detailedResults: data.questions.map((q: any) => {
           // Determine section based on groupBy parameter
@@ -166,7 +166,7 @@ export default function QuizReview() {
   const correctCount = reviewData.detailedResults.filter(q => q.isCorrect).length;
   const wrongCount = reviewData.detailedResults.filter(q => !q.isCorrect && q.selectedAnswer != null && q.selectedAnswer !== -1).length;
   const skippedCount = reviewData.detailedResults.filter(q => q.selectedAnswer == null || q.selectedAnswer === -1).length;
-  const accuracy = totalQuestions > 0 ? Math.round((correctCount / totalQuestions) * 100) : 0;
+  const accuracy = reviewData.quiz.totalMarks > 0 ? Math.round((reviewData.marksObtained / reviewData.quiz.totalMarks) * 100) : 0;
 
   // Section performance for graph
   const sectionPerformance = Array.from(new Set(reviewData.detailedResults.map(q => q.section))).map(section => {
