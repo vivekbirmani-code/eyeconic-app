@@ -90,25 +90,29 @@ const withWakeUpManifest = (config) => {
             }
         });
 
-        // --- FCM Service ---
+        // --- Remove Expo's own ExpoFirebaseMessagingService (our subclass replaces it) ---
         const services = mainApplication.service || [];
+        mainApplication.service = services.filter(
+            s => s.$['android:name'] !== 'expo.modules.notifications.service.ExpoFirebaseMessagingService'
+        );
 
+        // --- FCM Service ---
         const addServiceIfMissing = (name, attrs, intentFilters) => {
-            const existing = services.find(s => s.$['android:name'] === name);
+            const existing = mainApplication.service.find(s => s.$['android:name'] === name);
             if (!existing) {
-                services.push({
+                mainApplication.service.push({
                     $: { 'android:name': name, ...attrs },
                     ...(intentFilters ? { 'intent-filter': intentFilters } : {}),
                 });
             }
         };
 
-        // Firebase Messaging Service
+        // Firebase Messaging Service — high priority to win over any remaining library services
         addServiceIfMissing(
             '.MyFirebaseMessagingService',
             { 'android:exported': 'false' },
             [{
-                $: { 'android:priority': '1' },
+                $: { 'android:priority': '100' },
                 action: [{ $: { 'android:name': 'com.google.firebase.MESSAGING_EVENT' } }]
             }]
         );
@@ -183,20 +187,32 @@ const withWakeUpManifest = (config) => {
 };
 
 // ---------------------------------------------------------------------------
-// 3. Add Firebase Messaging dependency to app/build.gradle
+// 3. Add Firebase Messaging dependency + google-services plugin to app/build.gradle
 // ---------------------------------------------------------------------------
 const withWakeUpGradle = (config) => {
     return withAppBuildGradle(config, (config) => {
-        const buildGradle = config.modResults.contents;
-        const dependency = `implementation 'com.google.firebase:firebase-messaging:23.4.0'`;
+        let buildGradle = config.modResults.contents;
 
+        // Add firebase-messaging dependency
+        const dependency = `implementation 'com.google.firebase:firebase-messaging:23.4.0'`;
         if (!buildGradle.includes(dependency)) {
-            config.modResults.contents = buildGradle.replace(
+            buildGradle = buildGradle.replace(
                 /dependencies\s*{/,
                 `dependencies {\n    ${dependency}`
             );
         }
 
+        // Apply google-services plugin conditionally
+        const gsPlugin = `apply plugin: 'com.google.gms.google-services'`;
+        const gsConditional = `// Apply google-services plugin only when google-services.json exists
+if (file('google-services.json').exists()) {
+    apply plugin: 'com.google.gms.google-services'
+}`;
+        if (!buildGradle.includes('google.gms.google-services')) {
+            buildGradle = buildGradle + `\n${gsConditional}\n`;
+        }
+
+        config.modResults.contents = buildGradle;
         return config;
     });
 };

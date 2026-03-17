@@ -26,7 +26,7 @@ const { cleanupExpiredMedia } = require('./utils/media-cleanup');
 const Call = require('./models/Call');
 const User = require('./models/User');
 
-const { sendPushNotification } = require('./utils/notifications');
+const { sendPushNotification, sendPushToUser } = require('./utils/notifications');
 
 const app = express();
 const server = http.createServer(app);
@@ -310,26 +310,26 @@ io.on('connection', (socket) => {
       // Send push notifications to all target users (for when app is closed)
       if (targetUserIds && targetUserIds.length > 0) {
         const users = await User.find({
-          _id: { $in: targetUserIds },
-          pushToken: { $ne: null }
-        });
+          _id: { $in: targetUserIds, $ne: initiatorId },
+          $or: [{ pushToken: { $ne: null } }, { fcmToken: { $ne: null } }]
+        }).select('pushToken fcmToken');
 
         for (const user of users) {
-          if (user.pushToken && user._id.toString() !== initiatorId) {
-            sendPushNotification(
-              user.pushToken,
-              'Incoming Call',
-              `${initiatorName} is calling...`,
-              {
-                type: 'incoming_call',
-                callId: call._id.toString(),
-                groupId,
-                groupName,
-                initiatorId,
-                initiatorName
-              }
-            );
-          }
+          sendPushToUser({
+            expoPushToken: user.pushToken,
+            fcmToken: user.fcmToken,
+            title: 'Incoming Call',
+            body: `${initiatorName} is calling...`,
+            data: {
+              type: 'incoming_call',
+              callId: call._id.toString(),
+              groupId,
+              groupName,
+              initiatorId,
+              initiatorName,
+              callerName: initiatorName,
+            },
+          });
         }
       }
 

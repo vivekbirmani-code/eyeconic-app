@@ -4,7 +4,7 @@ const MessageReadStatus = require('../models/MessageReadStatus');
 const Group = require('../models/Group');
 const User = require('../models/User');
 const { auth } = require('../middleware/auth');
-const { sendPushNotification } = require('../utils/notifications');
+const { sendPushToUser } = require('../utils/notifications');
 
 const router = express.Router();
 
@@ -84,8 +84,8 @@ router.post('/', auth, async (req, res) => {
     try {
       const recipientUsers = await User.find({
         _id: { $in: group.members, $ne: req.user._id },
-        pushToken: { $ne: null }
-      }).select('pushToken');
+        $or: [{ pushToken: { $ne: null } }, { fcmToken: { $ne: null } }]
+      }).select('pushToken fcmToken');
 
       if (recipientUsers.length > 0) {
         const senderName = req.user.name || 'New message';
@@ -97,19 +97,20 @@ router.post('/', auth, async (req, res) => {
 
         await Promise.allSettled(
           recipientUsers.map((recipient) =>
-            sendPushNotification(
-              recipient.pushToken,
-              `${senderName} • ${group.name}`,
-              preview,
-              {
+            sendPushToUser({
+              expoPushToken: recipient.pushToken,
+              fcmToken: recipient.fcmToken,
+              title: `${senderName} • ${group.name}`,
+              body: preview,
+              data: {
                 type: 'group_message',
                 groupId: group._id.toString(),
                 groupName: group.name,
                 messageId: message._id.toString(),
                 senderId: req.user._id.toString(),
                 senderName,
-              }
-            )
+              },
+            })
           )
         );
       }

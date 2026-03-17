@@ -10,7 +10,7 @@ const { processQuestionImages } = require('../utils/imageUploader');
 const Subject = require('../models/Subject');
 const MentorStudentAssignment = require('../models/MentorStudentAssignment');
 const User = require('../models/User');
-const { sendPushNotification } = require('../utils/notifications');
+const { sendPushToUser } = require('../utils/notifications');
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -60,25 +60,26 @@ const notifyQuizAssignedToStudents = async ({ studentIds, quiz, assignedByName =
   try {
     const recipients = await User.find({
       _id: { $in: studentIds },
-      pushToken: { $ne: null }
-    }).select('_id pushToken');
+      $or: [{ pushToken: { $ne: null } }, { fcmToken: { $ne: null } }]
+    }).select('_id pushToken fcmToken');
 
     if (!recipients.length) return;
 
     await Promise.allSettled(
       recipients.map((student) =>
-        sendPushNotification(
-          student.pushToken,
-          'New Test Assigned',
-          `${quiz.title} has been assigned to you`,
-          {
+        sendPushToUser({
+          expoPushToken: student.pushToken,
+          fcmToken: student.fcmToken,
+          title: 'New Test Assigned',
+          body: `${quiz.title} has been assigned to you`,
+          data: {
             type: 'quiz_assigned',
             quizId: quiz._id.toString(),
             quizTitle: quiz.title,
             testType: quiz.testType || 'daily',
             assignedBy: assignedByName,
-          }
-        )
+          },
+        })
       )
     );
   } catch (error) {
@@ -2136,24 +2137,36 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
         };
 
         // 1. Notify Admins
-        const admins = await User.find({ role: 'admin' }).select('_id pushToken');
+        const admins = await User.find({ role: 'admin' }).select('_id pushToken fcmToken');
         if (socketHelpers && socketHelpers.emitToAdmins) {
           socketHelpers.emitToAdmins('quiz_completed_alert', attemptDetails);
         }
         for (const admin of admins) {
-          if (admin.pushToken) {
-            sendPushNotification(admin.pushToken, 'Quiz Completed', `${studentName} completed ${quiz.title}`, { type: 'quiz_completed', ...attemptDetails });
+          if (admin.pushToken || admin.fcmToken) {
+            sendPushToUser({
+              expoPushToken: admin.pushToken,
+              fcmToken: admin.fcmToken,
+              title: 'Quiz Completed',
+              body: `${studentName} completed ${quiz.title}`,
+              data: { type: 'quiz_completed', ...attemptDetails },
+            });
           }
         }
 
         // 2. Notify specific Mentor
-        const assignment = await MentorStudentAssignment.findOne({ student: req.user._id, isActive: true }).populate('mentor', '_id pushToken');
+        const assignment = await MentorStudentAssignment.findOne({ student: req.user._id, isActive: true }).populate('mentor', '_id pushToken fcmToken');
         if (assignment && assignment.mentor) {
           if (socketHelpers && socketHelpers.emitToUser) {
             socketHelpers.emitToUser(assignment.mentor._id.toString(), 'quiz_completed_alert', attemptDetails);
           }
-          if (assignment.mentor.pushToken) {
-            sendPushNotification(assignment.mentor.pushToken, 'Student Quiz Completed', `${studentName} completed ${quiz.title}`, { type: 'quiz_completed', ...attemptDetails });
+          if (assignment.mentor.pushToken || assignment.mentor.fcmToken) {
+            sendPushToUser({
+              expoPushToken: assignment.mentor.pushToken,
+              fcmToken: assignment.mentor.fcmToken,
+              title: 'Student Quiz Completed',
+              body: `${studentName} completed ${quiz.title}`,
+              data: { type: 'quiz_completed', ...attemptDetails },
+            });
           }
         }
       } catch (notifyErr) {
