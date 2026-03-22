@@ -73,6 +73,7 @@ interface QuestionFormState {
   optionImages: string[];
   correctAnswer: number;
   explanation: string;
+  explanationImage: string;
   marks: number;
   positiveMarks: number | string;
   negativeMarks: number | string;
@@ -105,6 +106,7 @@ export default function QuestionBankManagement() {
     optionImages: ['', '', '', ''],
     correctAnswer: 0,
     explanation: '',
+    explanationImage: '',
     marks: 1, // Keep for backward compatibility
     positiveMarks: 4,
     negativeMarks: -1,
@@ -191,7 +193,7 @@ export default function QuestionBankManagement() {
     }
   };
 
-  const handlePickImage = async (type: 'question' | 'option', optionIndex?: number) => {
+  const handlePickImage = async (type: 'question' | 'option' | 'explanation', optionIndex?: number) => {
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
@@ -208,7 +210,7 @@ export default function QuestionBankManagement() {
     }
   };
 
-  const uploadImage = async (base64: string, type: 'question' | 'option', optionIndex?: number) => {
+  const uploadImage = async (base64: string, type: 'question' | 'option' | 'explanation', optionIndex?: number) => {
     setImageUploading(true);
     try {
       const formData = new FormData();
@@ -228,6 +230,8 @@ export default function QuestionBankManagement() {
 
       if (type === 'question') {
         setNewQuestion(prev => ({ ...prev, questionImage: imageUrl }));
+      } else if (type === 'explanation') {
+        setNewQuestion(prev => ({ ...prev, explanationImage: imageUrl }));
       } else if (type === 'option' && typeof optionIndex === 'number') {
         setNewQuestion(prev => {
           const newOptionImages = [...prev.optionImages];
@@ -315,6 +319,7 @@ export default function QuestionBankManagement() {
       optionImages: (q.optionImages || []).concat(['', '', '', '']).slice(0, 4),
       correctAnswer: 0,
       explanation: (q as any).explanation || '',
+      explanationImage: (q as any).explanationImage || '',
       marks: q.marks,
       positiveMarks: q.positiveMarks !== undefined ? q.positiveMarks : q.marks,
       negativeMarks: q.negativeMarks !== undefined ? q.negativeMarks : 0,
@@ -336,6 +341,7 @@ export default function QuestionBankManagement() {
       optionImages: ['', '', '', ''],
       correctAnswer: 0,
       explanation: '',
+      explanationImage: '',
       marks: 1,
       positiveMarks: 4,
       negativeMarks: -1,
@@ -810,6 +816,26 @@ export default function QuestionBankManagement() {
               value={newQuestion.explanation}
               onChangeText={text => setNewQuestion({ ...newQuestion, explanation: text })}
             />
+ 
+            <TouchableOpacity
+              style={styles.imageUploadBtn}
+              onPress={() => handlePickImage('explanation')}
+            >
+              <ImageIcon color="#01b4ae" size={20} />
+              <Text style={styles.imageUploadText}>{newQuestion.explanationImage ? 'Change Image' : 'Add Image'}</Text>
+            </TouchableOpacity>
+ 
+            {newQuestion.explanationImage ? (
+              <View style={styles.previewImageContainer}>
+                <Image source={{ uri: newQuestion.explanationImage }} style={styles.previewImage} resizeMode="contain" />
+                <TouchableOpacity
+                  style={styles.removeImgBtn}
+                  onPress={() => setNewQuestion(prev => ({ ...prev, explanationImage: '' }))}
+                >
+                  <X color="#FFF" size={14} />
+                </TouchableOpacity>
+              </View>
+            ) : null}
 
             <TouchableOpacity
               style={[styles.saveBtn, saving && styles.disabledBtn]}
@@ -897,7 +923,14 @@ export default function QuestionBankManagement() {
                 {(selectedViewQuestion.explanation || selectedViewQuestion.explanationImage) && (
                   <View style={styles.explanationBox}>
                     <Text style={styles.explanationTitle}>Explanation</Text>
-                    <Text style={styles.explanationText}>{selectedViewQuestion.explanation}</Text>
+                    {selectedViewQuestion.explanation ? <Text style={styles.explanationText}>{selectedViewQuestion.explanation}</Text> : null}
+                    {selectedViewQuestion.explanationImage ? (
+                      <Image
+                        source={{ uri: selectedViewQuestion.explanationImage }}
+                        style={[styles.previewMainImage, { marginTop: 10, height: 180 }]}
+                        resizeMode="contain"
+                      />
+                    ) : null}
                   </View>
                 )}
               </View>

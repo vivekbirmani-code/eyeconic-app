@@ -4,6 +4,7 @@ import WakeUpModule from '@/modules/WakeUpModule';
 import { io, Socket } from 'socket.io-client';
 import { getSocketURL } from '@/services/config';
 import { useAuth } from './AuthContext';
+import { dismissCallNotification } from '@/utils/notificationService';
 
 // Safe import for expo-av Audio
 let Audio: any = null;
@@ -213,6 +214,28 @@ export function CallProvider({ children }: { children: ReactNode }) {
     socketRef.current.on('call_ended', handleCallEnded);
     socketRef.current.on('call_initiated', handleCallInitiated);
     socketRef.current.on('call_joined', handleCallJoined);
+    socketRef.current.on('call_declined', handleCallDeclined);
+  };
+
+  const handleCallDeclined = (data: any) => {
+    const { userId, callId } = data;
+    console.log(`User ${userId} declined call ${callId}`);
+    
+    // If we are the initiator, we might want to show feedback or end the call if it's 1-on-1
+    if (callStateRef.current.isInitiator && callStateRef.current.callId === callId) {
+      // Find the participant name
+      const participantName = callStateRef.current.participants.find(p => p._id === userId)?.name || 'Participant';
+      
+      console.log(`${participantName} declined the call`);
+      
+      // If it's a 1-on-1 call and they declined, we should end the call session for us too
+      // since there's no one else to talk to.
+      if (callStateRef.current.participants.length <= 2) {
+        console.log('1-on-1 call declined, ending call for initiator');
+        cleanup();
+        setCallState(initialCallState);
+      }
+    }
   };
 
   const handleIncomingCall = (data: any) => {
@@ -812,7 +835,17 @@ export function CallProvider({ children }: { children: ReactNode }) {
   };
 
   const declineIncomingCall = () => {
+    if (!incomingCall) return;
+    
     console.log('Declining incoming call');
+    
+    // Notify the server that we declined
+    socketRef.current?.emit('call_decline', {
+      callId: incomingCall.callId,
+      groupId: incomingCall.groupId,
+      userId: user?._id
+    });
+ 
     setIncomingCall(null);
   };
 
@@ -885,6 +918,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const cleanup = () => {
     console.log('Cleaning up call resources');
     stopCallTimer();
+    dismissCallNotification();
     
     // Stop InCallManager
     if (InCallManager) {

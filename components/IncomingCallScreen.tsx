@@ -10,6 +10,7 @@ import {
   Dimensions,
 } from 'react-native';
 import { Phone, PhoneOff, X } from 'lucide-react-native';
+import { dismissCallNotification } from '@/utils/notificationService';
 
 // Dynamically import expo-av
 let Audio: any = null;
@@ -92,11 +93,13 @@ export default function IncomingCallScreen({
 
   const handleAccept = () => {
     stopRinging();
+    dismissCallNotification();
     onAccept();
   };
 
   const handleDecline = () => {
     stopRinging();
+    dismissCallNotification();
     onDecline();
   };
 

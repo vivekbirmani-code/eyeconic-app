@@ -573,6 +573,24 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Decline an incoming call
+  socket.on('call_decline', async (data) => {
+    const { callId, userId, groupId } = data;
+    console.log(`User ${userId} declined call ${callId}`);
+
+    try {
+      // Notify the initiator or the group that the user declined
+      if (groupId) {
+        socket.to(groupId.toString()).emit('call_declined', {
+          callId,
+          userId
+        });
+      }
+    } catch (error) {
+      console.error('Error declining call:', error);
+    }
+  });
+
   // Get active call for a group
   socket.on('get_active_call', async (data) => {
     const { groupId } = data;

@@ -216,6 +216,16 @@ export default function QuizResult() {
             {result.score}/{result.quiz.totalQuestions}
           </Text>
           <Text style={styles.scoreSubtext}>Questions Correct</Text>
+
+          {/* Marks Score */}
+          <View style={styles.marksScoreContainer}>
+            <Award color="#8B5CF6" size={18} />
+            <Text style={styles.marksScoreText}>
+              Score: <Text style={styles.marksScoreValue}>{result.marksObtained}</Text>
+              <Text style={styles.marksScoreTotal}>/{result.quiz.totalMarks} marks</Text>
+            </Text>
+          </View>
+
           <View style={styles.percentageContainer}>
             <Text style={[
               styles.percentageText,
@@ -415,6 +425,29 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#6B7280',
     marginTop: 4,
+  },
+  marksScoreContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 12,
+    backgroundColor: '#F5F3FF',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+  },
+  marksScoreText: {
+    fontSize: 16,
+    color: '#374151',
+  },
+  marksScoreValue: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#8B5CF6',
+  },
+  marksScoreTotal: {
+    fontSize: 14,
+    color: '#6B7280',
   },
   percentageContainer: {
     marginTop: 16,

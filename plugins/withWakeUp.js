@@ -1,6 +1,7 @@
 const {
     withAndroidManifest,
     withAppBuildGradle,
+    withProjectBuildGradle,
     withMainApplication,
     withDangerousMod,
     withPlugins,
@@ -49,6 +50,16 @@ const withWakeUpFiles = (config) => {
                     console.warn(`Source file missing: ${sourceFile}`);
                 }
             });
+
+            // Copy google-services.json to android/app/ for Firebase
+            const gsSource = path.join(sourceDir, 'google-services.json');
+            const gsTarget = path.join(projectRoot, 'android', 'app', 'google-services.json');
+            if (fs.existsSync(gsSource)) {
+                fs.copyFileSync(gsSource, gsTarget);
+                console.log('google-services.json copied to android/app/');
+            } else {
+                console.warn('google-services.json not found in plugins/files/ — Firebase FCM will not work!');
+            }
 
             return config;
         },
@@ -126,8 +137,6 @@ const withWakeUpManifest = (config) => {
                 'android:stopWithTask': 'false',
             }
         );
-
-        mainApplication.service = services;
 
         // --- BootReceiver ---
         if (!mainApplication.receiver) {
@@ -218,7 +227,27 @@ if (file('google-services.json').exists()) {
 };
 
 // ---------------------------------------------------------------------------
-// 4. Register WakeUpPackage + BatteryOptimizationPackage in MainApplication
+// 4. Add google-services classpath to root build.gradle
+// ---------------------------------------------------------------------------
+const withGoogleServicesClasspath = (config) => {
+    return withProjectBuildGradle(config, (config) => {
+        let buildGradle = config.modResults.contents;
+
+        const classpath = `classpath('com.google.gms:google-services:4.4.0')`;
+        if (!buildGradle.includes('com.google.gms:google-services')) {
+            buildGradle = buildGradle.replace(
+                /dependencies\s*{/,
+                `dependencies {\n        ${classpath}`
+            );
+        }
+
+        config.modResults.contents = buildGradle;
+        return config;
+    });
+};
+
+// ---------------------------------------------------------------------------
+// 5. Register WakeUpPackage + BatteryOptimizationPackage in MainApplication
 // ---------------------------------------------------------------------------
 const withWakeUpMainApplication = (config) => {
     return withMainApplication(config, (config) => {
@@ -263,6 +292,7 @@ const withWakeUp = (config) => {
         withWakeUpFiles,
         withWakeUpManifest,
         withWakeUpGradle,
+        withGoogleServicesClasspath,
         withWakeUpMainApplication,
     ]);
 };

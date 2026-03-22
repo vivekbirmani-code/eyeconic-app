@@ -168,16 +168,25 @@ function QuizTakingContent() {
     if (currentSection === 'All') return quiz.questions.map((_, index) => index);
 
     if (quiz.sections && quiz.sections.length > 0) {
-      const sectionQuestionIds = new Set(sectionQuestionIdsMap[currentSection] || []);
-      return quiz.questions
-        .map((question, index) => (sectionQuestionIds.has(getQuestionId(question)) ? index : -1))
-        .filter(index => index !== -1);
+      // Preserve the order defined in section.questions (not global array order)
+      const sectionQuestionIds = sectionQuestionIdsMap[currentSection] || [];
+      // Build a map from questionId -> global index for O(1) lookup
+      const idToGlobalIndex: Record<string, number> = {};
+      quiz.questions.forEach((question, index) => {
+        const qid = getQuestionId(question);
+        if (qid) idToGlobalIndex[qid] = index;
+      });
+      // Return indexes in section-defined order, skipping any not found
+      return sectionQuestionIds
+        .map(qid => idToGlobalIndex[qid])
+        .filter((idx): idx is number => idx !== undefined);
     }
 
     return quiz.questions
       .map((question, index) => (getSubjectName(question) === currentSection ? index : -1))
       .filter(index => index !== -1);
   }, [quiz, currentSection, getSubjectName, sectionQuestionIdsMap]);
+
 
   const currentQuestionPosition = useMemo(
     () => activeQuestionIndexes.indexOf(currentQuestionIndex),
@@ -383,10 +392,25 @@ function QuizTakingContent() {
     }
   }, [currentQuestionIndex, activeQuestionIndexes, questionStartTime, selectedAnswer, markedForReview, saveAnswer]);
 
+  // Helper: find which section a given global question index belongs to
+  const getSectionForIndex = useCallback((index: number): string => {
+    if (!quiz) return 'All';
+    if (!quiz.sections || quiz.sections.length === 0) return 'All';
+    const questionId = getQuestionId(quiz.questions[index]);
+    for (const section of quiz.sections) {
+      const ids = (section.questions || []).map(q => getQuestionId(q));
+      if (ids.includes(questionId)) return section.name;
+    }
+    return 'All';
+  }, [quiz]);
+
   const handleQuestionSelect = useCallback((index: number) => {
+    // Sync section so the question is visible
+    const targetSection = getSectionForIndex(index);
+    setCurrentSection(targetSection);
     setCurrentQuestionIndex(index);
     scrollViewRef.current?.scrollTo({ y: 0, animated: false });
-  }, []);
+  }, [getSectionForIndex]);
 
   const handleSubmitQuiz = useCallback(() => {
     setShowReviewModal(true);
@@ -863,17 +887,22 @@ function QuizTakingContent() {
             <ScrollView style={styles.modalQuestionsGrid} showsVerticalScrollIndicator={false}>
               <View style={styles.gridContainer}>
                 {questionStatuses.map((status, index) => {
+                  // Priority: answered+marked = green with purple border, only-marked = purple, answered = green, not visited = white
                   let bgColor = '#FFFFFF';
                   let borderColor = '#D1D5DB';
                   let textColor = '#4B5563';
 
-                  if (status.answered) {
+                  if (status.answered && status.markedForReview) {
+                    // Answered AND bookmarked: show green background with purple border
+                    bgColor = '#10B981';
+                    borderColor = '#A855F7';
+                    textColor = '#FFFFFF';
+                  } else if (status.answered) {
                     bgColor = '#10B981';
                     borderColor = '#10B981';
                     textColor = '#FFFFFF';
-                  }
-
-                  if (status.markedForReview) {
+                  } else if (status.markedForReview) {
+                    // Only marked (unanswered): purple
                     bgColor = '#A855F7';
                     borderColor = '#A855F7';
                     textColor = '#FFFFFF';
@@ -884,7 +913,7 @@ function QuizTakingContent() {
                       key={index}
                       style={[
                         styles.gridItem,
-                        { backgroundColor: bgColor, borderColor: borderColor }
+                        { backgroundColor: bgColor, borderColor: borderColor, borderWidth: (status.answered && status.markedForReview) ? 3 : 1 }
                       ]}
                       onPress={() => {
                         handleQuestionSelect(index);

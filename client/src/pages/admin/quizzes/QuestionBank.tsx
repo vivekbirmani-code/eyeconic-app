@@ -37,7 +37,7 @@ export default function QuestionBank() {
   const [form, setForm] = useState({
     subject: '', topicName: '', question: '', questionImage: '',
     options: ['', '', '', ''], optionImages: ['', '', '', ''],
-    correctAnswer: 0, explanation: '', marks: 1, positiveMarks: 4, negativeMarks: -1
+    correctAnswer: 0, explanation: '', explanationImage: '', marks: 1, positiveMarks: 4, negativeMarks: -1
   });
 
   useEffect(() => {
@@ -74,13 +74,14 @@ export default function QuestionBank() {
     } catch (e) { console.error(e); } finally { setLoading(false); }
   };
 
-  const handleImageUpload = async (file: File, type: 'question' | 'option', optionIndex?: number) => {
+  const handleImageUpload = async (file: File, type: 'question' | 'option' | 'explanation', optionIndex?: number) => {
     try {
       const formData = new FormData();
       formData.append('image', file);
       const res = await api.post('/upload', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
       const url = res.data.url;
       if (type === 'question') setForm(prev => ({ ...prev, questionImage: url }));
+      else if (type === 'explanation') setForm(prev => ({ ...prev, explanationImage: url }));
       else if (type === 'option' && optionIndex !== undefined) {
         const newImgs = [...form.optionImages];
         newImgs[optionIndex] = url;
@@ -133,7 +134,9 @@ export default function QuestionBank() {
       question: q.question, questionImage: q.questionImage || '',
       options: q.options.concat(['','','','']).slice(0, 4),
       optionImages: (q.optionImages || []).concat(['','','','']).slice(0, 4),
-      correctAnswer: q.correctAnswer ?? 0, explanation: q.explanation || '',
+      correctAnswer: q.correctAnswer ?? 0, 
+      explanation: q.explanation || '', 
+      explanationImage: q.explanationImage || '',
       marks: q.marks, positiveMarks: Number(q.positiveMarks ?? q.marks), negativeMarks: Number(q.negativeMarks ?? 0)
     });
     setShowModal(true);
@@ -144,7 +147,7 @@ export default function QuestionBank() {
     setForm({
       subject: '', topicName: '', question: '', questionImage: '',
       options: ['', '', '', ''], optionImages: ['', '', '', ''],
-      correctAnswer: 0, explanation: '', marks: 1, positiveMarks: 4, negativeMarks: -1
+      correctAnswer: 0, explanation: '', explanationImage: '', marks: 1, positiveMarks: 4, negativeMarks: -1
     });
     setShowModal(true);
   };
@@ -322,7 +325,21 @@ export default function QuestionBank() {
               
               <div>
                 <label className="block text-sm font-bold text-gray-700 mb-2">Explanation (Optional)</label>
-                <textarea rows={2} value={form.explanation} onChange={e => setForm({...form, explanation: e.target.value})} className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#01b4ae] focus:outline-none" placeholder="Provide an explanation for the correct answer..." />
+                <textarea rows={2} value={form.explanation} onChange={e => setForm({...form, explanation: e.target.value})} className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-[#01b4ae] focus:outline-none mb-3" placeholder="Provide an explanation for the correct answer..." />
+                <div className="flex items-center gap-3">
+                   <input type="file" id="explanationImage" accept="image/*" onChange={e => e.target.files?.[0] && handleImageUpload(e.target.files[0], 'explanation')} className="hidden" />
+                   <label htmlFor="explanationImage" className="flex items-center gap-2 bg-emerald-50 text-emerald-700 px-4 py-2 rounded-xl cursor-pointer hover:bg-emerald-100 transition-colors font-bold text-xs border border-emerald-200">
+                     <ImageIcon className="w-4 h-4" /> Add Image
+                   </label>
+                   {form.explanationImage && (
+                     <div className="relative inline-block">
+                       <img src={form.explanationImage} alt="Explanation" className="h-20 rounded-lg border shadow-sm" />
+                       <button onClick={() => setForm({...form, explanationImage: ''})} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600 transition-colors shadow-sm">
+                         <X className="w-3 h-3"/>
+                       </button>
+                     </div>
+                   )}
+                </div>
               </div>
             </div>
 

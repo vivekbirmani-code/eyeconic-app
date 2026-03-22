@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "907459208798",
+    "project_id": "neetmentorship-a10c5",
+    "storage_bucket": "neetmentorship-a10c5.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:907459208798:android:b12fdac8c74801899c36cf",
+        "android_client_info": {
+          "package_name": "com.anonymous.neetmentorshipapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBMfLLw8GcTqj-XhLAfFWusCMPejA11pps"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

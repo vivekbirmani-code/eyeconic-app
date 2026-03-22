@@ -49,8 +49,8 @@ function AppContent() {
               const data = await response.json();
 
               if (data.success && data.quiz._id) {
-                // Navigate to normal quiz instructions
-                router.replace(`/quiz/${data.quiz._id}/instructions` as any);
+                // Navigate to the correct tab-based quiz instructions path
+                router.replace(`/(tabs)/quizzes/${data.quiz._id}/instructions` as any);
                 return;
               }
             }
