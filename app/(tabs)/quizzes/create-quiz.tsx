@@ -26,12 +26,14 @@ import {
   Users,
   Search,
   X,
-  Eye
+  Eye,
+  Minus
 } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { formatToIST } from '@/utils/date';
+import useDebounce from '@/hooks/useDebounce';
 
 interface Subject {
   _id: string;
@@ -163,6 +165,10 @@ export default function CreateQuiz() {
   ];
   const [instructions, setInstructions] = useState(defaultInstructions.join('\n'));
 
+  // Debounced search values for flicker-free filtering
+  const debouncedStudentSearch = useDebounce(studentSearch, 250);
+  const debouncedGroupSearch = useDebounce(groupSearch, 250);
+
   const studentIdSet = useMemo(() => {
     return new Set(students.map(student => student._id));
   }, [students]);
@@ -198,7 +204,7 @@ export default function CreateQuiz() {
   }, [groups, studentIdSet]);
 
   const filteredGroups = useMemo(() => {
-    const query = groupSearch.trim().toLowerCase();
+    const query = debouncedGroupSearch.trim().toLowerCase();
 
     return groups.filter(group => {
       const hasStudents = (groupStudentMap[group._id]?.length || 0) > 0;
@@ -211,7 +217,7 @@ export default function CreateQuiz() {
         (group.description || '').toLowerCase().includes(query)
       );
     });
-  }, [groupSearch, groups, groupStudentMap]);
+  }, [debouncedGroupSearch, groups, groupStudentMap]);
 
   const selectedGroupStudentIdSet = useMemo(() => {
     const ids = new Set<string>();
@@ -379,7 +385,7 @@ export default function CreateQuiz() {
       filtered = filtered.filter(student => selectedGroupStudentIdSet.has(student._id));
     }
 
-    const query = studentSearch.toLowerCase();
+    const query = debouncedStudentSearch.toLowerCase();
     if (query) {
       filtered = filtered.filter(s =>
         s.name.toLowerCase().includes(query) ||
@@ -388,7 +394,7 @@ export default function CreateQuiz() {
     }
 
     setFilteredStudents(filtered);
-  }, [studentSearch, students, selectedGroupIds, selectedGroupStudentIdSet]);
+  }, [debouncedStudentSearch, students, selectedGroupIds, selectedGroupStudentIdSet]);
 
   useEffect(() => {
     // Remove stale selected group IDs if groups list changes.
@@ -538,6 +544,9 @@ export default function CreateQuiz() {
 
   const allFilteredStudentsSelected = filteredStudents.length > 0
     && selectedFilteredStudentCount === filteredStudents.length;
+
+  const someFilteredStudentsSelected = selectedFilteredStudentCount > 0
+    && !allFilteredStudentsSelected;
 
   const allFilteredGroupsSelected = filteredGroups.length > 0
     && filteredGroups.every(group => selectedGroupIds.includes(group._id));
@@ -1360,14 +1369,26 @@ export default function CreateQuiz() {
           )}
 
           <View style={styles.selectionHeader}>
-            <Text style={styles.selectionCount}>
-              {selectedFilteredStudentCount} of {filteredStudents.length} filtered selected ({selectedStudents.length} total)
-            </Text>
-            <TouchableOpacity onPress={handleSelectAll}>
-              <Text style={styles.selectAllText}>
-                {allFilteredStudentsSelected ? 'Deselect Filtered' : 'Select Filtered'}
+            <TouchableOpacity
+              style={styles.selectAllCheckboxRow}
+              onPress={handleSelectAll}
+              disabled={filteredStudents.length === 0}
+              activeOpacity={0.7}
+            >
+              <View style={[
+                styles.checkbox,
+                (allFilteredStudentsSelected || someFilteredStudentsSelected) && styles.checkboxSelected,
+              ]}>
+                {allFilteredStudentsSelected && <Check color="#FFF" size={14} />}
+                {someFilteredStudentsSelected && <Minus color="#FFF" size={14} />}
+              </View>
+              <Text style={[styles.selectAllText, filteredStudents.length === 0 && styles.selectAllTextDisabled]}>
+                {allFilteredStudentsSelected ? 'Deselect All' : 'Select All'}
               </Text>
             </TouchableOpacity>
+            <Text style={styles.selectionCount}>
+              {selectedFilteredStudentCount} of {filteredStudents.length} visible ({selectedStudents.length} total)
+            </Text>
           </View>
 
           <View style={styles.searchInput}>
@@ -1378,6 +1399,11 @@ export default function CreateQuiz() {
               value={studentSearch}
               onChangeText={setStudentSearch}
             />
+            {studentSearch.length > 0 && (
+              <TouchableOpacity onPress={() => setStudentSearch('')}>
+                <X color="#9CA3AF" size={16} />
+              </TouchableOpacity>
+            )}
           </View>
 
           <View style={styles.studentList}>
@@ -1996,6 +2022,11 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 12,
+  },
+  selectAllCheckboxRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   selectionCount: {
     fontSize: 14,

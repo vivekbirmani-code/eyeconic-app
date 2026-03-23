@@ -26,11 +26,13 @@ import {
   Edit,
   Globe,
   Link,
-  AlertCircle
+  AlertCircle,
+  Minus
 } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
 import * as Clipboard from 'expo-clipboard';
+import useDebounce from '@/hooks/useDebounce';
 
 interface Quiz {
   _id: string;
@@ -88,6 +90,10 @@ export default function PastTests() {
   const [generatingLink, setGeneratingLink] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  // Debounced search values for flicker-free filtering
+  const debouncedStudentSearch = useDebounce(studentSearch, 250);
+  const debouncedGroupSearch = useDebounce(groupSearch, 250);
+
   const studentIdSet = useMemo(() => {
     return new Set(students.map(student => student._id));
   }, [students]);
@@ -123,7 +129,7 @@ export default function PastTests() {
   }, [groups, studentIdSet]);
 
   const filteredGroups = useMemo(() => {
-    const query = groupSearch.trim().toLowerCase();
+    const query = debouncedGroupSearch.trim().toLowerCase();
 
     return groups.filter(group => {
       const hasStudents = (groupStudentMap[group._id]?.length || 0) > 0;
@@ -136,7 +142,7 @@ export default function PastTests() {
         (group.description || '').toLowerCase().includes(query)
       );
     });
-  }, [groupSearch, groups, groupStudentMap]);
+  }, [debouncedGroupSearch, groups, groupStudentMap]);
 
   const selectedGroupStudentIdSet = useMemo(() => {
     const ids = new Set<string>();
@@ -151,7 +157,7 @@ export default function PastTests() {
   const availableStudents = useMemo(() => {
     if (!selectedQuiz) return [];
 
-    const query = studentSearch.toLowerCase();
+    const query = debouncedStudentSearch.toLowerCase();
 
     return students.filter(student => {
       const alreadyAssigned = selectedQuiz.assignedStudents.includes(student._id);
@@ -170,7 +176,7 @@ export default function PastTests() {
 
       return true;
     });
-  }, [selectedQuiz, studentSearch, students, selectedGroupIds, selectedGroupStudentIdSet]);
+  }, [selectedQuiz, debouncedStudentSearch, students, selectedGroupIds, selectedGroupStudentIdSet]);
 
   const selectedFilteredStudentCount = useMemo(() => {
     return availableStudents.filter(student => selectedStudents.includes(student._id)).length;
@@ -179,6 +185,10 @@ export default function PastTests() {
   const allFilteredStudentsSelected = useMemo(() => {
     return availableStudents.length > 0 && selectedFilteredStudentCount === availableStudents.length;
   }, [availableStudents.length, selectedFilteredStudentCount]);
+
+  const someFilteredStudentsSelected = useMemo(() => {
+    return selectedFilteredStudentCount > 0 && !allFilteredStudentsSelected;
+  }, [selectedFilteredStudentCount, allFilteredStudentsSelected]);
 
   const allFilteredGroupsSelected = useMemo(() => {
     return filteredGroups.length > 0
@@ -653,20 +663,34 @@ export default function PastTests() {
                     value={studentSearch}
                     onChangeText={setStudentSearch}
                   />
+                  {studentSearch.length > 0 && (
+                    <TouchableOpacity onPress={() => setStudentSearch('')}>
+                      <X color="#9CA3AF" size={16} />
+                    </TouchableOpacity>
+                  )}
                 </View>
 
                 <View style={styles.selectionActionRow}>
-                  <Text style={styles.selectedCount}>
-                    {selectedFilteredStudentCount} of {availableStudents.length} filtered selected ({selectedStudents.length} total)
-                  </Text>
                   <TouchableOpacity
+                    style={styles.selectAllCheckboxRow}
                     onPress={handleSelectAllFilteredStudents}
                     disabled={availableStudents.length === 0}
+                    activeOpacity={0.7}
                   >
+                    <View style={[
+                      styles.checkbox,
+                      (allFilteredStudentsSelected || someFilteredStudentsSelected) && styles.checkboxSelected,
+                    ]}>
+                      {allFilteredStudentsSelected && <Check color="#FFF" size={14} />}
+                      {someFilteredStudentsSelected && <Minus color="#FFF" size={14} />}
+                    </View>
                     <Text style={[styles.selectAllActionText, availableStudents.length === 0 && styles.selectAllActionTextDisabled]}>
-                      {allFilteredStudentsSelected ? 'Deselect Filtered' : 'Select Filtered'}
+                      {allFilteredStudentsSelected ? 'Deselect All' : 'Select All'}
                     </Text>
                   </TouchableOpacity>
+                  <Text style={styles.selectedCount}>
+                    {selectedFilteredStudentCount} of {availableStudents.length} visible ({selectedStudents.length} total)
+                  </Text>
                 </View>
 
                 <ScrollView style={styles.studentList}>
@@ -994,6 +1018,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 8,
     gap: 12,
+  },
+  selectAllCheckboxRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   selectAllActionText: {
     fontSize: 13,

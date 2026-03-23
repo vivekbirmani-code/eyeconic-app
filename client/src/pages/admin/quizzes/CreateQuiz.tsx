@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useAuth } from '../../../contexts/AuthContext';
 import { api } from '../../../services/api';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { 
   ChevronRight, ChevronLeft, Check, Clock, BookOpen, Users, 
-  Search, X 
+  Search, X, Minus 
 } from 'lucide-react';
 
 interface Subject { _id: string; name: string; }
@@ -57,6 +57,16 @@ export default function CreateQuiz() {
   const [selectedStudents, setSelectedStudents] = useState<string[]>([]);
   const [studentSearch, setStudentSearch] = useState('');
 
+  // Debounced student search for flicker-free filtering
+  const [debouncedStudentSearch, setDebouncedStudentSearch] = useState('');
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedStudentSearch(studentSearch), 250);
+    return () => clearTimeout(timer);
+  }, [studentSearch]);
+
+  // Indeterminate checkbox ref
+  const selectAllRef = useRef<HTMLInputElement>(null);
+
   useEffect(() => {
     fetchSubjects();
     fetchStudents();
@@ -92,12 +102,45 @@ export default function CreateQuiz() {
 
   useEffect(() => {
     let filtered = studentsList;
-    if (studentSearch) {
-      const q = studentSearch.toLowerCase();
+    if (debouncedStudentSearch) {
+      const q = debouncedStudentSearch.toLowerCase();
       filtered = filtered.filter(s => s.name.toLowerCase().includes(q) || s.email.toLowerCase().includes(q));
     }
     setFilteredStudents(filtered);
-  }, [studentSearch, studentsList]);
+  }, [debouncedStudentSearch, studentsList]);
+
+  // Selection stats for filtered students
+  const selectedFilteredCount = useMemo(
+    () => filteredStudents.filter(s => selectedStudents.includes(s._id)).length,
+    [filteredStudents, selectedStudents]
+  );
+  const allFilteredSelected = filteredStudents.length > 0 && selectedFilteredCount === filteredStudents.length;
+  const someFilteredSelected = selectedFilteredCount > 0 && !allFilteredSelected;
+
+  // Sync indeterminate state on the Select All checkbox
+  useEffect(() => {
+    if (selectAllRef.current) {
+      selectAllRef.current.indeterminate = someFilteredSelected;
+    }
+  }, [someFilteredSelected]);
+
+  // Scoped Select All: only toggles filtered items, preserves hidden selections
+  const handleSelectAllFiltered = useCallback(() => {
+    const filteredIds = new Set(filteredStudents.map(s => s._id));
+    if (filteredIds.size === 0) return;
+    if (allFilteredSelected) {
+      setSelectedStudents(prev => prev.filter(id => !filteredIds.has(id)));
+    } else {
+      setSelectedStudents(prev => Array.from(new Set([...prev, ...Array.from(filteredIds)])));
+    }
+  }, [filteredStudents, allFilteredSelected]);
+
+  // Toggle individual student (scoped, preserves other selections)
+  const toggleStudent = useCallback((studentId: string) => {
+    setSelectedStudents(prev =>
+      prev.includes(studentId) ? prev.filter(id => id !== studentId) : [...prev, studentId]
+    );
+  }, []);
 
   const loadQuiz = async (id: string, isClone: boolean) => {
     try {
@@ -364,38 +407,53 @@ export default function CreateQuiz() {
             <div className="space-y-6 animate-fade-in flex flex-col h-full">
               <div className="flex justify-between items-center">
                 <h2 className="text-xl font-bold text-gray-900">4. Assign Students</h2>
-                <div className="text-sm">
-                  <span className="font-bold text-[#01b4ae]">{selectedStudents.length}</span> / {filteredStudents.length} selected
-                  <button 
-                    onClick={() => setSelectedStudents(selectedStudents.length === filteredStudents.length ? [] : filteredStudents.map(s => s._id))} 
-                    className="ml-4 font-semibold text-blue-600 hover:underline"
-                  >
-                    {selectedStudents.length === filteredStudents.length ? 'Deselect All' : 'Select All Filtered'}
-                  </button>
+                <div className="text-sm text-gray-500">
+                  <span className="font-bold text-[#01b4ae]">{selectedFilteredCount}</span> of {filteredStudents.length} visible ({selectedStudents.length} total)
                 </div>
               </div>
 
               <div className="relative">
                 <Search className="absolute left-3 top-3 w-5 h-5 text-gray-400" />
-                <input type="text" placeholder="Search students..." value={studentSearch} onChange={e => setStudentSearch(e.target.value)} className="w-full pl-10 p-3 border border-gray-200 rounded-xl focus:outline-none focus:border-[#01b4ae]" />
+                <input type="text" placeholder="Search students..." value={studentSearch} onChange={e => setStudentSearch(e.target.value)} className="w-full pl-10 pr-10 p-3 border border-gray-200 rounded-xl focus:outline-none focus:border-[#01b4ae]" />
+                {studentSearch && (
+                  <button onClick={() => setStudentSearch('')} className="absolute right-3 top-3 text-gray-400 hover:text-gray-600">
+                    <X className="w-5 h-5" />
+                  </button>
+                )}
               </div>
 
+              {/* Select All with indeterminate checkbox */}
+              <label className="flex items-center gap-3 cursor-pointer select-none px-1">
+                <input
+                  ref={selectAllRef}
+                  type="checkbox"
+                  checked={allFilteredSelected}
+                  onChange={handleSelectAllFiltered}
+                  disabled={filteredStudents.length === 0}
+                  className="w-5 h-5 text-[#01b4ae] rounded accent-[#01b4ae]"
+                />
+                <span className={`font-semibold ${filteredStudents.length === 0 ? 'text-gray-400' : 'text-gray-700'}`}>
+                  {allFilteredSelected ? 'Deselect All' : 'Select All'}{debouncedStudentSearch ? ' (Filtered)' : ''}
+                </span>
+              </label>
+
               <div className="flex-1 overflow-y-auto space-y-2 border border-gray-100 p-2 rounded-xl max-h-[400px]">
-                {filteredStudents.map(s => (
-                  <div key={s._id} onClick={() => {
-                    if (selectedStudents.includes(s._id)) setSelectedStudents(selectedStudents.filter(id => id !== s._id));
-                    else setSelectedStudents([...selectedStudents, s._id]);
-                  }} className={`p-4 rounded-xl border cursor-pointer hover:border-[#01b4ae] flex gap-4 items-center ${selectedStudents.includes(s._id) ? 'bg-[#01b4ae]/5 border-[#01b4ae]' : 'bg-white border-gray-200'}`}>
-                    <input type="checkbox" checked={selectedStudents.includes(s._id)} readOnly className="w-5 h-5 text-[#01b4ae] rounded" />
-                    <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center font-bold text-blue-700">
-                      {s.name.charAt(0).toUpperCase()}
+                {filteredStudents.length === 0 ? (
+                  <p className="text-gray-400 text-center py-8">{studentSearch ? 'No matching students' : 'No students available'}</p>
+                ) : (
+                  filteredStudents.map(s => (
+                    <div key={s._id} onClick={() => toggleStudent(s._id)} className={`p-4 rounded-xl border cursor-pointer hover:border-[#01b4ae] flex gap-4 items-center ${selectedStudents.includes(s._id) ? 'bg-[#01b4ae]/5 border-[#01b4ae]' : 'bg-white border-gray-200'}`}>
+                      <input type="checkbox" checked={selectedStudents.includes(s._id)} readOnly className="w-5 h-5 text-[#01b4ae] rounded" />
+                      <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center font-bold text-blue-700">
+                        {s.name.charAt(0).toUpperCase()}
+                      </div>
+                      <div>
+                        <p className="text-gray-900 font-bold">{s.name}</p>
+                        <p className="text-gray-500 text-sm">{s.email}</p>
+                      </div>
                     </div>
-                    <div>
-                      <p className="text-gray-900 font-bold">{s.name}</p>
-                      <p className="text-gray-500 text-sm">{s.email}</p>
-                    </div>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </div>
           )}
