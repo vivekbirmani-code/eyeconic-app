@@ -780,7 +780,7 @@ export default function Groups() {
               data={filteredAndSortedGroups}
               renderItem={renderGroup}
               keyExtractor={(item) => item._id}
-              contentContainerStyle={styles.list}
+              contentContainerStyle={[styles.list, styles.studentScrollContent]}
               showsVerticalScrollIndicator={false}
               ListEmptyComponent={
                 <View style={styles.emptyContainer}>
@@ -1077,6 +1077,9 @@ const styles = StyleSheet.create({
   },
   adminScrollContent: {
     paddingBottom: 140,
+  },
+  studentScrollContent: {
+    paddingBottom: 120, // Enough to clear the tab bar for students/mentors
   },
   folderTopStrip: {
     backgroundColor: '#FFFFFF',

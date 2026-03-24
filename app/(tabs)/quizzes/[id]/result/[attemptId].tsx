@@ -293,7 +293,12 @@ export default function QuizResult() {
 
             {/* Table Rows */}
             {sectionPerformanceWithAccuracy.map((section, index) => (
-              <View key={index} style={styles.tableRow}>
+              <TouchableOpacity 
+                key={index} 
+                style={styles.tableRow}
+                onPress={() => router.push(`/quizzes/${id}/review/${attemptId}?section=${encodeURIComponent(section.sectionName)}`)}
+                disabled={!result.quiz.shareSolution}
+              >
                 <Text style={[styles.tableCell, styles.colSection]} numberOfLines={1}>
                   {section.sectionName}
                 </Text>
@@ -312,7 +317,7 @@ export default function QuizResult() {
                 <Text style={[styles.tableCell, styles.colTime]}>
                   {formatTime(section.timeSpent)}
                 </Text>
-              </View>
+              </TouchableOpacity>
             ))}
           </View>
         </View>

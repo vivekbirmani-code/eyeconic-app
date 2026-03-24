@@ -1724,6 +1724,34 @@ router.get('/analytics/:id', auth, authorize('admin', 'mentor'), async (req, res
   }
 });
 
+// Resolve quiz ID from shareToken (for deep links - authenticated users)
+router.get('/by-token/:shareToken', auth, async (req, res) => {
+  try {
+    const quiz = await Quiz.findOne({
+      shareToken: req.params.shareToken,
+      isActive: true
+    }).select('_id assignedStudents isPublic');
+
+    if (!quiz) {
+      return res.status(404).json({ message: 'Quiz not found' });
+    }
+
+    if (req.user.role === 'student') {
+      const isAssigned = quiz.assignedStudents.some(id => id.toString() === req.user._id.toString());
+      if (!isAssigned) {
+        return res.status(403).json({ 
+          message: 'Please ask the admin to assign you this test' 
+        });
+      }
+    }
+
+    res.json({ quizId: quiz._id });
+  } catch (error) {
+    console.error('By-token lookup error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Get quiz by ID (student view - for taking the quiz)
 router.get('/:id', auth, async (req, res) => {
   try {
@@ -1768,18 +1796,26 @@ router.get('/:id', auth, async (req, res) => {
         return res.status(403).json({ message: 'Access denied' });
       }
 
-      // Check if already attempted
+      // Check if already attempted — include status in response instead of blocking
       const existingAttempt = await QuizAttempt.findOne({
         quiz: quiz._id,
         student: req.user._id
       });
 
-      if (existingAttempt && existingAttempt.status === 'completed' && !existingAttempt.retestApproved) {
-        return res.status(400).json({
-          message: 'You have already completed this quiz',
-          attemptId: existingAttempt._id
-        });
-      }
+      // Attach attemptStatus so the frontend can handle it in the UI
+      // (e.g. show "View Results" instead of "Start Quiz")
+      // Stored as temp var - will be added to qObj after toObject()
+      var _attemptStatus = existingAttempt ? {
+        hasAttempted: existingAttempt.status === 'completed' || existingAttempt.status === 'auto_submitted',
+        status: existingAttempt.status,
+        attemptId: existingAttempt._id,
+        canRetake: existingAttempt.retestApproved && !existingAttempt.retestUsed,
+        retestRequested: existingAttempt.retestRequested && !existingAttempt.retestApproved
+      } : {
+        hasAttempted: false,
+        canRetake: false,
+        retestRequested: false
+      };
     }
 
     const qObj = quiz.toObject();
@@ -1801,6 +1837,11 @@ router.get('/:id', auth, async (req, res) => {
       if (!sectionResult.error) {
         qObj.sections = sectionResult.sections;
       }
+    }
+
+    // Add attemptStatus for students (set above)
+    if (req.user.role === 'student' && _attemptStatus) {
+      qObj.attemptStatus = _attemptStatus;
     }
 
     res.json(qObj);
@@ -2247,48 +2288,153 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
     const quiz = await Quiz.findById(attempt.quiz._id);
     const shareSolution = quiz.shareSolution !== undefined ? quiz.shareSolution : true;
 
-    // Recalculate section performance based on groupBy parameter
+    // Calculate section-aware data
+    const hasQuizSections = quiz.sections && quiz.sections.length > 0;
+    const questionsWithAnswers = [];
     const sectionPerformance = {};
 
-    attempt.quiz.questions.forEach((q, index) => {
-      const answer = attempt.answers.find(a => a.questionIndex === index);
-
-      // Determine section based on groupBy
-      let section = 'General';
+    // Helper to determine section for a question
+    const getSectionInfo = (qId, globalIndex) => {
+      if (hasQuizSections) {
+        for (const section of quiz.sections) {
+          const qIdx = section.questions.findIndex(id => id.toString() === qId.toString());
+          if (qIdx !== -1) {
+            return { name: section.name, index: qIdx };
+          }
+        }
+      }
+      
+      // Fallback to groupBy
+      let sectionName = 'General';
+      const q = attempt.quiz.questions[globalIndex];
       if (groupBy === 'subject') {
-        section = q.subject?.name || 'General';
+        sectionName = q.subject?.name || 'General';
       } else if (groupBy === 'tag') {
-        // Use first tag if available
-        section = (q.tags && q.tags.length > 0) ? q.tags[0] : 'Untagged';
+        sectionName = (q.tags && q.tags.length > 0) ? q.tags[0] : 'Untagged';
       } else {
-        // Default to topic
-        section = q.topicName || 'General';
+        sectionName = q.topicName || 'General';
       }
+      return { name: sectionName, index: globalIndex }; // Fallback relative index is global index
+    };
 
-      if (!sectionPerformance[section]) {
-        sectionPerformance[section] = {
-          sectionName: section,
-          correct: 0,
-          incorrect: 0,
-          skipped: 0,
-          timeSpent: 0
+    // If quiz has sections, follow section order. Otherwise follow global order.
+    if (hasQuizSections) {
+      quiz.sections.forEach(section => {
+        if (!sectionPerformance[section.name]) {
+          sectionPerformance[section.name] = {
+            sectionName: section.name,
+            correct: 0,
+            incorrect: 0,
+            skipped: 0,
+            timeSpent: 0
+          };
+        }
+
+        section.questions.forEach((qId, sIdx) => {
+          const globalIndex = attempt.quiz.questions.findIndex(qd => qd._id.toString() === qId.toString());
+          if (globalIndex !== -1) {
+            const q = attempt.quiz.questions[globalIndex];
+            const answer = attempt.answers.find(a => a.questionIndex === globalIndex);
+            
+            // Process performance
+            const hasAnswer = answer && answer.selectedAnswer != null && answer.selectedAnswer !== -1;
+            if (!hasAnswer) {
+              sectionPerformance[section.name].skipped++;
+            } else if (answer.isCorrect) {
+              sectionPerformance[section.name].correct++;
+            } else {
+              sectionPerformance[section.name].incorrect++;
+            }
+            if (answer) {
+              sectionPerformance[section.name].timeSpent += answer.timeSpent || 0;
+            }
+
+            // Build question data
+            const baseData = {
+              _id: q._id,
+              question: q.question,
+              questionImage: q.questionImage,
+              options: q.options,
+              optionImages: q.optionImages,
+              marks: q.marks,
+              subject: q.subject,
+              topicName: q.topicName,
+              tags: q.tags,
+              userAnswer: answer?.selectedAnswer,
+              isCorrect: answer?.isCorrect,
+              timeSpent: answer?.timeSpent,
+              markedForReview: answer?.markedForReview,
+              section: section.name,
+              sectionQuestionIndex: sIdx,
+              globalIndex: globalIndex
+            };
+
+            if (shareSolution) {
+              baseData.correctAnswer = q.correctAnswer;
+              baseData.explanation = q.explanation;
+              baseData.explanationImage = q.explanationImage;
+            }
+
+            questionsWithAnswers.push(baseData);
+          }
+        });
+      });
+    } else {
+      // Original global-order logic with refactored section determination
+      attempt.quiz.questions.forEach((q, index) => {
+        const answer = attempt.answers.find(a => a.questionIndex === index);
+        const secInfo = getSectionInfo(q._id, index);
+
+        if (!sectionPerformance[secInfo.name]) {
+          sectionPerformance[secInfo.name] = {
+            sectionName: secInfo.name,
+            correct: 0,
+            incorrect: 0,
+            skipped: 0,
+            timeSpent: 0
+          };
+        }
+
+        const hasAnswer = answer && answer.selectedAnswer != null && answer.selectedAnswer !== -1;
+        if (!hasAnswer) {
+          sectionPerformance[secInfo.name].skipped++;
+        } else if (answer.isCorrect) {
+          sectionPerformance[secInfo.name].correct++;
+        } else {
+          sectionPerformance[secInfo.name].incorrect++;
+        }
+        if (answer) {
+          sectionPerformance[secInfo.name].timeSpent += answer.timeSpent || 0;
+        }
+
+        const baseData = {
+          _id: q._id,
+          question: q.question,
+          questionImage: q.questionImage,
+          options: q.options,
+          optionImages: q.optionImages,
+          marks: q.marks,
+          subject: q.subject,
+          topicName: q.topicName,
+          tags: q.tags,
+          userAnswer: answer?.selectedAnswer,
+          isCorrect: answer?.isCorrect,
+          timeSpent: answer?.timeSpent,
+          markedForReview: answer?.markedForReview,
+          section: secInfo.name,
+          sectionQuestionIndex: index,
+          globalIndex: index
         };
-      }
 
-      const hasAnswer = answer && answer.selectedAnswer != null && answer.selectedAnswer !== -1;
+        if (shareSolution) {
+          baseData.correctAnswer = q.correctAnswer;
+          baseData.explanation = q.explanation;
+          baseData.explanationImage = q.explanationImage;
+        }
 
-      if (!hasAnswer) {
-        sectionPerformance[section].skipped++;
-      } else if (answer.isCorrect) {
-        sectionPerformance[section].correct++;
-      } else {
-        sectionPerformance[section].incorrect++;
-      }
-
-      if (answer) {
-        sectionPerformance[section].timeSpent += answer.timeSpent || 0;
-      }
-    });
+        questionsWithAnswers.push(baseData);
+      });
+    }
 
     // Calculate accuracy for each section
     const sectionPerformanceArray = Object.values(sectionPerformance).map(section => {
@@ -2302,37 +2448,6 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
         accuracy,
         total: totalQuestionsInSection
       };
-    });
-
-    // Build question data with conditional solution fields
-    const questionsWithAnswers = attempt.quiz.questions.map((q, index) => {
-      const userAnswer = attempt.answers.find(a => a.questionIndex === index);
-
-      const baseData = {
-        _id: q._id,
-        question: q.question,
-        questionImage: q.questionImage,
-        options: q.options,
-        optionImages: q.optionImages,
-        marks: q.marks,
-        subject: q.subject,
-        topicName: q.topicName,
-        tags: q.tags,
-        userAnswer: userAnswer?.selectedAnswer,
-        isCorrect: userAnswer?.isCorrect,
-        timeSpent: userAnswer?.timeSpent,
-        markedForReview: userAnswer?.markedForReview
-      };
-
-      // SECURITY: Only include solution fields if shareSolution is true
-      // This prevents solution data leakage even if admin changes setting after submission
-      if (shareSolution) {
-        baseData.correctAnswer = q.correctAnswer;
-        baseData.explanation = q.explanation;
-        baseData.explanationImage = q.explanationImage;
-      }
-
-      return baseData;
     });
 
     res.json({

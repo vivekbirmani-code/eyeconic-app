@@ -59,8 +59,13 @@ export default function QuizInstructions() {
       const response = await api.get(`/quizzes/${id}`);
       setQuiz(response.data);
     } catch (error: any) {
-      Alert.alert('Error', error.response?.data?.message || 'Failed to load quiz');
-      router.back();
+      const message = error.response?.data?.message || 'Failed to load quiz';
+      Alert.alert('Error', message, [
+        {
+          text: 'OK',
+          onPress: () => router.replace('/(tabs)/quizzes' as any)
+        }
+      ]);
     } finally {
       setLoading(false);
     }

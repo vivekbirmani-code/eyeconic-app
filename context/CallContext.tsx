@@ -230,10 +230,11 @@ export function CallProvider({ children }: { children: ReactNode }) {
       
       // If it's a 1-on-1 call and they declined, we should end the call session for us too
       // since there's no one else to talk to.
+      // If it's a 1-on-1 call and they declined, we should end the call session for us too
+      // since there's no one else to talk to. Notify the server to finalize the message.
       if (callStateRef.current.participants.length <= 2) {
         console.log('1-on-1 call declined, ending call for initiator');
-        cleanup();
-        setCallState(initialCallState);
+        endCall();
       }
     }
   };

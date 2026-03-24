@@ -166,9 +166,13 @@ const finalizeCallEventMessage = async ({
   if (!groupId || !callId || !finalMessageType) return;
 
   try {
+    // Robust ID conversion to ensure query works with both string and ObjectId types
+    const queryGroupId = new mongoose.Types.ObjectId(groupId.toString());
+    const queryCallId = new mongoose.Types.ObjectId(callId.toString());
+
     const callStartMessage = await Message.findOne({
-      group: groupId,
-      callId,
+      group: queryGroupId,
+      callId: queryCallId,
       messageType: 'call_start'
     })
       .sort({ createdAt: -1 })
@@ -607,11 +611,82 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('disconnect', () => {
+  socket.on('disconnect', async () => {
     const userId = socketUserMap.get(socket.id);
     socketUserMap.delete(socket.id);
     socketHelpers.unregisterSocket(socket.id, userId);
     console.log('User disconnected:', socket.id);
+
+    // If user was in an active call, handle their departure
+    if (userId) {
+      try {
+        // Find all active calls where this user is a participant
+        const activeCalls = await Call.find({
+          'participants.userId': userId,
+          status: 'active'
+        });
+
+        for (const call of activeCalls) {
+          // Effectively trigger the 'call_leave' logic for each active call
+          const participant = call.participants.find(
+            p => p.userId.toString() === userId && !p.leftAt
+          );
+
+          if (participant) {
+            participant.leftAt = new Date();
+            await call.save();
+
+            // Notify others in the group
+            socket.to(call.groupId.toString()).emit('call_user_left', {
+              callId: call._id,
+              userId
+            });
+
+            // If this was the last active participant, end the call
+            const activeParticipants = call.participants.filter(p => !p.leftAt);
+            if (activeParticipants.length === 0) {
+              call.status = 'ended';
+              call.endTime = new Date();
+              await call.save();
+
+              const durationSeconds = getCallDurationSeconds(call.startTime, call.endTime);
+              const durationStr = formatCallDurationLabel(durationSeconds);
+
+              // Update the call message in chat
+              const hasOtherParticipants = call.participants.some(
+                p => p.userId.toString() !== call.initiator.toString()
+              );
+
+              if (hasOtherParticipants) {
+                await finalizeCallEventMessage({
+                  groupId: call.groupId,
+                  callId: call._id,
+                  finalMessageType: 'call_end',
+                  content: `Call ended - Duration: ${durationStr}`,
+                  callDurationSeconds: durationSeconds,
+                  fallbackSenderId: userId,
+                  fallbackSenderName: participant.userName || 'Unknown'
+                });
+              } else {
+                const initiatorUser = await User.findById(call.initiator);
+                await finalizeCallEventMessage({
+                  groupId: call.groupId,
+                  callId: call._id,
+                  finalMessageType: 'call_missed',
+                  content: `${initiatorUser?.name || 'User'} missed a call`,
+                  callDurationSeconds: durationSeconds,
+                  fallbackSenderId: call.initiator,
+                  fallbackSenderName: initiatorUser?.name || 'Unknown'
+                });
+              }
+              socket.to(call.groupId.toString()).emit('call_ended', { callId: call._id });
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Error handling call cleanup on disconnect:', error);
+      }
+    }
   });
 });
 

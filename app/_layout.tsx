@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { View, Text as RNText, TouchableOpacity as RNTouchable, Platform } from 'react-native';
+import { View, Text as RNText, TouchableOpacity as RNTouchable, Platform, Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Linking from 'expo-linking';
 import * as SplashScreen from 'expo-splash-screen';
@@ -43,15 +43,23 @@ function AppContent() {
             // Check if user is logged in
             const token = await AsyncStorage.getItem('authToken');
             if (token) {
-              // User is logged in - fetch quiz ID from share token and route to normal quiz
+              // User is logged in - use authenticated endpoint to resolve quiz ID
+              // This works regardless of isPublic status
               const API_URL = getApiBaseURL();
-              const response = await fetch(`${API_URL}/public/quiz/${shareToken}`);
+              const response = await fetch(`${API_URL}/quizzes/by-token/${shareToken}`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+              });
               const data = await response.json();
 
-              if (data.success && data.quiz._id) {
+              if (response.ok && data.quizId) {
                 // Navigate to the correct tab-based quiz instructions path
-                router.replace(`/(tabs)/quizzes/${data.quiz._id}/instructions` as any);
+                router.replace(`/(tabs)/quizzes/${data.quizId}/instructions` as any);
                 return;
+              } else if (response.status === 403) {
+                 // Student is not assigned to this quiz
+                 Alert.alert('Access Denied', data.message || 'Please ask the admin to assign you this test');
+                 router.replace('/(tabs)/quizzes' as any);
+                 return;
               }
             }
             // Not logged in or couldn't get quiz ID - go to guest mode
