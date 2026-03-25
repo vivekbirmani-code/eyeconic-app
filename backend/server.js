@@ -274,7 +274,8 @@ io.on('connection', (socket) => {
       const call = new Call({
         groupId,
         initiator: initiatorId,
-        participants: [{ userId: initiatorId, userName: initiatorName, joinedAt: new Date() }]
+        participants: [{ userId: initiatorId, userName: initiatorName, joinedAt: new Date() }],
+        targetUserIds: targetUserIds || []
       });
       await call.save();
 
@@ -589,6 +590,33 @@ io.on('connection', (socket) => {
           callId,
           userId
         });
+      }
+
+      // If it's a 1-on-1 call, we should finalize the message as 'call_declined'
+      const call = await Call.findById(callId);
+      if (call && call.status === 'active' && call.targetUserIds && call.targetUserIds.length === 1) {
+        // End the call record
+        call.status = 'ended';
+        call.endTime = new Date();
+        await call.save();
+
+        // Finalize the chat message
+        const decliner = await User.findById(userId);
+        const declinerName = decliner?.name || 'User';
+        
+        await finalizeCallEventMessage({
+          groupId: call.groupId,
+          callId: call._id,
+          finalMessageType: 'call_declined',
+          content: `${declinerName} declined the call`,
+          callDurationSeconds: 0,
+          fallbackSenderId: userId,
+          fallbackSenderName: declinerName
+        });
+
+        // Notify everyone to clear their UI
+        io.to(call.groupId.toString()).emit('call_ended', { callId: call._id });
+        console.log(`Call ${callId} ended due to decline in 1-on-1`);
       }
     } catch (error) {
       console.error('Error declining call:', error);

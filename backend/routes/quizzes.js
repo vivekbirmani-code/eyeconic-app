@@ -158,8 +158,15 @@ const deriveSectionsForQuestions = (rawSections, rawQuestionIds, totalDuration, 
   const unassignedIds = questionIds.filter(id => !assignedIds.has(id));
 
   if (mixedSections.length > 0) {
-    unassignedIds.forEach((qid, idx) => {
-      mixedSections[idx % mixedSections.length].questions.push(qid);
+    const qPerSection = Math.floor(unassignedIds.length / mixedSections.length);
+    const remainder = unassignedIds.length % mixedSections.length;
+
+    let startIndex = 0;
+    mixedSections.forEach((section, idx) => {
+      const count = qPerSection + (idx < remainder ? 1 : 0);
+      const sectionQuestions = unassignedIds.slice(startIndex, startIndex + count);
+      section.questions.push(...sectionQuestions);
+      startIndex += count;
     });
   } else if (sections.length > 0 && unassignedIds.length > 0) {
     return {

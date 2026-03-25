@@ -18,7 +18,7 @@ const messageSchema = new mongoose.Schema({
   },
   messageType: {
     type: String,
-    enum: ['text', 'image', 'file', 'call_start', 'call_end', 'call_missed'],
+    enum: ['text', 'image', 'file', 'call_start', 'call_end', 'call_missed', 'call_declined'],
     default: 'text'
   },
   callId: {

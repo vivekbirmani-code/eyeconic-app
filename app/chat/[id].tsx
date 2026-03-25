@@ -54,7 +54,7 @@ interface Message {
     publicId: string;
     localUri?: string;
   }>;
-  messageType?: 'text' | 'image' | 'file' | 'call_start' | 'call_end' | 'call_missed';
+  messageType?: 'text' | 'image' | 'file' | 'call_start' | 'call_end' | 'call_missed' | 'call_declined';
   callDurationSeconds?: number;
   callId?: string;
 }
@@ -466,7 +466,7 @@ export default function ChatScreen() {
   };
 
   const isCallEvent = (message: Message) => {
-    return ['call_start', 'call_end', 'call_missed'].includes(message.messageType || '');
+    return ['call_start', 'call_end', 'call_missed', 'call_declined'].includes(message.messageType || '');
   };
 
   const renderCallMessage = (message: Message, isOwnMessage: boolean) => {
@@ -475,9 +475,11 @@ export default function ChatScreen() {
       ? formatCallDuration(message.callDurationSeconds)
       : callType === 'call_missed'
         ? 'No answer'
-        : 'Calling...';
-    const iconBackground = callType === 'call_missed' ? '#DC2626' : '#10B981';
-    const title = callType === 'call_missed' ? 'Missed call' : 'Voice call';
+        : callType === 'call_declined'
+          ? 'Declined'
+          : 'Calling...';
+    const iconBackground = (callType === 'call_missed' || callType === 'call_declined') ? '#DC2626' : '#10B981';
+    const title = callType === 'call_missed' ? 'Missed call' : callType === 'call_declined' ? 'Declined call' : 'Voice call';
     const containerStyle = [
       styles.callMessageContainer,
       isOwnMessage ? styles.callOwnMessage : styles.callOtherMessage
@@ -503,7 +505,7 @@ export default function ChatScreen() {
       >
         <View style={styles.callMessageRow}>
           <View style={[styles.callIconCircle, { backgroundColor: iconBackground }]}>
-            {callType === 'call_missed' ? (
+            {(callType === 'call_missed' || callType === 'call_declined') ? (
               <PhoneOff color="#FFFFFF" size={20} />
             ) : (
               <Phone color="#FFFFFF" size={20} />

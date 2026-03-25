@@ -17,6 +17,9 @@ interface Message {
   content: string;
   sender: { _id: string; name: string };
   createdAt: string;
+  messageType?: string;
+  callId?: string;
+  callDurationSeconds?: number;
 }
 
 interface Group {

@@ -34,6 +34,10 @@ const callSchema = new mongoose.Schema({
         required: true
     },
     participants: [participantSchema],
+    targetUserIds: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User'
+    }],
     status: {
         type: String,
         enum: ['active', 'ended'],
