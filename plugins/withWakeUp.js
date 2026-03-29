@@ -19,11 +19,20 @@ const withWakeUpFiles = (config) => {
         async (config) => {
             const projectRoot = config.modRequest.projectRoot;
             const sourceDir = path.join(projectRoot, 'plugins', 'files');
+            const androidConfig = config.android || {};
+            const packageName = androidConfig.package || 'com.eyeconicbydrlalla.mentorship';
+            const packagePath = packageName.split('.').join(path.sep);
+
             const targetDir = path.join(
                 projectRoot,
                 'android', 'app', 'src', 'main', 'java',
-                'com', 'anonymous', 'neetmentorshipapp'
+                packagePath
             );
+
+            // Ensure target directory exists for copyFileSync
+            if (!fs.existsSync(targetDir)) {
+                fs.mkdirSync(targetDir, { recursive: true });
+            }
 
             if (!fs.existsSync(sourceDir)) {
                 console.warn('WakeUpModule source files not found in plugins/files');

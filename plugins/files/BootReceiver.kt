@@ -1,4 +1,4 @@
-package com.anonymous.neetmentorshipapp
+package com.eyeconicbydrlalla.mentorship
 
 import android.content.BroadcastReceiver
 import android.content.Context

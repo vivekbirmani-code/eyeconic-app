@@ -23,6 +23,44 @@
           "other_platform_oauth_client": []
         }
       }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:907459208798:android:2b81d389743db0409c36cf",
+        "android_client_info": {
+          "package_name": "com.anonymous.neetmentorshipapp.dev"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBMfLLw8GcTqj-XhLAfFWusCMPejA11pps"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:907459208798:android:1cdf78e1b6412b1b9c36cf",
+        "android_client_info": {
+          "package_name": "com.eyeconicbydrlalla.mentorship"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBMfLLw8GcTqj-XhLAfFWusCMPejA11pps"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
     }
   ],
   "configuration_version": "1"

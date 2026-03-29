@@ -15,6 +15,7 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
+      "bundleIdentifier": "com.eyeconicbydrlalla.mentorship",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "This app requires microphone access for voice calls",
         "UIBackgroundModes": [
@@ -43,7 +44,8 @@
         "android.permission.RECEIVE_BOOT_COMPLETED",
         "android.permission.FOREGROUND_SERVICE"
       ],
-      "package": "com.anonymous.neetmentorshipapp",
+      "package": "com.eyeconicbydrlalla.mentorship",
+      "versionCode": 1,
       "intentFilters": [
         {
           "action": "VIEW",

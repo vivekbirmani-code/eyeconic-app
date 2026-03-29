@@ -1,4 +1,4 @@
-package com.anonymous.neetmentorshipapp
+package com.eyeconicbydrlalla.mentorship
 
 import android.app.Activity
 import android.app.KeyguardManager
