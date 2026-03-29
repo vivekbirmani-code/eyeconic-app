@@ -306,9 +306,21 @@ export default function Login() {
             </View>
 
             {/* Footer */}
-            <Text style={styles.footer}>
-              Contact your administrator if you need login credentials
-            </Text>
+            <View style={styles.loginFooter}>
+              <Text style={styles.footerText}>
+                Contact your administrator if you need login credentials
+              </Text>
+              <TouchableOpacity 
+                onPress={() => {
+                  // This is handled by the root layout but we could also 
+                  // navigate to a dedicated terms screen if we had one.
+                  // For now, we'll just show an alert or let them know they accepted it.
+                  Alert.alert('Terms & Conditions', 'You have already accepted the Terms & Conditions when starting the app.');
+                }}
+              >
+                <Text style={styles.termsLink}>Terms & Conditions</Text>
+              </TouchableOpacity>
+            </View>
           </Animated.View>
         </View>
       </ScrollView>
@@ -470,12 +482,22 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 0.5,
   },
-  footer: {
+  loginFooter: {
+    marginTop: 24,
+    alignItems: 'center',
+    gap: 8,
+  },
+  footerText: {
     fontSize: 12,
     color: '#6B7280',
     textAlign: 'center',
-    marginTop: 24,
     lineHeight: 18,
+  },
+  termsLink: {
+    fontSize: 13,
+    color: '#01b4ae',
+    fontWeight: '600',
+    textDecorationLine: 'underline',
   },
   signupLinkContainer: {
     marginTop: 4,

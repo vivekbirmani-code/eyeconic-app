@@ -14,6 +14,7 @@ import { GuestQuizProvider } from '@/context/GuestQuizContext';
 import FloatingCallBar from '@/components/FloatingCallBar';
 import IncomingCallScreen from '@/components/IncomingCallScreen';
 import PermissionsScreen from '@/components/PermissionsScreen';
+import DisclaimerScreen from '@/components/DisclaimerScreen';
 import { usePushNotifications } from '@/hooks/usePushNotifications';
 import { requestBatteryOptimizationExemption } from '@/utils/notificationService';
 import { useRouter } from 'expo-router';
@@ -24,13 +25,14 @@ function AppContent() {
   const { incomingCall, acceptIncomingCall, declineIncomingCall, callState, remoteStreams } = useCall();
   const router = useRouter();
   const [showPermissions, setShowPermissions] = useState(false);
-  const [isCheckingPermissions, setIsCheckingPermissions] = useState(true);
+  const [showDisclaimer, setShowDisclaimer] = useState(false);
+  const [isCheckingInitialStatus, setIsCheckingInitialStatus] = useState(true);
 
   // Register for push notifications
   usePushNotifications();
 
   useEffect(() => {
-    checkPermissionsStatus();
+    checkInitialStatus();
 
     // Handle deep links
     const handleDeepLink = async (event: { url: string }) => {
@@ -89,7 +91,7 @@ function AppContent() {
   }, []);
 
   useEffect(() => {
-    if (isCheckingPermissions || showPermissions) return;
+    if (isCheckingInitialStatus || showPermissions || showDisclaimer) return;
     if (Platform.OS !== 'android') return;
 
     const maybeRequestBatteryOptimizationExemption = async () => {
@@ -105,19 +107,33 @@ function AppContent() {
     };
 
     maybeRequestBatteryOptimizationExemption();
-  }, [isCheckingPermissions, showPermissions]);
+  }, [isCheckingInitialStatus, showPermissions, showDisclaimer]);
 
-  const checkPermissionsStatus = async () => {
+  const checkInitialStatus = async () => {
     try {
+      // Check disclaimer first
+      const disclaimerAccepted = await AsyncStorage.getItem('disclaimer_accepted');
+      if (!disclaimerAccepted) {
+        setShowDisclaimer(true);
+        return;
+      }
+
+      // Then check permissions
       const permissionsRequested = await AsyncStorage.getItem('permissions_requested');
       if (!permissionsRequested) {
         setShowPermissions(true);
       }
     } catch (error) {
-      console.error('Error checking permissions status:', error);
+      console.error('Error checking initial status:', error);
     } finally {
-      setIsCheckingPermissions(false);
+      setIsCheckingInitialStatus(false);
     }
+  };
+
+  const handleDisclaimerComplete = () => {
+    setShowDisclaimer(false);
+    // After disclaimer, check permissions
+    checkInitialStatus();
   };
 
   const handlePermissionsComplete = () => {
@@ -172,12 +188,18 @@ function AppContent() {
     return streams;
   };
 
-  // Show loading while checking permissions
-  if (isCheckingPermissions) {
+  // Show loading while checking status
+  if (isCheckingInitialStatus && !showDisclaimer && !showPermissions) {
     return <View style={{ flex: 1, backgroundColor: '#FFFFFF' }} />;
   }
 
-  // Show permissions screen on first launch
+  // Show disclaimer screen first
+  if (showDisclaimer) {
+    SplashScreen.hideAsync().catch(() => { });
+    return <DisclaimerScreen onComplete={handleDisclaimerComplete} />;
+  }
+
+  // Show permissions screen next
   if (showPermissions) {
     SplashScreen.hideAsync().catch(() => { });
     return <PermissionsScreen onComplete={handlePermissionsComplete} />;
