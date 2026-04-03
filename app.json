@@ -45,7 +45,7 @@
         "android.permission.FOREGROUND_SERVICE"
       ],
       "package": "com.eyeconicbydrlalla.mentorship",
-      "versionCode": 2,
+      "versionCode": 5,
       "intentFilters": [
         {
           "action": "VIEW",

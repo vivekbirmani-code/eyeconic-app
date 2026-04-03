@@ -23,7 +23,7 @@ class CallForegroundService : Service() {
     companion object {
         const val CHANNEL_ID = "eyeconic_call_channel"
         const val NOTIFICATION_ID = 12345
-        const val ACTION_STOP = "com.anonymous.neetmentorshipapp.STOP_CALL_SERVICE"
+        const val ACTION_STOP = "com.eyeconicbydrlalla.mentorship.STOP_CALL_SERVICE"
         const val EXTRA_CALLER_NAME = "caller_name"
 
         fun start(context: Context, callerName: String = "Incoming Call") {
