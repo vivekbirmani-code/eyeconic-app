@@ -124,3 +124,11 @@ function App() {
 }
 
 export default App;
+        </Routes>
+        </BrowserRouter>
+      </NotificationProvider>
+    </AuthProvider>
+  );
+}
+
+export default App;
