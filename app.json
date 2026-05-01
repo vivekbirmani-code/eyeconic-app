@@ -21,8 +21,12 @@
         "UIBackgroundModes": [
           "audio",
           "voip",
+          "remote-notification",
+          "audio",
+          "voip",
           "remote-notification"
-        ]
+        ],
+        "ITSAppUsesNonExemptEncryption": false
       },
       "bitcode": false
     },

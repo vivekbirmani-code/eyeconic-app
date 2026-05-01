@@ -89,7 +89,6 @@ const withWakeUpManifest = (config) => {
         }
 
         const permissionsToAdd = [
-            'android.permission.USE_FULL_SCREEN_INTENT',
             'android.permission.WAKE_LOCK',
             // Android 13+ required to post notifications
             'android.permission.POST_NOTIFICATIONS',
