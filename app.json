@@ -28,7 +28,8 @@
         ],
         "ITSAppUsesNonExemptEncryption": false
       },
-      "bitcode": false
+      "bitcode": false,
+      "buildNumber": "3"
     },
     "android": {
       "adaptiveIcon": {
