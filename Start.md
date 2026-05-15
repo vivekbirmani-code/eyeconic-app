@@ -1,5 +1,6 @@
 On Cloud
 eas build --platform android --profile preview --clear-cache
+eas build -p android --profile production
 
 For LocalHost (android)
 npx expo prebuild --platform android
@@ -9,6 +10,8 @@ cd android
 
 For LocalHost (iOS
 )
+eas build --platform ios --profile production
+eas submit --platform ios
 
  APK LOCATION
 android/app/build/outputs/apk/release/app-release.apk
