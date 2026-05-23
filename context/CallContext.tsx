@@ -5,6 +5,7 @@ import { io, Socket } from 'socket.io-client';
 import { getSocketURL } from '@/services/config';
 import { useAuth } from './AuthContext';
 import { dismissCallNotification } from '@/utils/notificationService';
+import { ensureMicrophonePermission } from '@/utils/microphonePermission';
 
 // Safe import for expo-av Audio
 let Audio: any = null;
@@ -96,8 +97,8 @@ interface DebugStats {
 interface CallContextType {
   callState: CallState;
   incomingCall: IncomingCallData | null;
-  initiateCall: (groupId: string, groupName: string, targetUserIds: string[]) => void;
-  joinCall: (callId: string, groupId: string, groupName: string) => void;
+  initiateCall: (groupId: string, groupName: string, targetUserIds: string[]) => Promise<boolean>;
+  joinCall: (callId: string, groupId: string, groupName: string) => Promise<boolean>;
   acceptIncomingCall: () => void;
   declineIncomingCall: () => void;
   leaveCall: () => void;
@@ -644,6 +645,11 @@ export function CallProvider({ children }: { children: ReactNode }) {
       console.log('WebRTC not available');
       return null;
     }
+
+    const micGranted = await ensureMicrophonePermission();
+    if (!micGranted) {
+      return null;
+    }
     
     try {
       // Simply ensure recording is allowed - let InCallManager handle routing to prevent conflicts
@@ -745,16 +751,16 @@ export function CallProvider({ children }: { children: ReactNode }) {
     timerStartedRef.current = false; // Reset for next call session
   };
 
-  const initiateCall = async (groupId: string, groupName: string, targetUserIds: string[]) => {
+  const initiateCall = async (groupId: string, groupName: string, targetUserIds: string[]): Promise<boolean> => {
     if (!isWebRTCAvailable) {
       console.log('WebRTC not available');
-      return;
+      return false;
     }
     
     console.log('Initiating call to group:', groupId);
     
     const stream = await startLocalStream();
-    if (!stream) return;
+    if (!stream) return false;
 
     setCallState({
       ...initialCallState,
@@ -783,18 +789,19 @@ export function CallProvider({ children }: { children: ReactNode }) {
 
     timerStartedRef.current = true;
     startCallTimer();
+    return true;
   };
 
-  const joinCall = async (callId: string, groupId: string, groupName: string) => {
+  const joinCall = async (callId: string, groupId: string, groupName: string): Promise<boolean> => {
     if (!isWebRTCAvailable) {
       console.log('WebRTC not available');
-      return;
+      return false;
     }
     
     console.log('Joining call:', callId);
     
     const stream = await startLocalStream();
-    if (!stream) return;
+    if (!stream) return false;
 
     setCallState({
       ...initialCallState,
@@ -822,6 +829,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
 
     // Don't start timer here for joiners - wait for server sync in handleCallJoined
     // This prevents timer de-sync between sender and receiver
+    return true;
   };
 
   const acceptIncomingCall = async () => {

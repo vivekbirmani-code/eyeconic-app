@@ -17,7 +17,7 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.eyeconicbydrlalla.mentorship",
       "infoPlist": {
-        "NSMicrophoneUsageDescription": "This app requires microphone access for voice calls",
+        "NSMicrophoneUsageDescription": "Microphone access is required so users can participate in live mentorship sessions, audio calls, and send voice messages.",
         "UIBackgroundModes": [
           "audio",
           "voip",
@@ -29,7 +29,7 @@
         "ITSAppUsesNonExemptEncryption": false
       },
       "bitcode": false,
-      "buildNumber": "4"
+      "buildNumber": "5"
     },
     "android": {
       "adaptiveIcon": {
@@ -56,7 +56,7 @@
         "android.permission.FOREGROUND_SERVICE"
       ],
       "package": "com.eyeconicbydrlalla.mentorship",
-      "versionCode": 7,
+      "versionCode": 8,
       "intentFilters": [
         {
           "action": "VIEW",
@@ -101,7 +101,7 @@
         "@config-plugins/react-native-webrtc",
         {
           "cameraPermission": "Allow Eyeconic to access your camera",
-          "microphonePermission": "Allow Eyeconic to access your microphone"
+          "microphonePermission": "Microphone access is required so users can participate in live mentorship sessions, audio calls, and send voice messages."
         }
       ],
       "@react-native-community/datetimepicker",

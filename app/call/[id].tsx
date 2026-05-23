@@ -10,6 +10,8 @@ import {
   FlatList,
   Modal,
   ScrollView,
+  Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowLeft, Phone, PhoneOff, Mic, MicOff, UserPlus, X, Check, Volume2, VolumeX } from 'lucide-react-native';
@@ -32,8 +34,17 @@ interface Member {
   email: string;
 }
 
+function resolveRouteParam(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) {
+    return value[0];
+  }
+  return value;
+}
+
 export default function CallScreen() {
-  const { id: groupId, callId } = useLocalSearchParams<{ id: string; callId?: string }>();
+  const { id: groupIdParam, callId: callIdParam } = useLocalSearchParams<{ id: string; callId?: string }>();
+  const groupId = resolveRouteParam(groupIdParam);
+  const callId = resolveRouteParam(callIdParam);
   const router = useRouter();
   const { user } = useAuth();
   const {
@@ -47,7 +58,7 @@ export default function CallScreen() {
     minimizeCall,
     addParticipant,
     remoteStreams,
-    debugStats
+    isWebRTCSupported,
   } = useCall();
 
   const [groupMembers, setGroupMembers] = useState<Member[]>([]);
@@ -59,16 +70,17 @@ export default function CallScreen() {
   const wasInCallRef = useRef(false);
 
   useEffect(() => {
-    fetchGroupDetails();
+    if (groupId) {
+      fetchGroupDetails();
+    }
   }, [groupId]);
-
 
   useEffect(() => {
     // If we have a callId parameter, join the existing call
-    if (callId && !callState.isInCall) {
+    if (callId && groupId && !callState.isInCall) {
       joinCall(callId, groupId, groupName);
     }
-  }, [callId, groupName]);
+  }, [callId, groupId, groupName]);
 
   useEffect(() => {
     if (callState.isInCall) {
@@ -84,31 +96,58 @@ export default function CallScreen() {
   }, [callState.isInCall, router]);
 
   const fetchGroupDetails = async () => {
+    if (!groupId) return;
     try {
       const response = await api.get(`/groups/${groupId}`);
       setGroupName(response.data.name);
       setGroupMembers(response.data.members || []);
     } catch (error) {
       console.error('Error fetching group:', error);
+      Alert.alert('Unable to load group', 'Please go back and try again.');
     }
   };
 
-  const handleStartCall = () => {
-    // On web, show informational modal instead of initiating the call
+  const handleStartCall = async () => {
     if (Platform.OS === 'web') {
       setShowWebCallModal(true);
       return;
     }
-    if (selectedMembers.length === 0) {
-      // Call all members
-      const memberIds = groupMembers
-        .filter(m => m._id !== user?._id)
-        .map(m => m._id);
-      initiateCall(groupId, groupName, memberIds);
-    } else {
-      initiateCall(groupId, groupName, selectedMembers);
+
+    if (!groupId) {
+      Alert.alert('Unable to start call', 'Group information is missing. Please go back and try again.');
+      return;
     }
-    setIsStartingCall(false);
+
+    if (!isWebRTCSupported) {
+      Alert.alert(
+        'Calling unavailable',
+        'Voice calling is not available in this environment. Please use the App Store build on a physical device.'
+      );
+      return;
+    }
+
+    const targetUserIds =
+      selectedMembers.length > 0
+        ? selectedMembers
+        : groupMembers.filter(m => m._id !== user?._id).map(m => m._id);
+
+    if (targetUserIds.length === 0) {
+      Alert.alert('No members to call', 'There are no other members in this group to call.');
+      return;
+    }
+
+    setIsStartingCall(true);
+    try {
+      const started = await initiateCall(groupId, groupName, targetUserIds);
+      if (!started) {
+        console.log('Call did not start — microphone permission or media stream unavailable');
+      }
+    } catch (error) {
+      console.error('Error starting call:', error);
+      Alert.alert('Call failed', 'Could not start the call. Please try again.');
+    } finally {
+      setIsStartingCall(false);
+    }
   };
 
   const handleBack = () => {
@@ -150,7 +189,7 @@ export default function CallScreen() {
   };
 
   // If not in a call, show the call initiation screen
-  if (!callState.isInCall && !isStartingCall) {
+  if (!callState.isInCall) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
@@ -169,7 +208,11 @@ export default function CallScreen() {
           <Text style={styles.memberCount}>{groupMembers.length} members</Text>
 
           <Text style={styles.sectionTitle}>Select participants (optional)</Text>
-          <ScrollView style={styles.memberList}>
+          <ScrollView
+            style={styles.memberList}
+            keyboardShouldPersistTaps="handled"
+            nestedScrollEnabled
+          >
             {groupMembers.filter(m => m._id !== user?._id).map(member => (
               <TouchableOpacity
                 key={member._id}
@@ -192,13 +235,29 @@ export default function CallScreen() {
             ))}
           </ScrollView>
 
-          <TouchableOpacity style={styles.startCallButton} onPress={handleStartCall}>
-            <Phone color="#FFFFFF" size={24} />
+          <TouchableOpacity
+            style={[styles.startCallButton, isStartingCall && styles.startCallButtonDisabled]}
+            onPress={handleStartCall}
+            disabled={isStartingCall}
+            activeOpacity={0.8}
+            accessibilityRole="button"
+            accessibilityLabel={
+              selectedMembers.length > 0
+                ? `Call ${selectedMembers.length} selected members`
+                : 'Call all members'
+            }
+          >
+            {isStartingCall ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Phone color="#FFFFFF" size={24} />
+            )}
             <Text style={styles.startCallButtonText}>
-              {selectedMembers.length > 0
-                ? `Call ${selectedMembers.length} selected`
-                : 'Call All Members'
-              }
+              {isStartingCall
+                ? 'Starting call...'
+                : selectedMembers.length > 0
+                  ? `Call ${selectedMembers.length} selected`
+                  : 'Call All Members'}
             </Text>
           </TouchableOpacity>
         </View>
@@ -480,6 +539,11 @@ const styles = StyleSheet.create({
     width: '100%',
     marginTop: 20,
     gap: 10,
+    flexShrink: 0,
+    minHeight: 56,
+  },
+  startCallButtonDisabled: {
+    opacity: 0.7,
   },
   startCallButtonText: {
     color: '#FFFFFF',
