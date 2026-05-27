@@ -21,15 +21,12 @@
         "UIBackgroundModes": [
           "audio",
           "voip",
-          "remote-notification",
-          "audio",
-          "voip",
           "remote-notification"
         ],
         "ITSAppUsesNonExemptEncryption": false
       },
       "bitcode": false,
-      "buildNumber": "5"
+      "buildNumber": "7"
     },
     "android": {
       "adaptiveIcon": {

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -6,12 +6,12 @@ import {
   TouchableOpacity,
   Image,
   Modal,
-  Linking,
   Dimensions,
   ActivityIndicator
 } from 'react-native';
 import { X, FileText, Download, ExternalLink } from 'lucide-react-native';
 import { getApiBaseURL } from '@/services/config';
+import { openExternalUrl } from '@/utils/openExternalUrl';
 
 interface Attachment {
   type: 'image' | 'video' | 'document';
@@ -50,11 +50,11 @@ export const AttachmentViewer: React.FC<AttachmentViewerProps> = ({ attachment, 
 
       // If we have a token, attach it to the URL so the request is authenticated
       const finalUrl = token ? `${proxyUrl}&token=${token}` : proxyUrl;
-      Linking.openURL(finalUrl).catch(err => console.error("Couldn't open file", err));
+      openExternalUrl(finalUrl).catch(err => console.error("Couldn't open file", err));
     } catch (err) {
       console.error('handleOpen error', err);
       // Fallback to direct URL
-      Linking.openURL(attachment.url).catch(e => console.error("Fallback open failed", e));
+      openExternalUrl(attachment.url).catch(e => console.error("Fallback open failed", e));
     }
   };
 

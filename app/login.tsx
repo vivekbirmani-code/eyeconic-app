@@ -4,7 +4,6 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  TouchableWithoutFeedback,
   StyleSheet,
   Alert,
   KeyboardAvoidingView,
@@ -14,15 +13,12 @@ import {
   Animated,
   Pressable,
   ScrollView,
-  Linking,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
 import { Eye, EyeOff } from 'lucide-react-native';
 import * as Haptics from '@/utils/haptics';
 import { LinearGradient } from 'expo-linear-gradient';
-
-const GOOGLE_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSccHeq1gUBguz8MYr4JGFzYFlsZeHCOsEq2BQ6g1chlvmkIuQ/viewform';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -145,9 +141,12 @@ export default function Login() {
     }
   };
 
-  const handleSignup = () => {
+  const handleForgotPassword = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    Linking.openURL(GOOGLE_FORM_URL);
+    Alert.alert(
+      'Password Help',
+      'Please contact your administrator to reset your password.'
+    );
   };
 
   return (
@@ -293,15 +292,13 @@ export default function Login() {
                 </Animated.View>
               </Pressable>
 
-              {/* Signup Link */}
+              {/* Password Help */}
               <TouchableOpacity
-                onPress={handleSignup}
-                style={styles.signupLinkContainer}
+                onPress={handleForgotPassword}
+                style={styles.helpLinkContainer}
                 activeOpacity={0.7}
               >
-                <Text style={styles.signupLinkText}>
-                  New user? <Text style={styles.signupLinkHighlight}>Fill the form to signup</Text>
-                </Text>
+                <Text style={styles.helpLinkText}>Forgot password?</Text>
               </TouchableOpacity>
             </View>
 
@@ -499,16 +496,13 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textDecorationLine: 'underline',
   },
-  signupLinkContainer: {
+  helpLinkContainer: {
     marginTop: 4,
     alignItems: 'center',
     padding: 4,
   },
-  signupLinkText: {
+  helpLinkText: {
     fontSize: 14,
-    color: '#6B7280',
-  },
-  signupLinkHighlight: {
     color: '#01b4ae',
     fontWeight: '600',
   },

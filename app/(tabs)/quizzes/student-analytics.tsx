@@ -11,7 +11,6 @@ import {
   ActivityIndicator,
   Platform,
   StatusBar,
-  Linking,
   Alert
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -25,11 +24,11 @@ import {
   Clock,
   AlertTriangle,
   Download,
-  BarChart3,
   Grid3X3
 } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
+import { openExternalUrl } from '@/utils/openExternalUrl';
 import TabSwitcher from '@/components/analytics/TabSwitcher';
 import TestDropdown from '@/components/analytics/test-analytics/TestDropdown';
 import TestOverview from '@/components/analytics/test-analytics/TestOverview';
@@ -297,8 +296,7 @@ export default function Analytics() {
       // Append the token as a query parameter so the backend auth middleware can read it
       const url = `${baseURL}/quizzes/analytics/test-report/${selectedTest._id}/csv?token=${token}`;
       
-      // Open in browser to trigger the download
-      Linking.openURL(url);
+      await openExternalUrl(url);
     } catch (error) {
       Alert.alert('Error', 'Failed to download CSV');
     }
@@ -316,7 +314,7 @@ export default function Analytics() {
       }
 
       const url = `${baseURL}/quizzes/analytics/student/${selectedStudent._id}/csv?token=${token}`;
-      Linking.openURL(url);
+      await openExternalUrl(url);
     } catch (error) {
       Alert.alert('Error', 'Failed to download student CSV');
     }

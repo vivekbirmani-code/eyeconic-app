@@ -3,8 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
-const GOOGLE_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSccHeq1gUBguz8MYr4JGFzYFlsZeHCOsEq2BQ6g1chlvmkIuQ/viewform';
-
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -108,17 +106,9 @@ export default function LoginScreen() {
               )}
             </button>
 
-            {/* Signup Link */}
-            <div className="text-center mt-4">
-              <a 
-                href={GOOGLE_FORM_URL} 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="text-sm text-gray-500 hover:text-gray-700 transition-colors inline-block p-2"
-              >
-                New user? <span className="text-[#01b4ae] font-semibold">Fill the form to signup</span>
-              </a>
-            </div>
+            <p className="text-sm text-center text-gray-500 mt-4">
+              Forgot password? Contact your administrator.
+            </p>
           </form>
 
           {/* Footer */}
