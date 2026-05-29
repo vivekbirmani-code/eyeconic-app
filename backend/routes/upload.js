@@ -70,7 +70,7 @@ router.post('/chat', auth, upload.single('file'), async (req, res) => {
 
         // Allowed MIME types
         const allowedTypes = [
-            'image/jpeg', 'image/png', 'image/gif', 'image/webp',
+            'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/heic', 'image/heif',
             'application/pdf',
             'application/msword',
             'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // docx

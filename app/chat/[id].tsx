@@ -96,6 +96,8 @@ export default function ChatScreen() {
   const [selectedNewMembers, setSelectedNewMembers] = useState<string[]>([]);
   const flatListRef = useRef<FlatList>(null);
   const socketRef = useRef<Socket | null>(null);
+  const pendingAttachmentActionRef = useRef<(() => void) | null>(null);
+  const pendingAttachmentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Message action states
   const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
@@ -112,6 +114,14 @@ export default function ChatScreen() {
   const [isUploading, setIsUploading] = useState(false);
   const [viewingAttachment, setViewingAttachment] = useState<any>(null);
   const [isViewerVisible, setIsViewerVisible] = useState(false);
+
+  useEffect(() => {
+    return () => {
+      if (pendingAttachmentTimerRef.current) {
+        clearTimeout(pendingAttachmentTimerRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (groupId) {
@@ -298,44 +308,79 @@ export default function ChatScreen() {
     }
   };
 
-  const handlePickImage = async () => {
+  const runPendingAttachmentAction = () => {
+    if (pendingAttachmentTimerRef.current) {
+      clearTimeout(pendingAttachmentTimerRef.current);
+      pendingAttachmentTimerRef.current = null;
+    }
+
+    const action = pendingAttachmentActionRef.current;
+    pendingAttachmentActionRef.current = null;
+    action?.();
+  };
+
+  const openPickerAfterMenuDismiss = (action: () => void) => {
+    pendingAttachmentActionRef.current = action;
+    setIsAttachmentMenuVisible(false);
+
+    // iOS, especially on iPad, can ignore a picker presentation while a RN Modal
+    // is still dismissing. onDismiss is the preferred path, with this as backup.
+    pendingAttachmentTimerRef.current = setTimeout(
+      runPendingAttachmentAction,
+      Platform.OS === 'ios' ? 450 : 80
+    );
+  };
+
+  const handlePickImage = () => {
+    openPickerAfterMenuDismiss(() => {
+      void launchImagePicker();
+    });
+  };
+
+  const launchImagePicker = async () => {
     try {
-      setIsAttachmentMenuVisible(false);
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync(false);
+      if (permission.status !== 'granted' && permission.accessPrivileges !== 'limited') {
+        Alert.alert(
+          'Photos Access Needed',
+          'Please allow photo access to choose an image from your gallery.'
+        );
+        return;
+      }
+
       const result = await ImagePicker.launchImageLibraryAsync({
-        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        mediaTypes: ['images'],
+        allowsMultipleSelection: false,
         quality: 0.8,
       });
 
       if (!result.canceled && result.assets[0]) {
-        uploadFile(result.assets[0], 'image');
+        await uploadFile(result.assets[0], 'image');
       }
     } catch (error) {
+      console.error('Image picker failed:', error);
       Alert.alert('Error', 'Failed to pick image');
     }
   };
 
-  const handlePickDocument = async () => {
+  const handlePickDocument = () => {
+    openPickerAfterMenuDismiss(() => {
+      void launchDocumentPicker();
+    });
+  };
+
+  const launchDocumentPicker = async () => {
     try {
-      setIsAttachmentMenuVisible(false);
       const result = await DocumentPicker.getDocumentAsync({
         type: ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
         copyToCacheDirectory: true
       });
 
       if (!result.canceled && result.assets && result.assets[0]) {
-        // Read file as base64 (needed for our upload implementation)
-        // Note: Expo DocumentPicker doesn't return base64 by default.
-        // We might need to use FileSystem if uri is file://
-        // But for web/expo-go, let's try to fetch the blob or rely on our backend accepting multipart if we switch logic.
-        // Wait, my backend implementation expects 'req.file' which usually comes from Multipart form data.
-        // But in `question-bank` I used `import { api } from '@/services/api'`. 
-        // If `api` is axios instance, passing FormData works.
-        // I should switch upload logic to FormData for Documents to avoid base64 complexity with large files.
-        // My upload endpoint `upload.js` uses `multer`. It handles multipart perfectly.
-
-        uploadFile(result.assets[0], 'document');
+        await uploadFile(result.assets[0], 'document');
       }
     } catch (error) {
+      console.error('Document picker failed:', error);
       Alert.alert('Error', 'Failed to pick document');
     }
   };
@@ -345,7 +390,7 @@ export default function ChatScreen() {
     
     // 1. Create a temporary message for optimistic UI
     const tempId = `temp_${Date.now()}`;
-    const uriToUse = Platform.OS === 'android' ? file.uri : file.uri.replace('file://', '');
+    const uriToUse = file.uri;
     const fileName = file.name || file.fileName || (type === 'image' ? 'image.jpg' : 'document.pdf');
     
     let mimeType = file.mimeType;
@@ -353,6 +398,10 @@ export default function ChatScreen() {
       const ext = fileName.split('.').pop()?.toLowerCase();
       if (ext === 'jpg' || ext === 'jpeg') mimeType = 'image/jpeg';
       else if (ext === 'png') mimeType = 'image/png';
+      else if (ext === 'gif') mimeType = 'image/gif';
+      else if (ext === 'webp') mimeType = 'image/webp';
+      else if (ext === 'heic') mimeType = 'image/heic';
+      else if (ext === 'heif') mimeType = 'image/heif';
       else if (ext === 'pdf') mimeType = 'application/pdf';
       else if (ext === 'doc') mimeType = 'application/msword';
       else if (ext === 'docx') mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -379,12 +428,9 @@ export default function ChatScreen() {
       }]
     };
 
-    // Append temporary message instantly
+    // Append temporary message locally only. Other clients should receive the
+    // persisted message after the upload succeeds.
     setMessages(prev => [...prev, tempMessage]);
-    socketRef.current?.emit('send_message', {
-      ...tempMessage,
-      groupId,
-    });
     setTimeout(scrollToBottom, 100);
 
     try {
@@ -426,8 +472,8 @@ export default function ChatScreen() {
           msg._id === tempId ? msgResponse.data : msg
         ));
 
-        // 3. Emit update globally to swap the loading state for the real message
-        socketRef.current?.emit('message_updated', {
+        // 3. Emit the persisted message to other clients
+        socketRef.current?.emit('send_message', {
           ...msgResponse.data,
           groupId,
         });
@@ -437,11 +483,6 @@ export default function ChatScreen() {
       Alert.alert('Upload Failed', error?.response?.data?.message || 'Failed to upload file');
       // On failure, remove the temp message
       setMessages(prev => prev.filter(msg => msg._id !== tempId));
-      socketRef.current?.emit('message_deleted', {
-        messageId: tempId,
-        deletedForEveryone: true,
-        groupId,
-      });
     } finally {
       setIsUploading(false);
     }
@@ -967,12 +1008,19 @@ export default function ChatScreen() {
       </Modal>
 
       {/* Attachment Menu Modal */}
-      <Modal visible={isAttachmentMenuVisible} transparent animationType="fade">
-        <Pressable
-          style={styles.menuOverlay}
-          onPress={() => setIsAttachmentMenuVisible(false)}
-        >
-          <View style={[styles.menuContainer, { bottom: 100, left: 20, width: 200 }]}>
+      <Modal
+        visible={isAttachmentMenuVisible}
+        transparent
+        animationType="fade"
+        onDismiss={runPendingAttachmentAction}
+        onRequestClose={() => setIsAttachmentMenuVisible(false)}
+      >
+        <View style={styles.menuOverlay}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => setIsAttachmentMenuVisible(false)}
+          />
+          <View style={[styles.menuContainer, styles.attachmentMenuContainer]}>
             <TouchableOpacity style={styles.menuItem} onPress={handlePickDocument}>
               <FileText color="#374151" size={20} />
               <Text style={styles.menuItemText}>Document</Text>
@@ -982,7 +1030,7 @@ export default function ChatScreen() {
               <Text style={styles.menuItemText}>Gallery</Text>
             </TouchableOpacity>
           </View>
-        </Pressable>
+        </View>
       </Modal>
 
       {/* Attachment Viewer */}
@@ -1428,6 +1476,12 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.25,
     shadowRadius: 4,
+  },
+  attachmentMenuContainer: {
+    position: 'absolute',
+    bottom: 100,
+    left: 20,
+    width: 200,
   },
   menuItem: {
     flexDirection: 'row',

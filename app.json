@@ -18,6 +18,7 @@
       "bundleIdentifier": "com.eyeconicbydrlalla.mentorship",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Microphone access is required so users can participate in live mentorship sessions, audio calls, and send voice messages.",
+        "NSPhotoLibraryUsageDescription": "Photo library access is required so users can choose gallery images to share in chats.",
         "UIBackgroundModes": [
           "audio",
           "voip",
@@ -26,7 +27,7 @@
         "ITSAppUsesNonExemptEncryption": false
       },
       "bitcode": false,
-      "buildNumber": "7"
+      "buildNumber": "9"
     },
     "android": {
       "adaptiveIcon": {
@@ -53,7 +54,7 @@
         "android.permission.FOREGROUND_SERVICE"
       ],
       "package": "com.eyeconicbydrlalla.mentorship",
-      "versionCode": 8,
+      "versionCode": 9,
       "intentFilters": [
         {
           "action": "VIEW",
