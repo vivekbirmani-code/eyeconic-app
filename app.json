@@ -18,6 +18,7 @@
       "bundleIdentifier": "com.eyeconicbydrlalla.mentorship",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Microphone access is required so users can participate in live mentorship sessions, audio calls, and send voice messages.",
+        "NSCameraUsageDescription": "Eyeconic Mentorship includes live mentorship calling support. Camera access is used only for supported video-call features, for example to share your video with your mentor during a live session.",
         "NSPhotoLibraryUsageDescription": "Allow Eyeconic Mentorship to access your photo library so you can attach images to chat messages or add images to quiz content. For example, you can select a study diagram from your library and send it to your mentor in a chat.",
         "UIBackgroundModes": [
           "audio",
@@ -27,7 +28,7 @@
         "ITSAppUsesNonExemptEncryption": false
       },
       "bitcode": false,
-      "buildNumber": "11"
+      "buildNumber": "13"
     },
     "android": {
       "adaptiveIcon": {
@@ -85,7 +86,7 @@
         "expo-image-picker",
         {
           "photosPermission": "Allow Eyeconic Mentorship to access your photo library so you can attach images to chat messages or add images to quiz content. For example, you can select a study diagram from your library and send it to your mentor in a chat.",
-          "cameraPermission": false
+          "cameraPermission": "Eyeconic Mentorship includes live mentorship calling support. Camera access is used only for supported video-call features, for example to share your video with your mentor during a live session."
         }
       ],
       [
@@ -97,6 +98,7 @@
       [
         "@config-plugins/react-native-webrtc",
         {
+          "cameraPermission": "Eyeconic Mentorship includes live mentorship calling support. Camera access is used only for supported video-call features, for example to share your video with your mentor during a live session.",
           "microphonePermission": "Microphone access is required so users can participate in live mentorship sessions, audio calls, and send voice messages."
         }
       ],
