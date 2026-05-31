@@ -18,7 +18,7 @@
       "bundleIdentifier": "com.eyeconicbydrlalla.mentorship",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Microphone access is required so users can participate in live mentorship sessions, audio calls, and send voice messages.",
-        "NSPhotoLibraryUsageDescription": "Photo library access is required so users can choose gallery images to share in chats.",
+        "NSPhotoLibraryUsageDescription": "Allow Eyeconic Mentorship to access your photo library so you can attach images to chat messages or add images to quiz content. For example, you can select a study diagram from your library and send it to your mentor in a chat.",
         "UIBackgroundModes": [
           "audio",
           "voip",
@@ -27,7 +27,7 @@
         "ITSAppUsesNonExemptEncryption": false
       },
       "bitcode": false,
-      "buildNumber": "9"
+      "buildNumber": "11"
     },
     "android": {
       "adaptiveIcon": {
@@ -44,7 +44,6 @@
         "android.permission.RECORD_AUDIO",
         "android.permission.MODIFY_AUDIO_SETTINGS",
         "android.permission.ACCESS_NETWORK_STATE",
-        "android.permission.CAMERA",
         "android.permission.INTERNET",
         "android.permission.SYSTEM_ALERT_WINDOW",
         "android.permission.WAKE_LOCK",
@@ -85,8 +84,8 @@
       [
         "expo-image-picker",
         {
-          "photosPermission": "Allow access to select photos.",
-          "cameraPermission": "Allow camera access."
+          "photosPermission": "Allow Eyeconic Mentorship to access your photo library so you can attach images to chat messages or add images to quiz content. For example, you can select a study diagram from your library and send it to your mentor in a chat.",
+          "cameraPermission": false
         }
       ],
       [
@@ -98,7 +97,6 @@
       [
         "@config-plugins/react-native-webrtc",
         {
-          "cameraPermission": "Allow Eyeconic to access your camera",
           "microphonePermission": "Microphone access is required so users can participate in live mentorship sessions, audio calls, and send voice messages."
         }
       ],

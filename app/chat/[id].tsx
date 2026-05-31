@@ -339,15 +339,6 @@ export default function ChatScreen() {
 
   const launchImagePicker = async () => {
     try {
-      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync(false);
-      if (permission.status !== 'granted' && permission.accessPrivileges !== 'limited') {
-        Alert.alert(
-          'Photos Access Needed',
-          'Please allow photo access to choose an image from your gallery.'
-        );
-        return;
-      }
-
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
         allowsMultipleSelection: false,
