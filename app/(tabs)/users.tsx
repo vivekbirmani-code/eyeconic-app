@@ -57,6 +57,7 @@ interface User {
   phone?: string;
   isActive?: boolean;
   isProfileComplete?: boolean;
+  isFreeUser?: boolean;
   studentProfile?: StudentProfile;
   createdAt?: string;
   groups?: { _id: string; name: string }[];
@@ -369,6 +370,44 @@ export default function Users() {
     } finally {
       setIsResettingPassword(false);
     }
+  };
+
+  const handleToggleUserTier = async () => {
+    if (!selectedUser) return;
+
+    const newIsFreeUser = !selectedUser.isFreeUser;
+    const tierText = newIsFreeUser ? 'Free' : 'Paid';
+
+    Alert.alert(
+      'Confirm Tier Change',
+      `Are you sure you want to convert this student to a ${tierText} User?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Convert',
+          onPress: async () => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            try {
+              const response = await api.put(`/users/${selectedUser._id}`, {
+                isFreeUser: newIsFreeUser
+              });
+              
+              const updatedUser = response.data;
+              setSelectedUser(prev => prev ? { ...prev, isFreeUser: updatedUser.isFreeUser } : null);
+              
+              // Update in our main users array
+              setUsers(prev => prev.map(u => u._id === selectedUser._id ? { ...u, isFreeUser: updatedUser.isFreeUser } : u));
+              
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              Alert.alert('Success', `Student converted to ${tierText} User successfully.`);
+            } catch (error: any) {
+              const message = error?.response?.data?.message || 'Failed to update user tier';
+              Alert.alert('Error', message);
+            }
+          }
+        }
+      ]
+    );
   };
 
   const fetchMentorDetails = async (studentId: string) => {
@@ -691,6 +730,13 @@ export default function Users() {
                   {item.role.toUpperCase()}
                 </Text>
               </View>
+              {item.role === 'student' && (
+                <View style={[styles.roleBadge, { backgroundColor: item.isFreeUser ? '#FEF3C7' : '#D1FAE5' }]}>
+                  <Text style={[styles.userRole, { color: item.isFreeUser ? '#D97706' : '#059669' }]}>
+                    {item.isFreeUser ? 'FREE USER' : 'PAID USER'}
+                  </Text>
+                </View>
+              )}
               {item.role === 'student' && item.isProfileComplete === false && (
                 <View style={styles.incompleteProfileBadge}>
                   <Text style={styles.incompleteProfileText}>Profile Incomplete</Text>
@@ -1031,10 +1077,37 @@ export default function Users() {
                         <Text style={styles.infoValue}>{formatDate(selectedUser.createdAt)}</Text>
                       </View>
                     </View>
+
+                    {selectedUser.role === 'student' && (
+                      <View style={[styles.infoRow, { justifyContent: 'space-between', alignItems: 'center' }]}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                          <UsersIcon color="#6B7280" size={20} />
+                          <View style={styles.infoContent}>
+                            <Text style={styles.infoLabel}>Student Tier</Text>
+                            <Text style={[styles.infoValue, { fontWeight: 'bold', color: selectedUser.isFreeUser ? '#D97706' : '#059669' }]}>
+                              {selectedUser.isFreeUser ? 'Free User' : 'Paid User'}
+                            </Text>
+                          </View>
+                        </View>
+                        <TouchableOpacity
+                          style={{
+                            backgroundColor: selectedUser.isFreeUser ? '#01b4ae' : '#EF4444',
+                            paddingVertical: 6,
+                            paddingHorizontal: 12,
+                            borderRadius: 8,
+                          }}
+                          onPress={handleToggleUserTier}
+                        >
+                          <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 12 }}>
+                            {selectedUser.isFreeUser ? 'Make Paid' : 'Make Free'}
+                          </Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
                   </View>
 
                   {/* Student Profile Details - Only shown for students */}
-                  {selectedUser.role === 'student' && (
+                  {selectedUser.role === 'student' && !selectedUser.isFreeUser && (
                     <View style={styles.studentProfileSection}>
                       <Text style={styles.studentProfileTitle}>
                         Student Profile {selectedUser.isProfileComplete === false && '(Incomplete)'}
@@ -1094,7 +1167,7 @@ export default function Users() {
                   )}
 
                   {/* Subject and Mentor Assignment - Only shown for students */}
-                  {selectedUser.role === 'student' && (
+                  {selectedUser.role === 'student' && !selectedUser.isFreeUser && (
                     <>
                       {/* Subject Assignment Section */}
                       <View style={styles.assignmentSection}>

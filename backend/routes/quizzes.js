@@ -273,11 +273,19 @@ router.get('/', auth, async (req, res) => {
         return qObj;
       });
     } else {
-      // Student sees only quizzes assigned to them
-      quizzes = await Quiz.find({
+      // Student sees only quizzes assigned to them (or free quizzes for free users)
+      const studentQuery = {
         isActive: true,
-        assignedStudents: req.user._id
-      })
+        $or: [
+          { assignedStudents: req.user._id }
+        ]
+      };
+      
+      if (req.user.isFreeUser) {
+        studentQuery.$or.push({ assignToAllFreeUsers: true });
+      }
+
+      quizzes = await Quiz.find(studentQuery)
         .populate('subject', 'name')
         .populate('createdBy', 'name')
         .populate({ path: 'questions', select: 'subject', populate: { path: 'subject', select: 'name' } })
@@ -420,6 +428,8 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
     // Calculate total marks
     const totalMarks = questions.length * (positiveMarks !== undefined ? positiveMarks : 4);
 
+    const assignToAllFreeUsers = req.body.assignToAllFreeUsers === true;
+
     // Create quiz - use first subject if multiple
     const quiz = new Quiz({
       title,
@@ -437,25 +447,37 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
       scheduledDate: scheduledDate ? new Date(scheduledDate) : undefined,
       expiryDate: expiryDate ? new Date(expiryDate) : undefined,
       sections: sectionResult.sections,
-      assignedMentors: assignedMentors || []
+      assignedMentors: assignedMentors || [],
+      assignToAllFreeUsers
     });
 
     await quiz.save();
 
-    if (assignedStudents && assignedStudents.length > 0) {
+    let finalStudentIds = [...(assignedStudents || [])];
+    if (assignToAllFreeUsers) {
+      console.log('Backend quizzes: assignToAllFreeUsers is true. Querying free users...');
+      const freeUsers = await User.find({ role: 'student', isFreeUser: true }).select('_id');
+      console.log('Backend quizzes: Found free users count:', freeUsers.length);
+      const freeUserIds = freeUsers.map(u => u._id.toString());
+      finalStudentIds = Array.from(new Set([...finalStudentIds, ...freeUserIds]));
+      quiz.assignedStudents = finalStudentIds;
+      await quiz.save();
+    }
+
+    if (finalStudentIds.length > 0) {
       const User = require('../models/User');
       await User.updateMany(
-        { _id: { $in: assignedStudents } },
+        { _id: { $in: finalStudentIds } },
         { $addToSet: { unseenQuizzes: quiz._id } }
       );
 
       const io = req.app.get('io');
       if (io) {
-        io.emit('new_quiz_assigned', { quizId: quiz._id, title: quiz.title, assignedStudents });
+        io.emit('new_quiz_assigned', { quizId: quiz._id, title: quiz.title, assignedStudents: finalStudentIds });
       }
 
       await notifyQuizAssignedToStudents({
-        studentIds: assignedStudents,
+        studentIds: finalStudentIds,
         quiz,
         assignedByName: req.user?.name || 'Admin'
       });
@@ -818,7 +840,7 @@ router.post('/:id/duplicate', auth, authorize('admin'), async (req, res) => {
 // Update Quiz
 router.put('/:id', auth, authorize('admin'), async (req, res) => {
   try {
-    const { title, duration, instructions, questions, testType, subject, assignedStudents, assignedMentors, shareSolution, scheduledDate, expiryDate, positiveMarks, negativeMarks, sections } = req.body;
+    const { title, duration, instructions, questions, testType, subject, assignedStudents, assignedMentors, shareSolution, assignToAllFreeUsers, scheduledDate, expiryDate, positiveMarks, negativeMarks, sections } = req.body;
 
     // Check if quiz exists
     const quiz = await Quiz.findById(req.params.id);
@@ -846,7 +868,20 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
     if (instructions) quiz.instructions = instructions;
     if (testType) quiz.testType = testType;
     if (subject) quiz.subject = subject; // Expecting single subject ID or handled by frontend
-    if (assignedStudents) quiz.assignedStudents = assignedStudents;
+    
+    if (assignToAllFreeUsers !== undefined) {
+      quiz.assignToAllFreeUsers = assignToAllFreeUsers === true;
+    }
+
+    let finalAssignedStudents = assignedStudents;
+    if (quiz.assignToAllFreeUsers) {
+      const User = require('../models/User');
+      const freeUsers = await User.find({ role: 'student', isFreeUser: true }).select('_id');
+      const freeUserIds = freeUsers.map(u => u._id.toString());
+      finalAssignedStudents = Array.from(new Set([...(assignedStudents || quiz.assignedStudents.map(s => s.toString())), ...freeUserIds]));
+    }
+
+    if (finalAssignedStudents) quiz.assignedStudents = finalAssignedStudents;
     if (assignedMentors) quiz.assignedMentors = assignedMentors;
     if (shareSolution !== undefined) quiz.shareSolution = shareSolution;  // Allow toggling solution sharing
     if (scheduledDate) quiz.scheduledDate = new Date(scheduledDate);
@@ -878,8 +913,8 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
 
     await quiz.save();
 
-    if (assignedStudents && assignedStudents.length > 0) {
-      const newlyAssigned = assignedStudents.filter(id => !prevAssigned.includes(id.toString()));
+    if (finalAssignedStudents && finalAssignedStudents.length > 0) {
+      const newlyAssigned = finalAssignedStudents.filter(id => !prevAssigned.includes(id.toString()));
 
       if (newlyAssigned.length > 0) {
         const User = require('../models/User');
@@ -2900,9 +2935,18 @@ router.get('/analytics/student/:studentId', auth, authorize('admin', 'mentor'), 
 // Share quiz with additional students (for Past Tests feature)
 router.put('/:id/share', auth, authorize('admin'), async (req, res) => {
   try {
-    const { studentIds } = req.body;
+    const { studentIds, assignToAllFreeUsers } = req.body;
 
-    if (!studentIds || !Array.isArray(studentIds) || studentIds.length === 0) {
+    let targetStudentIds = studentIds || [];
+    const isAssignToAllFree = assignToAllFreeUsers === true;
+
+    if (isAssignToAllFree) {
+      const freeUsers = await User.find({ role: 'student', isFreeUser: true }).select('_id');
+      const freeUserIds = freeUsers.map(u => u._id.toString());
+      targetStudentIds = Array.from(new Set([...targetStudentIds, ...freeUserIds]));
+    }
+
+    if (!isAssignToAllFree && targetStudentIds.length === 0) {
       return res.status(400).json({ message: 'Please provide student IDs to share with' });
     }
 
@@ -2911,9 +2955,13 @@ router.put('/:id/share', auth, authorize('admin'), async (req, res) => {
       return res.status(404).json({ message: 'Quiz not found' });
     }
 
+    if (isAssignToAllFree) {
+      quiz.assignToAllFreeUsers = true;
+    }
+
     // Add new students (avoid duplicates)
     const currentStudents = quiz.assignedStudents.map(s => s.toString());
-    const newStudents = studentIds.filter(id => !currentStudents.includes(id));
+    const newStudents = targetStudentIds.filter(id => !currentStudents.includes(id));
 
     if (newStudents.length === 0) {
       return res.json({

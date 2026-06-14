@@ -59,6 +59,48 @@ router.put('/profile', auth, async (req, res) => {
       return res.status(403).json({ message: 'Only students can update their profile' });
     }
 
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (user.isFreeUser) {
+      const { year, issues, resources, isReadyToTransform } = req.body;
+
+      // Validate required fields for free user persona
+      if (!year || !issues || !resources) {
+        return res.status(400).json({ message: 'Please fill in all required fields (Year, Issues, Resources)' });
+      }
+
+      // Update free user profile
+      user.freeUserProfile = {
+        year,
+        issues,
+        resources,
+        isReadyToTransform: !!isReadyToTransform
+      };
+      user.isProfileComplete = true;
+
+      await user.save();
+
+      // Notify all admins that a user's profile was updated
+      emitToAdmins('user_updated', { userId: user._id.toString() });
+
+      return res.json({
+        message: 'Profile updated successfully',
+        user: {
+          _id: user._id,
+          name: user.name,
+          email: user.email,
+          phone: user.phone,
+          role: user.role,
+          isFreeUser: user.isFreeUser,
+          freeUserProfile: user.freeUserProfile,
+          isProfileComplete: user.isProfileComplete
+        }
+      });
+    }
+
     const {
       mbbsBatch,
       collegeName,
@@ -72,14 +114,9 @@ router.put('/profile', auth, async (req, res) => {
       subscriptions
     } = req.body;
 
-    // Validate required fields
+    // Validate required fields for normal students
     if (!mbbsBatch || !collegeName || !batchType) {
       return res.status(400).json({ message: 'Please fill in all required fields' });
-    }
-
-    const user = await User.findById(req.user._id);
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
     }
 
     // Update student profile
@@ -187,7 +224,7 @@ router.get('/:id', auth, async (req, res) => {
 // Update user (Admin only or own profile)
 router.put('/:id', auth, async (req, res) => {
   try {
-    const { name, email, role } = req.body;
+    const { name, email, role, isFreeUser } = req.body;
 
     // Check permissions
     if (req.user.role !== 'admin' && req.user._id.toString() !== req.params.id) {
@@ -197,6 +234,9 @@ router.put('/:id', auth, async (req, res) => {
     const updateData = { name, email };
     if (req.user.role === 'admin') {
       updateData.role = role;
+      if (isFreeUser !== undefined) {
+        updateData.isFreeUser = isFreeUser;
+      }
     }
 
     const user = await User.findByIdAndUpdate(

@@ -1,5 +1,5 @@
 import { Tabs, Redirect } from 'expo-router';
-import { Users, MessageCircle, BookOpen, Home, UserCheck, ClipboardList, TrendingUp } from 'lucide-react-native';
+import { Users, MessageCircle, BookOpen, Home, UserCheck, ClipboardList, TrendingUp, Sparkles, BarChart2 } from 'lucide-react-native';
 import { useAuth } from '@/context/AuthContext';
 import { View, Text, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import { useNotifications } from '@/context/NotificationContext';
@@ -10,9 +10,10 @@ function TabInner() {
   const { user } = useAuth();
   const insets = useSafeAreaInsets();
 
-  const isAdmin = user?.role === 'admin';
-  const isMentor = user?.role === 'mentor';
-  const isStudent = user?.role === 'student';
+  const isFree = user?.isFreeUser === true;
+  const isAdmin = user?.role === 'admin' && !isFree;
+  const isMentor = user?.role === 'mentor' && !isFree;
+  const isStudent = user?.role === 'student' && !isFree;
   const showUsers = isAdmin;
 
   return (
@@ -51,10 +52,30 @@ function TabInner() {
       <Tabs.Screen
         name="dashboard"
         options={{
-          title: 'Dashboard',
+          title: isFree ? 'Home' : 'Dashboard',
           tabBarIcon: ({ color, size }) => (
             <Home color={color} size={22} />
           ),
+        }}
+      />
+      <Tabs.Screen
+        name="transformations"
+        options={{
+          title: 'Transformations',
+          tabBarIcon: ({ color, size }) => (
+            <Sparkles color={color} size={22} />
+          ),
+          href: isFree ? '/transformations' : null,
+        }}
+      />
+      <Tabs.Screen
+        name="graphs"
+        options={{
+          title: 'Graphs',
+          tabBarIcon: ({ color, size }) => (
+            <BarChart2 color={color} size={22} />
+          ),
+          href: isFree ? '/graphs' : null,
         }}
       />
       <Tabs.Screen
@@ -87,6 +108,7 @@ function TabInner() {
             <MessageCircle color={color} size={22} />
           ),
           tabBarBadge: totalUnreadCount > 0 ? totalUnreadCount : undefined,
+          href: isFree ? null : '/groups',
         }}
       />
       <Tabs.Screen
@@ -114,11 +136,12 @@ function TabInner() {
       <Tabs.Screen
         name="quizzes"
         options={{
-          title: 'Tests',
+          title: isFree ? 'Quizzes' : 'Tests',
           tabBarIcon: ({ color, size }) => (
             <BookOpen color={color} size={22} />
           ),
           tabBarBadge: unseenQuizCount > 0 ? unseenQuizCount : undefined,
+          href: isFree ? null : '/quizzes',
         }}
       />
     </Tabs>

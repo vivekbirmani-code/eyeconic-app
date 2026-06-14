@@ -25,6 +25,13 @@ interface User {
   studentProfile?: StudentProfile;
   groups?: string[];
   unseenQuizzes?: string[];
+  isFreeUser?: boolean;
+  freeUserProfile?: {
+    year?: string;
+    issues?: string;
+    resources?: string[];
+    isReadyToTransform?: boolean;
+  };
 }
 
 interface AuthContextType {

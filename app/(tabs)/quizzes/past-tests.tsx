@@ -27,7 +27,8 @@ import {
   Globe,
   Link,
   AlertCircle,
-  Minus
+  Minus,
+  Sparkles
 } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
@@ -338,6 +339,26 @@ export default function PastTests() {
     } catch (error: any) {
       console.error('Share error:', error);
       Alert.alert('Error', error.response?.data?.message || 'Failed to share quiz');
+    } finally {
+      setSharing(false);
+    }
+  };
+
+  const handleShareWithFreeUsers = async () => {
+    if (!selectedQuiz) return;
+
+    setSharing(true);
+    try {
+      const response = await api.put(`/quizzes/${selectedQuiz._id}/share`, {
+        assignToAllFreeUsers: true
+      });
+
+      Alert.alert('Success', 'Quiz shared with all free users successfully!');
+      setShareModalVisible(false);
+      fetchQuizzes(); // Refresh the list
+    } catch (error: any) {
+      console.error('Share with free users error:', error);
+      Alert.alert('Error', error.response?.data?.message || 'Failed to share with free users');
     } finally {
       setSharing(false);
     }
@@ -736,6 +757,18 @@ export default function PastTests() {
                     <Text style={styles.shareConfirmText}>Share with {selectedStudents.length} Student(s)</Text>
                   )}
                 </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.shareFreeConfirmButton, sharing && styles.buttonDisabled]}
+                  onPress={handleShareWithFreeUsers}
+                  disabled={sharing}
+                >
+                  {sharing ? (
+                    <ActivityIndicator color="#FFF" />
+                  ) : (
+                    <Text style={styles.shareConfirmText}>Share with All Free Users 🚀</Text>
+                  )}
+                </TouchableOpacity>
               </>
             ) : (
               // External sharing (public link)
@@ -1124,6 +1157,13 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     padding: 16,
     alignItems: 'center',
+  },
+  shareFreeConfirmButton: {
+    backgroundColor: '#01b4ae',
+    borderRadius: 8,
+    padding: 16,
+    alignItems: 'center',
+    marginTop: 10,
   },
   shareConfirmText: {
     fontSize: 16,

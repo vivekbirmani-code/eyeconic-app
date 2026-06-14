@@ -14,6 +14,13 @@ const studentProfileSchema = new mongoose.Schema({
   subscriptions: { type: String, trim: true }
 }, { _id: false });
 
+const freeUserProfileSchema = new mongoose.Schema({
+  year: { type: String, trim: true },
+  issues: { type: String, trim: true },
+  resources: [{ type: String }],
+  isReadyToTransform: { type: Boolean, default: false }
+}, { _id: false });
+
 const userSchema = new mongoose.Schema({
   name: {
     type: String,
@@ -41,8 +48,13 @@ const userSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
+  isFreeUser: {
+    type: Boolean,
+    default: false
+  },
   // Student-specific profile data
   studentProfile: studentProfileSchema,
+  freeUserProfile: freeUserProfileSchema,
   isProfileComplete: {
     type: Boolean,
     default: false

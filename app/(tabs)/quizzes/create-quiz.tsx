@@ -27,7 +27,8 @@ import {
   Search,
   X,
   Eye,
-  Minus
+  Minus,
+  Sparkles
 } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
@@ -114,6 +115,7 @@ export default function CreateQuiz() {
   const [negativeMarks, setNegativeMarks] = useState('1');
   const [availableQuestions, setAvailableQuestions] = useState(0);
   const [shareSolution, setShareSolution] = useState(true);  // NEW: Share solutions with students
+  const [assignToAllFreeUsers, setAssignToAllFreeUsers] = useState(false);
 
   // Time Window
   const [scheduledDate, setScheduledDate] = useState<Date | null>(null);
@@ -281,6 +283,9 @@ export default function CreateQuiz() {
       // Load shareSolution setting (defaults to true if not present)
       if (quiz.shareSolution !== undefined) {
         setShareSolution(quiz.shareSolution);
+      }
+      if (quiz.assignToAllFreeUsers !== undefined) {
+        setAssignToAllFreeUsers(quiz.assignToAllFreeUsers);
       }
 
       // Load time window
@@ -630,7 +635,7 @@ export default function CreateQuiz() {
       Alert.alert('Error', 'Please select at least one question');
       return;
     }
-    if (selectedStudents.length === 0 && selectedMentors.length === 0) {
+    if (!assignToAllFreeUsers && selectedStudents.length === 0 && selectedMentors.length === 0) {
       Alert.alert('Error', 'Please select at least one student or mentor');
       return;
     }
@@ -657,6 +662,7 @@ export default function CreateQuiz() {
           assignedStudents: selectedStudents,
           assignedMentors: selectedMentors,
           shareSolution,
+          assignToAllFreeUsers,
           scheduledDate: scheduledDate?.toISOString(),
           expiryDate: expiryDate?.toISOString(),
           sections: quizSections
@@ -677,6 +683,7 @@ export default function CreateQuiz() {
           assignedStudents: selectedStudents,
           assignedMentors: selectedMentors,
           shareSolution,
+          assignToAllFreeUsers,
           scheduledDate: scheduledDate?.toISOString(),
           expiryDate: expiryDate?.toISOString(),
           sections: quizSections
@@ -1281,6 +1288,22 @@ export default function CreateQuiz() {
     <View style={styles.stepContent}>
       <Text style={styles.stepTitle}>Assign Quiz</Text>
 
+      {/* Assign to all Free Users Toggle */}
+      <View style={styles.toggleContainer}>
+        <View style={styles.toggleLabelContainer}>
+          <Text style={styles.toggleLabel}>Assign to all Free Users</Text>
+          <Text style={styles.toggleHelperText}>
+            Automatically share this quiz with all free/unregistered student users
+          </Text>
+        </View>
+        <Switch
+          value={assignToAllFreeUsers}
+          onValueChange={setAssignToAllFreeUsers}
+          trackColor={{ false: '#D1D5DB', true: '#93C5FD' }}
+          thumbColor={assignToAllFreeUsers ? '#2563EB' : '#9CA3AF'}
+        />
+      </View>
+
       <View style={styles.assignmentTabs}>
         <TouchableOpacity 
           style={[styles.assignmentTab, assignmentTab === 'students' && styles.assignmentTabActive]}
@@ -1301,7 +1324,16 @@ export default function CreateQuiz() {
       </View>
 
       {assignmentTab === 'students' ? (
-        <>
+        assignToAllFreeUsers ? (
+          <View style={styles.freeUserAssignmentBanner}>
+            <Sparkles color="#01b4ae" size={28} style={{ marginBottom: 8 }} />
+            <Text style={styles.freeUserAssignmentTitle}>Assigning to All Free Users</Text>
+            <Text style={styles.freeUserAssignmentText}>
+              This quiz is configured to be shared with all unregistered and free student users automatically. Individual student selection is disabled.
+            </Text>
+          </View>
+        ) : (
+          <>
           <View style={styles.selectionHeader}>
             <Text style={styles.selectionCount}>
               {selectedGroupIds.length} group filter(s) active
@@ -1436,6 +1468,7 @@ export default function CreateQuiz() {
             )}
           </View>
         </>
+        )
       ) : (
         <>
           <View style={styles.selectionHeader}>
@@ -2440,5 +2473,28 @@ const styles = StyleSheet.create({
     borderBottomColor: '#E5E7EB',
     textTransform: 'uppercase',
     letterSpacing: 0.5,
+  },
+  freeUserAssignmentBanner: {
+    backgroundColor: '#F0FDFA',
+    borderWidth: 1,
+    borderColor: '#CCFBF1',
+    borderRadius: 16,
+    padding: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 16,
+  },
+  freeUserAssignmentTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0D9488',
+    marginBottom: 6,
+    textAlign: 'center',
+  },
+  freeUserAssignmentText: {
+    fontSize: 14,
+    color: '#0F766E',
+    textAlign: 'center',
+    lineHeight: 20,
   },
 });

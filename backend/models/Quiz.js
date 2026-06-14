@@ -80,6 +80,10 @@ const quizSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   },
+  assignToAllFreeUsers: {
+    type: Boolean,
+    default: false
+  },
   // Quiz Sections (NEET style)
   sections: [{
     name: {

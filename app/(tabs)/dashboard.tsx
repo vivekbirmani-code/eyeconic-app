@@ -12,14 +12,16 @@ import {
   Platform,
   StatusBar,
   Animated,
-  Pressable
+  Pressable,
+  ActivityIndicator
 } from 'react-native';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
-import { LogOut, AlertTriangle, Check, MessageCircle, BookOpen, Users, LayoutDashboard } from 'lucide-react-native';
+import { LogOut, AlertTriangle, Check, MessageCircle, BookOpen, Users, LayoutDashboard, Menu, Sparkles } from 'lucide-react-native';
 import * as Haptics from '@/utils/haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
+import FreeUserSidebar from '@/components/FreeUserSidebar';
 
 interface StudentProfile {
   mbbsBatch: string;
@@ -40,6 +42,21 @@ export default function Dashboard() {
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDataLoading, setIsDataLoading] = useState(true);
+  
+  // Free User States
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [freeUserStep, setFreeUserStep] = useState(1);
+  const [freeYear, setFreeYear] = useState('First year');
+  const [freeIssues, setFreeIssues] = useState('Stuck');
+  const [freeResources, setFreeResources] = useState<string[]>([]);
+  const [freeIsReady, setFreeIsReady] = useState(false);
+  
+  // Animation States
+  const [showOnboardingAnimation, setShowOnboardingAnimation] = useState(false);
+  const [animationMessage, setAnimationMessage] = useState('Analyzing your prep profile...');
+  const animOpacity = useRef(new Animated.Value(0)).current;
+  const animScale = useRef(new Animated.Value(0.9)).current;
+
   const [profile, setProfile] = useState<StudentProfile>({
     mbbsBatch: '',
     collegeName: '',
@@ -182,6 +199,73 @@ export default function Dashboard() {
     }
   };
 
+  const toggleFreeResource = (res: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (freeResources.includes(res)) {
+      setFreeResources(freeResources.filter(r => r !== res));
+    } else {
+      setFreeResources([...freeResources, res]);
+    }
+  };
+
+  const handleSubmitFreeProfile = async () => {
+    if (!freeYear || !freeIssues || freeResources.length === 0) {
+      Alert.alert('Error', 'Please complete all questions and select at least one resource.');
+      return;
+    }
+    if (!freeIsReady) {
+      Alert.alert('Transform Journey', 'Please confirm that you are ready to transform your NEET PG journey.');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      await api.put('/users/profile', {
+        year: freeYear,
+        issues: freeIssues,
+        resources: freeResources,
+        isReadyToTransform: freeIsReady
+      });
+
+      // Play premium reveal/onboarding animation
+      setShowProfileModal(false);
+      setShowOnboardingAnimation(true);
+      
+      // Animated entrance
+      Animated.parallel([
+        Animated.timing(animOpacity, { toValue: 1, duration: 400, useNativeDriver: true }),
+        Animated.spring(animScale, { toValue: 1, tension: 40, friction: 6, useNativeDriver: true })
+      ]).start();
+
+      // Cycle motivational statements
+      setTimeout(() => setAnimationMessage('Mapping your customized mentorship path...'), 1000);
+      setTimeout(() => {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setAnimationMessage('Eyeconic Mentors track initialized! 🚀');
+      }, 2000);
+
+      setTimeout(async () => {
+        // Animated exit
+        Animated.parallel([
+          Animated.timing(animOpacity, { toValue: 0, duration: 300, useNativeDriver: true }),
+          Animated.timing(animScale, { toValue: 0.9, duration: 300, useNativeDriver: true })
+        ]).start(async () => {
+          setShowOnboardingAnimation(false);
+          // Sync new state with auth context
+          if (refreshUser) {
+            await refreshUser();
+          }
+        });
+      }, 3500);
+
+    } catch (error: any) {
+      const message = error?.response?.data?.message || 'Failed to save profile';
+      Alert.alert('Error', message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   const batchTypes = ['FOUNDATION', 'REGULAR', 'CRASH COURSE', 'TEST SERIES'];
 
   return (
@@ -206,8 +290,20 @@ export default function Dashboard() {
           style={styles.headerGradient}
         >
           <View style={styles.headerContent}>
+            {user?.isFreeUser && (
+              <TouchableOpacity
+                style={[styles.logoutButton, { marginRight: 12 }]}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setSidebarOpen(true);
+                }}
+                activeOpacity={0.7}
+              >
+                <Menu color="#FFFFFF" size={20} />
+              </TouchableOpacity>
+            )}
             <View style={styles.headerTextContainer}>
-              <Text style={styles.title}>Eyeconic Dashboard</Text>
+              <Text style={styles.title}>{user?.isFreeUser ? 'Eyeconic Mentors' : 'Eyeconic Dashboard'}</Text>
               <Text style={styles.subtitle}>Hi, {user?.name} 👋</Text>
             </View>
             <Pressable
@@ -274,239 +370,446 @@ export default function Dashboard() {
         </Animated.View>
 
         {/* Enhanced Quick Actions Card */}
-        <Animated.View
-          style={[
-            {
-              opacity: card2Opacity,
-              transform: [{ translateY: card2TranslateY }],
-            },
-          ]}
-        >
-          <View style={styles.card}>
-            <Text style={styles.cardTitle}>Quick Actions</Text>
+        {!user?.isFreeUser && (
+          <Animated.View
+            style={[
+              {
+                opacity: card2Opacity,
+                transform: [{ translateY: card2TranslateY }],
+              },
+            ]}
+          >
+            <View style={styles.card}>
+              <Text style={styles.cardTitle}>Quick Actions</Text>
 
-            {isDataLoading ? (
-              // Skeleton loading
-              <View style={[styles.skeleton, styles.skeletonText]} />
-            ) : (
-              <Animated.View style={{ opacity: contentOpacity }}>
-                <Text style={styles.cardDescription}>
-                  {user?.role === 'admin' && 'Manage users, groups, and quizzes'}
-                  {user?.role === 'mentor' && 'View your groups and interact with students'}
-                  {user?.role === 'student' && 'Join groups and attempt quizzes'}
-                </Text>
+              {isDataLoading ? (
+                // Skeleton loading
+                <View style={[styles.skeleton, styles.skeletonText]} />
+              ) : (
+                <Animated.View style={{ opacity: contentOpacity }}>
+                  <Text style={styles.cardDescription}>
+                    {user?.role === 'admin' && 'Manage users, groups, and quizzes'}
+                    {user?.role === 'mentor' && 'View your groups and interact with students'}
+                    {user?.role === 'student' && 'Join groups and attempt quizzes'}
+                  </Text>
 
-                <View style={styles.quickActionsGrid}>
-                  {/* Groups button - all roles */}
-                  <TouchableOpacity
-                    style={styles.quickActionButton}
-                    onPress={() => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      router.push('/(tabs)/groups');
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <View style={[styles.quickActionIcon, { backgroundColor: 'rgba(37, 99, 235, 0.1)' }]}>
-                      <MessageCircle color="#2563EB" size={22} />
-                    </View>
-                    <Text style={styles.quickActionLabel}>Groups</Text>
-                  </TouchableOpacity>
-
-                  {/* Tests button - all roles */}
-                  <TouchableOpacity
-                    style={styles.quickActionButton}
-                    onPress={() => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      router.push('/(tabs)/quizzes');
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <View style={[styles.quickActionIcon, { backgroundColor: 'rgba(16, 185, 129, 0.1)' }]}>
-                      <BookOpen color="#10B981" size={22} />
-                    </View>
-                    <Text style={styles.quickActionLabel}>Tests</Text>
-                  </TouchableOpacity>
-
-                  {/* My Tasks - student only */}
-                  {user?.role === 'student' && (
+                  <View style={styles.quickActionsGrid}>
+                    {/* Groups button - all roles */}
                     <TouchableOpacity
                       style={styles.quickActionButton}
                       onPress={() => {
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        router.push('/(tabs)/student-assignments');
+                        router.push('/(tabs)/groups');
                       }}
                       activeOpacity={0.7}
                     >
-                      <View style={[styles.quickActionIcon, { backgroundColor: 'rgba(245, 158, 11, 0.1)' }]}>
-                        <LayoutDashboard color="#F59E0B" size={22} />
+                      <View style={[styles.quickActionIcon, { backgroundColor: 'rgba(37, 99, 235, 0.1)' }]}>
+                        <MessageCircle color="#2563EB" size={22} />
                       </View>
-                      <Text style={styles.quickActionLabel}>My Tasks</Text>
+                      <Text style={styles.quickActionLabel}>Groups</Text>
                     </TouchableOpacity>
-                  )}
 
-                  {/* Users - admin only */}
-                  {user?.role === 'admin' && (
+                    {/* Tests button - all roles */}
                     <TouchableOpacity
                       style={styles.quickActionButton}
                       onPress={() => {
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        router.push('/(tabs)/users');
+                        router.push('/(tabs)/quizzes');
                       }}
                       activeOpacity={0.7}
                     >
-                      <View style={[styles.quickActionIcon, { backgroundColor: 'rgba(139, 92, 246, 0.1)' }]}>
-                        <Users color="#8B5CF6" size={22} />
+                      <View style={[styles.quickActionIcon, { backgroundColor: 'rgba(16, 185, 129, 0.1)' }]}>
+                        <BookOpen color="#10B981" size={22} />
                       </View>
-                      <Text style={styles.quickActionLabel}>Users</Text>
+                      <Text style={styles.quickActionLabel}>Tests</Text>
                     </TouchableOpacity>
-                  )}
-                </View>
-              </Animated.View>
-            )}
-          </View>
-        </Animated.View>
+
+                    {/* My Tasks - student only */}
+                    {user?.role === 'student' && (
+                      <TouchableOpacity
+                        style={styles.quickActionButton}
+                        onPress={() => {
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          router.push('/(tabs)/student-assignments');
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <View style={[styles.quickActionIcon, { backgroundColor: 'rgba(245, 158, 11, 0.1)' }]}>
+                          <LayoutDashboard color="#F59E0B" size={22} />
+                        </View>
+                        <Text style={styles.quickActionLabel}>My Tasks</Text>
+                      </TouchableOpacity>
+                    )}
+
+                    {/* Users - admin only */}
+                    {user?.role === 'admin' && (
+                      <TouchableOpacity
+                        style={styles.quickActionButton}
+                        onPress={() => {
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          router.push('/(tabs)/users');
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <View style={[styles.quickActionIcon, { backgroundColor: 'rgba(139, 92, 246, 0.1)' }]}>
+                          <Users color="#8B5CF6" size={22} />
+                        </View>
+                        <Text style={styles.quickActionLabel}>Users</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                </Animated.View>
+              )}
+            </View>
+          </Animated.View>
+        )}
       </ScrollView>
 
       {/* Student Profile Completion Modal */}
       <Modal visible={showProfileModal} animationType="slide" transparent={false}>
         <SafeAreaView style={styles.modalContainer}>
-          <View style={styles.modalHeader}>
-            <View style={styles.urgentBanner}>
-              <AlertTriangle color="#DC2626" size={24} />
-              <Text style={styles.urgentText}>Complete Your Profile</Text>
+          {user?.isFreeUser ? (
+            // FREE USER PERSONA QUESTIONNAIRE
+            <View style={{ flex: 1 }}>
+              <View style={[styles.modalHeader, { backgroundColor: '#F0FDFA' }]}>
+                <View style={styles.urgentBanner}>
+                  <Sparkles color="#01b4ae" size={24} />
+                  <Text style={[styles.urgentText, { color: '#01b4ae' }]}>Iconic Onboarding</Text>
+                </View>
+                <Text style={styles.modalSubtitle}>
+                  Help us customize your NEET PG journey. Question {freeUserStep} of 4
+                </Text>
+              </View>
+
+              <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
+                {freeUserStep === 1 && (
+                  <View style={styles.stepContainer}>
+                    <Text style={styles.sectionTitle}>Question 1: Which year of MBBS are you in?</Text>
+                    {['First year', 'Second year', 'Third year', 'Final year', 'Intern', 'MBBS completed'].map((yr) => (
+                      <TouchableOpacity
+                        key={yr}
+                        style={[
+                          styles.optionCard,
+                          freeYear === yr && styles.optionCardActive
+                        ]}
+                        onPress={() => {
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          setFreeYear(yr);
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[
+                          styles.optionText,
+                          freeYear === yr && styles.optionTextActive
+                        ]}>{yr}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+
+                {freeUserStep === 2 && (
+                  <View style={styles.stepContainer}>
+                    <Text style={styles.sectionTitle}>Question 2: What issues are you facing currently?</Text>
+                    {['Stuck', 'GT corrects', 'Lack of consistency', 'Want study schedule', 'Just exploring'].map((issue) => (
+                      <TouchableOpacity
+                        key={issue}
+                        style={[
+                          styles.optionCard,
+                          freeIssues === issue && styles.optionCardActive
+                        ]}
+                        onPress={() => {
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          setFreeIssues(issue);
+                        }}
+                        activeOpacity={0.7}
+                      >
+                        <Text style={[
+                          styles.optionText,
+                          freeIssues === issue && styles.optionTextActive
+                        ]}>{issue}</Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                )}
+
+                {freeUserStep === 3 && (
+                  <View style={styles.stepContainer}>
+                    <Text style={styles.sectionTitle}>Question 3: Which resources are you using currently? (Multiple select)</Text>
+                    {['Marrow', 'PrepLadder', 'Cerebrum', 'DAMS', 'DBMCI', 'others'].map((res) => {
+                      const isSelected = freeResources.includes(res);
+                      return (
+                        <TouchableOpacity
+                          key={res}
+                          style={[
+                            styles.optionCard,
+                            isSelected && styles.optionCardActive
+                          ]}
+                          onPress={() => toggleFreeResource(res)}
+                          activeOpacity={0.7}
+                        >
+                          <View style={styles.checkboxRowOnboarding}>
+                            <View style={[
+                              styles.checkboxOnboarding,
+                              isSelected && styles.checkboxOnboardingChecked
+                            ]}>
+                              {isSelected && <Check color="#FFFFFF" size={12} />}
+                            </View>
+                            <Text style={[
+                              styles.optionText,
+                              isSelected && styles.optionTextActive,
+                              { marginLeft: 10 }
+                            ]}>{res}</Text>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
+
+                {freeUserStep === 4 && (
+                  <View style={styles.stepContainer}>
+                    <Text style={styles.sectionTitle}>Question 4: Are you ready to transform your NEET PG journey?</Text>
+                    <TouchableOpacity
+                      style={[
+                        styles.optionCard,
+                        freeIsReady && styles.optionCardActive,
+                        { paddingVertical: 24, alignItems: 'center' }
+                      ]}
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                        setFreeIsReady(!freeIsReady);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Sparkles color={freeIsReady ? '#01b4ae' : '#9CA3AF'} size={32} style={{ marginBottom: 10 }} />
+                      <Text style={[
+                        styles.optionText,
+                        freeIsReady && styles.optionTextActive,
+                        { fontSize: 16, fontWeight: '700', textAlign: 'center' }
+                      ]}>
+                        {freeIsReady ? 'YES, I AM 100% READY! 🚀' : 'Click to confirm your readiness'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+
+                {/* Step navigation buttons */}
+                <View style={styles.stepNavigationRow}>
+                  {freeUserStep > 1 && (
+                    <TouchableOpacity
+                      style={styles.backStepBtn}
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        setFreeUserStep(freeUserStep - 1);
+                      }}
+                    >
+                      <Text style={styles.backStepBtnText}>Back</Text>
+                    </TouchableOpacity>
+                  )}
+                  
+                  {freeUserStep < 4 ? (
+                    <TouchableOpacity
+                      style={[
+                        styles.nextStepBtn,
+                        freeUserStep === 3 && freeResources.length === 0 && styles.nextStepBtnDisabled
+                      ]}
+                      disabled={freeUserStep === 3 && freeResources.length === 0}
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        setFreeUserStep(freeUserStep + 1);
+                      }}
+                    >
+                      <Text style={styles.nextStepBtnText}>Next Question</Text>
+                    </TouchableOpacity>
+                  ) : (
+                    <TouchableOpacity
+                      style={[
+                        styles.submitOnboardingBtn,
+                        (!freeIsReady || isSubmitting) && styles.submitButtonDisabled
+                      ]}
+                      disabled={!freeIsReady || isSubmitting}
+                      onPress={handleSubmitFreeProfile}
+                    >
+                      {isSubmitting ? (
+                        <ActivityIndicator color="#FFFFFF" size="small" />
+                      ) : (
+                        <>
+                          <Check color="#FFFFFF" size={20} />
+                          <Text style={styles.submitOnboardingBtnText}>Transform Now!</Text>
+                        </>
+                      )}
+                    </TouchableOpacity>
+                  )}
+                </View>
+
+                <View style={{ height: 40 }} />
+              </ScrollView>
             </View>
-            <Text style={styles.modalSubtitle}>
-              Please fill in your details to continue using the app
-            </Text>
-          </View>
+          ) : (
+            // ORIGINAL STUDENT PROFILE COMPLETION MODAL
+            <View style={{ flex: 1 }}>
+              <View style={styles.modalHeader}>
+                <View style={styles.urgentBanner}>
+                  <AlertTriangle color="#DC2626" size={24} />
+                  <Text style={styles.urgentText}>Complete Your Profile</Text>
+                </View>
+                <Text style={styles.modalSubtitle}>
+                  Please fill in your details to continue using the app
+                </Text>
+              </View>
 
-          <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
-            {/* Basic Info */}
-            <Text style={styles.sectionTitle}>Basic Information</Text>
+              <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
+                {/* Basic Info */}
+                <Text style={styles.sectionTitle}>Basic Information</Text>
 
-            <Text style={styles.inputLabel}>MBBS Batch *</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g., 2019"
-              placeholderTextColor="#9CA3AF"
-              value={profile.mbbsBatch}
-              onChangeText={(text) => setProfile({ ...profile, mbbsBatch: text })}
-            />
+                <Text style={styles.inputLabel}>MBBS Batch *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g., 2019"
+                  placeholderTextColor="#9CA3AF"
+                  value={profile.mbbsBatch}
+                  onChangeText={(text) => setProfile({ ...profile, mbbsBatch: text })}
+                />
 
-            <Text style={styles.inputLabel}>College Name *</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g., AIIMS Delhi"
-              placeholderTextColor="#9CA3AF"
-              value={profile.collegeName}
-              onChangeText={(text) => setProfile({ ...profile, collegeName: text })}
-            />
+                <Text style={styles.inputLabel}>College Name *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g., AIIMS Delhi"
+                  placeholderTextColor="#9CA3AF"
+                  value={profile.collegeName}
+                  onChangeText={(text) => setProfile({ ...profile, collegeName: text })}
+                />
 
-            <Text style={styles.inputLabel}>Attempt Number</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g., 2"
-              placeholderTextColor="#9CA3AF"
-              value={profile.attemptNo}
-              onChangeText={(text) => setProfile({ ...profile, attemptNo: text })}
-              keyboardType="numeric"
-            />
+                <Text style={styles.inputLabel}>Attempt Number</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g., 2"
+                  placeholderTextColor="#9CA3AF"
+                  value={profile.attemptNo}
+                  onChangeText={(text) => setProfile({ ...profile, attemptNo: text })}
+                  keyboardType="numeric"
+                />
 
-            <Text style={styles.inputLabel}>Batch Type *</Text>
-            <View style={styles.batchTypeContainer}>
-              {batchTypes.map((type) => (
+                <Text style={styles.inputLabel}>Batch Type *</Text>
+                <View style={styles.batchTypeContainer}>
+                  {batchTypes.map((type) => (
+                    <TouchableOpacity
+                      key={type}
+                      style={[
+                        styles.batchTypeButton,
+                        profile.batchType === type && styles.batchTypeButtonActive
+                      ]}
+                      onPress={() => setProfile({ ...profile, batchType: type })}
+                    >
+                      <Text style={[
+                        styles.batchTypeText,
+                        profile.batchType === type && styles.batchTypeTextActive
+                      ]}>{type}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+
+                {/* Performance Info */}
+                <Text style={styles.sectionTitle}>Performance Data</Text>
+
+                <Text style={styles.inputLabel}>No. of Grand Tests Given</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g., 7-8"
+                  placeholderTextColor="#9CA3AF"
+                  value={profile.grandTestsGiven}
+                  onChangeText={(text) => setProfile({ ...profile, grandTestsGiven: text })}
+                />
+
+                <Text style={styles.inputLabel}>Average Corrects</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g., 90-110"
+                  placeholderTextColor="#9CA3AF"
+                  value={profile.averageCorrects}
+                  onChangeText={(text) => setProfile({ ...profile, averageCorrects: text })}
+                />
+
+                <Text style={styles.inputLabel}>Average Score</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g., 420"
+                  placeholderTextColor="#9CA3AF"
+                  value={profile.averageScore}
+                  onChangeText={(text) => setProfile({ ...profile, averageScore: text })}
+                  keyboardType="numeric"
+                />
+
+                {/* Target Info */}
+                <Text style={styles.sectionTitle}>Targets & Preferences</Text>
+
+                <Text style={styles.inputLabel}>Weakest Subjects</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g., Biochem, Pharma, Opthal"
+                  placeholderTextColor="#9CA3AF"
+                  value={profile.weakestSubjects}
+                  onChangeText={(text) => setProfile({ ...profile, weakestSubjects: text })}
+                />
+
+                <Text style={styles.inputLabel}>Target Branch</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g., Radio, Orthopedics"
+                  placeholderTextColor="#9CA3AF"
+                  value={profile.targetBranch}
+                  onChangeText={(text) => setProfile({ ...profile, targetBranch: text })}
+                />
+
+                <Text style={styles.inputLabel}>Subscriptions</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="e.g., Marrow, PrepLadder"
+                  placeholderTextColor="#9CA3AF"
+                  value={profile.subscriptions}
+                  onChangeText={(text) => setProfile({ ...profile, subscriptions: text })}
+                />
+
                 <TouchableOpacity
-                  key={type}
-                  style={[
-                    styles.batchTypeButton,
-                    profile.batchType === type && styles.batchTypeButtonActive
-                  ]}
-                  onPress={() => setProfile({ ...profile, batchType: type })}
+                  style={[styles.submitButton, isSubmitting && styles.submitButtonDisabled]}
+                  onPress={handleSubmitProfile}
+                  disabled={isSubmitting}
                 >
-                  <Text style={[
-                    styles.batchTypeText,
-                    profile.batchType === type && styles.batchTypeTextActive
-                  ]}>{type}</Text>
+                  <Check color="#FFFFFF" size={20} />
+                  <Text style={styles.submitButtonText}>
+                    {isSubmitting ? 'Saving...' : 'Complete Profile'}
+                  </Text>
                 </TouchableOpacity>
-              ))}
+
+                <View style={{ height: 40 }} />
+              </ScrollView>
             </View>
-
-            {/* Performance Info */}
-            <Text style={styles.sectionTitle}>Performance Data</Text>
-
-            <Text style={styles.inputLabel}>No. of Grand Tests Given</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g., 7-8"
-              placeholderTextColor="#9CA3AF"
-              value={profile.grandTestsGiven}
-              onChangeText={(text) => setProfile({ ...profile, grandTestsGiven: text })}
-            />
-
-            <Text style={styles.inputLabel}>Average Corrects</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g., 90-110"
-              placeholderTextColor="#9CA3AF"
-              value={profile.averageCorrects}
-              onChangeText={(text) => setProfile({ ...profile, averageCorrects: text })}
-            />
-
-            <Text style={styles.inputLabel}>Average Score</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g., 420"
-              placeholderTextColor="#9CA3AF"
-              value={profile.averageScore}
-              onChangeText={(text) => setProfile({ ...profile, averageScore: text })}
-              keyboardType="numeric"
-            />
-
-            {/* Target Info */}
-            <Text style={styles.sectionTitle}>Targets & Preferences</Text>
-
-            <Text style={styles.inputLabel}>Weakest Subjects</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g., Biochem, Pharma, Opthal"
-              placeholderTextColor="#9CA3AF"
-              value={profile.weakestSubjects}
-              onChangeText={(text) => setProfile({ ...profile, weakestSubjects: text })}
-            />
-
-            <Text style={styles.inputLabel}>Target Branch</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g., Radio, Orthopedics"
-              placeholderTextColor="#9CA3AF"
-              value={profile.targetBranch}
-              onChangeText={(text) => setProfile({ ...profile, targetBranch: text })}
-            />
-
-            <Text style={styles.inputLabel}>Subscriptions</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g., Marrow, PrepLadder"
-              placeholderTextColor="#9CA3AF"
-              value={profile.subscriptions}
-              onChangeText={(text) => setProfile({ ...profile, subscriptions: text })}
-            />
-
-            <TouchableOpacity
-              style={[styles.submitButton, isSubmitting && styles.submitButtonDisabled]}
-              onPress={handleSubmitProfile}
-              disabled={isSubmitting}
-            >
-              <Check color="#FFFFFF" size={20} />
-              <Text style={styles.submitButtonText}>
-                {isSubmitting ? 'Saving...' : 'Complete Profile'}
-              </Text>
-            </TouchableOpacity>
-
-            <View style={{ height: 40 }} />
-          </ScrollView>
+          )}
         </SafeAreaView>
       </Modal>
+
+      {/* Free User Sidebar Panel */}
+      {user?.isFreeUser && (
+        <FreeUserSidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      )}
+
+      {/* Onboarding Transition Animation Overlay */}
+      {showOnboardingAnimation && (
+        <Modal transparent visible={true} animationType="fade">
+          <View style={styles.animationOverlay}>
+            <LinearGradient
+              colors={['#01b4ae', '#007f7c']}
+              style={StyleSheet.absoluteFillObject}
+            />
+            <Animated.View style={[styles.animationContent, { opacity: animOpacity, transform: [{ scale: animScale }] }]}>
+              <Sparkles color="#FFFFFF" size={60} style={{ marginBottom: 20 }} />
+              <Text style={styles.animationTitle}>Initiating Onboarding...</Text>
+              <Text style={styles.animationMessage}>{animationMessage}</Text>
+              <ActivityIndicator color="#FFFFFF" size="large" style={{ marginTop: 25 }} />
+            </Animated.View>
+          </View>
+        </Modal>
+      )}
     </SafeAreaView>
   );
 }
@@ -812,5 +1115,147 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '600',
+  },
+  stepContainer: {
+    padding: 16,
+    gap: 12,
+  },
+  optionCard: {
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.02,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  optionCardActive: {
+    borderColor: '#01b4ae',
+    backgroundColor: '#F0FDFA',
+  },
+  optionText: {
+    fontSize: 15,
+    fontWeight: '500',
+    color: '#374151',
+  },
+  optionTextActive: {
+    fontWeight: '700',
+    color: '#01b4ae',
+  },
+  checkboxRowOnboarding: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  checkboxOnboarding: {
+    width: 20,
+    height: 20,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#D1D5DB',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  checkboxOnboardingChecked: {
+    backgroundColor: '#01b4ae',
+    borderColor: '#01b4ae',
+  },
+  stepNavigationRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 24,
+    gap: 12,
+    paddingHorizontal: 16,
+  },
+  backStepBtn: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    backgroundColor: '#FFFFFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  backStepBtnText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#4B5563',
+  },
+  nextStepBtn: {
+    flex: 2,
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#01b4ae',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#01b4ae',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  nextStepBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  nextStepBtnDisabled: {
+    backgroundColor: '#D1D5DB',
+    opacity: 0.6,
+  },
+  submitOnboardingBtn: {
+    flex: 2,
+    flexDirection: 'row',
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: '#10B981',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    shadowColor: '#10B981',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  submitOnboardingBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  animationOverlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.85)',
+  },
+  animationContent: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 40,
+  },
+  animationTitle: {
+    fontSize: 24,
+    fontWeight: '800',
+    color: '#FFFFFF',
+    marginTop: 16,
+    textAlign: 'center',
+    letterSpacing: 0.5,
+  },
+  animationMessage: {
+    fontSize: 16,
+    fontWeight: '500',
+    color: '#E0F2FE',
+    marginTop: 10,
+    textAlign: 'center',
+    lineHeight: 22,
   },
 });
