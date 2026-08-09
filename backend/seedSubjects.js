@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const Subject = require('./models/Subject');
 require('dotenv').config();
+const { getMongoUri } = require('./utils/mongoUri');
 
 // Subject data based on the medical curriculum image
 const subjects = [
@@ -35,7 +36,7 @@ const subjects = [
 async function seedSubjects() {
     try {
         // Connect to MongoDB
-        await mongoose.connect(process.env.MONGODB_URI || 'mongodb+srv://REDACTED:REDACTED@cluster0.g7l8wx5.mongodb.net/?appName=Cluster0');
+        await mongoose.connect(getMongoUri());
         console.log('Connected to MongoDB');
 
         // Clear existing subjects

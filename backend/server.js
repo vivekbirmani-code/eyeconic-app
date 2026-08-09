@@ -5,6 +5,12 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 require('dotenv').config();
 
+const logger = require('./utils/logger');
+const { getMongoUri } = require('./utils/mongoUri');
+const requestId = require('./middleware/requestId');
+const errorHandler = require('./middleware/errorHandler');
+const healthRoutes = require('./routes/health');
+
 // Import socket helpers BEFORE routes to avoid circular deps
 const socketHelpers = require('./utils/socket-helpers');
 
@@ -43,24 +49,78 @@ app.set('io', io);
 // Initialize socket helpers with the io instance
 socketHelpers.setIo(io);
 
+// Validate critical environment variables at startup
+const validateEnvironment = () => {
+  const warnings = [];
+  if (!process.env.JWT_SECRET) {
+    warnings.push('JWT_SECRET is not set — authentication will fail');
+  }
+  if (!process.env.MONGODB_URI) {
+    warnings.push('MONGODB_URI is not set — database connection will fail');
+  }
+  warnings.forEach((warning) => logger.warn(warning));
+};
+
+validateEnvironment();
+
 // Middleware
 app.use(cors());
+app.use(requestId);
 // Increase body size limit for large Excel file uploads (base64 encoded)
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI || 'mongodb+srv://REDACTED:REDACTED@cluster0.g7l8wx5.mongodb.net/?appName=Cluster0', {
-  serverSelectionTimeoutMS: 5000,
-  maxPoolSize: 10,
-})
-  .then(() => {
-    console.log('Connected to MongoDB');
-    // Schedule media cleanup (run once on start, then daily)
-    cleanupExpiredMedia(); // Run immediately on startup
-    setInterval(cleanupExpiredMedia, 24 * 60 * 60 * 1000); // Run every 24 hours
-  })
-  .catch(err => console.error('MongoDB connection error:', err));
+// Structured request logging (never log bodies — may contain credentials)
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const durationMs = Date.now() - start;
+    const level = res.statusCode >= 500 ? 'error' : res.statusCode >= 400 ? 'warn' : 'info';
+    logger[level]('HTTP request completed', {
+      requestId: req.requestId,
+      method: req.method,
+      path: req.originalUrl,
+      statusCode: res.statusCode,
+      durationMs,
+    });
+  });
+  next();
+});
+
+// MongoDB connection with automatic recovery
+const connectDatabase = async () => {
+  try {
+    await mongoose.connect(getMongoUri(), {
+      serverSelectionTimeoutMS: 10000,
+      socketTimeoutMS: 45000,
+      maxPoolSize: 10,
+      minPoolSize: 2,
+      retryWrites: true,
+    });
+    logger.info('Connected to MongoDB');
+    cleanupExpiredMedia();
+    setInterval(cleanupExpiredMedia, 24 * 60 * 60 * 1000);
+  } catch (err) {
+    logger.error('MongoDB connection error', { errorMessage: err.message });
+    // Retry connection after delay — keeps service alive for health checks
+    setTimeout(connectDatabase, 5000);
+  }
+};
+
+mongoose.connection.on('disconnected', () => {
+  logger.warn('MongoDB disconnected — attempting reconnection');
+  setTimeout(connectDatabase, 3000);
+});
+
+mongoose.connection.on('reconnected', () => {
+  logger.info('MongoDB reconnected');
+});
+
+connectDatabase();
+
+// Health endpoints (no auth required — used by load balancers and monitoring)
+app.use('/health', healthRoutes);
+app.use('/api/health', healthRoutes);
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -718,8 +778,20 @@ io.on('connection', (socket) => {
   });
 });
 
+// 404 handler for unknown API routes
+app.use('/api', (req, res) => {
+  res.status(404).json({
+    message: 'The requested resource was not found.',
+    code: 'NOT_FOUND',
+    requestId: req.requestId,
+  });
+});
+
+// Global error handler — must be last
+app.use(errorHandler);
+
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  logger.info('Server started', { port: PORT, nodeEnv: process.env.NODE_ENV || 'development' });
 });
 

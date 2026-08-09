@@ -2,9 +2,10 @@ const mongoose = require('mongoose');
 const User = require('./models/User');
 require('dotenv').config();
 const jwt = require('jsonwebtoken');
+const { getMongoUri } = require('./utils/mongoUri');
 
 async function getValidToken() {
-    await mongoose.connect(process.env.MONGODB_URI);
+    await mongoose.connect(getMongoUri());
     const user = await User.findOne({});
     if (!user) {
         console.log("No users found in DB.");

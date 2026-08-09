@@ -5,12 +5,12 @@ const QuizAttempt = require('./models/QuizAttempt');
 const Subject = require('./models/Subject');
 const Topic = require('./models/Topic');
 require('dotenv').config();
+const { getMongoUri } = require('./utils/mongoUri');
 
 const clearQuizData = async () => {
     try {
         console.log('Connecting to MongoDB...');
-        // Use the same connection string logic as seed.js
-        await mongoose.connect(process.env.MONGODB_URI || 'mongodb+srv://REDACTED:REDACTED@cluster0.g7l8wx5.mongodb.net/?appName=Cluster0');
+        await mongoose.connect(getMongoUri());
         console.log('✅ Connected to MongoDB');
 
         // Confirm before deleting (optional in script, but good for logs)

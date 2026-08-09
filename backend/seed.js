@@ -1,11 +1,12 @@
 const mongoose = require('mongoose');
 const User = require('./models/User');
 require('dotenv').config();
+const { getMongoUri } = require('./utils/mongoUri');
 
 const seedUsers = async () => {
     try {
         // Connect to MongoDB
-        await mongoose.connect(process.env.MONGODB_URI || 'mongodb+srv://REDACTED:REDACTED@cluster0.g7l8wx5.mongodb.net/?appName=Cluster0');
+        await mongoose.connect(getMongoUri());
         console.log('Connected to MongoDB');
 
         // Seed Admin

@@ -20,7 +20,7 @@ import { useAuth } from '@/context/AuthContext';
 import { Eye, EyeOff, Mail, Lock, ShieldCheck } from 'lucide-react-native';
 import * as Haptics from '@/utils/haptics';
 import { LinearGradient } from 'expo-linear-gradient';
-import { api } from '@/services/api';
+import { api, getUserMessage } from '@/services/api';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -150,10 +150,8 @@ export default function Login() {
     } catch (error: any) {
       // Error haptic on login failure
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      // Improve error handling to show network errors
-      console.log('Login error:', error);
-      const message = error?.response?.data?.message || error.message || 'Invalid credentials';
-      Alert.alert('Error', message);
+      const message = error?.message || getUserMessage(error);
+      Alert.alert('Unable to Sign In', message);
     } finally {
       setIsLoading(false);
     }
@@ -188,8 +186,7 @@ export default function Login() {
       setForgotStep(2);
     } catch (error: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      const message = error?.response?.data?.message || 'Failed to send OTP. Please check the email address.';
-      Alert.alert('Error', message);
+      Alert.alert('Error', getUserMessage(error));
     } finally {
       setForgotLoading(false);
     }
@@ -236,7 +233,7 @@ export default function Login() {
       setEmail(forgotEmail);
     } catch (error: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      const message = error?.response?.data?.message || 'Failed to reset password. Please try again.';
+      const message = getUserMessage(error);
       Alert.alert('Error', message);
     } finally {
       setForgotLoading(false);

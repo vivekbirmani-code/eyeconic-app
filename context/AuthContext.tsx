@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { api } from '@/services/api';
+import { api, getUserMessage } from '@/services/api';
 
 interface StudentProfile {
   mbbsBatch?: string;
@@ -69,12 +69,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const login = async (email: string, password: string) => {
-    const response = await api.post('/auth/login', { email, password });
-    const { token, user } = response.data;
-    
-    await AsyncStorage.setItem('authToken', token);
-    api.defaults.headers.Authorization = `Bearer ${token}`;
-    setUser(user);
+    try {
+      const response = await api.post('/auth/login', { email, password });
+      const { token, user } = response.data;
+
+      await AsyncStorage.setItem('authToken', token);
+      api.defaults.headers.Authorization = `Bearer ${token}`;
+      setUser(user);
+    } catch (error) {
+      throw new Error(getUserMessage(error));
+    }
   };
 
   const logout = async () => {

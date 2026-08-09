@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { getUserMessage } from '../services/errors';
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('');
@@ -22,9 +23,8 @@ export default function LoginScreen() {
     try {
       await login(email.trim(), password.trim());
       navigate('/dashboard', { replace: true });
-    } catch (error: any) {
-      console.error('Login error:', error);
-      const message = error?.response?.data?.message || error.message || 'Invalid credentials';
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : getUserMessage(error);
       alert(message);
     } finally {
       setIsLoading(false);

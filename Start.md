@@ -4,7 +4,7 @@ eas build -p android --profile production
 
 For LocalHost (android)
 npx expo prebuild --platform android
-npx expo prebuild --platform android --clean
+<!-- npx expo prebuild --platform android --clean -->
 cd android
 ./gradlew assembleRelease
 

@@ -6,16 +6,36 @@ const QuizAttempt = require('../models/QuizAttempt');
 const Otp = require('../models/Otp');
 const { sendOtpMail, sendPasswordResetMail } = require('../utils/mailer');
 const { auth } = require('../middleware/auth');
+const requireDatabase = require('../middleware/requireDatabase');
+const logger = require('../utils/logger');
 
 const router = express.Router();
 
 // Login
-router.post('/login', async (req, res) => {
+router.post('/login', requireDatabase, async (req, res) => {
+  const loginStart = Date.now();
   try {
     const { email, password, guestId } = req.body;
 
+    if (!email || !password) {
+      return res.status(400).json({
+        message: 'Email and password are required.',
+        code: 'VALIDATION_ERROR',
+        requestId: req.requestId,
+      });
+    }
+
+    if (!process.env.JWT_SECRET) {
+      logger.error('Login blocked — JWT_SECRET not configured', { requestId: req.requestId });
+      return res.status(503).json({
+        message: 'Our servers are temporarily unavailable. Please try again in a few moments.',
+        code: 'SERVICE_UNAVAILABLE',
+        requestId: req.requestId,
+      });
+    }
+
     // Find user
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email: email.trim().toLowerCase() });
     if (!user) {
       return res.status(400).json({ message: 'Invalid credentials' });
     }
@@ -85,6 +105,12 @@ router.post('/login', async (req, res) => {
       }
     }
 
+    logger.info('Login successful', {
+      requestId: req.requestId,
+      userId: user._id,
+      durationMs: Date.now() - loginStart,
+    });
+
     res.json({
       token,
       user: {
@@ -101,8 +127,16 @@ router.post('/login', async (req, res) => {
       linkedAttempts
     });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Server error' });
+    logger.error('Login failed', {
+      requestId: req.requestId,
+      errorMessage: error.message,
+      durationMs: Date.now() - loginStart,
+    });
+    res.status(500).json({
+      message: "We're unable to process your request right now. Please try again shortly.",
+      code: 'INTERNAL_ERROR',
+      requestId: req.requestId,
+    });
   }
 });
 

@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const User = require('./models/User');
 require('dotenv').config();
+const { getMongoUri } = require('./utils/mongoUri');
 
 const studentsData = [
   { name: 'ANKUSH KESARWANI', email: 'sadgurumann@gmail.com', password: 'student1' },
@@ -34,8 +35,7 @@ const studentsData = [
 
 const seedStudents = async () => {
   try {
-    const mongoUri = process.env.MONGODB_URI || 'mongodb+srv://REDACTED:REDACTED@cluster0.g7l8wx5.mongodb.net/?appName=Cluster0';
-    await mongoose.connect(mongoUri);
+    await mongoose.connect(getMongoUri());
     console.log('Connected to MongoDB');
 
     for (const student of studentsData) {
