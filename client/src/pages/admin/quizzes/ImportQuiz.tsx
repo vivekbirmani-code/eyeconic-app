@@ -73,7 +73,7 @@ export default function ImportQuiz() {
           <h2 className="text-xl md:text-2xl font-bold text-gray-900 mb-4">Upload Questions CSV/Excel</h2>
           
           <div className="text-sm font-medium text-gray-500 mb-8 max-w-md mx-auto leading-relaxed">
-            Ensure your file follows the standard template format. Required columns: Subject, Topic, Question, Options 1-4, Correct Answer (0-3), Marks, Positive (+), Negative (-).
+            Ensure your file follows the standard template format. Required columns: SUBJECT, TOPIC, SUBTOPIC, SYSTEM, QUESTION_TYPE, DIFFICULTY, QUESTION, OPTION1-6, CORRECT. TAGS is optional. See Format.md for type-specific column formats (Assertion/Reason, Match the Following, Numerical, etc).
           </div>
 
           <label className="border-2 border-dashed border-gray-300 rounded-2xl p-8 block cursor-pointer hover:border-blue-500 hover:bg-blue-50/50 transition-all mb-6">

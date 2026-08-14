@@ -6,8 +6,13 @@ const guestAnswerSchema = new mongoose.Schema({
         type: Number,
         required: true
     },
+    questionId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'QuestionBank'
+    },
+    // Shape depends on the question's questionType (see QuizAttempt.answerSchema).
     selectedAnswer: {
-        type: Number,
+        type: mongoose.Schema.Types.Mixed,
         default: -1
     },
     isCorrect: {

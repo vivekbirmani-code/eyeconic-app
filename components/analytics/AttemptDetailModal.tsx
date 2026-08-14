@@ -160,9 +160,25 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
              totalTimeSpent = (new Date(attemptData.attempt.endTime).getTime() - new Date(attemptData.attempt.startTime).getTime()) / 1000;
         }
 
-        const percentage = attemptData.attempt.totalMarks ? Math.round((attemptData.attempt.marksObtained / attemptData.attempt.totalMarks) * 100) : 0;
+        const scorePercentage = attemptData.attempt.totalMarks
+            ? Math.round((attemptData.attempt.marksObtained / attemptData.attempt.totalMarks) * 10000) / 100
+            : 0;
+        const attempted = totalCorrect + totalWrong;
+        const accuracy = attempted > 0
+            ? Math.round((totalCorrect / attempted) * 10000) / 100
+            : null;
 
-        return { correct: totalCorrect, wrong: totalWrong, skipped: totalSkipped, total, markedCount, totalTimeSpent, percentage };
+        return {
+            correct: totalCorrect,
+            wrong: totalWrong,
+            skipped: totalSkipped,
+            total,
+            markedCount,
+            totalTimeSpent,
+            scorePercentage,
+            accuracy,
+            percentage: scorePercentage,
+        };
     };
 
     const stats = calculateStats();
@@ -218,7 +234,7 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
                             {/* Score Card - Mirrored from Result Screen */}
                             <View style={styles.scoreCard}>
                                 <View style={styles.scoreIconContainer}>
-                                    {stats.percentage >= 50 ? (
+                                    {stats.scorePercentage >= 50 ? (
                                         <CheckCircle color="#10B981" size={64} />
                                     ) : (
                                         <XCircle color="#EF4444" size={64} />
@@ -231,11 +247,12 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
                                 <View style={styles.percentageContainer}>
                                     <Text style={[
                                         styles.percentageText,
-                                        stats.percentage >= 50 ? styles.passPercentage : styles.failPercentage
+                                        stats.scorePercentage >= 50 ? styles.passPercentage : styles.failPercentage
                                     ]}>
-                                        {stats.percentage}%
+                                        {stats.scorePercentage}%
                                     </Text>
                                 </View>
+                                <Text style={styles.scoreSubtext}>Score % (marks-based)</Text>
                                 <Text style={styles.marksText}>
                                     {formatMarks(attemptData.attempt.marksObtained)} / {formatMarks(attemptData.attempt.totalMarks)} Marks
                                 </Text>
@@ -269,7 +286,9 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
                                 </View>
                                 <View style={styles.metricCard}>
                                     <Award color="#8B5CF6" size={24} />
-                                    <Text style={styles.metricValue}>{stats.percentage}%</Text>
+                                    <Text style={styles.metricValue}>
+                                        {stats.accuracy !== null ? `${stats.accuracy}%` : 'N/A'}
+                                    </Text>
                                     <Text style={styles.metricLabel}>Accuracy</Text>
                                 </View>
                                 <View style={styles.metricCard}>

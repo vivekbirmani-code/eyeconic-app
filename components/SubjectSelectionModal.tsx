@@ -8,7 +8,8 @@ import {
   StyleSheet,
   ActivityIndicator,
   Animated,
-  Easing
+  Easing,
+  Platform,
 } from 'react-native';
 import { X, Check, Square, CheckSquare } from 'lucide-react-native';
 import * as Haptics from '@/utils/haptics';
@@ -241,6 +242,8 @@ export default function SubjectSelectionModal({
       transparent
       animationType="none"
       onRequestClose={onClose}
+      presentationStyle="overFullScreen"
+      statusBarTranslucent={Platform.OS === 'android'}
     >
       <Animated.View style={[styles.overlay, { opacity: modalOpacity }]}>
         <Animated.View

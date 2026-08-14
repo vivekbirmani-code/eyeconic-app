@@ -83,13 +83,15 @@ export const apiLogger = {
     method: string,
     requestId: string,
     errorCode: string,
-    durationMs: number
+    durationMs: number,
+    expected = false
   ) =>
-    writeLog('error', 'API request failed', {
+    writeLog(expected ? 'warn' : 'error', 'API request failed', {
       endpoint,
       method,
       requestId,
       errorCode,
       durationMs,
+      expected,
     }),
 };

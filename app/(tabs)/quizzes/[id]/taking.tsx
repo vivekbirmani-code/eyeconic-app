@@ -28,19 +28,35 @@ import { QuestionSkeleton } from '@/components/Skeleton';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { getSocketURL } from '@/services/config';
 import { formatToIST } from '@/utils/date';
+import QuestionPrompt from '@/components/quiz/QuestionPrompt';
+import { QuestionType, StudentResponse, isResponseAnswered } from '@/types/question';
 
 interface Question {
   _id: string;
   question: string;
   questionImage?: string;
-  options: string[];
+  questionType?: QuestionType;
+  options?: string[];
   optionImages?: string[];
+  assertion?: string;
+  reason?: string;
+  columnA?: string[];
+  columnB?: string[];
   marks: number;
   subject?: {
     _id: string;
     name: string;
   };
 }
+
+const defaultResponseFor = (type?: QuestionType): StudentResponse => {
+  switch (type) {
+    case 'multiple_correct': return [];
+    case 'match_the_following': return {};
+    case 'numerical': return null;
+    default: return -1;
+  }
+};
 
 interface Quiz {
   _id: string;
@@ -75,7 +91,7 @@ function QuizTakingContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [selectedAnswer, setSelectedAnswer] = useState<number>(-1);
+  const [selectedAnswer, setSelectedAnswer] = useState<StudentResponse>(-1);
   const [markedForReview, setMarkedForReview] = useState(false);
   const [currentSection, setCurrentSection] = useState<string>('All');
   const [questionStartTime, setQuestionStartTime] = useState(Date.now());
@@ -196,10 +212,10 @@ function QuizTakingContent() {
   // Memoize question statuses
   const questionStatuses = useMemo(() => {
     if (!quiz || !currentAttempt) return [];
-    return quiz.questions.map((_, index) => {
+    return quiz.questions.map((q, index) => {
       const answer = currentAttempt.answers.find(a => a.questionIndex === index);
       return {
-        answered: answer?.selectedAnswer !== -1 && answer?.selectedAnswer !== undefined,
+        answered: isResponseAnswered(q.questionType || 'mcq_single', answer?.selectedAnswer as StudentResponse),
         markedForReview: answer?.markedForReview || false,
         visited: index <= currentQuestionIndex
       };
@@ -243,12 +259,13 @@ function QuizTakingContent() {
   useEffect(() => {
     if (currentAttempt && currentAttempt.answers) {
       const answer = currentAttempt.answers.find(a => a.questionIndex === currentQuestionIndex);
-      if (answer) {
-        setSelectedAnswer(answer.selectedAnswer);
+      const questionType = quiz?.questions[currentQuestionIndex]?.questionType;
+      if (answer && isResponseAnswered(questionType || 'mcq_single', answer.selectedAnswer as StudentResponse)) {
+        setSelectedAnswer(answer.selectedAnswer as StudentResponse);
         setMarkedForReview(answer.markedForReview);
       } else {
-        setSelectedAnswer(-1);
-        setMarkedForReview(false);
+        setSelectedAnswer(defaultResponseFor(questionType));
+        setMarkedForReview(answer?.markedForReview || false);
       }
     }
     setQuestionStartTime(Date.now());
@@ -311,7 +328,7 @@ function QuizTakingContent() {
     );
   }, [router]);
 
-  const handleAnswerSelect = useCallback(async (answerIndex: number) => {
+  const handleResponseChange = useCallback(async (response: StudentResponse) => {
     // Button press animation
     Animated.sequence([
       Animated.timing(buttonScaleAnim, {
@@ -326,47 +343,49 @@ function QuizTakingContent() {
       }),
     ]).start();
 
-    setSelectedAnswer(answerIndex);
+    setSelectedAnswer(response);
     setSaving(true);
     setSaveError(false);
 
     const timeSpent = Math.floor((Date.now() - questionStartTime) / 1000);
+    const questionId = quiz?.questions[currentQuestionIndex]?._id;
 
     try {
-      await saveAnswer(currentQuestionIndex, answerIndex, markedForReview, timeSpent);
-      // Announce to screen reader
-      AccessibilityInfo.announceForAccessibility(`Option ${String.fromCharCode(65 + answerIndex)} selected`);
+      await saveAnswer(currentQuestionIndex, response, markedForReview, timeSpent, questionId);
+      AccessibilityInfo.announceForAccessibility('Response saved');
     } catch (error) {
       setSaveError(true);
       console.error('Save error:', error);
     } finally {
       setSaving(false);
     }
-  }, [currentQuestionIndex, markedForReview, questionStartTime, saveAnswer]);
+  }, [currentQuestionIndex, markedForReview, questionStartTime, saveAnswer, quiz]);
 
   const handleMarkForReview = useCallback(async () => {
     const newMarkedState = !markedForReview;
     setMarkedForReview(newMarkedState);
 
     const timeSpent = Math.floor((Date.now() - questionStartTime) / 1000);
+    const questionId = quiz?.questions[currentQuestionIndex]?._id;
 
     try {
-      await saveAnswer(currentQuestionIndex, selectedAnswer, newMarkedState, timeSpent);
+      await saveAnswer(currentQuestionIndex, selectedAnswer, newMarkedState, timeSpent, questionId);
       AccessibilityInfo.announceForAccessibility(
         newMarkedState ? 'Question marked for review' : 'Question unmarked'
       );
     } catch (error) {
       console.error('Mark error:', error);
     }
-  }, [markedForReview, currentQuestionIndex, selectedAnswer, questionStartTime, saveAnswer]);
+  }, [markedForReview, currentQuestionIndex, selectedAnswer, questionStartTime, saveAnswer, quiz]);
 
   const handleNextQuestion = useCallback(async () => {
     const activeIndex = activeQuestionIndexes.indexOf(currentQuestionIndex);
     if (quiz && activeIndex !== -1 && activeIndex < activeQuestionIndexes.length - 1) {
       // Save current progress/time before moving
       const timeSpent = Math.floor((Date.now() - questionStartTime) / 1000);
+      const questionId = quiz?.questions[currentQuestionIndex]?._id;
       try {
-        await saveAnswer(currentQuestionIndex, selectedAnswer, markedForReview, timeSpent);
+        await saveAnswer(currentQuestionIndex, selectedAnswer, markedForReview, timeSpent, questionId);
       } catch (err) {
         console.error('Save failed on skip:', err);
       }
@@ -381,8 +400,9 @@ function QuizTakingContent() {
     if (activeIndex > 0) {
       // Save current progress/time before moving
       const timeSpent = Math.floor((Date.now() - questionStartTime) / 1000);
+      const questionId = quiz?.questions[currentQuestionIndex]?._id;
       try {
-        await saveAnswer(currentQuestionIndex, selectedAnswer, markedForReview, timeSpent);
+        await saveAnswer(currentQuestionIndex, selectedAnswer, markedForReview, timeSpent, questionId);
       } catch (err) {
         console.error('Save failed on skip back:', err);
       }
@@ -390,7 +410,7 @@ function QuizTakingContent() {
       setCurrentQuestionIndex(activeQuestionIndexes[activeIndex - 1]);
       scrollViewRef.current?.scrollTo({ y: 0, animated: false });
     }
-  }, [currentQuestionIndex, activeQuestionIndexes, questionStartTime, selectedAnswer, markedForReview, saveAnswer]);
+  }, [currentQuestionIndex, activeQuestionIndexes, questionStartTime, selectedAnswer, markedForReview, saveAnswer, quiz]);
 
   // Helper: find which section a given global question index belongs to
   const getSectionForIndex = useCallback((index: number): string => {
@@ -706,57 +726,21 @@ function QuizTakingContent() {
                 />
               )}
 
-              {/* Options */}
-              <View style={styles.optionsContainer}>
-                {currentQuestion.options.map((option, index) => (
-                  <TouchableOpacity
-                    key={index}
-                    style={[
-                      styles.optionButton,
-                      selectedAnswer === index && styles.selectedOption
-                    ]}
-                    onPress={() => handleAnswerSelect(index)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={[
-                      styles.optionRadio,
-                      selectedAnswer === index && styles.selectedRadio
-                    ]}>
-                      {selectedAnswer === index && <View style={styles.radioInner} />}
-                    </View>
-                    <View style={styles.optionContent}>
-                      <Text style={styles.optionLabel}>
-                        {String.fromCharCode(65 + index)}.
-                      </Text>
-                      <View style={{ flex: 1 }}>
-                        {option ? (
-                          <Text style={[
-                            styles.optionText,
-                            selectedAnswer === index && styles.selectedOptionText
-                          ]}>
-                            {option}
-                          </Text>
-                        ) : null}
-
-                        {currentQuestion.optionImages?.[index] && !failedImages.has(currentQuestion.optionImages[index]) && (
-                          <Image
-                            source={getImageUrl(currentQuestion.optionImages[index])}
-                            style={styles.optionImage}
-                            resizeMode="contain"
-                            onError={() => handleImageError(currentQuestion.optionImages![index])}
-                          />
-                        )}
-                      </View>
-                    </View>
-                  </TouchableOpacity>
-                ))}
-              </View>
+              {/* Answer Input (adapts to question type) */}
+              <QuestionPrompt
+                question={currentQuestion}
+                response={selectedAnswer}
+                onChange={handleResponseChange}
+                getImageUrl={getImageUrl}
+                failedImages={failedImages}
+                onImageError={handleImageError}
+              />
 
               {/* Clear Response */}
-              {selectedAnswer !== -1 && (
+              {isResponseAnswered(currentQuestion.questionType || 'mcq_single', selectedAnswer) && (
                 <TouchableOpacity
                   style={styles.clearButton}
-                  onPress={() => handleAnswerSelect(-1)}
+                  onPress={() => handleResponseChange(defaultResponseFor(currentQuestion.questionType))}
                 >
                   <Text style={styles.clearButtonText}>Clear Response</Text>
                 </TouchableOpacity>

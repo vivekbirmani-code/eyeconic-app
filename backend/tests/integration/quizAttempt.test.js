@@ -1,0 +1,362 @@
+const request = require('supertest');
+const db = require('../helpers/db');
+const { buildApp, createUser, createSubject } = require('../helpers/testApp');
+const Quiz = require('../../models/Quiz');
+const QuestionBank = require('../../models/QuestionBank');
+const MentorStudentAssignment = require('../../models/MentorStudentAssignment');
+
+let app;
+
+beforeAll(async () => {
+  await db.connect();
+  app = buildApp();
+});
+
+afterAll(async () => {
+  await db.closeDatabase();
+});
+
+async function createQuestion(admin, subject, overrides = {}) {
+  const res = await request(app)
+    .post('/api/question-bank')
+    .set('Authorization', `Bearer ${admin.token}`)
+    .send({
+      subject: subject._id.toString(),
+      topicName: 'Genetics',
+      subtopicName: 'Mendelian Inheritance',
+      system: 'Genetic Disorders',
+      questionType: 'mcq_single',
+      difficulty: 'medium',
+      question: 'What is the powerhouse of the cell?',
+      options: ['Nucleus', 'Mitochondria', 'Ribosome', 'Golgi'],
+      correctAnswer: 1,
+      ...overrides,
+    });
+  expect(res.status).toBe(201);
+  return res.body;
+}
+
+async function setupQuizWithQuestions(admin, student, subject, questionOverridesList) {
+  const questions = [];
+  for (const overrides of questionOverridesList) {
+    questions.push(await createQuestion(admin, subject, overrides));
+  }
+  const quiz = await Quiz.create({
+    title: 'Mixed Type Test',
+    subject: subject._id,
+    testType: 'daily',
+    duration: 30,
+    questions: questions.map((q) => q._id),
+    positiveMarks: 4,
+    negativeMarks: 1,
+    assignedStudents: [student.user._id],
+    createdBy: admin.user._id,
+  });
+  return { quiz, questions };
+}
+
+describe('Quiz attempt lifecycle — type-aware grading + snapshots', () => {
+  let admin;
+  let student;
+  let otherStudent;
+  let subject;
+
+  beforeEach(async () => {
+    await db.clearDatabase();
+    admin = await createUser({ role: 'admin' });
+    student = await createUser({ role: 'student' });
+    otherStudent = await createUser({ role: 'student' });
+    subject = await createSubject('Pathology');
+  });
+
+  it('grades a mix of question types correctly and stores a server-derived snapshot', async () => {
+    const { quiz, questions } = await setupQuizWithQuestions(admin, student, subject, [
+      { questionType: 'mcq_single', options: ['A', 'B', 'C'], correctAnswer: 1 }, // Q0
+      { questionType: 'multiple_correct', options: ['A', 'B', 'C'], correctAnswer: [0, 2] }, // Q1
+      {
+        questionType: 'match_the_following',
+        options: undefined,
+        columnA: ['Item 1', 'Item 2'],
+        columnB: ['Match A', 'Match B'],
+        correctAnswer: { '0': '1', '1': '0' },
+      }, // Q2
+      { questionType: 'numerical', options: undefined, correctAnswer: 42 }, // Q3
+    ]);
+
+    const startRes = await request(app)
+      .post(`/api/quizzes/${quiz._id}/start`)
+      .set('Authorization', `Bearer ${student.token}`);
+    expect(startRes.status).toBe(201);
+    const attemptId = startRes.body.attemptId;
+
+    // Q0: correct mcq_single
+    await request(app)
+      .put(`/api/quizzes/${quiz._id}/attempt/${attemptId}/answer`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({ questionIndex: 0, questionId: questions[0]._id, selectedAnswer: 1 })
+      .expect(200);
+
+    // Q1: incorrect multiple_correct (missing one)
+    await request(app)
+      .put(`/api/quizzes/${quiz._id}/attempt/${attemptId}/answer`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({ questionIndex: 1, questionId: questions[1]._id, selectedAnswer: [0] })
+      .expect(200);
+
+    // Q2: correct match_the_following
+    await request(app)
+      .put(`/api/quizzes/${quiz._id}/attempt/${attemptId}/answer`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({ questionIndex: 2, questionId: questions[2]._id, selectedAnswer: { '0': '1', '1': '0' } })
+      .expect(200);
+
+    // Q3: skipped (numerical) — left unanswered
+
+    const submitRes = await request(app)
+      .post(`/api/quizzes/${quiz._id}/attempt/${attemptId}/submit`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({});
+    expect(submitRes.status).toBe(200);
+
+    const attemptRes = await request(app)
+      .get(`/api/quizzes/attempt/${attemptId}`)
+      .set('Authorization', `Bearer ${student.token}`);
+    expect(attemptRes.status).toBe(200);
+
+    const answers = attemptRes.body.answers;
+    const byIndex = (i) => answers.find((a) => a.questionIndex === i);
+
+    expect(byIndex(0).isCorrect).toBe(true);
+    expect(byIndex(1).isCorrect).toBe(false);
+    expect(byIndex(2).isCorrect).toBe(true);
+    // Q3 was skipped — no answer document, or isCorrect false with no marks impact
+    expect(byIndex(3)).toBeUndefined();
+
+    // Marks: +4 (Q0) -1 (Q1 wrong) +4 (Q2) = 7; Q3 skipped = 0
+    expect(attemptRes.body.marksObtained).toBe(7);
+    expect(attemptRes.body.score).toBe(2);
+
+    // Snapshot correctness — server-derived, includes all 7 dimensions
+    expect(byIndex(0).metadataSnapshot).toMatchObject({
+      subjectName: 'Pathology',
+      topicName: 'Genetics',
+      subtopicName: 'Mendelian Inheritance',
+      system: 'Genetic Disorders',
+      questionType: 'mcq_single',
+      difficulty: 'medium',
+    });
+  });
+
+  it('ignores a client-submitted isCorrect / metadataSnapshot on save', async () => {
+    const { quiz, questions } = await setupQuizWithQuestions(admin, student, subject, [
+      { questionType: 'mcq_single', options: ['A', 'B'], correctAnswer: 0 },
+    ]);
+
+    const startRes = await request(app)
+      .post(`/api/quizzes/${quiz._id}/start`)
+      .set('Authorization', `Bearer ${student.token}`);
+    const attemptId = startRes.body.attemptId;
+
+    // Submit a wrong answer but try to spoof isCorrect: true and a fake snapshot
+    await request(app)
+      .put(`/api/quizzes/${quiz._id}/attempt/${attemptId}/answer`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({
+        questionIndex: 0,
+        questionId: questions[0]._id,
+        selectedAnswer: 1, // wrong (correct is 0)
+        isCorrect: true,
+        metadataSnapshot: { difficulty: 'hard', questionType: 'numerical' },
+      })
+      .expect(200);
+
+    await request(app)
+      .post(`/api/quizzes/${quiz._id}/attempt/${attemptId}/submit`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({});
+
+    const attemptRes = await request(app)
+      .get(`/api/quizzes/attempt/${attemptId}`)
+      .set('Authorization', `Bearer ${student.token}`);
+
+    const answer = attemptRes.body.answers[0];
+    expect(answer.isCorrect).toBe(false); // server-graded truth, not the spoofed value
+    expect(answer.metadataSnapshot.difficulty).toBe('medium'); // real value from QuestionBank
+    expect(answer.metadataSnapshot.questionType).toBe('mcq_single');
+  });
+
+  it('rejects a mismatched client-supplied questionId', async () => {
+    const { quiz, questions } = await setupQuizWithQuestions(admin, student, subject, [
+      { questionType: 'mcq_single', options: ['A', 'B'], correctAnswer: 0 },
+      { questionType: 'mcq_single', options: ['A', 'B'], correctAnswer: 1 },
+    ]);
+
+    const startRes = await request(app)
+      .post(`/api/quizzes/${quiz._id}/start`)
+      .set('Authorization', `Bearer ${student.token}`);
+    const attemptId = startRes.body.attemptId;
+
+    const res = await request(app)
+      .put(`/api/quizzes/${quiz._id}/attempt/${attemptId}/answer`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({ questionIndex: 0, questionId: questions[1]._id, selectedAnswer: 0 });
+
+    expect(res.status).toBe(400);
+  });
+
+  it('preserves the snapshot even after the QuestionBank question is later reclassified', async () => {
+    const { quiz, questions } = await setupQuizWithQuestions(admin, student, subject, [
+      { questionType: 'mcq_single', options: ['A', 'B'], correctAnswer: 0, subtopicName: 'Original Subtopic' },
+    ]);
+
+    const startRes = await request(app)
+      .post(`/api/quizzes/${quiz._id}/start`)
+      .set('Authorization', `Bearer ${student.token}`);
+    const attemptId = startRes.body.attemptId;
+
+    await request(app)
+      .put(`/api/quizzes/${quiz._id}/attempt/${attemptId}/answer`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({ questionIndex: 0, questionId: questions[0]._id, selectedAnswer: 0 });
+
+    await request(app)
+      .post(`/api/quizzes/${quiz._id}/attempt/${attemptId}/submit`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({});
+
+    // Admin reclassifies the question's Subtopic after the fact.
+    await request(app)
+      .put(`/api/question-bank/${questions[0]._id}`)
+      .set('Authorization', `Bearer ${admin.token}`)
+      .send({ subtopicName: 'Reclassified Subtopic' })
+      .expect(200);
+
+    const attemptRes = await request(app)
+      .get(`/api/quizzes/attempt/${attemptId}`)
+      .set('Authorization', `Bearer ${student.token}`);
+
+    expect(attemptRes.body.answers[0].metadataSnapshot.subtopicName).toBe('Original Subtopic');
+
+    const liveQuestion = await QuestionBank.findById(questions[0]._id);
+    expect(liveQuestion.subtopicName).toBe('Reclassified Subtopic');
+  });
+
+  it('rejects a student viewing another student\'s attempt', async () => {
+    const { quiz } = await setupQuizWithQuestions(admin, student, subject, [
+      { questionType: 'mcq_single', options: ['A', 'B'], correctAnswer: 0 },
+    ]);
+
+    const startRes = await request(app)
+      .post(`/api/quizzes/${quiz._id}/start`)
+      .set('Authorization', `Bearer ${student.token}`);
+    const attemptId = startRes.body.attemptId;
+
+    const res = await request(app)
+      .get(`/api/quizzes/attempt/${attemptId}`)
+      .set('Authorization', `Bearer ${otherStudent.token}`);
+
+    expect(res.status).toBe(403);
+  });
+
+  it('allows an admin and an assigned mentor to view a student attempt, but not an unassigned mentor', async () => {
+    const { quiz } = await setupQuizWithQuestions(admin, student, subject, [
+      { questionType: 'mcq_single', options: ['A', 'B'], correctAnswer: 0 },
+    ]);
+
+    const startRes = await request(app)
+      .post(`/api/quizzes/${quiz._id}/start`)
+      .set('Authorization', `Bearer ${student.token}`);
+    const attemptId = startRes.body.attemptId;
+
+    const assignedMentor = await createUser({ role: 'mentor' });
+    const unassignedMentor = await createUser({ role: 'mentor' });
+    await MentorStudentAssignment.create({
+      mentor: assignedMentor.user._id,
+      student: student.user._id,
+      isActive: true,
+      assignedBy: admin.user._id,
+    });
+
+    const adminRes = await request(app)
+      .get(`/api/quizzes/attempt/${attemptId}`)
+      .set('Authorization', `Bearer ${admin.token}`);
+    expect(adminRes.status).toBe(200);
+
+    const assignedRes = await request(app)
+      .get(`/api/quizzes/attempt/${attemptId}`)
+      .set('Authorization', `Bearer ${assignedMentor.token}`);
+    expect(assignedRes.status).toBe(200);
+
+    const unassignedRes = await request(app)
+      .get(`/api/quizzes/attempt/${attemptId}`)
+      .set('Authorization', `Bearer ${unassignedMentor.token}`);
+    expect(unassignedRes.status).toBe(403);
+  });
+
+  it('strips correctAnswer/explanation from the student-facing quiz payload', async () => {
+    const { quiz } = await setupQuizWithQuestions(admin, student, subject, [
+      { questionType: 'mcq_single', options: ['A', 'B'], correctAnswer: 0, explanation: 'Because reasons' },
+    ]);
+
+    const res = await request(app)
+      .get(`/api/quizzes/${quiz._id}`)
+      .set('Authorization', `Bearer ${student.token}`);
+
+    expect(res.status).toBe(200);
+    const q = res.body.questions[0];
+    expect(q.correctAnswer).toBeUndefined();
+    expect(q.explanation).toBeUndefined();
+  });
+
+  it('computes a 7-dimension performance breakdown for the student analytics endpoint', async () => {
+    const { quiz } = await setupQuizWithQuestions(admin, student, subject, [
+      { questionType: 'mcq_single', options: ['A', 'B'], correctAnswer: 0, difficulty: 'easy', tags: ['high-yield'] },
+      { questionType: 'mcq_single', options: ['A', 'B'], correctAnswer: 1, difficulty: 'hard', tags: ['high-yield'] },
+    ]);
+
+    const startRes = await request(app)
+      .post(`/api/quizzes/${quiz._id}/start`)
+      .set('Authorization', `Bearer ${student.token}`);
+    const attemptId = startRes.body.attemptId;
+
+    await request(app)
+      .put(`/api/quizzes/${quiz._id}/attempt/${attemptId}/answer`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({ questionIndex: 0, selectedAnswer: 0 }); // correct
+    await request(app)
+      .put(`/api/quizzes/${quiz._id}/attempt/${attemptId}/answer`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({ questionIndex: 1, selectedAnswer: 0 }); // incorrect (correct is 1)
+
+    await request(app)
+      .post(`/api/quizzes/${quiz._id}/attempt/${attemptId}/submit`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({});
+
+    const res = await request(app)
+      .get(`/api/quizzes/analytics/student/${student.user._id}/performance`)
+      .set('Authorization', `Bearer ${admin.token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.overall.attempted).toBe(2);
+    expect(res.body.overall.correct).toBe(1);
+    expect(res.body.byDifficulty.find((b) => b.key === 'easy').correct).toBe(1);
+    expect(res.body.byDifficulty.find((b) => b.key === 'hard').correct).toBe(0);
+    expect(res.body.byTag.find((b) => b.key === 'high-yield').attempted).toBe(2);
+  });
+
+  it('rejects a spoofed studentId — a student cannot start/submit as another student', async () => {
+    const { quiz } = await setupQuizWithQuestions(admin, student, subject, [
+      { questionType: 'mcq_single', options: ['A', 'B'], correctAnswer: 0 },
+    ]);
+
+    // otherStudent is not assigned to this quiz, so starting it must fail —
+    // identity always comes from the JWT (req.user), never from the request body.
+    const res = await request(app)
+      .post(`/api/quizzes/${quiz._id}/start`)
+      .set('Authorization', `Bearer ${otherStudent.token}`)
+      .send({ studentId: student.user._id.toString() });
+
+    expect(res.status).toBe(403);
+  });
+});

@@ -1,7 +1,7 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from 'axios';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getApiBaseURL } from './config';
-import { isRetryableError, normalizeApiError } from './errors';
+import { isExpectedApiFailure, isRetryableError, normalizeApiError } from './errors';
 import { apiLogger } from './logger';
 
 const REQUEST_TIMEOUT_MS = 30000;
@@ -41,7 +41,6 @@ const shouldRetryRequest = (error: AxiosError, config?: RetryableAxiosRequestCon
 };
 
 export const api = axios.create({
-  baseURL: getApiBaseURL(),
   timeout: REQUEST_TIMEOUT_MS,
   headers: {
     'Content-Type': 'application/json',
@@ -52,6 +51,7 @@ export const api = axios.create({
 api.interceptors.request.use(
   async (config) => {
     const retryConfig = config as RetryableAxiosRequestConfig;
+    retryConfig.baseURL = getApiBaseURL();
     retryConfig._requestId = retryConfig._requestId || createRequestId();
     retryConfig._startTime = Date.now();
 
@@ -100,7 +100,8 @@ api.interceptors.response.use(
         (config.method || 'get').toUpperCase(),
         config._requestId || 'unknown',
         normalized.code,
-        durationMs
+        durationMs,
+        isExpectedApiFailure(normalized.code)
       );
     }
 

@@ -25,7 +25,7 @@ import {
   X
 } from 'lucide-react-native';
 import * as DocumentPicker from 'expo-document-picker';
-import { api } from '@/services/api';
+import { api, normalizeApiError } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
 import DateTimePicker from '@react-native-community/datetimepicker';
 
@@ -237,11 +237,24 @@ export default function ImportQuiz() {
       setImportStats(response.data.stats);
       setPreviewQuestions(response.data.previewQuestions || []);
       setShowPreview(true);
-    } catch (error: any) {
-      console.error('Import error:', error);
-      const msg = error.response?.data?.message || 'Failed to import quiz';
-      const details = error.response?.data?.errors?.join('\n') || '';
-      Alert.alert('Import Failed', `${msg}\n${details}`);
+    } catch (error: unknown) {
+      const normalized = normalizeApiError(error);
+      const axiosData = (error as { response?: { data?: { code?: string; errors?: string[] } } })?.response?.data;
+      const validationErrors = axiosData?.errors;
+      const isImportValidation = axiosData?.code === 'IMPORT_VALIDATION_ERROR' || normalized.code === 'VALIDATION_ERROR';
+
+      if (isImportValidation && validationErrors?.length) {
+        const formatted = validationErrors
+          .map((entry) => entry.replace(/^Row (\d+): /, 'Row $1\n• '))
+          .join('\n\n');
+        Alert.alert('Excel validation failed', formatted);
+      } else {
+        Alert.alert('Import Failed', normalized.userMessage);
+      }
+
+      if (!isImportValidation) {
+        console.error('Import error:', normalized.code, normalized.userMessage);
+      }
     } finally {
       setLoading(false);
       setProgressMessage('');

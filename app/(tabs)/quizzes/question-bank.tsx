@@ -12,7 +12,6 @@ import {
   ActivityIndicator,
   Platform,
   StatusBar,
-  FlatList,
   Image,
   Animated,
   Pressable
@@ -26,59 +25,41 @@ import {
   X,
   Check,
   Search,
-  Filter,
   Trash2,
   Edit,
   Image as ImageIcon,
   Eye,
   ArrowLeft,
-  ChevronRight
+  PlusCircle,
+  MinusCircle
 } from 'lucide-react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
-import { api } from '@/services/api';
+import { api, normalizeApiError } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from '@/utils/haptics';
+import {
+  Question,
+  QuestionFormState,
+  QuestionType,
+  Difficulty,
+  QUESTION_TYPES,
+  QUESTION_TYPE_LABELS,
+  DIFFICULTY_LEVELS,
+  DIFFICULTY_LABELS,
+  DEFAULT_ASSERTION_REASON_OPTIONS,
+  emptyQuestionFormState,
+} from '@/types/question';
 
 interface Subject {
   _id: string;
   name: string;
 }
 
-interface Question {
-  _id: string;
-  qid?: string;
-  subject: { _id: string; name: string };
-  topicName?: string;
-  question: string;
-  questionImage?: string;
-  options: string[];
-  optionImages?: string[];
-  correctAnswer?: number;
-  explanation?: string;
-  explanationImage?: string;
-  marks: number;
-  positiveMarks?: number | string; // Allow string for editing state
-  negativeMarks?: number | string; // Allow string for editing state
-  tags?: string[];
-}
-
-interface QuestionFormState {
-  subject: string;
-  topicName: string;
-  question: string;
-  questionImage: string;
-  options: string[];
-  optionImages: string[];
-  correctAnswer: number;
-  explanation: string;
-  explanationImage: string;
-  marks: number;
-  positiveMarks: number | string;
-  negativeMarks: number | string;
-  tags?: string[];
-}
+const getDifficultyBadgeStyle = (difficulty: string) => ({
+  backgroundColor: difficulty === 'hard' ? '#FEF2F2' : difficulty === 'medium' ? '#FFFBEB' : '#ECFDF5',
+});
 
 export default function QuestionBankManagement() {
   const { user } = useAuth();
@@ -92,31 +73,21 @@ export default function QuestionBankManagement() {
   // Filters
   const [selectedSubject, setSelectedSubject] = useState<string>('');
   const [searchQuery, setSearchQuery] = useState('');
+  const [filterQuestionType, setFilterQuestionType] = useState<QuestionType | ''>('');
+  const [filterDifficulty, setFilterDifficulty] = useState<Difficulty | ''>('');
 
   // Add/Edit Question Modal
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingQuestionId, setEditingQuestionId] = useState<string | null>(null);
 
-  const [newQuestion, setNewQuestion] = useState<QuestionFormState>({
-    subject: '',
-    topicName: '',
-    question: '',
-    questionImage: '',
-    options: ['', '', '', ''],
-    optionImages: ['', '', '', ''],
-    correctAnswer: 0,
-    explanation: '',
-    explanationImage: '',
-    marks: 1, // Keep for backward compatibility
-    positiveMarks: 4,
-    negativeMarks: -1,
-    tags: []
-  });
+  const [newQuestion, setNewQuestion] = useState<QuestionFormState>(emptyQuestionFormState());
   const [saving, setSaving] = useState(false);
   const [imageUploading, setImageUploading] = useState(false);
 
-  // Subject dropdown
+  // Dropdowns
   const [showSubjectDropdown, setShowSubjectDropdown] = useState(false);
+  const [showTypeDropdown, setShowTypeDropdown] = useState(false);
+  const [showDifficultyDropdown, setShowDifficultyDropdown] = useState(false);
 
   // Stats
   const [stats, setStats] = useState<{ total: number; bySubject: any[] }>({ total: 0, bySubject: [] });
@@ -127,7 +98,6 @@ export default function QuestionBankManagement() {
   // Animation Refs
   const headerOpacity = useRef(new Animated.Value(0)).current;
   const contentOpacity = useRef(new Animated.Value(0)).current;
-  const scrollY = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     fetchSubjects();
@@ -137,7 +107,7 @@ export default function QuestionBankManagement() {
 
   useEffect(() => {
     fetchQuestions();
-  }, [selectedSubject, searchQuery]);
+  }, [selectedSubject, searchQuery, filterQuestionType, filterDifficulty]);
 
   const runEntryAnimations = () => {
     Animated.timing(headerOpacity, {
@@ -163,11 +133,13 @@ export default function QuestionBankManagement() {
       const params: any = {};
       if (selectedSubject) params.subject = selectedSubject;
       if (searchQuery) params.search = searchQuery;
+      if (filterQuestionType) params.questionType = filterQuestionType;
+      if (filterDifficulty) params.difficulty = filterDifficulty;
 
+      // Server-side filtering: the full bank is never fetched and filtered client-side.
       const response = await api.get('/question-bank', { params });
       setQuestions(response.data);
 
-      // Fade in content
       Animated.timing(contentOpacity, {
         toValue: 1,
         duration: 400,
@@ -247,37 +219,198 @@ export default function QuestionBankManagement() {
     }
   };
 
+  // ---- Type-specific option list helpers ----
+  const addOption = () => {
+    setNewQuestion(prev => (prev.options.length >= 6 ? prev : {
+      ...prev,
+      options: [...prev.options, ''],
+      optionImages: [...prev.optionImages, ''],
+    }));
+  };
+
+  const removeOption = (idx: number) => {
+    setNewQuestion(prev => {
+      if (prev.options.length <= 2) return prev;
+      const options = prev.options.filter((_, i) => i !== idx);
+      const optionImages = prev.optionImages.filter((_, i) => i !== idx);
+      const correctAnswer = prev.correctAnswer === idx ? 0 : prev.correctAnswer > idx ? prev.correctAnswer - 1 : prev.correctAnswer;
+      const correctAnswers = prev.correctAnswers
+        .filter(i => i !== idx)
+        .map(i => (i > idx ? i - 1 : i));
+      return { ...prev, options, optionImages, correctAnswer, correctAnswers };
+    });
+  };
+
+  const toggleMultipleCorrect = (idx: number) => {
+    setNewQuestion(prev => {
+      const has = prev.correctAnswers.includes(idx);
+      const correctAnswers = has ? prev.correctAnswers.filter(i => i !== idx) : [...prev.correctAnswers, idx];
+      return { ...prev, correctAnswers };
+    });
+  };
+
+  const addColumnEntry = (column: 'columnA' | 'columnB') => {
+    setNewQuestion(prev => (prev[column].length >= 6 ? prev : { ...prev, [column]: [...prev[column], ''] }));
+  };
+
+  const removeColumnEntry = (column: 'columnA' | 'columnB', idx: number) => {
+    setNewQuestion(prev => {
+      if (prev[column].length <= 2) return prev;
+      const updated = prev[column].filter((_, i) => i !== idx);
+      let correctMapping = prev.correctMapping;
+      if (column === 'columnA') {
+        correctMapping = {};
+        Object.entries(prev.correctMapping).forEach(([k, v]) => {
+          const ki = Number(k);
+          if (ki === idx) return;
+          correctMapping[String(ki > idx ? ki - 1 : ki)] = v;
+        });
+      } else {
+        correctMapping = {};
+        Object.entries(prev.correctMapping).forEach(([k, v]) => {
+          const vi = Number(v);
+          if (vi === idx) return; // drop mapping pointing at removed column B entry
+          correctMapping[k] = String(vi > idx ? vi - 1 : vi);
+        });
+      }
+      return { ...prev, [column]: updated, correctMapping };
+    });
+  };
+
+  const setMapping = (aIndex: number, bIndex: number) => {
+    setNewQuestion(prev => ({ ...prev, correctMapping: { ...prev.correctMapping, [String(aIndex)]: String(bIndex) } }));
+  };
+
+  const onQuestionTypeChange = (type: QuestionType) => {
+    setNewQuestion(prev => {
+      const next: QuestionFormState = { ...prev, questionType: type };
+      // Seed sensible defaults for the newly selected type without wiping unrelated metadata (subject/topic/subtopic/system/tags/difficulty are untouched).
+      if (type === 'assertion_reason' && (!prev.assertion && !prev.reason) && prev.options.every(o => !o.trim())) {
+        next.options = [...DEFAULT_ASSERTION_REASON_OPTIONS];
+        next.optionImages = ['', '', '', ''];
+      }
+      if ((type === 'mcq_single' || type === 'image_based' || type === 'multiple_correct') && next.options.length < 2) {
+        next.options = ['', '', '', ''];
+        next.optionImages = ['', '', '', ''];
+      }
+      if (type === 'match_the_following' && (next.columnA.length < 2 || next.columnB.length < 2)) {
+        next.columnA = next.columnA.length >= 2 ? next.columnA : ['', ''];
+        next.columnB = next.columnB.length >= 2 ? next.columnB : ['', ''];
+      }
+      return next;
+    });
+    setShowTypeDropdown(false);
+  };
+
+  const validateForm = (): string | null => {
+    if (!newQuestion.subject) return 'Please select a Subject';
+    if (!newQuestion.topicName.trim()) return 'Topic is required';
+    if (!newQuestion.subtopicName.trim()) return 'Subtopic is required';
+    if (!newQuestion.system.trim()) return 'System is required';
+    if (!newQuestion.difficulty) return 'Difficulty is required';
+    if (!newQuestion.question.trim() && !newQuestion.questionImage) return 'Please enter the question or upload an image';
+
+    switch (newQuestion.questionType) {
+      case 'mcq_single': {
+        const valid = newQuestion.options.filter(o => o.trim()).length;
+        if (valid < 2) return 'Please provide at least 2 options';
+        break;
+      }
+      case 'image_based': {
+        if (!newQuestion.questionImage) return 'Image-Based questions require a question image';
+        const valid = newQuestion.options.filter(o => o.trim()).length;
+        if (valid < 2) return 'Please provide at least 2 options';
+        break;
+      }
+      case 'multiple_correct': {
+        const valid = newQuestion.options.filter(o => o.trim()).length;
+        if (valid < 2) return 'Please provide at least 2 options';
+        if (newQuestion.correctAnswers.length === 0) return 'Select at least one correct option';
+        break;
+      }
+      case 'assertion_reason': {
+        if (!newQuestion.assertion.trim()) return 'Assertion text is required';
+        if (!newQuestion.reason.trim()) return 'Reason text is required';
+        break;
+      }
+      case 'match_the_following': {
+        const a = newQuestion.columnA.filter(v => v.trim()).length;
+        const b = newQuestion.columnB.filter(v => v.trim()).length;
+        if (a < 2) return 'Column A needs at least 2 entries';
+        if (b < 2) return 'Column B needs at least 2 entries';
+        if (Object.keys(newQuestion.correctMapping).length !== newQuestion.columnA.length) {
+          return 'Every Column A entry must be matched to a Column B entry';
+        }
+        break;
+      }
+      case 'numerical': {
+        if (newQuestion.correctNumerical.trim() === '' || Number.isNaN(Number(newQuestion.correctNumerical))) {
+          return 'Please provide a valid numerical answer';
+        }
+        break;
+      }
+    }
+    return null;
+  };
+
+  const buildPayload = () => {
+    const base: any = {
+      subject: newQuestion.subject,
+      topicName: newQuestion.topicName.trim(),
+      subtopicName: newQuestion.subtopicName.trim(),
+      system: newQuestion.system.trim(),
+      questionType: newQuestion.questionType,
+      difficulty: newQuestion.difficulty,
+      tags: newQuestion.tags,
+      question: newQuestion.question.trim(),
+      questionImage: newQuestion.questionImage || undefined,
+      explanation: newQuestion.explanation,
+      explanationImage: newQuestion.explanationImage || undefined,
+      positiveMarks: parseFloat(newQuestion.positiveMarks?.toString() || '0') || 0,
+      negativeMarks: parseFloat(newQuestion.negativeMarks?.toString() || '0') || 0,
+      marks: parseFloat(newQuestion.positiveMarks?.toString() || '0') || 0,
+    };
+
+    switch (newQuestion.questionType) {
+      case 'mcq_single':
+      case 'image_based':
+        base.options = newQuestion.options;
+        base.optionImages = newQuestion.optionImages;
+        base.correctAnswer = newQuestion.correctAnswer;
+        break;
+      case 'multiple_correct':
+        base.options = newQuestion.options;
+        base.optionImages = newQuestion.optionImages;
+        base.correctAnswer = newQuestion.correctAnswers;
+        break;
+      case 'assertion_reason':
+        base.assertion = newQuestion.assertion.trim();
+        base.reason = newQuestion.reason.trim();
+        base.options = newQuestion.options;
+        base.correctAnswer = newQuestion.correctAnswer;
+        break;
+      case 'match_the_following':
+        base.columnA = newQuestion.columnA.filter(v => v.trim());
+        base.columnB = newQuestion.columnB.filter(v => v.trim());
+        base.correctAnswer = newQuestion.correctMapping;
+        break;
+      case 'numerical':
+        base.correctAnswer = Number(newQuestion.correctNumerical);
+        break;
+    }
+    return base;
+  };
+
   const handleAddQuestion = async () => {
-    if (!newQuestion.subject) {
-      Alert.alert('Error', 'Please select a subject');
-      return;
-    }
-    if (!newQuestion.question.trim() && !newQuestion.questionImage) {
-      Alert.alert('Error', 'Please enter the question or upload an image');
-      return;
-    }
-
-    // Validate options: need at least 2 options matching either text or image
-    const validOptionsCount = newQuestion.options.reduce((acc, opt, idx) => {
-      const hasText = !!opt.trim();
-      const hasImage = !!newQuestion.optionImages[idx];
-      return acc + (hasText || hasImage ? 1 : 0);
-    }, 0);
-
-    if (validOptionsCount < 2) {
-      Alert.alert('Error', 'Please provide at least 2 options (text or image)');
+    const error = validateForm();
+    if (error) {
+      Alert.alert('Validation Error', error);
       return;
     }
 
     setSaving(true);
     try {
-      const payload = {
-        ...newQuestion,
-        positiveMarks: parseFloat(newQuestion.positiveMarks?.toString() || '0') || 0,
-        negativeMarks: parseFloat(newQuestion.negativeMarks?.toString() || '0') || 0,
-        // Ensure marks syncs with positiveMarks
-        marks: parseFloat(newQuestion.positiveMarks?.toString() || '0') || 0,
-      };
+      const payload = buildPayload();
 
       if (editingQuestionId) {
         await api.put(`/question-bank/${editingQuestionId}`, payload);
@@ -292,14 +425,17 @@ export default function QuestionBankManagement() {
       fetchQuestions();
       fetchStats();
     } catch (error: any) {
-      Alert.alert('Error', error.response?.data?.message || 'Failed to save question');
+      const errors = error.response?.data?.errors;
+      const message = Array.isArray(errors) && errors.length > 0
+        ? errors.join('\n')
+        : (error.response?.data?.message || 'Failed to save question');
+      Alert.alert('Error', message);
     } finally {
       setSaving(false);
     }
   };
 
   const handleEditQuestion = (q: Question) => {
-    // Check if subject exists
     if (!q.subject || !q.subject._id) {
       Alert.alert(
         'Cannot Edit',
@@ -309,44 +445,55 @@ export default function QuestionBankManagement() {
       return;
     }
 
-    setEditingQuestionId(q._id);
-    setNewQuestion({
+    const questionType = q.questionType || 'mcq_single';
+    const baseOptions = q.options && q.options.length >= 2 ? q.options : ['', '', '', ''];
+    const baseOptionImages = q.optionImages && q.optionImages.length ? q.optionImages : baseOptions.map(() => '');
+
+    const form: QuestionFormState = {
+      ...emptyQuestionFormState(),
       subject: q.subject._id,
       topicName: q.topicName || '',
+      subtopicName: q.subtopicName || '',
+      system: q.system || '',
+      questionType,
+      tags: q.tags || [],
+      difficulty: q.difficulty || 'medium',
       question: q.question,
       questionImage: q.questionImage || '',
-      options: q.options.concat(['', '', '', '']).slice(0, 4),
-      optionImages: (q.optionImages || []).concat(['', '', '', '']).slice(0, 4),
-      correctAnswer: 0,
-      explanation: (q as any).explanation || '',
-      explanationImage: (q as any).explanationImage || '',
-      marks: q.marks,
-      positiveMarks: q.positiveMarks !== undefined ? q.positiveMarks : q.marks,
+      options: baseOptions,
+      optionImages: baseOptionImages,
+      explanation: q.explanation || '',
+      explanationImage: q.explanationImage || '',
+      marks: q.marks || 4,
+      positiveMarks: q.positiveMarks !== undefined ? q.positiveMarks : (q.marks || 4),
       negativeMarks: q.negativeMarks !== undefined ? q.negativeMarks : 0,
-      tags: q.tags || []
-    });
-    if ((q as any).correctAnswer !== undefined) {
-      setNewQuestion(prev => ({ ...prev, correctAnswer: (q as any).correctAnswer }));
+      assertion: q.assertion || '',
+      reason: q.reason || '',
+      columnA: q.columnA && q.columnA.length >= 2 ? q.columnA : ['', ''],
+      columnB: q.columnB && q.columnB.length >= 2 ? q.columnB : ['', ''],
+      correctMapping: {},
+      correctAnswer: 0,
+      correctAnswers: [],
+      correctNumerical: '',
+    };
+
+    if (questionType === 'multiple_correct' && Array.isArray(q.correctAnswer)) {
+      form.correctAnswers = q.correctAnswer as number[];
+    } else if (questionType === 'match_the_following' && q.correctAnswer && typeof q.correctAnswer === 'object') {
+      form.correctMapping = q.correctAnswer as Record<string, string>;
+    } else if (questionType === 'numerical') {
+      form.correctNumerical = q.correctAnswer !== undefined ? String(q.correctAnswer) : '';
+    } else if (typeof q.correctAnswer === 'number') {
+      form.correctAnswer = q.correctAnswer;
     }
+
+    setEditingQuestionId(q._id);
+    setNewQuestion(form);
     setShowAddModal(true);
   };
 
   const resetNewQuestion = () => {
-    setNewQuestion({
-      subject: '',
-      topicName: '',
-      question: '',
-      questionImage: '',
-      options: ['', '', '', ''],
-      optionImages: ['', '', '', ''],
-      correctAnswer: 0,
-      explanation: '',
-      explanationImage: '',
-      marks: 1,
-      positiveMarks: 4,
-      negativeMarks: -1,
-      tags: []
-    });
+    setNewQuestion(emptyQuestionFormState());
     setEditingQuestionId(null);
   };
 
@@ -396,14 +543,34 @@ export default function QuestionBankManagement() {
         data: base64
       });
 
+      const errorPreview = Array.isArray(apiResponse.data?.errors) && apiResponse.data.errors.length > 0
+        ? `\n\n${apiResponse.data.errors.slice(0, 5).join('\n')}${apiResponse.data.errors.length > 5 ? '\n...' : ''}`
+        : '';
+
       Alert.alert(
-        'Success',
-        `Imported ${apiResponse.data.count} questions!`,
+        'Import Complete',
+        `Imported ${apiResponse.data.count} questions.${errorPreview}`,
         [{ text: 'OK', onPress: () => { fetchQuestions(); fetchStats(); fetchSubjects(); } }]
       );
-    } catch (error: any) {
-      console.error('Import error:', error);
-      Alert.alert('Error', 'Failed to import questions');
+    } catch (error: unknown) {
+      const normalized = normalizeApiError(error);
+      const axiosData = (error as { response?: { data?: { code?: string; errors?: string[] } } })?.response?.data;
+      const validationErrors = axiosData?.errors;
+      const isImportValidation = axiosData?.code === 'IMPORT_VALIDATION_ERROR' || normalized.code === 'VALIDATION_ERROR';
+
+      if (isImportValidation && validationErrors?.length) {
+        const formatted = validationErrors
+          .slice(0, 8)
+          .map((entry) => entry.replace(/^Row (\d+): /, 'Row $1\n• '))
+          .join('\n\n');
+        Alert.alert('Excel validation failed', formatted);
+      } else {
+        Alert.alert('Import Failed', normalized.userMessage);
+      }
+
+      if (!isImportValidation) {
+        console.error('Import error:', normalized.code, normalized.userMessage);
+      }
     } finally {
       setUploading(false);
     }
@@ -437,8 +604,9 @@ export default function QuestionBankManagement() {
     <View style={[styles.skeleton, style]} />
   );
 
-  const renderQuestion = ({ item, index }: { item: Question; index: number }) => (
+  const renderQuestionCard = (item: Question, index: number) => (
     <Pressable
+      key={item._id}
       style={({ pressed }) => [
         styles.questionCard,
         pressed && styles.questionCardPressed
@@ -461,7 +629,26 @@ export default function QuestionBankManagement() {
               <Text style={styles.topicBadgeText}>{item.topicName}</Text>
             </View>
           )}
+          {item.subtopicName && (
+            <View style={[styles.badgeContainer, styles.subtopicBadge]}>
+              <Text style={styles.subtopicBadgeText}>{item.subtopicName}</Text>
+            </View>
+          )}
+          {item.system && (
+            <View style={[styles.badgeContainer, styles.systemBadge]}>
+              <Text style={styles.systemBadgeText}>{item.system}</Text>
+            </View>
+          )}
+          {item.difficulty && (
+            <View style={[styles.badgeContainer, getDifficultyBadgeStyle(item.difficulty)]}>
+              <Text style={styles.difficultyBadgeText}>{DIFFICULTY_LABELS[item.difficulty]}</Text>
+            </View>
+          )}
         </View>
+      </View>
+
+      <View style={styles.typeRow}>
+        <Text style={styles.typeRowText}>{QUESTION_TYPE_LABELS[item.questionType] || 'MCQ — Single Correct'}</Text>
       </View>
 
       <Text style={styles.questionText} numberOfLines={2}>{item.question}</Text>
@@ -475,7 +662,9 @@ export default function QuestionBankManagement() {
 
       <View style={styles.cardFooter}>
         <View style={styles.optionsPreview}>
-          <Text style={styles.optionCount}>{item.options.length} Options</Text>
+          <Text style={styles.optionCount}>
+            {item.tags && item.tags.length > 0 ? item.tags.join(', ') : 'No tags'}
+          </Text>
         </View>
 
         <View style={styles.actionButtons}>
@@ -509,6 +698,215 @@ export default function QuestionBankManagement() {
       </SafeAreaView>
     );
   }
+
+  const renderOptionsEditor = (mode: 'single' | 'multiple') => (
+    <>
+      <View style={styles.rowBetween}>
+        <Text style={styles.label}>
+          {mode === 'multiple' ? 'Options (Check all correct answers) *' : 'Options (Select correct answer) *'}
+        </Text>
+        {newQuestion.options.length < 6 && (
+          <TouchableOpacity onPress={addOption} style={styles.addOptionBtn}>
+            <PlusCircle color="#01b4ae" size={20} />
+          </TouchableOpacity>
+        )}
+      </View>
+      {newQuestion.options.map((opt, idx) => (
+        <View key={idx} style={styles.optionRow}>
+          <TouchableOpacity
+            style={mode === 'multiple'
+              ? [styles.checkBtn, newQuestion.correctAnswers.includes(idx) && styles.checkBtnSelected]
+              : [styles.radioBtn, newQuestion.correctAnswer === idx && styles.radioBtnSelected]}
+            onPress={() => mode === 'multiple' ? toggleMultipleCorrect(idx) : setNewQuestion(prev => ({ ...prev, correctAnswer: idx }))}
+          >
+            {mode === 'multiple'
+              ? (newQuestion.correctAnswers.includes(idx) && <Check color="#FFF" size={14} />)
+              : (newQuestion.correctAnswer === idx && <View style={styles.radioInner} />)}
+          </TouchableOpacity>
+          <View style={{ flex: 1, gap: 8 }}>
+            <TextInput
+              style={styles.optionInput}
+              placeholder={`Option ${idx + 1}`}
+              value={opt}
+              onChangeText={text => {
+                const newOpts = [...newQuestion.options];
+                newOpts[idx] = text;
+                setNewQuestion(prev => ({ ...prev, options: newOpts }));
+              }}
+            />
+            <View style={styles.rowBetween}>
+              <TouchableOpacity
+                onPress={() => handlePickImage('option', idx)}
+                style={styles.miniImageLink}
+              >
+                <ImageIcon size={14} color="#01b4ae" />
+                <Text style={styles.miniImageLinkText}>
+                  {newQuestion.optionImages[idx] ? 'Change Image' : 'Add Image'}
+                </Text>
+              </TouchableOpacity>
+              {newQuestion.options.length > 2 && (
+                <TouchableOpacity onPress={() => removeOption(idx)}>
+                  <MinusCircle color="#EF4444" size={18} />
+                </TouchableOpacity>
+              )}
+            </View>
+            {newQuestion.optionImages[idx] ? (
+              <View style={styles.miniImagePreview}>
+                <Image source={{ uri: newQuestion.optionImages[idx] }} style={{ width: 60, height: 60, borderRadius: 4 }} />
+                <TouchableOpacity onPress={() => {
+                  const newImgs = [...newQuestion.optionImages];
+                  newImgs[idx] = '';
+                  setNewQuestion(prev => ({ ...prev, optionImages: newImgs }));
+                }}>
+                  <Text style={{ color: '#EF4444', fontSize: 10, marginTop: 2 }}>Remove</Text>
+                </TouchableOpacity>
+              </View>
+            ) : null}
+          </View>
+        </View>
+      ))}
+    </>
+  );
+
+  const renderTypeSpecificEditor = () => {
+    switch (newQuestion.questionType) {
+      case 'mcq_single':
+        return renderOptionsEditor('single');
+      case 'multiple_correct':
+        return renderOptionsEditor('multiple');
+      case 'image_based':
+        return (
+          <>
+            <Text style={styles.helperText}>Image-Based questions require a question image (below).</Text>
+            {renderOptionsEditor('single')}
+          </>
+        );
+      case 'assertion_reason':
+        return (
+          <>
+            <Text style={styles.label}>Assertion *</Text>
+            <TextInput
+              style={[styles.input, styles.textArea]}
+              placeholder="Enter the assertion statement..."
+              multiline
+              value={newQuestion.assertion}
+              onChangeText={text => setNewQuestion(prev => ({ ...prev, assertion: text }))}
+            />
+            <Text style={styles.label}>Reason *</Text>
+            <TextInput
+              style={[styles.input, styles.textArea]}
+              placeholder="Enter the reason statement..."
+              multiline
+              value={newQuestion.reason}
+              onChangeText={text => setNewQuestion(prev => ({ ...prev, reason: text }))}
+            />
+            {renderOptionsEditor('single')}
+          </>
+        );
+      case 'match_the_following':
+        return (
+          <>
+            <View style={styles.rowBetween}>
+              <Text style={styles.label}>Column A *</Text>
+              {newQuestion.columnA.length < 6 && (
+                <TouchableOpacity onPress={() => addColumnEntry('columnA')} style={styles.addOptionBtn}>
+                  <PlusCircle color="#01b4ae" size={20} />
+                </TouchableOpacity>
+              )}
+            </View>
+            {newQuestion.columnA.map((val, idx) => (
+              <View key={idx} style={styles.matchRow}>
+                <Text style={styles.matchIndex}>{idx + 1}.</Text>
+                <TextInput
+                  style={[styles.optionInput, { flex: 1 }]}
+                  placeholder={`Column A item ${idx + 1}`}
+                  value={val}
+                  onChangeText={text => {
+                    const columnA = [...newQuestion.columnA];
+                    columnA[idx] = text;
+                    setNewQuestion(prev => ({ ...prev, columnA }));
+                  }}
+                />
+                {newQuestion.columnA.length > 2 && (
+                  <TouchableOpacity onPress={() => removeColumnEntry('columnA', idx)}>
+                    <MinusCircle color="#EF4444" size={18} />
+                  </TouchableOpacity>
+                )}
+              </View>
+            ))}
+
+            <View style={styles.rowBetween}>
+              <Text style={styles.label}>Column B *</Text>
+              {newQuestion.columnB.length < 6 && (
+                <TouchableOpacity onPress={() => addColumnEntry('columnB')} style={styles.addOptionBtn}>
+                  <PlusCircle color="#01b4ae" size={20} />
+                </TouchableOpacity>
+              )}
+            </View>
+            {newQuestion.columnB.map((val, idx) => (
+              <View key={idx} style={styles.matchRow}>
+                <Text style={styles.matchIndex}>{String.fromCharCode(65 + idx)}.</Text>
+                <TextInput
+                  style={[styles.optionInput, { flex: 1 }]}
+                  placeholder={`Column B item ${String.fromCharCode(65 + idx)}`}
+                  value={val}
+                  onChangeText={text => {
+                    const columnB = [...newQuestion.columnB];
+                    columnB[idx] = text;
+                    setNewQuestion(prev => ({ ...prev, columnB }));
+                  }}
+                />
+                {newQuestion.columnB.length > 2 && (
+                  <TouchableOpacity onPress={() => removeColumnEntry('columnB', idx)}>
+                    <MinusCircle color="#EF4444" size={18} />
+                  </TouchableOpacity>
+                )}
+              </View>
+            ))}
+
+            <Text style={styles.label}>Correct Matching *</Text>
+            {newQuestion.columnA.map((val, aIdx) => (
+              <View key={aIdx} style={styles.mappingRow}>
+                <Text style={styles.mappingLabel} numberOfLines={1}>{aIdx + 1}. {val || '(empty)'}</Text>
+                <View style={styles.mappingChips}>
+                  {newQuestion.columnB.map((_, bIdx) => (
+                    <TouchableOpacity
+                      key={bIdx}
+                      style={[
+                        styles.mappingChip,
+                        newQuestion.correctMapping[String(aIdx)] === String(bIdx) && styles.mappingChipActive
+                      ]}
+                      onPress={() => setMapping(aIdx, bIdx)}
+                    >
+                      <Text style={[
+                        styles.mappingChipText,
+                        newQuestion.correctMapping[String(aIdx)] === String(bIdx) && styles.mappingChipTextActive
+                      ]}>{String.fromCharCode(65 + bIdx)}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+            ))}
+          </>
+        );
+      case 'numerical':
+        return (
+          <>
+            <Text style={styles.label}>Correct Numerical Answer *</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g., 42.5"
+              keyboardType="numeric"
+              value={newQuestion.correctNumerical}
+              onChangeText={text => setNewQuestion(prev => ({ ...prev, correctNumerical: text }))}
+            />
+            <Text style={styles.helperText}>Exact numeric match is required — no tolerance range is applied.</Text>
+          </>
+        );
+      default:
+        return null;
+    }
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -575,7 +973,7 @@ export default function QuestionBankManagement() {
           </View>
         </View>
 
-        {/* Categories / Stats */}
+        {/* Subject filter */}
         <View style={styles.statsListContainer}>
           <ScrollView
             horizontal
@@ -583,34 +981,59 @@ export default function QuestionBankManagement() {
             contentContainerStyle={styles.statsScrollContent}
           >
             <Pressable
-              style={[
-                styles.statChip,
-                selectedSubject === '' && styles.statChipActive
-              ]}
+              style={[styles.statChip, selectedSubject === '' && styles.statChipActive]}
               onPress={() => setSelectedSubject('')}
             >
-              <Text style={[
-                styles.statChipText,
-                selectedSubject === '' && styles.statChipTextActive
-              ]}>All</Text>
+              <Text style={[styles.statChipText, selectedSubject === '' && styles.statChipTextActive]}>All</Text>
             </Pressable>
 
             {stats.bySubject.map((stat, index) => (
               <Pressable
                 key={index}
-                style={[
-                  styles.statChip,
-                  selectedSubject === stat._id && styles.statChipActive
-                ]}
+                style={[styles.statChip, selectedSubject === stat._id && styles.statChipActive]}
                 onPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   setSelectedSubject(selectedSubject === stat._id ? '' : stat._id);
                 }}
               >
-                <Text style={[
-                  styles.statChipText,
-                  selectedSubject === stat._id && styles.statChipTextActive
-                ]}>{stat.subject} ({stat.count})</Text>
+                <Text style={[styles.statChipText, selectedSubject === stat._id && styles.statChipTextActive]}>
+                  {stat.subject} ({stat.count})
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+
+        {/* Question Type + Difficulty filters */}
+        <View style={styles.statsListContainer}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.statsScrollContent}>
+            <Pressable
+              style={[styles.statChip, styles.filterChip, filterQuestionType === '' && styles.statChipActive]}
+              onPress={() => setFilterQuestionType('')}
+            >
+              <Text style={[styles.statChipText, filterQuestionType === '' && styles.statChipTextActive]}>All Types</Text>
+            </Pressable>
+            {QUESTION_TYPES.map(type => (
+              <Pressable
+                key={type}
+                style={[styles.statChip, styles.filterChip, filterQuestionType === type && styles.statChipActive]}
+                onPress={() => setFilterQuestionType(filterQuestionType === type ? '' : type)}
+              >
+                <Text style={[styles.statChipText, filterQuestionType === type && styles.statChipTextActive]}>
+                  {QUESTION_TYPE_LABELS[type]}
+                </Text>
+              </Pressable>
+            ))}
+            <View style={styles.filterDivider} />
+            {DIFFICULTY_LEVELS.map(level => (
+              <Pressable
+                key={level}
+                style={[styles.statChip, styles.filterChip, filterDifficulty === level && styles.statChipActive]}
+                onPress={() => setFilterDifficulty(filterDifficulty === level ? '' : level)}
+              >
+                <Text style={[styles.statChipText, filterDifficulty === level && styles.statChipTextActive]}>
+                  {DIFFICULTY_LABELS[level]}
+                </Text>
               </Pressable>
             ))}
           </ScrollView>
@@ -632,14 +1055,12 @@ export default function QuestionBankManagement() {
             ))}
           </View>
         ) : (
-          <Animated.FlatList
-            data={questions}
-            renderItem={renderQuestion}
-            keyExtractor={item => item._id}
+          <Animated.ScrollView
             contentContainerStyle={styles.listContent}
             style={{ opacity: contentOpacity }}
             showsVerticalScrollIndicator={false}
-            ListEmptyComponent={
+          >
+            {questions.length === 0 ? (
               <View style={styles.emptyState}>
                 <View style={styles.emptyIconContainer}>
                   <BookOpen color="#01b4ae" size={32} />
@@ -647,8 +1068,10 @@ export default function QuestionBankManagement() {
                 <Text style={styles.emptyText}>No questions found</Text>
                 <Text style={styles.emptySubtext}>Try adjusting your filters or add a new question</Text>
               </View>
-            }
-          />
+            ) : (
+              questions.map((item, index) => renderQuestionCard(item, index))
+            )}
+          </Animated.ScrollView>
         )}
       </View>
 
@@ -672,12 +1095,16 @@ export default function QuestionBankManagement() {
             keyboardShouldPersistTaps="handled"
             nestedScrollEnabled={true}
           >
-            {/* Subject Dropdown */}
+            {/* ---- Question Classification ---- */}
+            <Text style={styles.sectionHeading}>Question Classification</Text>
+
             <Text style={styles.label}>Subject *</Text>
             <View style={{ zIndex: 3000, elevation: 5, overflow: 'visible' }}>
               <TouchableOpacity
                 style={styles.dropdownButton}
                 onPress={() => setShowSubjectDropdown(!showSubjectDropdown)}
+                accessibilityRole="button"
+                accessibilityLabel="Select subject"
               >
                 <Text style={newQuestion.subject ? styles.dropdownText : styles.placeholderText}>
                   {(Array.isArray(subjects) ? subjects : []).find(s => s._id === newQuestion.subject)?.name || 'Select Subject'}
@@ -693,7 +1120,7 @@ export default function QuestionBankManagement() {
                         key={subject._id}
                         style={styles.dropdownItem}
                         onPress={() => {
-                          setNewQuestion({ ...newQuestion, subject: subject._id });
+                          setNewQuestion(prev => ({ ...prev, subject: subject._id }));
                           setShowSubjectDropdown(false);
                         }}
                       >
@@ -709,21 +1136,105 @@ export default function QuestionBankManagement() {
               )}
             </View>
 
-            <Text style={styles.label}>Topic</Text>
+            <Text style={styles.label}>Topic *</Text>
             <TextInput
               style={styles.input}
-              placeholder="e.g., Cardiovascular System"
+              placeholder="e.g., General Pathology"
               value={newQuestion.topicName}
-              onChangeText={text => setNewQuestion({ ...newQuestion, topicName: text })}
+              onChangeText={text => setNewQuestion(prev => ({ ...prev, topicName: text }))}
+              accessibilityLabel="Topic"
             />
 
-            <Text style={styles.label}>Question Text *</Text>
+            <Text style={styles.label}>Subtopic *</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g., Acute Inflammation"
+              value={newQuestion.subtopicName}
+              onChangeText={text => setNewQuestion(prev => ({ ...prev, subtopicName: text }))}
+              accessibilityLabel="Subtopic"
+            />
+            <Text style={styles.helperText}>Subtopic is a distinct classification level from Topic and Tag.</Text>
+
+            <Text style={styles.label}>System *</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="e.g., Immune System"
+              value={newQuestion.system}
+              onChangeText={text => setNewQuestion(prev => ({ ...prev, system: text }))}
+              accessibilityLabel="System"
+            />
+
+            {/* ---- Question Configuration ---- */}
+            <Text style={styles.sectionHeading}>Question Configuration</Text>
+
+            <Text style={styles.label}>Question Type *</Text>
+            <View style={{ zIndex: 2000, elevation: 4, overflow: 'visible' }}>
+              <TouchableOpacity
+                style={styles.dropdownButton}
+                onPress={() => setShowTypeDropdown(!showTypeDropdown)}
+                accessibilityRole="button"
+                accessibilityLabel="Select question type"
+              >
+                <Text style={styles.dropdownText}>{QUESTION_TYPE_LABELS[newQuestion.questionType]}</Text>
+                <ChevronDown color="#6B7280" size={20} />
+              </TouchableOpacity>
+              {showTypeDropdown && (
+                <View style={[styles.dropdownList, { position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 3000, elevation: 5 }]}>
+                  {QUESTION_TYPES.map(type => (
+                    <TouchableOpacity
+                      key={type}
+                      style={styles.dropdownItem}
+                      onPress={() => onQuestionTypeChange(type)}
+                    >
+                      <Text style={[styles.dropdownItemText, newQuestion.questionType === type && styles.selectedDropdownText]}>
+                        {QUESTION_TYPE_LABELS[type]}
+                      </Text>
+                      {newQuestion.questionType === type && <Check color="#01b4ae" size={16} />}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </View>
+
+            <Text style={styles.label}>Difficulty *</Text>
+            <View style={{ zIndex: 1000, elevation: 3, overflow: 'visible' }}>
+              <TouchableOpacity
+                style={styles.dropdownButton}
+                onPress={() => setShowDifficultyDropdown(!showDifficultyDropdown)}
+                accessibilityRole="button"
+                accessibilityLabel="Select difficulty"
+              >
+                <Text style={styles.dropdownText}>{DIFFICULTY_LABELS[newQuestion.difficulty]}</Text>
+                <ChevronDown color="#6B7280" size={20} />
+              </TouchableOpacity>
+              {showDifficultyDropdown && (
+                <View style={[styles.dropdownList, { position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 2000, elevation: 5 }]}>
+                  {DIFFICULTY_LEVELS.map(level => (
+                    <TouchableOpacity
+                      key={level}
+                      style={styles.dropdownItem}
+                      onPress={() => { setNewQuestion(prev => ({ ...prev, difficulty: level })); setShowDifficultyDropdown(false); }}
+                    >
+                      <Text style={[styles.dropdownItemText, newQuestion.difficulty === level && styles.selectedDropdownText]}>
+                        {DIFFICULTY_LABELS[level]}
+                      </Text>
+                      {newQuestion.difficulty === level && <Check color="#01b4ae" size={16} />}
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </View>
+
+            {/* ---- Question Content ---- */}
+            <Text style={styles.sectionHeading}>Question Content</Text>
+
+            <Text style={styles.label}>Question Text {newQuestion.questionType === 'image_based' ? '' : '*'}</Text>
             <TextInput
               style={[styles.input, styles.textArea]}
               placeholder="Enter question..."
               multiline
               value={newQuestion.question}
-              onChangeText={text => setNewQuestion({ ...newQuestion, question: text })}
+              onChangeText={text => setNewQuestion(prev => ({ ...prev, question: text }))}
             />
 
             <TouchableOpacity
@@ -731,7 +1242,9 @@ export default function QuestionBankManagement() {
               onPress={() => handlePickImage('question')}
             >
               <ImageIcon color="#01b4ae" size={20} />
-              <Text style={styles.imageUploadText}>{newQuestion.questionImage ? 'Change Image' : 'Add Image'}</Text>
+              <Text style={styles.imageUploadText}>
+                {newQuestion.questionImage ? 'Change Image' : (newQuestion.questionType === 'image_based' ? 'Add Image *' : 'Add Image')}
+              </Text>
             </TouchableOpacity>
 
             {newQuestion.questionImage ? (
@@ -746,66 +1259,24 @@ export default function QuestionBankManagement() {
               </View>
             ) : null}
 
-            <Text style={styles.label}>Options (Select correct answer) *</Text>
-            {newQuestion.options.map((opt, idx) => (
-              <View key={idx} style={styles.optionRow}>
-                <TouchableOpacity
-                  style={[styles.radioBtn, newQuestion.correctAnswer === idx && styles.radioBtnSelected]}
-                  onPress={() => setNewQuestion(prev => ({ ...prev, correctAnswer: idx }))}
-                >
-                  {newQuestion.correctAnswer === idx && <View style={styles.radioInner} />}
-                </TouchableOpacity>
-                <View style={{ flex: 1, gap: 8 }}>
-                  <TextInput
-                    style={styles.optionInput}
-                    placeholder={`Option ${idx + 1}`}
-                    value={opt}
-                    onChangeText={text => {
-                      const newOpts = [...newQuestion.options];
-                      newOpts[idx] = text;
-                      setNewQuestion(prev => ({ ...prev, options: newOpts }));
-                    }}
-                  />
-                  <TouchableOpacity
-                    onPress={() => handlePickImage('option', idx)}
-                    style={styles.miniImageLink}
-                  >
-                    <ImageIcon size={14} color="#01b4ae" />
-                    <Text style={styles.miniImageLinkText}>
-                      {newQuestion.optionImages[idx] ? 'Change Image' : 'Add Image'}
-                    </Text>
-                  </TouchableOpacity>
-                  {newQuestion.optionImages[idx] ? (
-                    <View style={styles.miniImagePreview}>
-                      <Image source={{ uri: newQuestion.optionImages[idx] }} style={{ width: 60, height: 60, borderRadius: 4 }} />
-                      <TouchableOpacity onPress={() => {
-                        const newImgs = [...newQuestion.optionImages];
-                        newImgs[idx] = '';
-                        setNewQuestion(prev => ({ ...prev, optionImages: newImgs }));
-                      }}>
-                        <Text style={{ color: '#EF4444', fontSize: 10, marginTop: 2 }}>Remove</Text>
-                      </TouchableOpacity>
-                    </View>
-                  ) : null}
-                </View>
-              </View>
-            ))}
+            {/* ---- Type-specific answer configuration ---- */}
+            {renderTypeSpecificEditor()}
 
-
-
-            {/* Tags Input */}
+            {/* ---- Additional Classification ---- */}
+            <Text style={styles.sectionHeading}>Additional Classification</Text>
             <View>
               <Text style={styles.label}>Tags (Optional)</Text>
               <TextInput
                 style={styles.input}
                 value={newQuestion.tags?.join(', ') || ''}
-                placeholder="e.g., Cardiology, Emergency, Anatomy"
+                placeholder="e.g., High Yield, Clinical, NEET"
                 onChangeText={text => {
                   const tags = text.split(',').map(t => t.trim()).filter(t => t);
-                  setNewQuestion({ ...newQuestion, tags });
+                  setNewQuestion(prev => ({ ...prev, tags }));
                 }}
+                accessibilityLabel="Tags (optional)"
               />
-              <Text style={styles.helperText}>Separate multiple tags with commas</Text>
+              <Text style={styles.helperText}>Separate multiple tags with commas. Tags are optional.</Text>
             </View>
 
             <Text style={styles.label}>Explanation</Text>
@@ -814,9 +1285,9 @@ export default function QuestionBankManagement() {
               placeholder="Explain correct answer..."
               multiline
               value={newQuestion.explanation}
-              onChangeText={text => setNewQuestion({ ...newQuestion, explanation: text })}
+              onChangeText={text => setNewQuestion(prev => ({ ...prev, explanation: text }))}
             />
- 
+
             <TouchableOpacity
               style={styles.imageUploadBtn}
               onPress={() => handlePickImage('explanation')}
@@ -824,7 +1295,7 @@ export default function QuestionBankManagement() {
               <ImageIcon color="#01b4ae" size={20} />
               <Text style={styles.imageUploadText}>{newQuestion.explanationImage ? 'Change Image' : 'Add Image'}</Text>
             </TouchableOpacity>
- 
+
             {newQuestion.explanationImage ? (
               <View style={styles.previewImageContainer}>
                 <Image source={{ uri: newQuestion.explanationImage }} style={styles.previewImage} resizeMode="contain" />
@@ -883,6 +1354,15 @@ export default function QuestionBankManagement() {
                   </View>
                 </View>
 
+                <View style={styles.metadataGrid}>
+                  <Text style={styles.metadataLine}><Text style={styles.metadataKey}>Topic: </Text>{selectedViewQuestion.topicName || '—'}</Text>
+                  <Text style={styles.metadataLine}><Text style={styles.metadataKey}>Subtopic: </Text>{selectedViewQuestion.subtopicName || '—'}</Text>
+                  <Text style={styles.metadataLine}><Text style={styles.metadataKey}>System: </Text>{selectedViewQuestion.system || '—'}</Text>
+                  <Text style={styles.metadataLine}><Text style={styles.metadataKey}>Question Type: </Text>{QUESTION_TYPE_LABELS[selectedViewQuestion.questionType] || 'MCQ — Single Correct'}</Text>
+                  <Text style={styles.metadataLine}><Text style={styles.metadataKey}>Difficulty: </Text>{selectedViewQuestion.difficulty ? DIFFICULTY_LABELS[selectedViewQuestion.difficulty] : '—'}</Text>
+                  <Text style={styles.metadataLine}><Text style={styles.metadataKey}>Tags: </Text>{selectedViewQuestion.tags && selectedViewQuestion.tags.length > 0 ? selectedViewQuestion.tags.join(', ') : 'None'}</Text>
+                </View>
+
                 <Text style={styles.previewQuestion}>{selectedViewQuestion.question}</Text>
 
                 {selectedViewQuestion.questionImage && (
@@ -895,30 +1375,55 @@ export default function QuestionBankManagement() {
 
                 <View style={styles.previewDivider} />
 
-                {selectedViewQuestion.options.map((opt, idx) => (
-                  <View
-                    key={idx}
-                    style={[
-                      styles.previewOption,
-                      selectedViewQuestion.correctAnswer === idx && styles.previewOptionCorrect
-                    ]}
-                  >
-                    <Text style={[
-                      styles.previewOptionLabel,
-                      selectedViewQuestion.correctAnswer === idx && styles.previewOptionLabelCorrect
-                    ]}>{String.fromCharCode(65 + idx)}</Text>
-                    <View style={{ flex: 1 }}>
-                      <Text style={[
-                        styles.previewOptionText,
-                        selectedViewQuestion.correctAnswer === idx && styles.previewOptionTextCorrect
-                      ]}>{opt}</Text>
-                      {selectedViewQuestion.optionImages?.[idx] ? (
-                        <Image source={{ uri: selectedViewQuestion.optionImages[idx] }} style={styles.previewOptionImage} resizeMode="contain" />
-                      ) : null}
-                    </View>
-                    {selectedViewQuestion.correctAnswer === idx && <Check color="#10B981" size={20} />}
+                {selectedViewQuestion.questionType === 'assertion_reason' && (
+                  <View style={{ marginBottom: 16 }}>
+                    <Text style={styles.metadataLine}><Text style={styles.metadataKey}>Assertion: </Text>{selectedViewQuestion.assertion}</Text>
+                    <Text style={styles.metadataLine}><Text style={styles.metadataKey}>Reason: </Text>{selectedViewQuestion.reason}</Text>
                   </View>
-                ))}
+                )}
+
+                {selectedViewQuestion.questionType === 'match_the_following' ? (
+                  <View>
+                    {(selectedViewQuestion.columnA || []).map((a, idx) => {
+                      const mapping = (selectedViewQuestion.correctAnswer as Record<string, string>) || {};
+                      const bIdx = mapping[String(idx)];
+                      const bText = bIdx !== undefined ? selectedViewQuestion.columnB?.[Number(bIdx)] : undefined;
+                      return (
+                        <View key={idx} style={styles.previewOption}>
+                          <Text style={styles.previewOptionText}>{idx + 1}. {a} → {bText ? `${String.fromCharCode(65 + Number(bIdx))}. ${bText}` : '—'}</Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+                ) : selectedViewQuestion.questionType === 'numerical' ? (
+                  <View style={styles.previewOption}>
+                    <Text style={styles.previewOptionText}>Correct Answer: {String(selectedViewQuestion.correctAnswer)}</Text>
+                  </View>
+                ) : (
+                  (selectedViewQuestion.options || []).map((opt, idx) => {
+                    const isMultiple = selectedViewQuestion.questionType === 'multiple_correct';
+                    const correct = isMultiple
+                      ? Array.isArray(selectedViewQuestion.correctAnswer) && (selectedViewQuestion.correctAnswer as number[]).includes(idx)
+                      : selectedViewQuestion.correctAnswer === idx;
+                    return (
+                      <View
+                        key={idx}
+                        style={[styles.previewOption, correct && styles.previewOptionCorrect]}
+                      >
+                        <Text style={[styles.previewOptionLabel, correct && styles.previewOptionLabelCorrect]}>
+                          {String.fromCharCode(65 + idx)}
+                        </Text>
+                        <View style={{ flex: 1 }}>
+                          <Text style={[styles.previewOptionText, correct && styles.previewOptionTextCorrect]}>{opt}</Text>
+                          {selectedViewQuestion.optionImages?.[idx] ? (
+                            <Image source={{ uri: selectedViewQuestion.optionImages[idx] }} style={styles.previewOptionImage} resizeMode="contain" />
+                          ) : null}
+                        </View>
+                        {correct && <Check color="#10B981" size={20} />}
+                      </View>
+                    );
+                  })
+                )}
 
                 {(selectedViewQuestion.explanation || selectedViewQuestion.explanationImage) && (
                   <View style={styles.explanationBox}>
@@ -1041,6 +1546,16 @@ const styles = StyleSheet.create({
     gap: 10,
     paddingBottom: 10,
     paddingTop: 5,
+    alignItems: 'center',
+  },
+  filterChip: {
+    paddingHorizontal: 12,
+  },
+  filterDivider: {
+    width: 1,
+    height: 24,
+    backgroundColor: '#E5E7EB',
+    marginHorizontal: 4,
   },
   statChip: {
     paddingHorizontal: 16,
@@ -1085,6 +1600,7 @@ const styles = StyleSheet.create({
     elevation: 3,
     borderWidth: 1,
     borderColor: 'rgba(0,0,0,0.02)',
+    marginBottom: 16,
   },
   questionCardPressed: {
     transform: [{ scale: 0.98 }],
@@ -1092,8 +1608,8 @@ const styles = StyleSheet.create({
   },
   questionHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
+    alignItems: 'flex-start',
+    marginBottom: 8,
   },
   questionIdContainer: {
     backgroundColor: 'rgba(1, 180, 174, 0.1)',
@@ -1129,6 +1645,29 @@ const styles = StyleSheet.create({
   },
   topicBadgeText: {
     color: '#3B82F6',
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  subtopicBadge: {
+    backgroundColor: '#F5F3FF',
+  },
+  subtopicBadgeText: {
+    color: '#7C3AED',
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  systemBadge: {
+    backgroundColor: '#FFF7ED',
+  },
+  systemBadgeText: {
+    color: '#EA580C',
+    fontSize: 11,
+    fontWeight: '500',
+  },
+  difficultyBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#374151',
   },
   marksBadge: {
     backgroundColor: '#ECFDF5',
@@ -1136,6 +1675,14 @@ const styles = StyleSheet.create({
   marksBadgeText: {
     color: '#10B981',
     fontWeight: '600',
+  },
+  typeRow: {
+    marginBottom: 8,
+  },
+  typeRowText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#01b4ae',
   },
   questionText: {
     fontSize: 15,
@@ -1171,6 +1718,7 @@ const styles = StyleSheet.create({
   },
   optionsPreview: {
     flexDirection: 'row',
+    flex: 1,
   },
   optionCount: {
     fontSize: 12,
@@ -1264,6 +1812,26 @@ const styles = StyleSheet.create({
     flex: 1,
     padding: 20,
   },
+  sectionHeading: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#01b4ae',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginTop: 24,
+    marginBottom: 4,
+    borderTopWidth: 1,
+    borderTopColor: '#F3F4F6',
+    paddingTop: 20,
+  },
+  rowBetween: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  addOptionBtn: {
+    padding: 4,
+  },
   label: {
     fontSize: 14,
     fontWeight: '600',
@@ -1301,6 +1869,7 @@ const styles = StyleSheet.create({
     borderColor: '#E5E7EB',
     borderRadius: 12,
     padding: 14,
+    marginBottom: 16,
   },
   dropdownText: {
     fontSize: 16,
@@ -1316,7 +1885,7 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#E5E7EB',
-    maxHeight: 200,
+    maxHeight: 260,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.15,
@@ -1334,6 +1903,8 @@ const styles = StyleSheet.create({
   dropdownItemText: {
     fontSize: 15,
     color: '#374151',
+    flex: 1,
+    marginRight: 8,
   },
   selectedDropdownText: {
     color: '#01b4ae',
@@ -1364,6 +1935,20 @@ const styles = StyleSheet.create({
     borderRadius: 6,
     backgroundColor: '#01b4ae',
   },
+  checkBtn: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: '#D1D5DB',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginTop: 14,
+  },
+  checkBtnSelected: {
+    borderColor: '#01b4ae',
+    backgroundColor: '#01b4ae',
+  },
   optionInput: {
     flex: 1,
     backgroundColor: '#FFF',
@@ -1372,6 +1957,52 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     padding: 12,
     fontSize: 15,
+  },
+  matchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 10,
+  },
+  matchIndex: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#6B7280',
+    width: 20,
+  },
+  mappingRow: {
+    marginBottom: 12,
+  },
+  mappingLabel: {
+    fontSize: 13,
+    color: '#374151',
+    marginBottom: 6,
+  },
+  mappingChips: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  mappingChip: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    backgroundColor: '#FFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  mappingChipActive: {
+    backgroundColor: '#01b4ae',
+    borderColor: '#01b4ae',
+  },
+  mappingChipText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#374151',
+  },
+  mappingChipTextActive: {
+    color: '#FFF',
   },
   saveBtn: {
     backgroundColor: '#01b4ae',
@@ -1463,6 +2094,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 16,
+  },
+  metadataGrid: {
+    marginBottom: 16,
+    gap: 4,
+  },
+  metadataLine: {
+    fontSize: 13,
+    color: '#374151',
+  },
+  metadataKey: {
+    fontWeight: '700',
+    color: '#1F2937',
   },
   previewQuestion: {
     fontSize: 18,

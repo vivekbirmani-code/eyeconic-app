@@ -1,12 +1,40 @@
 const mongoose = require('mongoose');
 
+// Historical snapshot of a question's classification at the moment the
+// student answered it. This is intentionally decoupled from the live
+// QuestionBank document so that later edits to a question (e.g. an admin
+// reclassifying its Subtopic) never rewrite past analytics.
+const metadataSnapshotSchema = new mongoose.Schema({
+  subjectId: { type: mongoose.Schema.Types.ObjectId, ref: 'Subject' },
+  subjectName: { type: String },
+  topicName: { type: String },
+  subtopicName: { type: String },
+  system: { type: String },
+  questionType: { type: String },
+  tags: { type: [String], default: [] },
+  difficulty: { type: String }
+}, { _id: false });
+
 const answerSchema = new mongoose.Schema({
   questionIndex: {
     type: Number,
     required: true
   },
+  // Stable identity of the QuestionBank document this answer belongs to.
+  // Required for all answers created going forward; may be absent on
+  // legacy answers created before this field existed.
+  questionId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'QuestionBank'
+  },
+  // Shape depends on the question's questionType:
+  //   mcq_single / image_based / assertion_reason -> Number
+  //   multiple_correct                            -> Number[]
+  //   match_the_following                         -> Object map
+  //   numerical                                    -> Number
+  // -1 (legacy) / null / undefined = unanswered.
   selectedAnswer: {
-    type: Number,
+    type: mongoose.Schema.Types.Mixed,
     default: -1
   },
   isCorrect: {
@@ -19,6 +47,11 @@ const answerSchema = new mongoose.Schema({
   timeSpent: {
     type: Number, // seconds spent on this question
     default: 0
+  },
+  // Populated server-side at submit time only. Never trust a client-submitted
+  // metadataSnapshot for analytics or grading.
+  metadataSnapshot: {
+    type: metadataSnapshotSchema
   }
 });
 

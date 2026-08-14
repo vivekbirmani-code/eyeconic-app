@@ -35,6 +35,7 @@ import { useAuth } from '@/context/AuthContext';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { formatToIST } from '@/utils/date';
 import useDebounce from '@/hooks/useDebounce';
+import { QUESTION_TYPES, QUESTION_TYPE_LABELS, DIFFICULTY_LEVELS, DIFFICULTY_LABELS } from '@/types/question';
 
 interface Subject {
   _id: string;
@@ -72,9 +73,17 @@ interface Question {
   questionImage?: string;
   subject: { _id: string; name: string };
   topicName?: string;
-  options: string[];
+  subtopicName?: string;
+  system?: string;
+  questionType?: string;
+  difficulty?: string;
+  options?: string[];
   optionImages?: string[];
-  correctAnswer?: number;
+  assertion?: string;
+  reason?: string;
+  columnA?: string[];
+  columnB?: string[];
+  correctAnswer?: any;
   explanation?: string;
   explanationImage?: string;
   marks?: number;
@@ -133,6 +142,8 @@ export default function CreateQuiz() {
   const [questionSubjectFilter, setQuestionSubjectFilter] = useState('');
   const [topicFilter, setTopicFilter] = useState('');
   const [tagFilter, setTagFilter] = useState('');
+  const [difficultyFilter, setDifficultyFilter] = useState('');
+  const [questionTypeFilter, setQuestionTypeFilter] = useState('');
   const [loadingQuestions, setLoadingQuestions] = useState(false);
   const [selectedQuestion, setSelectedQuestion] = useState<Question | null>(null);
   const [page, setPage] = useState(1);
@@ -252,7 +263,7 @@ export default function CreateQuiz() {
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [questionSearch, topicFilter, tagFilter, questionSubjectFilter, step]);
+  }, [questionSearch, topicFilter, tagFilter, difficultyFilter, questionTypeFilter, questionSubjectFilter, step]);
 
   const fetchMentors = async () => {
     try {
@@ -379,8 +390,16 @@ export default function CreateQuiz() {
       filtered = filtered.filter(q => q.tags?.some(t => t.toLowerCase().includes(tf)));
     }
 
+    if (difficultyFilter) {
+      filtered = filtered.filter(q => q.difficulty === difficultyFilter);
+    }
+
+    if (questionTypeFilter) {
+      filtered = filtered.filter(q => q.questionType === questionTypeFilter);
+    }
+
     setFilteredQuestions(filtered);
-  }, [questionSearch, availableQuestionsList, questionSubjectFilter, topicFilter, tagFilter]);
+  }, [questionSearch, availableQuestionsList, questionSubjectFilter, topicFilter, tagFilter, difficultyFilter, questionTypeFilter]);
 
   useEffect(() => {
     // Filter students by search query and subject
@@ -494,6 +513,8 @@ export default function CreateQuiz() {
       if (questionSearch) params.append('search', questionSearch);
       if (topicFilter) params.append('topic', topicFilter);
       if (tagFilter) params.append('tag', tagFilter);
+      if (difficultyFilter) params.append('difficulty', difficultyFilter);
+      if (questionTypeFilter) params.append('questionType', questionTypeFilter);
 
       const response = await api.get(`/question-bank/by-subjects?${params}`);
       const { questions, total, pages } = response.data;
@@ -1076,6 +1097,54 @@ export default function CreateQuiz() {
         />
       </View>
 
+      {/* Difficulty filter */}
+      <View style={styles.filterRow}>
+        <Text style={styles.filterLabel}>Difficulty:</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <TouchableOpacity
+            style={[styles.filterChip, !difficultyFilter && styles.filterChipActive]}
+            onPress={() => setDifficultyFilter('')}
+          >
+            <Text style={[styles.filterChipText, !difficultyFilter && styles.filterChipTextActive]}>All</Text>
+          </TouchableOpacity>
+          {DIFFICULTY_LEVELS.map(level => (
+            <TouchableOpacity
+              key={level}
+              style={[styles.filterChip, difficultyFilter === level && styles.filterChipActive]}
+              onPress={() => setDifficultyFilter(level)}
+            >
+              <Text style={[styles.filterChipText, difficultyFilter === level && styles.filterChipTextActive]}>
+                {DIFFICULTY_LABELS[level]}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
+      {/* Question Type filter */}
+      <View style={styles.filterRow}>
+        <Text style={styles.filterLabel}>Type:</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          <TouchableOpacity
+            style={[styles.filterChip, !questionTypeFilter && styles.filterChipActive]}
+            onPress={() => setQuestionTypeFilter('')}
+          >
+            <Text style={[styles.filterChipText, !questionTypeFilter && styles.filterChipTextActive]}>All</Text>
+          </TouchableOpacity>
+          {QUESTION_TYPES.map(type => (
+            <TouchableOpacity
+              key={type}
+              style={[styles.filterChip, questionTypeFilter === type && styles.filterChipActive]}
+              onPress={() => setQuestionTypeFilter(type)}
+            >
+              <Text style={[styles.filterChipText, questionTypeFilter === type && styles.filterChipTextActive]}>
+                {QUESTION_TYPE_LABELS[type]}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+      </View>
+
       {/* Subject filter for questions - only show selected subjects */}
       <View style={styles.filterRow}>
         <Text style={styles.filterLabel}>Filter by subject:</Text>
@@ -1126,6 +1195,8 @@ export default function CreateQuiz() {
                   <View style={styles.questionMeta}>
                     <Text style={styles.questionSubject}>{item.subject?.name}</Text>
                     {item.topicName && <Text style={styles.questionTopic}> • {item.topicName}</Text>}
+                    {item.difficulty && <Text style={styles.questionTopic}> • {DIFFICULTY_LABELS[item.difficulty as keyof typeof DIFFICULTY_LABELS] || item.difficulty}</Text>}
+                    {item.questionType && <Text style={styles.questionTopic}> • {QUESTION_TYPE_LABELS[item.questionType as keyof typeof QUESTION_TYPE_LABELS] || item.questionType}</Text>}
                   </View>
                 </View>
                 <TouchableOpacity
@@ -1660,27 +1731,58 @@ export default function CreateQuiz() {
                 )}
               </View>
 
-              {/* Options */}
+              {/* Assertion / Reason */}
+              {selectedQuestion.questionType === 'assertion_reason' && (
+                <View style={styles.questionSection}>
+                  <Text style={styles.sectionLabel}>Assertion</Text>
+                  <Text style={styles.fullQuestionText}>{selectedQuestion.assertion}</Text>
+                  <Text style={[styles.sectionLabel, { marginTop: 12 }]}>Reason</Text>
+                  <Text style={styles.fullQuestionText}>{selectedQuestion.reason}</Text>
+                </View>
+              )}
+
+              {/* Match the Following */}
+              {selectedQuestion.questionType === 'match_the_following' ? (
+                <View style={styles.optionsSection}>
+                  <Text style={styles.sectionLabel}>Column A</Text>
+                  {(selectedQuestion.columnA || []).map((a, i) => (
+                    <Text key={i} style={styles.optionText}>{i + 1}. {a}</Text>
+                  ))}
+                  <Text style={[styles.sectionLabel, { marginTop: 12 }]}>Column B</Text>
+                  {(selectedQuestion.columnB || []).map((b, i) => (
+                    <Text key={i} style={styles.optionText}>{String.fromCharCode(65 + i)}. {b}</Text>
+                  ))}
+                </View>
+              ) : selectedQuestion.questionType === 'numerical' ? (
+                <View style={styles.optionsSection}>
+                  <Text style={styles.sectionLabel}>Correct Answer</Text>
+                  <Text style={styles.fullQuestionText}>{String(selectedQuestion.correctAnswer)}</Text>
+                </View>
+              ) : (
               <View style={styles.optionsSection}>
                 <Text style={styles.sectionLabel}>Options</Text>
-                {selectedQuestion.options.map((option, index) => (
+                {(selectedQuestion.options || []).map((option, index) => {
+                  const isCorrect = Array.isArray(selectedQuestion.correctAnswer)
+                    ? selectedQuestion.correctAnswer.includes(index)
+                    : selectedQuestion.correctAnswer === index;
+                  return (
                   <View
                     key={index}
                     style={[
                       styles.optionBox,
-                      selectedQuestion.correctAnswer === index && styles.correctOption
+                      isCorrect && styles.correctOption
                     ]}
                   >
                     <Text style={[
                       styles.optionLabel,
-                      selectedQuestion.correctAnswer === index && styles.correctOptionText
+                      isCorrect && styles.correctOptionText
                     ]}>
                       {String.fromCharCode(65 + index)}.
                     </Text>
                     <View style={styles.optionContent}>
                       <Text style={[
                         styles.optionText,
-                        selectedQuestion.correctAnswer === index && styles.correctOptionText
+                        isCorrect && styles.correctOptionText
                       ]}>
                         {option}
                       </Text>
@@ -1692,12 +1794,14 @@ export default function CreateQuiz() {
                         />
                       )}
                     </View>
-                    {selectedQuestion.correctAnswer === index && (
+                    {isCorrect && (
                       <Check color="#059669" size={20} />
                     )}
                   </View>
-                ))}
+                  );
+                })}
               </View>
+              )}
 
               {/* Explanation */}
               {(selectedQuestion.explanation || selectedQuestion.explanationImage) && (

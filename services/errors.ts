@@ -6,13 +6,16 @@ export type ApiErrorCode =
   | 'NETWORK_ERROR'
   | 'TIMEOUT'
   | 'SERVER_UNAVAILABLE'
+  | 'DATABASE_UNAVAILABLE'
   | 'SERVICE_MAINTENANCE'
   | 'UNAUTHORIZED'
   | 'FORBIDDEN'
   | 'NOT_FOUND'
   | 'VALIDATION_ERROR'
+  | 'IMPORT_VALIDATION_ERROR'
   | 'CONFLICT'
   | 'RATE_LIMITED'
+  | 'CONFIGURATION_ERROR'
   | 'INTERNAL_ERROR'
   | 'UNKNOWN';
 
@@ -31,6 +34,8 @@ const USER_MESSAGES: Record<ApiErrorCode, string> = {
   TIMEOUT: 'The request timed out. Please try again.',
   SERVER_UNAVAILABLE:
     'Our servers are temporarily unavailable. Please try again in a few moments.',
+  DATABASE_UNAVAILABLE:
+    'Our servers are temporarily unavailable. Please try again in a few moments.',
   SERVICE_MAINTENANCE:
     'We are performing maintenance. Please try again shortly.',
   UNAUTHORIZED: 'Your session has expired. Please sign in again.',
@@ -39,20 +44,54 @@ const USER_MESSAGES: Record<ApiErrorCode, string> = {
   VALIDATION_ERROR: 'Please check your input and try again.',
   CONFLICT: 'This action conflicts with existing data. Please refresh and try again.',
   RATE_LIMITED: 'Too many requests. Please wait a moment and try again.',
+  CONFIGURATION_ERROR:
+    'The app is not configured correctly. Please contact support if this continues.',
   INTERNAL_ERROR:
     "We're unable to process your request right now. Please try again shortly.",
-  UNKNOWN: "Something went wrong. Please try again.",
+  UNKNOWN: 'Something went wrong. Please try again.',
 };
 
 const RETRYABLE_STATUS_CODES = new Set([408, 429, 500, 502, 503, 504]);
+
+const RETRYABLE_ERROR_CODES = new Set<ApiErrorCode>([
+  'NETWORK_ERROR',
+  'TIMEOUT',
+  'SERVER_UNAVAILABLE',
+  'DATABASE_UNAVAILABLE',
+  'SERVICE_MAINTENANCE',
+  'INTERNAL_ERROR',
+  'RATE_LIMITED',
+]);
 
 const isNetworkFailure = (error: AxiosError): boolean => {
   return (
     !error.response &&
     (error.code === 'ERR_NETWORK' ||
       error.code === 'ECONNABORTED' ||
+      error.code === 'ECONNREFUSED' ||
+      error.code === 'ENOTFOUND' ||
       error.message === 'Network Error')
   );
+};
+
+const mapServerCode = (serverCode?: string): ApiErrorCode | null => {
+  if (!serverCode) return null;
+
+  switch (serverCode) {
+    case 'DATABASE_UNAVAILABLE':
+      return 'DATABASE_UNAVAILABLE';
+    case 'SERVICE_UNAVAILABLE':
+      return 'SERVER_UNAVAILABLE';
+    case 'VALIDATION_ERROR':
+    case 'IMPORT_VALIDATION_ERROR':
+      return 'VALIDATION_ERROR';
+    case 'UNAUTHORIZED':
+      return 'UNAUTHORIZED';
+    case 'FORBIDDEN':
+      return 'FORBIDDEN';
+    default:
+      return null;
+  }
 };
 
 const mapStatusToCode = (status: number): ApiErrorCode => {
@@ -83,7 +122,11 @@ export const normalizeApiError = (error: unknown): NormalizedApiError => {
     };
   }
 
-  const axiosError = error as AxiosError<{ message?: string; code?: string; requestId?: string }>;
+  const axiosError = error as AxiosError<{
+    message?: string;
+    code?: string;
+    requestId?: string;
+  }>;
 
   if (isNetworkFailure(axiosError)) {
     const isTimeout = axiosError.code === 'ECONNABORTED';
@@ -97,10 +140,11 @@ export const normalizeApiError = (error: unknown): NormalizedApiError => {
 
   const status = axiosError.response?.status;
   const serverMessage = axiosError.response?.data?.message;
+  const serverCode = axiosError.response?.data?.code;
   const requestId = axiosError.response?.data?.requestId;
-  const code = status ? mapStatusToCode(status) : 'UNKNOWN';
+  const codeFromServer = mapServerCode(serverCode);
+  const code = codeFromServer ?? (status ? mapStatusToCode(status) : 'UNKNOWN');
 
-  // Use server-provided safe message when available; never use axios error.message
   const userMessage =
     serverMessage && !serverMessage.toLowerCase().includes('axios')
       ? serverMessage
@@ -110,7 +154,7 @@ export const normalizeApiError = (error: unknown): NormalizedApiError => {
     code,
     userMessage,
     status,
-    retryable: status ? RETRYABLE_STATUS_CODES.has(status) : false,
+    retryable: RETRYABLE_ERROR_CODES.has(code) || (status ? RETRYABLE_STATUS_CODES.has(status) : false),
     requestId,
     originalError: error,
   };
@@ -122,6 +166,10 @@ export const getUserMessage = (error: unknown): string => {
 
 export const isRetryableError = (error: unknown): boolean => {
   return normalizeApiError(error).retryable;
+};
+
+export const isExpectedApiFailure = (errorCode: ApiErrorCode): boolean => {
+  return RETRYABLE_ERROR_CODES.has(errorCode) || errorCode === 'UNAUTHORIZED' || errorCode === 'VALIDATION_ERROR';
 };
 
 export const getDeviceContext = () => ({

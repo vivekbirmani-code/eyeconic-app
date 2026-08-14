@@ -33,7 +33,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useNotifications } from '@/context/NotificationContext';
 import { api } from '@/services/api';
 import SubjectSelectionModal from '@/components/SubjectSelectionModal';
-import MentorSelectionModal from '@/components/MentorSelectionModal';
+import MentorSelectionModal, { type Mentor } from '@/components/MentorSelectionModal';
 import { useAppRefresh } from '@/hooks/useAppRefresh';
 
 interface StudentProfile {
@@ -315,6 +315,8 @@ export default function Users() {
   };
 
   const closeDetailModal = () => {
+    setIsMentorModalVisible(false);
+    setIsSubjectModalVisible(false);
     // Animate modal out
     Animated.parallel([
       Animated.timing(modalOpacity, {
@@ -413,19 +415,46 @@ export default function Users() {
   const fetchMentorDetails = async (studentId: string) => {
     setIsLoadingMentor(true);
     try {
-      const response = await api.get(`/mentor-students/student/${studentId}`);
-      if (response.data && response.data.mentors) {
-        // response.data.mentors is the array
-        setSelectedUser(prev => prev ? { ...prev, assignedMentors: response.data.mentors } : null);
-      } else {
-        setSelectedUser(prev => prev ? { ...prev, assignedMentors: [] } : null);
-      }
+      const response = await api.get<{ mentors: Mentor[] }>(`/mentor-students/student/${studentId}`);
+      const mentors = response.data?.mentors ?? [];
+      setSelectedUser(prev => (prev && prev._id === studentId ? { ...prev, assignedMentors: mentors } : prev));
     } catch (error) {
       console.error('Error fetching mentor details:', error);
+      Alert.alert('Error', 'Unable to load assigned mentors. Please try again.');
     } finally {
       setIsLoadingMentor(false);
     }
   };
+
+  const openMentorAssignmentModal = useCallback(() => {
+    if (!selectedUser || selectedUser.role !== 'student') {
+      return;
+    }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setIsMentorModalVisible(true);
+  }, [selectedUser]);
+
+  const handleMentorModalClose = useCallback(() => {
+    setIsMentorModalVisible(false);
+  }, []);
+
+  const handleMentorSave = useCallback(async (assignedMentors: Mentor[]) => {
+    if (!selectedUser) {
+      return;
+    }
+
+    const studentId = selectedUser._id;
+    setSelectedUser(prev => (prev && prev._id === studentId ? { ...prev, assignedMentors } : prev));
+    await fetchMentorDetails(studentId);
+
+    const mentorCount = assignedMentors.length;
+    Alert.alert(
+      'Success',
+      mentorCount > 0
+        ? `${mentorCount} mentor${mentorCount === 1 ? '' : 's'} assigned successfully.`
+        : 'All mentor assignments have been removed.'
+    );
+  }, [selectedUser]);
 
   const fetchStudentSubjects = async (studentId: string) => {
     setIsLoadingSubjects(true);
@@ -1207,7 +1236,7 @@ export default function Users() {
                           <Text style={styles.assignmentTitle}>Assigned Mentors</Text>
                           <TouchableOpacity
                             style={styles.assignButton}
-                            onPress={() => setIsMentorModalVisible(true)}
+                            onPress={openMentorAssignmentModal}
                           >
                             <Text style={styles.assignButtonText}>Manage Mentors</Text>
                           </TouchableOpacity>
@@ -1242,7 +1271,7 @@ export default function Users() {
                             <Text style={styles.emptyMentorText}>No mentors assigned</Text>
                             <TouchableOpacity
                               style={styles.assignLink}
-                              onPress={() => setIsMentorModalVisible(true)}
+                              onPress={openMentorAssignmentModal}
                             >
                               <Text style={styles.assignLinkText}>Assign Now</Text>
                             </TouchableOpacity>
@@ -1303,6 +1332,26 @@ export default function Users() {
               </ScrollView>
             )}
           </Animated.View>
+
+          {/* Assignment modals must be children of the detail modal for iOS modal stacking */}
+          {selectedUser?.role === 'student' && (
+            <>
+              <SubjectSelectionModal
+                visible={isSubjectModalVisible}
+                onClose={() => setIsSubjectModalVisible(false)}
+                studentId={selectedUser._id}
+                studentName={selectedUser.name}
+                onSave={handleSaveSubjects}
+              />
+              <MentorSelectionModal
+                visible={isMentorModalVisible}
+                onClose={handleMentorModalClose}
+                studentId={selectedUser._id}
+                studentName={selectedUser.name}
+                onSave={handleMentorSave}
+              />
+            </>
+          )}
         </Animated.View>
       </Modal>
 
@@ -1410,40 +1459,6 @@ export default function Users() {
         </View>
       </Modal>
 
-      {/* Subject Selection Modal */}
-      {
-        selectedUser && selectedUser.role === 'student' && (
-          <SubjectSelectionModal
-            visible={isSubjectModalVisible}
-            onClose={() => setIsSubjectModalVisible(false)}
-            studentId={selectedUser._id}
-            studentName={selectedUser.name}
-            onSave={handleSaveSubjects}
-          />
-        )
-      }
-
-      {/* Mentor Selection Modal */}
-      {
-        selectedUser && selectedUser.role === 'student' && (
-          <MentorSelectionModal
-            visible={isMentorModalVisible}
-            onClose={() => setIsMentorModalVisible(false)}
-            studentId={selectedUser._id}
-            studentName={selectedUser.name}
-            onSave={(assignedMentor) => {
-              // Optimistic UI Update - we might receive just one, or maybe we should just refetch
-              // For simplicity and correctness with multi-select, let's just refetch
-              // Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-
-              // Background fetch to ensure consistency
-              if (selectedUser) {
-                fetchMentorDetails(selectedUser._id);
-              }
-            }}
-          />
-        )
-      }
     </SafeAreaView >
   );
 }

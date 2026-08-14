@@ -36,6 +36,22 @@ import PerformanceMetrics from '@/components/analytics/test-analytics/Performanc
 import QuestionAnalytics from '@/components/analytics/test-analytics/QuestionAnalytics';
 import StudentPerformanceList from '@/components/analytics/test-analytics/StudentPerformanceList';
 import AttemptDetailModal from '@/components/analytics/AttemptDetailModal';
+import QuestionBankPerformance from '@/components/analytics/QuestionBankPerformance';
+import AnalyticsKpiGrid from '@/components/analytics/AnalyticsKpiGrid';
+import DateRangeFilter from '@/components/analytics/DateRangeFilter';
+import ScoreLegend from '@/components/analytics/ScoreLegend';
+import PerformanceTrend from '@/components/analytics/PerformanceTrend';
+import ScoreDistribution from '@/components/analytics/ScoreDistribution';
+import {
+  DateRange,
+  StudentAnalyticsSummary,
+  StudentPerformanceBreakdown,
+  TrendPoint,
+  AnalyticsInsight,
+  TestOverviewData,
+  ScoreDistributionBucket,
+  formatPercent,
+} from '@/types/analytics';
 
 interface Student {
   _id: string;
@@ -50,19 +66,22 @@ interface AttemptSummary {
   totalQuestions: number;
   marksObtained: number;
   totalMarks: number;
+  scorePercentage?: number | null;
+  accuracy?: number | null;
+  correct?: number;
+  incorrect?: number;
+  skipped?: number;
+  attempted?: number;
   percentage: number;
   endTime: string;
   tabSwitchCount: number;
 }
 
 interface StudentAnalytics {
-  summary: {
-    totalTests: number;
-    totalMarks: number;
-    obtainedMarks: number;
-    avgPercentage: number;
-  };
+  summary: StudentAnalyticsSummary;
   attempts: AttemptSummary[];
+  trend?: TrendPoint[];
+  insights?: AnalyticsInsight[];
 }
 
 interface SubjectPerformance {
@@ -72,7 +91,12 @@ interface SubjectPerformance {
   totalMarks: number;
   obtainedMarks: number;
   totalCorrect: number;
+  totalIncorrect?: number;
+  totalSkipped?: number;
+  totalAttempted?: number;
   totalQuestions: number;
+  scorePercentage?: number | null;
+  accuracy?: number | null;
   percentage: number;
   attempts: any[];
 }
@@ -94,14 +118,7 @@ interface TestAnalyticsData {
     totalMarks: number;
     totalQuestions: number;
   };
-  overview: {
-    totalAssigned: number;
-    totalAttempted: number;
-    completionRate: number;
-    avgScore: number;
-    highestScore: number;
-    lowestScore: number;
-  };
+  overview: TestOverviewData;
   performanceMetrics: {
     totalQuestions: number;
     avgCorrect: string | number;
@@ -110,6 +127,9 @@ interface TestAnalyticsData {
     avgTime: number;
   };
   questionAnalytics: any[];
+  scoreDistribution?: ScoreDistributionBucket[];
+  easiestQuestion?: any;
+  hardestQuestion?: any;
   studentPerformance: any[];
 }
 
@@ -147,6 +167,10 @@ export default function Analytics() {
   const [loadingSubjects, setLoadingSubjects] = useState(false);
   const [expandedSubject, setExpandedSubject] = useState<string | null>(null);
 
+  // Question Bank metadata performance (Subject/Topic/Subtopic/System/Type/Tag/Difficulty)
+  const [qbPerformance, setQbPerformance] = useState<StudentPerformanceBreakdown | null>(null);
+  const [loadingQbPerformance, setLoadingQbPerformance] = useState(false);
+
   // Heat map state
   const [heatmapData, setHeatmapData] = useState<any>(null);
   const [loadingHeatmap, setLoadingHeatmap] = useState(false);
@@ -154,6 +178,7 @@ export default function Analytics() {
   // Modal state
   const [selectedAttemptId, setSelectedAttemptId] = useState<string | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
+  const [dateRange, setDateRange] = useState<DateRange>(null);
 
   useEffect(() => {
     if (activeTab === 'test') {
@@ -232,10 +257,11 @@ export default function Analytics() {
     }
   };
 
-  const fetchStudentAnalytics = async (studentId: string) => {
+  const fetchStudentAnalytics = async (studentId: string, range: DateRange = dateRange) => {
     setLoadingStudentAnalytics(true);
     try {
-      const response = await api.get(`/quizzes/analytics/student/${studentId}`);
+      const params = range ? { range } : undefined;
+      const response = await api.get(`/quizzes/analytics/student/${studentId}`, { params });
       setStudentAnalytics(response.data);
     } catch (error) {
       console.error('Error fetching analytics:', error);
@@ -245,20 +271,17 @@ export default function Analytics() {
     }
   };
 
-  const handleSelectStudent = (student: Student) => {
-    setSelectedStudent(student);
-    fetchStudentAnalytics(student._id);
-  };
 
   const handleStudentAttemptClick = (attemptId: string) => {
     setSelectedAttemptId(attemptId);
     setModalVisible(true);
   };
 
-  const fetchSubjectReport = async (studentId: string) => {
+  const fetchSubjectReport = async (studentId: string, range: DateRange = dateRange) => {
     setLoadingSubjects(true);
     try {
-      const response = await api.get(`/quizzes/analytics/student/${studentId}/subjects`);
+      const params = range ? { range } : undefined;
+      const response = await api.get(`/quizzes/analytics/student/${studentId}/subjects`, { params });
       setSubjectReport(response.data.subjects || []);
     } catch (error) {
       console.error('Error fetching subject report:', error);
@@ -320,11 +343,33 @@ export default function Analytics() {
     }
   };
 
-  // When selecting a student, also fetch their subject report
+  const fetchQuestionBankPerformance = async (studentId: string) => {
+    setLoadingQbPerformance(true);
+    try {
+      const response = await api.get(`/quizzes/analytics/student/${studentId}/performance`);
+      setQbPerformance(response.data || null);
+    } catch (error) {
+      console.error('Error fetching question bank performance:', error);
+      setQbPerformance(null);
+    } finally {
+      setLoadingQbPerformance(false);
+    }
+  };
+
+  // When selecting a student, also fetch their subject report + question-level breakdown
   const handleSelectStudentEnhanced = (student: Student) => {
     setSelectedStudent(student);
     fetchStudentAnalytics(student._id);
     fetchSubjectReport(student._id);
+    fetchQuestionBankPerformance(student._id);
+  };
+
+  const handleDateRangeChange = (range: DateRange) => {
+    setDateRange(range);
+    if (selectedStudent) {
+      fetchStudentAnalytics(selectedStudent._id, range);
+      fetchSubjectReport(selectedStudent._id, range);
+    }
   };
 
   if (user?.role !== 'admin' && user?.role !== 'mentor') {
@@ -379,11 +424,43 @@ export default function Analytics() {
                 <ActivityIndicator color="#01b4ae" style={{ marginTop: 40 }} />
               ) : testAnalytics ? (
                 <>
+                  <ScoreLegend />
                   <TestOverview
                     overview={testAnalytics.overview}
                     totalMarks={testAnalytics.test.totalMarks}
                   />
                   <PerformanceMetrics metrics={testAnalytics.performanceMetrics} />
+
+                  {testAnalytics.scoreDistribution ? (
+                    <>
+                      <Text style={styles.sectionTitle}>Score Distribution</Text>
+                      <ScoreDistribution
+                        distribution={testAnalytics.scoreDistribution}
+                        totalAttempts={testAnalytics.overview.totalAttempted}
+                      />
+                    </>
+                  ) : null}
+
+                  {(testAnalytics.easiestQuestion || testAnalytics.hardestQuestion) ? (
+                    <View style={styles.insightCard}>
+                      {testAnalytics.easiestQuestion ? (
+                        <Text style={styles.insightText}>
+                          Easiest: Q{testAnalytics.easiestQuestion.questionNumber}
+                          {testAnalytics.easiestQuestion.topicName ? ` (${testAnalytics.easiestQuestion.topicName})` : ''}
+                          {' — '}{testAnalytics.easiestQuestion.correctRate}% correct
+                          ({testAnalytics.easiestQuestion.correctCount}/{testAnalytics.easiestQuestion.sampleSize})
+                        </Text>
+                      ) : null}
+                      {testAnalytics.hardestQuestion ? (
+                        <Text style={styles.insightText}>
+                          Hardest: Q{testAnalytics.hardestQuestion.questionNumber}
+                          {testAnalytics.hardestQuestion.topicName ? ` (${testAnalytics.hardestQuestion.topicName})` : ''}
+                          {' — '}{testAnalytics.hardestQuestion.correctRate}% correct
+                          ({testAnalytics.hardestQuestion.correctCount}/{testAnalytics.hardestQuestion.sampleSize})
+                        </Text>
+                      ) : null}
+                    </View>
+                  ) : null}
 
                   {/* Download CSV Button */}
                   <TouchableOpacity
@@ -494,24 +571,58 @@ export default function Analytics() {
                 <ActivityIndicator color="#01b4ae" style={{ marginTop: 40 }} />
               ) : studentAnalytics ? (
                 <>
-                  <View style={styles.summaryContainer}>
-                    <View style={styles.summaryCard}>
-                      <BookOpen color="#2563EB" size={24} />
-                      <Text style={styles.summaryNumber}>{studentAnalytics.summary.totalTests}</Text>
-                      <Text style={styles.summaryLabel}>Tests Taken</Text>
+                  <DateRangeFilter value={dateRange} onChange={handleDateRangeChange} />
+                  <ScoreLegend />
+
+                  <AnalyticsKpiGrid
+                    items={[
+                      {
+                        value: String(studentAnalytics.summary.totalTests),
+                        label: 'Tests Taken',
+                      },
+                      {
+                        value: formatPercent(studentAnalytics.summary.avgScorePercentage ?? studentAnalytics.summary.avgPercentage),
+                        label: 'Score %',
+                        sublabel: 'marks-based',
+                      },
+                      {
+                        value: formatPercent(studentAnalytics.summary.avgAccuracy, 'N/A'),
+                        label: 'Accuracy',
+                        sublabel: studentAnalytics.summary.avgAccuracy === null ? 'No attempted questions' : 'correct / attempted',
+                      },
+                      {
+                        value: `${formatMarks(studentAnalytics.summary.obtainedMarks)}/${formatMarks(studentAnalytics.summary.totalMarks)}`,
+                        label: 'Total Marks',
+                      },
+                      {
+                        value: String(studentAnalytics.summary.totalCorrect ?? 0),
+                        label: 'Correct',
+                      },
+                      {
+                        value: String(studentAnalytics.summary.totalIncorrect ?? 0),
+                        label: 'Incorrect',
+                      },
+                      {
+                        value: String(studentAnalytics.summary.totalSkipped ?? 0),
+                        label: 'Skipped',
+                      },
+                      {
+                        value: String(studentAnalytics.summary.totalAttempted ?? 0),
+                        label: 'Attempted',
+                      },
+                    ]}
+                  />
+
+                  {studentAnalytics.insights && studentAnalytics.insights.length > 0 ? (
+                    <View style={styles.insightCard}>
+                      {studentAnalytics.insights.map((insight, idx) => (
+                        <Text key={idx} style={styles.insightText}>{insight.message}</Text>
+                      ))}
                     </View>
-                    <View style={styles.summaryCard}>
-                      <TrendingUp color="#10B981" size={24} />
-                      <Text style={styles.summaryNumber}>{studentAnalytics.summary.avgPercentage}%</Text>
-                      <Text style={styles.summaryLabel}>Average</Text>
-                    </View>
-                    <View style={styles.summaryCard}>
-                      <Text style={[styles.summaryNumber, { fontSize: 20 }]}>
-                        {formatMarks(studentAnalytics.summary.obtainedMarks)}/{formatMarks(studentAnalytics.summary.totalMarks)}
-                      </Text>
-                      <Text style={styles.summaryLabel}>Total Marks</Text>
-                    </View>
-                  </View>
+                  ) : null}
+
+                  <Text style={styles.sectionTitle}>Performance Trend</Text>
+                  <PerformanceTrend trend={studentAnalytics.trend || []} />
 
                   {/* Subject-Wise Performance */}
                   <Text style={styles.sectionTitle}>Subject-Wise Performance</Text>
@@ -531,25 +642,28 @@ export default function Analytics() {
                           <View style={{ flex: 1 }}>
                             <Text style={styles.subjectName}>{sub.subjectName}</Text>
                             <Text style={styles.subjectMeta}>
-                              {sub.tests} tests • {sub.totalCorrect}/{sub.totalQuestions} correct
+                              {sub.tests} tests • Score {formatPercent(sub.scorePercentage ?? null, 'N/A')}
+                            </Text>
+                            <Text style={styles.subjectMeta}>
+                              Acc {formatPercent(sub.accuracy, 'N/A')} • {sub.totalCorrect}/{sub.totalAttempted ?? sub.totalQuestions} correct
                             </Text>
                           </View>
                           <View style={[
                             styles.subjectPctBadge,
-                            { backgroundColor: sub.percentage >= 60 ? '#D1FAE5' : '#FEE2E2' }
+                            { backgroundColor: (sub.scorePercentage ?? sub.percentage) >= 60 ? '#D1FAE5' : '#FEE2E2' }
                           ]}>
                             <Text style={[
                               styles.subjectPctText,
-                              { color: sub.percentage >= 60 ? '#059669' : '#DC2626' }
+                              { color: (sub.scorePercentage ?? sub.percentage) >= 60 ? '#059669' : '#DC2626' }
                             ]}>
-                              {sub.percentage}%
+                              {formatPercent(sub.scorePercentage ?? sub.percentage)}
                             </Text>
                           </View>
                         </View>
                         <View style={styles.progressBarBg}>
                           <View style={[
                             styles.progressBarFill,
-                            { width: `${Math.min(sub.percentage, 100)}%`, backgroundColor: sub.percentage >= 60 ? '#10B981' : '#EF4444' }
+                            { width: `${Math.min(sub.scorePercentage ?? sub.percentage ?? 0, 100)}%`, backgroundColor: (sub.scorePercentage ?? sub.percentage) >= 60 ? '#10B981' : '#EF4444' }
                           ]} />
                         </View>
                         {expandedSubject === sub.subjectId && sub.attempts.length > 0 && (
@@ -563,8 +677,10 @@ export default function Analytics() {
                                 <Text style={styles.subjectAttemptTitle} numberOfLines={1}>{att.quizTitle}</Text>
                                 <Text style={[
                                   styles.subjectAttemptPct,
-                                  { color: att.percentage >= 60 ? '#10B981' : '#EF4444' }
-                                ]}>{att.percentage}%</Text>
+                                  { color: (att.scorePercentage ?? att.percentage) >= 60 ? '#10B981' : '#EF4444' }
+                                ]}>
+                                  {formatPercent(att.scorePercentage ?? att.percentage)}
+                                </Text>
                               </TouchableOpacity>
                             ))}
                           </View>
@@ -573,6 +689,14 @@ export default function Analytics() {
                     ))
                   ) : (
                     <Text style={{ color: '#9CA3AF', textAlign: 'center', marginTop: 12 }}>No subject data available</Text>
+                  )}
+
+                  {/* Question Bank Performance: Subject / Topic / Subtopic / System / Question Type / Tag / Difficulty */}
+                  <Text style={[styles.sectionTitle, { marginTop: 24 }]}>Question Bank Performance</Text>
+                  {loadingQbPerformance ? (
+                    <ActivityIndicator color="#01b4ae" style={{ marginTop: 12 }} />
+                  ) : (
+                    <QuestionBankPerformance data={qbPerformance} />
                   )}
 
                   <Text style={[styles.sectionTitle, { marginTop: 24 }]}>Test History</Text>
@@ -599,9 +723,18 @@ export default function Analytics() {
 
                         <View style={styles.attemptStats}>
                           <View style={styles.attemptStat}>
-                            <Text style={styles.attemptStatLabel}>Score</Text>
+                            <Text style={styles.attemptStatLabel}>Score %</Text>
+                            <Text style={[
+                              styles.attemptStatValue,
+                              (attempt.scorePercentage ?? attempt.percentage) >= 60 ? styles.passText : styles.failText
+                            ]}>
+                              {formatPercent(attempt.scorePercentage ?? attempt.percentage)}
+                            </Text>
+                          </View>
+                          <View style={styles.attemptStat}>
+                            <Text style={styles.attemptStatLabel}>Accuracy</Text>
                             <Text style={styles.attemptStatValue}>
-                              {attempt.score}/{attempt.totalQuestions}
+                              {formatPercent(attempt.accuracy, 'N/A')}
                             </Text>
                           </View>
                           <View style={styles.attemptStat}>
@@ -610,16 +743,10 @@ export default function Analytics() {
                               {formatMarks(attempt.marksObtained)}/{formatMarks(attempt.totalMarks)}
                             </Text>
                           </View>
-                          <View style={styles.attemptStat}>
-                            <Text style={styles.attemptStatLabel}>Percentage</Text>
-                            <Text style={[
-                              styles.attemptStatValue,
-                              attempt.percentage >= 60 ? styles.passText : styles.failText
-                            ]}>
-                              {attempt.percentage}%
-                            </Text>
-                          </View>
                         </View>
+                        <Text style={styles.attemptCws}>
+                          C {attempt.correct ?? attempt.score} / W {attempt.incorrect ?? '—'} / S {attempt.skipped ?? '—'}
+                        </Text>
 
                         <View style={styles.attemptFooter}>
                           <View style={styles.attemptDate}>
@@ -665,7 +792,7 @@ export default function Analytics() {
             <View style={{ padding: 16 }}>
               <Text style={styles.sectionTitle}>Performance Heat Map</Text>
               <Text style={{ color: '#6B7280', fontSize: 13, marginBottom: 16 }}>
-                Students × Tests • Color indicates accuracy percentage
+                Students × Tests • Color indicates score percentage (marks-based)
               </Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={true}>
                 <View>
@@ -855,6 +982,26 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#2563EB',
+  },
+  insightCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 14,
+    marginHorizontal: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    gap: 6,
+  },
+  insightText: {
+    fontSize: 13,
+    color: '#374151',
+    lineHeight: 18,
+  },
+  attemptCws: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 8,
   },
   summaryContainer: {
     flexDirection: 'row',

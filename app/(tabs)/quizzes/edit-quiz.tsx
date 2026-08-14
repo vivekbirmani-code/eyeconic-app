@@ -36,13 +36,21 @@ interface Question {
   qid?: string;
   question: string;
   questionImage?: string;
-  options: string[];
+  questionType?: string;
+  options?: string[];
   optionImages?: string[];
-  correctAnswer?: number;
+  assertion?: string;
+  reason?: string;
+  columnA?: string[];
+  columnB?: string[];
+  correctAnswer?: any;
   explanation?: string;
   explanationImage?: string;
   marks: number;
   topicName?: string;
+  subtopicName?: string;
+  system?: string;
+  difficulty?: string;
   subject: { _id: string; name: string };
   tags?: string[];
 }
@@ -1167,26 +1175,56 @@ export default function EditQuiz() {
                 )}
               </View>
 
+              {previewQuestion.questionType === 'assertion_reason' && (
+                <View style={styles.previewSection}>
+                  <Text style={styles.previewLabel}>Assertion</Text>
+                  <Text style={styles.previewText}>{previewQuestion.assertion}</Text>
+                  <Text style={[styles.previewLabel, { marginTop: 12 }]}>Reason</Text>
+                  <Text style={styles.previewText}>{previewQuestion.reason}</Text>
+                </View>
+              )}
+
+              {previewQuestion.questionType === 'match_the_following' ? (
+                <View style={styles.previewSection}>
+                  <Text style={styles.previewLabel}>Column A</Text>
+                  {(previewQuestion.columnA || []).map((a: string, i: number) => (
+                    <Text key={i} style={styles.previewOptionText}>{i + 1}. {a}</Text>
+                  ))}
+                  <Text style={[styles.previewLabel, { marginTop: 12 }]}>Column B</Text>
+                  {(previewQuestion.columnB || []).map((b: string, i: number) => (
+                    <Text key={i} style={styles.previewOptionText}>{String.fromCharCode(65 + i)}. {b}</Text>
+                  ))}
+                </View>
+              ) : previewQuestion.questionType === 'numerical' ? (
+                <View style={styles.previewSection}>
+                  <Text style={styles.previewLabel}>Correct Answer</Text>
+                  <Text style={styles.previewText}>{String(previewQuestion.correctAnswer)}</Text>
+                </View>
+              ) : (
               <View style={styles.previewSection}>
                 <Text style={styles.previewLabel}>Options</Text>
-                {previewQuestion.options.map((option, index) => (
+                {(previewQuestion.options || []).map((option: string, index: number) => {
+                  const isCorrect = Array.isArray(previewQuestion.correctAnswer)
+                    ? previewQuestion.correctAnswer.includes(index)
+                    : previewQuestion.correctAnswer === index;
+                  return (
                   <View
                     key={index}
                     style={[
                       styles.previewOption,
-                      previewQuestion.correctAnswer === index && styles.correctOption
+                      isCorrect && styles.correctOption
                     ]}
                   >
                     <Text style={[
                       styles.previewOptionLabel,
-                      previewQuestion.correctAnswer === index && styles.correctText
+                      isCorrect && styles.correctText
                     ]}>
                       {String.fromCharCode(65 + index)}.
                     </Text>
                     <View style={{ flex: 1 }}>
                       <Text style={[
                         styles.previewOptionText,
-                        previewQuestion.correctAnswer === index && styles.correctText
+                        isCorrect && styles.correctText
                       ]}>
                         {option}
                       </Text>
@@ -1198,12 +1236,14 @@ export default function EditQuiz() {
                         />
                       )}
                     </View>
-                    {previewQuestion.correctAnswer === index && (
+                    {isCorrect && (
                       <Check color="#059669" size={20} />
                     )}
                   </View>
-                ))}
+                  );
+                })}
               </View>
+              )}
 
               {previewQuestion.explanation && (
                 <View style={[styles.previewSection, { backgroundColor: '#FEF3C7' }]}>

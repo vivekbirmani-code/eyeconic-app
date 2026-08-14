@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert } from 'react-native';
 import { getApiBaseURL } from '@/services/config';
+import { StudentResponse } from '@/types/question';
 
 // Get API URL for public endpoints
 const API_URL = getApiBaseURL();
@@ -16,7 +17,8 @@ const generateUUID = (): string => {
 };
 interface GuestAnswer {
   questionIndex: number;
-  selectedAnswer: number;
+  questionId?: string;
+  selectedAnswer: StudentResponse;
   markedForReview: boolean;
   timeSpent: number;
 }
@@ -49,7 +51,7 @@ interface GuestQuizContextType {
   error: string | null;
   fetchQuizByToken: (shareToken: string) => Promise<Quiz | null>;
   startGuestQuiz: (shareToken: string) => Promise<void>;
-  saveGuestAnswer: (questionIndex: number, selectedAnswer: number, markedForReview: boolean, timeSpent: number) => Promise<void>;
+  saveGuestAnswer: (questionIndex: number, selectedAnswer: StudentResponse, markedForReview: boolean, timeSpent: number, questionId?: string) => Promise<void>;
   submitGuestQuiz: () => Promise<any>;
   clearGuestAttempt: () => void;
 }
@@ -176,9 +178,10 @@ export const GuestQuizProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const saveGuestAnswer = async (
     questionIndex: number,
-    selectedAnswer: number,
+    selectedAnswer: StudentResponse,
     markedForReview: boolean = false,
-    timeSpent: number = 0
+    timeSpent: number = 0,
+    questionId?: string
   ) => {
     if (!currentAttempt) return;
 
@@ -191,6 +194,7 @@ export const GuestQuizProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
       const newAnswer = {
         questionIndex,
+        questionId,
         selectedAnswer,
         markedForReview,
         timeSpent
@@ -216,6 +220,7 @@ export const GuestQuizProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       const idx = networkAnswers.findIndex(a => a.questionIndex === questionIndex);
       const answerData = {
         questionIndex,
+        questionId,
         selectedAnswer,
         markedForReview,
         timeSpent

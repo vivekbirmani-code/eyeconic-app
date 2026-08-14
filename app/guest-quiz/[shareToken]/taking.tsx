@@ -18,15 +18,31 @@ import { ChevronLeft, ChevronRight, Flag, Clock, AlertCircle } from 'lucide-reac
 import { useGuestQuiz } from '@/context/GuestQuizContext';
 import { getSocketURL } from '@/services/config';
 import { SectionTabs } from '@/components/SectionTabs';
+import QuestionPrompt from '@/components/quiz/QuestionPrompt';
+import { QuestionType, StudentResponse, isResponseAnswered } from '@/types/question';
 
 interface Question {
   _id: string;
   questionText: string;
   questionImage?: string;
-  options: string[];
+  questionType?: QuestionType;
+  options?: string[];
   optionImages?: string[];
+  assertion?: string;
+  reason?: string;
+  columnA?: string[];
+  columnB?: string[];
   marks: number;
 }
+
+const defaultResponseFor = (type?: QuestionType): StudentResponse => {
+  switch (type) {
+    case 'multiple_correct': return [];
+    case 'match_the_following': return {};
+    case 'numerical': return null;
+    default: return -1;
+  }
+};
 
 export default function GuestQuizTaking() {
   const router = useRouter();
@@ -40,12 +56,17 @@ export default function GuestQuizTaking() {
   } = useGuestQuiz();
 
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [selectedAnswer, setSelectedAnswer] = useState<number>(-1);
+  const [selectedAnswer, setSelectedAnswer] = useState<StudentResponse>(-1);
   const [markedForReview, setMarkedForReview] = useState(false);
   const [timeRemaining, setTimeRemaining] = useState(0);
   const [currentSection, setCurrentSection] = useState('All');
   const [questionStartTime, setQuestionStartTime] = useState(Date.now());
   const [submitting, setSubmitting] = useState(false);
+  const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
+
+  const handleImageError = useCallback((url: string) => {
+    setFailedImages(prev => new Set(prev).add(url));
+  }, []);
 
   const scrollViewRef = useRef<ScrollView>(null);
   const timerRef = useRef<any>(null);
@@ -102,12 +123,13 @@ export default function GuestQuizTaking() {
   useEffect(() => {
     if (currentAttempt?.answers) {
       const answer = currentAttempt.answers.find(a => a.questionIndex === currentQuestionIndex);
-      if (answer) {
-        setSelectedAnswer(answer.selectedAnswer);
+      const questionType = quizData?.questions[currentQuestionIndex]?.questionType;
+      if (answer && isResponseAnswered(questionType || 'mcq_single', answer.selectedAnswer as StudentResponse)) {
+        setSelectedAnswer(answer.selectedAnswer as StudentResponse);
         setMarkedForReview(answer.markedForReview);
       } else {
-        setSelectedAnswer(-1);
-        setMarkedForReview(false);
+        setSelectedAnswer(defaultResponseFor(questionType));
+        setMarkedForReview(answer?.markedForReview || false);
       }
     }
     setQuestionStartTime(Date.now());
@@ -139,25 +161,28 @@ export default function GuestQuizTaking() {
     await handleSubmit(true);
   }, []);
 
-  const handleAnswerSelect = async (answerIndex: number) => {
-    setSelectedAnswer(answerIndex);
+  const handleResponseChange = async (response: StudentResponse) => {
+    setSelectedAnswer(response);
     const timeSpent = Math.floor((Date.now() - questionStartTime) / 1000);
-    await saveGuestAnswer(currentQuestionIndex, answerIndex, markedForReview, timeSpent);
+    const questionId = quizData?.questions[currentQuestionIndex]?._id;
+    await saveGuestAnswer(currentQuestionIndex, response, markedForReview, timeSpent, questionId);
   };
 
   const handleMarkForReview = async () => {
     const newState = !markedForReview;
     setMarkedForReview(newState);
     const timeSpent = Math.floor((Date.now() - questionStartTime) / 1000);
-    await saveGuestAnswer(currentQuestionIndex, selectedAnswer, newState, timeSpent);
+    const questionId = quizData?.questions[currentQuestionIndex]?._id;
+    await saveGuestAnswer(currentQuestionIndex, selectedAnswer, newState, timeSpent, questionId);
   };
 
   const handleNextQuestion = async () => {
     if (quizData && currentQuestionIndex < quizData.questions.length - 1) {
       // Save current progress/time before moving
       const timeSpent = Math.floor((Date.now() - questionStartTime) / 1000);
+      const questionId = quizData?.questions[currentQuestionIndex]?._id;
       try {
-        await saveGuestAnswer(currentQuestionIndex, selectedAnswer, markedForReview, timeSpent);
+        await saveGuestAnswer(currentQuestionIndex, selectedAnswer, markedForReview, timeSpent, questionId);
       } catch (err) {
         console.error('Save failed on guest skip:', err);
       }
@@ -171,8 +196,9 @@ export default function GuestQuizTaking() {
     if (currentQuestionIndex > 0) {
       // Save current progress/time before moving
       const timeSpent = Math.floor((Date.now() - questionStartTime) / 1000);
+      const questionId = quizData?.questions[currentQuestionIndex]?._id;
       try {
-        await saveGuestAnswer(currentQuestionIndex, selectedAnswer, markedForReview, timeSpent);
+        await saveGuestAnswer(currentQuestionIndex, selectedAnswer, markedForReview, timeSpent, questionId);
       } catch (err) {
         console.error('Save failed on guest skip back:', err);
       }
@@ -312,55 +338,21 @@ export default function GuestQuizTaking() {
           />
         )}
 
-        {/* Options */}
-        <View style={styles.optionsContainer}>
-          {currentQuestion.options.map((option: string, index: number) => (
-            <TouchableOpacity
-              key={index}
-              style={[
-                styles.optionButton,
-                selectedAnswer === index && styles.selectedOption
-              ]}
-              onPress={() => handleAnswerSelect(index)}
-              activeOpacity={0.7}
-            >
-              <View style={[
-                styles.optionRadio,
-                selectedAnswer === index && styles.selectedRadio
-              ]}>
-                {selectedAnswer === index && <View style={styles.radioInner} />}
-              </View>
-              <View style={styles.optionContent}>
-                <Text style={styles.optionLabel}>
-                  {String.fromCharCode(65 + index)}.
-                </Text>
-                <View style={{ flex: 1 }}>
-                  {option && (
-                    <Text style={[
-                      styles.optionText,
-                      selectedAnswer === index && styles.selectedOptionText
-                    ]}>
-                      {option}
-                    </Text>
-                  )}
-                  {currentQuestion.optionImages?.[index] && (
-                    <Image
-                      source={getImageUrl(currentQuestion.optionImages[index])}
-                      style={styles.optionImage}
-                      resizeMode="contain"
-                    />
-                  )}
-                </View>
-              </View>
-            </TouchableOpacity>
-          ))}
-        </View>
+        {/* Answer Input (adapts to question type) */}
+        <QuestionPrompt
+          question={currentQuestion}
+          response={selectedAnswer}
+          onChange={handleResponseChange}
+          getImageUrl={getImageUrl}
+          failedImages={failedImages}
+          onImageError={handleImageError}
+        />
 
         {/* Clear Response */}
-        {selectedAnswer !== -1 && (
+        {isResponseAnswered(currentQuestion.questionType || 'mcq_single', selectedAnswer) && (
           <TouchableOpacity
             style={styles.clearButton}
-            onPress={() => handleAnswerSelect(-1)}
+            onPress={() => handleResponseChange(defaultResponseFor(currentQuestion.questionType))}
           >
             <Text style={styles.clearButtonText}>Clear Response</Text>
           </TouchableOpacity>

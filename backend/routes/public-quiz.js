@@ -3,6 +3,8 @@ const crypto = require('crypto');
 const Quiz = require('../models/Quiz');
 const QuestionBank = require('../models/QuestionBank');
 const GuestAttempt = require('../models/GuestAttempt');
+const { gradeQuestion } = require('../utils/grading');
+const { buildMetadataSnapshot } = require('../utils/questionSnapshot');
 
 const router = express.Router();
 
@@ -139,7 +141,7 @@ router.post('/quiz/:shareToken/start', async (req, res) => {
             isActive: true
         }).populate({
             path: 'questions',
-            select: 'question options questionImage optionImages marks subject',
+            select: 'question options optionImages questionImage marks subject questionType assertion reason columnA columnB',
             populate: {
                 path: 'subject',
                 select: 'name'
@@ -195,9 +197,14 @@ router.post('/quiz/:shareToken/start', async (req, res) => {
                         _id: q._id,
                         questionText: q.question,
                         subjectName: q.subject?.name || 'Uncategorized',
+                        questionType: q.questionType,
                         options: q.options,
                         questionImage: q.questionImage,
                         optionImages: q.optionImages,
+                        assertion: q.assertion,
+                        reason: q.reason,
+                        columnA: q.columnA,
+                        columnB: q.columnB,
                         marks: q.marks || 1
                     })),
                     totalMarks: quiz.totalMarks
@@ -212,8 +219,9 @@ router.post('/quiz/:shareToken/start', async (req, res) => {
             deviceInfo,
             totalQuestions: quiz.questions.length,
             totalMarks: quiz.totalMarks,
-            answers: quiz.questions.map((_, index) => ({
+            answers: quiz.questions.map((q, index) => ({
                 questionIndex: index,
+                questionId: q._id,
                 selectedAnswer: -1,
                 isCorrect: false,
                 markedForReview: false,
@@ -239,9 +247,14 @@ router.post('/quiz/:shareToken/start', async (req, res) => {
                     _id: q._id,
                     questionText: q.question,
                     subjectName: q.subject?.name || 'Uncategorized',
+                    questionType: q.questionType,
                     options: q.options,
                     questionImage: q.questionImage,
                     optionImages: q.optionImages,
+                    assertion: q.assertion,
+                    reason: q.reason,
+                    columnA: q.columnA,
+                    columnB: q.columnB,
                     marks: q.marks || 1
                 })),
                 totalMarks: quiz.totalMarks
@@ -274,7 +287,8 @@ router.post('/quiz/:shareToken/submit', async (req, res) => {
             isPublic: true
         }).populate({
             path: 'questions',
-            select: 'correctAnswer marks'
+            select: 'correctAnswer marks questionType topicName subtopicName system tags difficulty subject',
+            populate: { path: 'subject', select: 'name' }
         });
 
         if (!quiz) {
@@ -304,13 +318,17 @@ router.post('/quiz/:shareToken/submit', async (req, res) => {
             });
         }
 
-        // Calculate score
+        // Calculate score. Server-side grading is the only source of truth —
+        // client-submitted isCorrect/metadataSnapshot values are never trusted.
         let score = 0;
         let marksObtained = 0;
 
-        const gradedAnswers = answers.map((answer, index) => {
-            const question = quiz.questions[index];
-            const isCorrect = answer.selectedAnswer === question?.correctAnswer;
+        const clientAnswers = Array.isArray(answers) ? answers : [];
+
+        const gradedAnswers = quiz.questions.map((question, index) => {
+            const clientAnswer = clientAnswers.find(a => a && a.questionIndex === index) || clientAnswers[index];
+            const selectedAnswer = clientAnswer ? clientAnswer.selectedAnswer : -1;
+            const { answered, isCorrect } = gradeQuestion(question, selectedAnswer);
             const marks = question?.marks || 1;
 
             if (isCorrect) {
@@ -319,8 +337,13 @@ router.post('/quiz/:shareToken/submit', async (req, res) => {
             }
 
             return {
-                ...answer,
-                isCorrect
+                questionIndex: index,
+                questionId: question._id,
+                selectedAnswer,
+                isCorrect: answered ? isCorrect : false,
+                markedForReview: !!(clientAnswer && clientAnswer.markedForReview),
+                timeSpent: (clientAnswer && clientAnswer.timeSpent) || 0,
+                metadataSnapshot: buildMetadataSnapshot(question)
             };
         });
 
@@ -378,8 +401,16 @@ router.post('/quiz/:shareToken/save-progress', async (req, res) => {
             });
         }
 
-        // Update progress
-        attempt.answers = answers;
+        // Update progress. Only positional/response fields are trusted from
+        // the client — correctness and metadata are always server-derived,
+        // and only ever computed at submit time.
+        attempt.answers = (Array.isArray(answers) ? answers : []).map(a => ({
+            questionIndex: a.questionIndex,
+            questionId: a.questionId,
+            selectedAnswer: a.selectedAnswer,
+            markedForReview: !!a.markedForReview,
+            timeSpent: a.timeSpent || 0
+        }));
         attempt.tabSwitchCount = tabSwitchCount || attempt.tabSwitchCount;
         attempt.tabSwitchLog = tabSwitchLog || attempt.tabSwitchLog;
 

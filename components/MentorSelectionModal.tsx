@@ -8,27 +8,19 @@ import {
   StyleSheet,
   ActivityIndicator,
   Animated,
-  Easing
+  Easing,
+  Alert,
+  Platform,
 } from 'react-native';
 import { X, UserCheck, User as UserIcon } from 'lucide-react-native';
 import * as Haptics from '@/utils/haptics';
 import { api } from '@/services/api';
 
-interface Mentor {
+export interface Mentor {
   _id: string;
   name: string;
   email: string;
   phone?: string;
-}
-
-interface MentorAssignment {
-  _id: string;
-  mentor: Mentor;
-  assignedBy: {
-    name: string;
-    email: string;
-  };
-  createdAt: string;
 }
 
 interface MentorSelectionModalProps {
@@ -36,7 +28,7 @@ interface MentorSelectionModalProps {
   onClose: () => void;
   studentId: string;
   studentName: string;
-  onSave: (mentor: Mentor) => void;
+  onSave: (mentors: Mentor[]) => void;
 }
 
 export default function MentorSelectionModal({
@@ -44,25 +36,30 @@ export default function MentorSelectionModal({
   onClose,
   studentId,
   studentName,
-  onSave
+  onSave,
 }: MentorSelectionModalProps) {
   const [mentors, setMentors] = useState<Mentor[]>([]);
   const [selectedMentorIds, setSelectedMentorIds] = useState<string[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const modalOpacity = useRef(new Animated.Value(0)).current;
   const modalScale = useRef(new Animated.Value(0.9)).current;
 
   useEffect(() => {
-    if (visible) {
-      fetchMentors();
-      fetchCurrentAssignment();
-      animateIn();
-    } else {
+    if (!visible) {
       animateOut();
+      return;
     }
-  }, [visible]);
+
+    modalOpacity.setValue(0);
+    modalScale.setValue(0.9);
+    setLoadError(null);
+    setSelectedMentorIds([]);
+    void loadModalData();
+    animateIn();
+  }, [visible, studentId]);
 
   const animateIn = () => {
     Animated.parallel([
@@ -96,28 +93,22 @@ export default function MentorSelectionModal({
     ]).start();
   };
 
-  const fetchMentors = async () => {
-    try {
-      const response = await api.get('/users/search?role=mentor');
-      setMentors(response.data);
-    } catch (error) {
-      console.error('Error fetching mentors:', error);
-    }
-  };
-
-  const fetchCurrentAssignment = async () => {
+  const loadModalData = async () => {
     setIsLoading(true);
+    setLoadError(null);
+
     try {
-      const response = await api.get(`/mentor-students/student/${studentId}`);
-      if (response.data && response.data.mentors) {
-        // response.data.mentors is array of mentor objects
-        const ids = response.data.mentors.map((m: Mentor) => m._id);
-        setSelectedMentorIds(ids);
-      } else {
-        setSelectedMentorIds([]);
-      }
+      const [mentorsResponse, assignmentResponse] = await Promise.all([
+        api.get<Mentor[]>('/users/search?role=mentor'),
+        api.get<{ mentors: Mentor[] }>(`/mentor-students/student/${studentId}`),
+      ]);
+
+      setMentors(mentorsResponse.data);
+      const assignedIds = assignmentResponse.data?.mentors?.map((mentor) => mentor._id) ?? [];
+      setSelectedMentorIds(assignedIds);
     } catch (error) {
-      console.error('Error fetching current assignment:', error);
+      console.error('Error loading mentor assignment data:', error);
+      setLoadError('Unable to load mentors. Please try again.');
     } finally {
       setIsLoading(false);
     }
@@ -126,20 +117,23 @@ export default function MentorSelectionModal({
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      await api.post('/mentor-students', {
+      const response = await api.post<{ mentors: Mentor[] }>('/mentor-students', {
         mentorIds: selectedMentorIds,
-        studentId
+        studentId,
       });
+
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      // We need to pass back something to update local state, 
-      // but the parent likely refetches or we can just pass the list of selected mentor objects
-      const selectedMentors = mentors.filter(m => selectedMentorIds.includes(m._id));
-      onSave(selectedMentors[0]); // Keep signature for now or updated parent? 
-      // Actually, let's just close and let parent refetch as per plan
+      const assignedMentors = response.data?.mentors ?? mentors.filter((mentor) =>
+        selectedMentorIds.includes(mentor._id)
+      );
+      onSave(assignedMentors);
       onClose();
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Error assigning mentors:', error);
-      alert(error?.response?.data?.message || 'Failed to assign mentors');
+      const message =
+        (error as { response?: { data?: { message?: string } } })?.response?.data?.message ||
+        'Unable to assign mentor. Please try again.';
+      Alert.alert('Assignment Failed', message);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setIsSaving(false);
@@ -148,13 +142,9 @@ export default function MentorSelectionModal({
 
   const toggleMentor = (mentorId: string) => {
     Haptics.selectionAsync();
-    setSelectedMentorIds(prev => {
-      if (prev.includes(mentorId)) {
-        return prev.filter(id => id !== mentorId);
-      } else {
-        return [...prev, mentorId];
-      }
-    });
+    setSelectedMentorIds((prev) =>
+      prev.includes(mentorId) ? prev.filter((id) => id !== mentorId) : [...prev, mentorId]
+    );
   };
 
   return (
@@ -163,14 +153,16 @@ export default function MentorSelectionModal({
       transparent
       animationType="none"
       onRequestClose={onClose}
+      presentationStyle="overFullScreen"
+      statusBarTranslucent={Platform.OS === 'android'}
     >
       <Animated.View style={[styles.overlay, { opacity: modalOpacity }]}>
         <Animated.View
           style={[
             styles.modalContainer,
             {
-              transform: [{ scale: modalScale }]
-            }
+              transform: [{ scale: modalScale }],
+            },
           ]}
         >
           <View style={styles.header}>
@@ -178,7 +170,7 @@ export default function MentorSelectionModal({
               <Text style={styles.title}>Assign Mentors</Text>
               <Text style={styles.subtitle}>{studentName}</Text>
             </View>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+            <TouchableOpacity onPress={onClose} style={styles.closeButton} accessibilityRole="button">
               <X color="#6B7280" size={24} />
             </TouchableOpacity>
           </View>
@@ -188,12 +180,16 @@ export default function MentorSelectionModal({
               <ActivityIndicator size="large" color="#01b4ae" />
               <Text style={styles.loadingText}>Loading mentors...</Text>
             </View>
+          ) : loadError ? (
+            <View style={styles.loadingContainer}>
+              <Text style={styles.errorText}>{loadError}</Text>
+              <TouchableOpacity style={styles.retryButton} onPress={() => void loadModalData()}>
+                <Text style={styles.retryButtonText}>Try Again</Text>
+              </TouchableOpacity>
+            </View>
           ) : (
             <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
-
-              <Text style={styles.sectionTitle}>
-                Select Mentors
-              </Text>
+              <Text style={styles.sectionTitle}>Select Mentors</Text>
 
               {mentors.length === 0 ? (
                 <View style={styles.emptyState}>
@@ -202,35 +198,24 @@ export default function MentorSelectionModal({
                 </View>
               ) : (
                 <View style={styles.mentorList}>
-                  {mentors.map(mentor => {
+                  {mentors.map((mentor) => {
                     const isSelected = selectedMentorIds.includes(mentor._id);
                     return (
                       <TouchableOpacity
                         key={mentor._id}
-                        style={[
-                          styles.mentorCard,
-                          isSelected && styles.mentorCardSelected
-                        ]}
+                        style={[styles.mentorCard, isSelected && styles.mentorCardSelected]}
                         onPress={() => toggleMentor(mentor._id)}
                         activeOpacity={0.7}
                       >
-                        <View style={[
-                          styles.checkboxCircle,
-                          isSelected && styles.checkboxCircleSelected
-                        ]}>
+                        <View style={[styles.checkboxCircle, isSelected && styles.checkboxCircleSelected]}>
                           {isSelected && <UserCheck color="#FFFFFF" size={14} />}
                         </View>
                         <View style={styles.mentorInfo}>
-                          <Text style={[
-                            styles.mentorName,
-                            isSelected && styles.mentorNameSelected
-                          ]}>
+                          <Text style={[styles.mentorName, isSelected && styles.mentorNameSelected]}>
                             {mentor.name}
                           </Text>
                           <Text style={styles.mentorEmail}>{mentor.email}</Text>
-                          {mentor.phone && (
-                            <Text style={styles.mentorPhone}>{mentor.phone}</Text>
-                          )}
+                          {mentor.phone ? <Text style={styles.mentorPhone}>{mentor.phone}</Text> : null}
                         </View>
                       </TouchableOpacity>
                     );
@@ -241,20 +226,13 @@ export default function MentorSelectionModal({
           )}
 
           <View style={styles.footer}>
-            <TouchableOpacity
-              style={styles.cancelButton}
-              onPress={onClose}
-              disabled={isSaving}
-            >
+            <TouchableOpacity style={styles.cancelButton} onPress={onClose} disabled={isSaving}>
               <Text style={styles.cancelButtonText}>Cancel</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[
-                styles.saveButton,
-                isSaving && styles.saveButtonDisabled
-              ]}
-              onPress={handleSave}
-              disabled={isSaving || isLoading}
+              style={[styles.saveButton, (isSaving || isLoading || !!loadError) && styles.saveButtonDisabled]}
+              onPress={() => void handleSave()}
+              disabled={isSaving || isLoading || !!loadError}
             >
               {isSaving ? (
                 <ActivityIndicator color="#FFFFFF" />
@@ -278,7 +256,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20
+    padding: 20,
   },
   modalContainer: {
     backgroundColor: '#FFFFFF',
@@ -291,7 +269,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.15,
     shadowRadius: 20,
-    elevation: 10
+    elevation: 10,
   },
   header: {
     flexDirection: 'row',
@@ -299,33 +277,33 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     padding: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6'
+    borderBottomColor: '#F3F4F6',
   },
   title: {
     fontSize: 24,
     fontWeight: '700',
     color: '#111827',
-    marginBottom: 4
+    marginBottom: 4,
   },
   subtitle: {
     fontSize: 14,
-    color: '#6B7280'
+    color: '#6B7280',
   },
   closeButton: {
-    padding: 4
+    padding: 4,
   },
   content: {
     flex: 1,
-    padding: 20
+    padding: 20,
   },
   sectionTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: '#111827',
-    marginBottom: 12
+    marginBottom: 12,
   },
   mentorList: {
-    gap: 12
+    gap: 12,
   },
   mentorCard: {
     flexDirection: 'row',
@@ -334,11 +312,11 @@ const styles = StyleSheet.create({
     padding: 16,
     borderRadius: 12,
     borderWidth: 2,
-    borderColor: '#E5E7EB'
+    borderColor: '#E5E7EB',
   },
   mentorCardSelected: {
     backgroundColor: '#ECFDF5',
-    borderColor: '#01b4ae'
+    borderColor: '#01b4ae',
   },
   checkboxCircle: {
     width: 24,
@@ -349,48 +327,48 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
-    backgroundColor: 'transparent'
+    backgroundColor: 'transparent',
   },
   checkboxCircleSelected: {
     borderColor: '#01b4ae',
-    backgroundColor: '#01b4ae'
+    backgroundColor: '#01b4ae',
   },
   mentorInfo: {
-    flex: 1
+    flex: 1,
   },
   mentorName: {
     fontSize: 16,
     fontWeight: '600',
     color: '#374151',
-    marginBottom: 2
+    marginBottom: 2,
   },
   mentorNameSelected: {
-    color: '#01b4ae'
+    color: '#01b4ae',
   },
   mentorEmail: {
     fontSize: 14,
-    color: '#6B7280'
+    color: '#6B7280',
   },
   mentorPhone: {
     fontSize: 13,
     color: '#9CA3AF',
-    marginTop: 2
+    marginTop: 2,
   },
   emptyState: {
     alignItems: 'center',
-    padding: 40
+    padding: 40,
   },
   emptyText: {
     marginTop: 12,
     fontSize: 14,
-    color: '#6B7280'
+    color: '#6B7280',
   },
   footer: {
     flexDirection: 'row',
     padding: 20,
     gap: 12,
     borderTopWidth: 1,
-    borderTopColor: '#F3F4F6'
+    borderTopColor: '#F3F4F6',
   },
   cancelButton: {
     flex: 1,
@@ -398,12 +376,12 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#E5E7EB',
-    alignItems: 'center'
+    alignItems: 'center',
   },
   cancelButtonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#374151'
+    color: '#374151',
   },
   saveButton: {
     flex: 1,
@@ -413,25 +391,42 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8
+    gap: 8,
   },
   saveButtonDisabled: {
-    opacity: 0.6
+    opacity: 0.6,
   },
   saveButtonText: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#FFFFFF'
+    color: '#FFFFFF',
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 40
+    padding: 40,
   },
   loadingText: {
     marginTop: 12,
     fontSize: 14,
-    color: '#6B7280'
-  }
+    color: '#6B7280',
+  },
+  errorText: {
+    fontSize: 14,
+    color: '#DC2626',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  retryButton: {
+    backgroundColor: '#01b4ae',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 8,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+    fontSize: 14,
+  },
 });

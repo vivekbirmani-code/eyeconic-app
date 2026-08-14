@@ -11,6 +11,7 @@ interface QuestionAnalytic {
     correctCount: number;
     wrongCount: number;
     skippedCount: number;
+    sampleSize?: number;
 }
 
 interface QuestionAnalyticsProps {
@@ -18,31 +19,29 @@ interface QuestionAnalyticsProps {
 }
 
 export default function QuestionAnalytics({ questions }: QuestionAnalyticsProps) {
-    const renderProgressBar = (correct: number, wrong: number, skipped: number) => {
+    if (!questions || questions.length === 0) {
         return (
-            <View style={styles.progressBar}>
-                {correct > 0 && (
-                    <View style={[styles.progressSegment, styles.correctSegment, { flex: correct }]} />
-                )}
-                {wrong > 0 && (
-                    <View style={[styles.progressSegment, styles.wrongSegment, { flex: wrong }]} />
-                )}
-                {skipped > 0 && (
-                    <View style={[styles.progressSegment, styles.skippedSegment, { flex: skipped }]} />
-                )}
+            <View style={styles.container}>
+                <Text style={styles.sectionTitle}>Question-wise Analytics</Text>
+                <Text style={styles.empty}>No question analytics available.</Text>
             </View>
         );
-    };
+    }
+
+    const sampleSize = questions[0]?.sampleSize ?? 0;
 
     return (
         <View style={styles.container}>
             <Text style={styles.sectionTitle}>Question-wise Analytics</Text>
+            <Text style={styles.note}>
+                Percentages are based on {sampleSize} completed attempt{sampleSize === 1 ? '' : 's'}.
+            </Text>
             <View style={styles.card}>
                 <View style={styles.header}>
                     <Text style={[styles.headerText, styles.questionCol]}>Question</Text>
                     <Text style={[styles.headerText, styles.percentCol]}>Correct</Text>
                     <Text style={[styles.headerText, styles.percentCol]}>Wrong</Text>
-                    <Text style={[styles.headerText, styles.percentCol]}>Skipped</Text>
+                    <Text style={[styles.headerText, styles.percentCol]}>Skip</Text>
                 </View>
 
                 <FlatList
@@ -52,11 +51,12 @@ export default function QuestionAnalytics({ questions }: QuestionAnalyticsProps)
                         <View style={styles.row}>
                             <View style={styles.questionCol}>
                                 <Text style={styles.questionNumber}>Q{item.questionNumber}</Text>
-                                {item.topicName && (
-                                    <Text style={styles.topicName} numberOfLines={1}>
-                                        {item.topicName}
-                                    </Text>
-                                )}
+                                {item.topicName ? (
+                                    <Text style={styles.topicName}>{item.topicName}</Text>
+                                ) : null}
+                                <Text style={styles.counts}>
+                                    {item.correctCount}C • {item.wrongCount}W • {item.skippedCount}S
+                                </Text>
                             </View>
                             <View style={styles.percentCol}>
                                 <Text style={[styles.percentText, styles.correctText]}>
@@ -91,7 +91,18 @@ const styles = StyleSheet.create({
         fontWeight: '700',
         color: '#1F2937',
         marginHorizontal: 16,
+        marginBottom: 4,
+    },
+    note: {
+        fontSize: 12,
+        color: '#6B7280',
+        marginHorizontal: 16,
         marginBottom: 12,
+    },
+    empty: {
+        color: '#9CA3AF',
+        textAlign: 'center',
+        marginHorizontal: 16,
     },
     card: {
         backgroundColor: '#FFFFFF',
@@ -141,6 +152,11 @@ const styles = StyleSheet.create({
         color: '#6B7280',
         marginTop: 2,
     },
+    counts: {
+        fontSize: 11,
+        color: '#9CA3AF',
+        marginTop: 4,
+    },
     percentText: {
         fontSize: 14,
         fontWeight: '600',
@@ -153,24 +169,5 @@ const styles = StyleSheet.create({
     },
     skippedText: {
         color: '#9CA3AF',
-    },
-    progressBar: {
-        flexDirection: 'row',
-        height: 4,
-        borderRadius: 2,
-        overflow: 'hidden',
-        marginTop: 8,
-    },
-    progressSegment: {
-        height: '100%',
-    },
-    correctSegment: {
-        backgroundColor: '#10B981',
-    },
-    wrongSegment: {
-        backgroundColor: '#EF4444',
-    },
-    skippedSegment: {
-        backgroundColor: '#E5E7EB',
     },
 });

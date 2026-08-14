@@ -11,6 +11,30 @@ const Subject = require('../models/Subject');
 const MentorStudentAssignment = require('../models/MentorStudentAssignment');
 const User = require('../models/User');
 const { sendPushToUser } = require('../utils/notifications');
+const { gradeQuestion, isAnswered } = require('../utils/grading');
+const { buildMetadataSnapshot } = require('../utils/questionSnapshot');
+const {
+  computeAttemptStats,
+  computeQuestionAnalytics,
+  findEasiestHardestQuestions,
+  computeScoreDistribution,
+  computeTestOverview,
+  computePerformanceMetricsAverages,
+  computePercentile,
+  rankStudentAttempts,
+  filterAttemptsByDateRange,
+  aggregateStudentSummary,
+  aggregateSubjectStats,
+  computePerformanceBuckets,
+  computeStrengthsWeaknesses,
+  computeTrend,
+  computeInsights,
+  computeMarksAwarded,
+  resolveQuestionType,
+  classifyAnswer,
+  getAttemptDurationMinutes,
+  computeScorePercentage,
+} = require('../utils/analytics');
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -391,6 +415,18 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
           if (req.body.topics && req.body.topics.length > 0) {
             matchStage.topicName = { $in: req.body.topics };
           }
+          if (req.body.subtopics && req.body.subtopics.length > 0) {
+            matchStage.subtopicName = { $in: req.body.subtopics };
+          }
+          if (req.body.systems && req.body.systems.length > 0) {
+            matchStage.system = { $in: req.body.systems };
+          }
+          if (req.body.questionTypes && req.body.questionTypes.length > 0) {
+            matchStage.questionType = { $in: req.body.questionTypes };
+          }
+          if (req.body.difficulties && req.body.difficulties.length > 0) {
+            matchStage.difficulty = { $in: req.body.difficulties };
+          }
 
           const subjectQuestions = await QuestionBank.aggregate([
             { $match: matchStage },
@@ -517,10 +553,10 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
     const { questions: parsedQuestions, errors } = await parseExcel(req.file.buffer);
 
     if (errors.length > 0) {
-      return res.status(400).json({
-        message: 'Validation errors in Excel file',
-        errors: errors.slice(0, 5) // Return first 5 errors
-      });
+      const { buildImportValidationPayload } = require('../utils/importErrors');
+      return res.status(400).json(buildImportValidationPayload(errors.slice(0, 50), {
+        totalErrors: errors.length,
+      }));
     }
 
     if (parsedQuestions.length === 0) {
@@ -639,9 +675,11 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
         firstSubjectId = subId;
       }
 
-      // Check for duplicate: same question text + same options
+      // Check for duplicate: same question text + same options (types without
+      // options, e.g. numerical/match_the_following, are matched on text +
+      // questionType only)
       const normalizedQuestion = qData.question.trim().toLowerCase();
-      const normalizedOptions = qData.options.map(o => String(o).trim().toLowerCase()).sort().join('|');
+      const normalizedOptions = (qData.options || []).map(o => String(o).trim().toLowerCase()).sort().join('|');
 
       const existingQuestion = await QuestionBank.findOne({
         subject: subId,
@@ -651,11 +689,15 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
         }
       });
 
-      // Check if options match
+      // Check if options match (or, for optionless types, that the question type matches)
       let isDuplicate = false;
       if (existingQuestion) {
-        const existingOptions = existingQuestion.options.map(o => String(o).trim().toLowerCase()).sort().join('|');
-        isDuplicate = existingOptions === normalizedOptions;
+        if (!qData.options || qData.options.length === 0) {
+          isDuplicate = existingQuestion.questionType === qData.questionType;
+        } else {
+          const existingOptions = (existingQuestion.options || []).map(o => String(o).trim().toLowerCase()).sort().join('|');
+          isDuplicate = existingOptions === normalizedOptions;
+        }
       }
 
       const newHasImage = !!(qData.questionImage || qData.optionImages?.some(img => img));
@@ -711,14 +753,22 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
         const question = new QuestionBank({
           subject: subId,
           topicName: processedQData.topicName,
+          subtopicName: qData.subtopicName,
+          system: qData.system,
+          questionType: qData.questionType,
+          difficulty: qData.difficulty,
           question: processedQData.question,
           questionImage: processedQData.questionImage,
           options: processedQData.options,
           optionImages: processedQData.optionImages,
-          correctAnswer: processedQData.correctAnswer,
+          assertion: qData.assertion,
+          reason: qData.reason,
+          columnA: qData.columnA,
+          columnB: qData.columnB,
+          correctAnswer: processedQData.correctAnswer !== undefined ? processedQData.correctAnswer : qData.correctAnswer,
           explanation: processedQData.explanation,
           explanationImage: processedQData.explanationImage,
-          tags: [...qData.tags, 'excel-import', `quiz:${quizTitle}`],
+          tags: [...(qData.tags || []), 'excel-import', `quiz:${quizTitle}`],
           createdBy: req.user._id,
           isActive: true
         });
@@ -1020,39 +1070,47 @@ router.get('/analytics/test-report/:testId', auth, authorize('admin', 'mentor'),
       .populate('questions');
     if (!quiz) return res.status(404).json({ message: 'Test not found' });
 
-    const attempts = await QuizAttempt.find({
+    const attemptQuery = {
       quiz: req.params.testId,
       status: { $in: ['completed', 'auto_submitted'] }
-    }).populate('student', 'name email');
+    };
 
-    // Calculate percentile ranking
+    let totalAssigned = quiz.assignedStudents?.length || 0;
+
+    if (req.user.role === 'mentor') {
+      const assignments = await MentorStudentAssignment.find({ mentor: req.user._id, isActive: true }).select('student');
+      const mentorStudentIds = assignments.map(a => a.student.toString());
+      attemptQuery.student = { $in: mentorStudentIds };
+
+      if (quiz.assignedStudents && quiz.assignedStudents.length > 0) {
+        totalAssigned = quiz.assignedStudents.filter(id => mentorStudentIds.includes(id.toString())).length;
+      } else {
+        totalAssigned = mentorStudentIds.length;
+      }
+    }
+
+    const attempts = await QuizAttempt.find(attemptQuery).populate('student', 'name email');
     const sorted = [...attempts].sort((a, b) => (b.marksObtained || 0) - (a.marksObtained || 0));
     const total = sorted.length;
+    const ranked = rankStudentAttempts(sorted, quiz.questions);
 
-    const students = sorted.map((a, idx) => {
-      const correct = a.score || 0;
-      const incorrect = (a.totalQuestions || 0) - correct - (a.answers?.filter(ans => ans.selectedAnswer === -1).length || 0);
-      const skipped = (a.totalQuestions || 0) - correct - Math.max(0, incorrect);
-      const pct = a.totalQuestions > 0 ? Math.round((correct / a.totalQuestions) * 100) : 0;
-      // Percentile = percentage of students scored below this student
-      const belowCount = sorted.filter(s => (s.marksObtained || 0) < (a.marksObtained || 0)).length;
-      const percentile = total > 1 ? Math.round((belowCount / (total - 1)) * 100) : 100;
-
-      return {
-        _id: a._id,
-        studentName: a.student?.name || 'Unknown',
-        studentEmail: a.student?.email || '',
-        rank: idx + 1,
-        correct,
-        incorrect: Math.max(0, incorrect),
-        skipped: Math.max(0, skipped),
-        marksObtained: a.marksObtained || 0,
-        totalMarks: a.totalMarks || 0,
-        totalQuestions: a.totalQuestions || 0,
-        percentage: pct,
-        percentile
-      };
-    });
+    const students = ranked.map((entry) => ({
+      _id: entry._id,
+      studentName: entry.studentName,
+      studentEmail: entry.studentEmail,
+      rank: entry.rank,
+      correct: entry.correct,
+      incorrect: entry.incorrect,
+      skipped: entry.skipped,
+      attempted: entry.attempted,
+      marksObtained: entry.marksObtained,
+      totalMarks: entry.totalMarks,
+      totalQuestions: entry.totalQuestions,
+      scorePercentage: entry.scorePercentage,
+      accuracy: entry.accuracy,
+      percentage: entry.percentage,
+      percentile: computePercentile(sorted, sorted.find(a => String(a._id) === String(entry._id)), { excludeSelf: true })
+    }));
 
     res.json({
       test: {
@@ -1064,7 +1122,7 @@ router.get('/analytics/test-report/:testId', auth, authorize('admin', 'mentor'),
       },
       students,
       totalAttempted: total,
-      totalAssigned: quiz.assignedStudents?.length || 0
+      totalAssigned
     });
   } catch (error) {
     console.error('Test report error:', error);
@@ -1109,39 +1167,7 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
     const highestScore = marksList.length > 0 ? roundTo2(Math.max(...marksList)) : 0;
     const lowestScore = marksList.length > 0 ? roundTo2(Math.min(...marksList)) : 0;
 
-    const getAttemptStats = (attempt) => {
-      let correct = Number(attempt.score || 0);
-      let incorrect = 0;
-      let skipped = 0;
-      const totalQuestions = Number(attempt.totalQuestions || quizQuestionCount || 0);
-
-      if (Array.isArray(attempt.sectionPerformance) && attempt.sectionPerformance.length > 0) {
-        correct = 0;
-        attempt.sectionPerformance.forEach((section) => {
-          correct += Number(section.correct || 0);
-          incorrect += Number(section.incorrect || 0);
-          skipped += Number(section.skipped || 0);
-        });
-      } else {
-        const answeredCount = Array.isArray(attempt.answers)
-          ? attempt.answers.filter(ans => ans.selectedAnswer !== undefined && ans.selectedAnswer !== -1).length
-          : 0;
-        incorrect = Math.max(0, answeredCount - correct);
-        skipped = Math.max(0, totalQuestions - answeredCount);
-      }
-
-      const answered = Math.max(0, totalQuestions - skipped);
-      const accuracy = answered > 0 ? roundTo2((correct / answered) * 100) : 0;
-
-      return {
-        correct: Math.max(0, correct),
-        incorrect: Math.max(0, incorrect),
-        skipped: Math.max(0, skipped),
-        answered,
-        totalQuestions,
-        accuracy
-      };
-    };
+    const getAttemptStats = (attempt) => computeAttemptStats(attempt, quiz.questions);
 
     let sumCorrect = 0;
     let sumWrong = 0;
@@ -1164,44 +1190,21 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
     const avgSkipped = total > 0 ? roundTo2(sumSkipped / total) : 0;
     const avgTime = total > 0 ? roundTo2(sumTimeMinutes / total) : 0;
 
-    const questionAnalytics = quiz.questions.map((question, index) => {
-      let correctCount = 0;
-      let wrongCount = 0;
-      let skippedCount = 0;
-
-      sorted.forEach((attempt) => {
-        const answer = Array.isArray(attempt.answers)
-          ? attempt.answers.find(a => a.questionIndex === index)
-          : null;
-
-        if (!answer || answer.selectedAnswer === -1 || answer.selectedAnswer === undefined) {
-          skippedCount++;
-        } else if (answer.selectedAnswer === question.correctAnswer) {
-          correctCount++;
-        } else {
-          wrongCount++;
-        }
-      });
-
-      const attemptCount = sorted.length || 1;
-      const options = Array.isArray(question.options) ? question.options : [];
+    const questionAnalytics = computeQuestionAnalytics(sorted, quiz.questions).map((q) => {
+      const question = quiz.questions[q.questionNumber - 1];
+      const options = Array.isArray(question?.options) ? question.options : [];
       return {
-        questionNumber: index + 1,
-        subjectName: question.subject?.name || quiz.subject?.name || 'General',
-        topicName: question.topicName || '',
-        questionText: question.question || '',
+        ...q,
+        subjectName: q.subjectName || quiz.subject?.name || 'General',
+        topicName: q.topicName || question?.topicName || '',
+        questionText: question?.question || '',
         optionA: options[0] || '',
         optionB: options[1] || '',
         optionC: options[2] || '',
         optionD: options[3] || '',
-        correctOptionLabel: optionLabelFromIndex(question.correctAnswer),
-        correctOptionText: optionTextFromIndex(options, question.correctAnswer),
-        correctCount,
-        wrongCount,
-        skippedCount,
-        percentCorrect: roundTo2((correctCount / attemptCount) * 100),
-        percentWrong: roundTo2((wrongCount / attemptCount) * 100),
-        percentSkipped: roundTo2((skippedCount / attemptCount) * 100)
+        correctOptionLabel: optionLabelFromIndex(question?.correctAnswer),
+        correctOptionText: optionTextFromIndex(options, question?.correctAnswer),
+        wrongCount: q.wrongCount,
       };
     });
 
@@ -1255,6 +1258,7 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
       'Skipped',
       'Answered',
       'Accuracy (%)',
+      'Score Percentage (%)',
       'Score',
       'Total Questions',
       'Marks Obtained',
@@ -1273,7 +1277,8 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
       const stats = getAttemptStats(attempt);
       const marksObtained = roundTo2(attempt.marksObtained || 0);
       const totalMarks = roundTo2(attempt.totalMarks || 0);
-      const percentage = totalMarks > 0 ? roundTo2((marksObtained / totalMarks) * 100) : 0;
+      const scorePercentage = stats.scorePercentage ?? 0;
+      const percentage = scorePercentage;
       const belowCount = sorted.filter(s => (s.marksObtained || 0) < (attempt.marksObtained || 0)).length;
       const percentile = total > 0 ? roundTo2((belowCount / total) * 100) : 0;
       const timeSpentMinutes = (attempt.startTime && attempt.endTime)
@@ -1297,7 +1302,8 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
         stats.incorrect,
         stats.skipped,
         stats.answered,
-        stats.accuracy,
+        stats.accuracy ?? '',
+        scorePercentage,
         roundTo2(attempt.score || 0),
         stats.totalQuestions,
         marksObtained,
@@ -1508,10 +1514,16 @@ router.get('/analytics/student/:studentId/csv', auth, authorize('admin'), async 
       quiz.questions.forEach((question, questionIndex) => {
         const answer = answerByQuestionIndex.get(questionIndex);
         const options = Array.isArray(question.options) ? question.options : [];
-        const selectedAnswer = answer?.selectedAnswer;
-        const isSkipped = selectedAnswer === undefined || selectedAnswer === null || Number(selectedAnswer) === -1;
-        const isCorrect = !isSkipped && Number(selectedAnswer) === Number(question.correctAnswer);
-        const marksAwarded = isSkipped ? 0 : (isCorrect ? positiveMarks : -negativeMarks);
+        const questionType = resolveQuestionType(answer, question);
+        const result = classifyAnswer(answer, questionType);
+        const isSkipped = result.skipped;
+        const isCorrect = result.answered && result.correct;
+        const marksAwarded = computeMarksAwarded(
+          isCorrect,
+          isSkipped,
+          positiveMarks,
+          negativeMarks
+        );
 
         csvLines.push(toCsvRow([
           String(student._id),
@@ -1536,8 +1548,8 @@ router.get('/analytics/student/:studentId/csv', auth, authorize('admin'), async 
           options[3] || '',
           optionLabelFromIndex(question.correctAnswer),
           optionTextFromIndex(options, question.correctAnswer),
-          isSkipped ? '' : optionLabelFromIndex(selectedAnswer),
-          isSkipped ? '' : optionTextFromIndex(options, selectedAnswer),
+          isSkipped ? '' : optionLabelFromIndex(answer?.selectedAnswer),
+          isSkipped ? '' : optionTextFromIndex(options, answer?.selectedAnswer),
           isSkipped ? 'No' : 'Yes',
           isSkipped ? 'Yes' : 'No',
           isSkipped ? '' : (isCorrect ? 'Yes' : 'No'),
@@ -1564,7 +1576,6 @@ router.get('/analytics/student/:studentId/csv', auth, authorize('admin'), async 
 // Student subject-wise performance report
 router.get('/analytics/student/:studentId/subjects', auth, authorize('admin', 'mentor'), async (req, res) => {
   try {
-    // If mentor, verify student is assigned to them
     if (req.user.role === 'mentor') {
       const assignment = await MentorStudentAssignment.findOne({
         mentor: req.user._id,
@@ -1577,67 +1588,90 @@ router.get('/analytics/student/:studentId/subjects', auth, authorize('admin', 'm
       }
     }
 
-    const { subject } = req.query; // optional filter
+    const { subject, range } = req.query;
     const filter = {
       student: req.params.studentId,
       status: { $in: ['completed', 'auto_submitted'] }
     };
 
-    const attempts = await QuizAttempt.find(filter)
+    let attempts = await QuizAttempt.find(filter)
       .populate({
         path: 'quiz',
         populate: { path: 'subject', select: 'name' }
       })
       .sort({ endTime: -1 });
 
-    // Group by subject
-    const subjectMap = {};
-    attempts.forEach(a => {
-      const subId = a.quiz?.subject?._id?.toString() || 'unknown';
-      const subName = a.quiz?.subject?.name || 'General';
+    attempts = filterAttemptsByDateRange(attempts, range);
 
-      if (subject && subId !== subject) return; // filter by specific subject
-
-      if (!subjectMap[subId]) {
-        subjectMap[subId] = {
-          subjectId: subId,
-          subjectName: subName,
-          tests: 0,
-          totalMarks: 0,
-          obtainedMarks: 0,
-          totalCorrect: 0,
-          totalQuestions: 0,
-          attempts: []
-        };
-      }
-      subjectMap[subId].tests++;
-      subjectMap[subId].totalMarks += a.totalMarks || 0;
-      subjectMap[subId].obtainedMarks += a.marksObtained || 0;
-      subjectMap[subId].totalCorrect += a.score || 0;
-      subjectMap[subId].totalQuestions += a.totalQuestions || 0;
-      subjectMap[subId].attempts.push({
-        _id: a._id,
-        quizTitle: a.quiz?.title || 'Untitled',
-        quizId: a.quiz?._id,
-        testType: a.quiz?.testType || 'daily',
-        score: a.score,
-        totalQuestions: a.totalQuestions,
-        marksObtained: a.marksObtained,
-        totalMarks: a.totalMarks,
-        percentage: a.totalQuestions > 0 ? Math.round((a.score / a.totalQuestions) * 100) : 0,
-        endTime: a.endTime
-      });
-    });
-
-    // Add percentage to each subject
-    const subjects = Object.values(subjectMap).map(s => ({
-      ...s,
-      percentage: s.totalQuestions > 0 ? Math.round((s.totalCorrect / s.totalQuestions) * 100) : 0
-    }));
+    let subjects = aggregateSubjectStats(attempts);
+    if (subject) {
+      subjects = subjects.filter((s) => s.subjectId === subject);
+    }
 
     res.json({ subjects });
   } catch (error) {
     console.error('Student subject report error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Student performance broken down by the seven Question Bank classification
+// dimensions (Subject, Topic, Subtopic, System, Question Type, Tag, Difficulty).
+// Uses the server-derived metadataSnapshot captured at submit time — never the
+// live QuestionBank — so historical accuracy remains stable even if a
+// question's classification is edited later. (admin, mentor)
+router.get('/analytics/student/:studentId/performance', auth, authorize('admin', 'mentor'), async (req, res) => {
+  try {
+    if (req.user.role === 'mentor') {
+      const assignment = await MentorStudentAssignment.findOne({
+        mentor: req.user._id,
+        student: req.params.studentId,
+        isActive: true
+      });
+
+      if (!assignment) {
+        return res.status(403).json({ message: 'Not authorized to view this student\'s analytics' });
+      }
+    }
+
+    const mongoose = require('mongoose');
+    if (!mongoose.Types.ObjectId.isValid(req.params.studentId)) {
+      return res.status(400).json({ message: 'Invalid student id' });
+    }
+    const studentObjectId = new mongoose.Types.ObjectId(req.params.studentId);
+
+    // Pull only the fields needed for bucketing. Answers without a
+    // metadataSnapshot predate this feature and are excluded rather than
+    // guessed at.
+    const rows = await QuizAttempt.aggregate([
+      { $match: { student: studentObjectId, status: { $in: ['completed', 'auto_submitted'] } } },
+      { $unwind: '$answers' },
+      { $match: { 'answers.metadataSnapshot': { $exists: true, $ne: null } } },
+      {
+        $project: {
+          _id: 0,
+          selectedAnswer: '$answers.selectedAnswer',
+          isCorrect: '$answers.isCorrect',
+          snapshot: '$answers.metadataSnapshot'
+        }
+      }
+    ]);
+
+    const breakdown = computePerformanceBuckets(rows.map((row) => ({
+      selectedAnswer: row.selectedAnswer,
+      isCorrect: row.isCorrect,
+      snapshot: row.snapshot,
+    })));
+
+    const { strengths, weaknesses } = computeStrengthsWeaknesses(breakdown.bySubject);
+
+    res.json({
+      ...breakdown,
+      strengths,
+      weaknesses,
+    });
+  } catch (error) {
+    console.error('Student performance analytics error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -1686,8 +1720,10 @@ router.get('/analytics/heatmap', auth, authorize('admin', 'mentor'), async (req,
           scores: {}
         };
       }
-      const pct = a.totalQuestions > 0 ? Math.round((a.score / a.totalQuestions) * 100) : 0;
-      studentMap[sId].scores[a.quiz.toString()] = pct;
+      const scorePct = computeScorePercentage(a.marksObtained, a.totalMarks);
+      if (scorePct !== null) {
+        studentMap[sId].scores[a.quiz.toString()] = scorePct;
+      }
     });
 
     res.json({
@@ -1736,19 +1772,23 @@ router.get('/analytics/:id', auth, authorize('admin', 'mentor'), async (req, res
     let totalTime = 0;
 
     const studentPerformance = attempts.map(a => {
-      const percentage = a.totalMarks > 0 ? (a.marksObtained / a.totalMarks) * 100 : 0;
+      const stats = computeAttemptStats(a);
+      const percentage = stats.scorePercentage ?? 0;
       totalScore += percentage;
-      totalCorrect += a.correctCount || 0;
-      totalTime += a.timeTaken || 0;
+      totalCorrect += stats.correct;
+      totalTime += getAttemptDurationMinutes(a) || 0;
 
       return {
         studentId: a.student?._id,
         studentName: a.student?.name || 'Unknown',
         percentage,
-        correct: a.correctCount || 0,
-        wrong: a.incorrectCount || 0,
-        skipped: a.skippedCount || 0,
-        timeTaken: a.timeTaken || 0,
+        scorePercentage: stats.scorePercentage,
+        accuracy: stats.accuracy,
+        correct: stats.correct,
+        wrong: stats.incorrect,
+        skipped: stats.skipped,
+        attempted: stats.attempted,
+        timeTaken: getAttemptDurationMinutes(a) || 0,
         tabSwitchCount: a.tabSwitchCount || 0
       };
     });
@@ -1802,7 +1842,8 @@ router.get('/:id', auth, async (req, res) => {
       .populate('createdBy', 'name')
       .populate({
         path: 'questions',
-        select: 'question options topicName questionImage optionImages subject correctAnswer explanation explanationImage',
+        select: 'question options optionImages topicName subtopicName system questionType tags difficulty '
+          + 'questionImage subject correctAnswer explanation explanationImage assertion reason columnA columnB',
         populate: {
           path: 'subject',
           select: 'name'
@@ -1861,6 +1902,21 @@ router.get('/:id', auth, async (req, res) => {
     }
 
     const qObj = quiz.toObject();
+
+    // SECURITY: students must never receive the answer key. Strip it from
+    // every question reference (top-level questions[] and sections[].questions[]).
+    if (req.user.role === 'student') {
+      const stripAnswerKey = (q) => {
+        if (!q || typeof q !== 'object') return q;
+        delete q.correctAnswer;
+        delete q.explanation;
+        delete q.explanationImage;
+        return q;
+      };
+      (qObj.questions || []).forEach(stripAnswerKey);
+      (qObj.sections || []).forEach(section => (section.questions || []).forEach(stripAnswerKey));
+    }
+
     // Compute unique subject names from questions (same logic as list endpoint)
     const names = [...new Set(
       (qObj.questions || [])
@@ -2007,7 +2063,11 @@ router.post('/:id/attempt/:attemptId/tab-switch', auth, authorize('student'), as
 // Save answer
 router.put('/:id/attempt/:attemptId/answer', auth, authorize('student'), async (req, res) => {
   try {
-    const { questionIndex, selectedAnswer, markedForReview, timeSpent } = req.body;
+    const { questionIndex, selectedAnswer, markedForReview, timeSpent, questionId } = req.body;
+
+    if (typeof questionIndex !== 'number' || questionIndex < 0) {
+      return res.status(400).json({ message: 'A valid questionIndex is required' });
+    }
 
     const attempt = await QuizAttempt.findOne({
       _id: req.params.attemptId,
@@ -2019,14 +2079,29 @@ router.put('/:id/attempt/:attemptId/answer', auth, authorize('student'), async (
       return res.status(404).json({ message: 'No active attempt found' });
     }
 
+    // Resolve the canonical question id server-side from the quiz's ordered
+    // question list. A client-supplied questionId is only ever used as a
+    // consistency check — never as the source of truth for identity.
+    const quizForAnswer = await Quiz.findById(req.params.id).select('questions');
+    const resolvedQuestionId = quizForAnswer?.questions?.[questionIndex];
+    if (!resolvedQuestionId) {
+      return res.status(400).json({ message: 'Invalid question index for this quiz' });
+    }
+    if (questionId && String(questionId) !== String(resolvedQuestionId)) {
+      return res.status(400).json({ message: 'questionId does not match the quiz question at this index' });
+    }
+
     // Find or create answer for this question
     const existingIndex = attempt.answers.findIndex(a => a.questionIndex === questionIndex);
 
     const answerData = {
       questionIndex,
+      questionId: resolvedQuestionId,
       selectedAnswer,
       markedForReview: markedForReview || false,
       timeSpent: timeSpent || 0
+      // isCorrect / metadataSnapshot are intentionally omitted here: they are
+      // only ever computed server-side at submit time, never on save.
     };
 
     if (existingIndex >= 0) {
@@ -2129,24 +2204,29 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
         };
       }
 
-      // CRITICAL FIX: Check if question was answered at all
-      // Using != null to catch BOTH null and undefined
-      const hasAnswer = answer && answer.selectedAnswer != null && answer.selectedAnswer !== -1;
+      // Server-side grading is the ONLY source of truth for correctness.
+      // Never trust a client-submitted isCorrect value.
+      const { answered, isCorrect } = gradeQuestion(question, answer ? answer.selectedAnswer : undefined);
 
-      if (!hasAnswer) {
+      if (answer) {
+        // Ensure the answer is always tied to its canonical question, even if
+        // it was created before questionId existed on the answer schema.
+        answer.questionId = question._id;
+        answer.metadataSnapshot = buildMetadataSnapshot(question);
+      }
+
+      if (!answered) {
         // Question was skipped (either never visited OR visited but not answered)
         skippedCount++;
         sectionPerformance[section].skipped++;
         if (answer) answer.isCorrect = false;
-      } else if (answer.selectedAnswer === question.correctAnswer) {
-        // Correct answer
+      } else if (isCorrect) {
         correctCount++;
         const points = quiz.positiveMarks !== undefined ? quiz.positiveMarks : 4;
         marksObtained += points;
         sectionPerformance[section].correct++;
         answer.isCorrect = true;
       } else {
-        // Incorrect answer
         incorrectCount++;
         sectionPerformance[section].incorrect++;
         answer.isCorrect = false;
@@ -2398,9 +2478,17 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
               questionImage: q.questionImage,
               options: q.options,
               optionImages: q.optionImages,
+              questionType: q.questionType,
+              assertion: q.assertion,
+              reason: q.reason,
+              columnA: q.columnA,
+              columnB: q.columnB,
               marks: q.marks,
               subject: q.subject,
               topicName: q.topicName,
+              subtopicName: q.subtopicName,
+              system: q.system,
+              difficulty: q.difficulty,
               tags: q.tags,
               userAnswer: answer?.selectedAnswer,
               isCorrect: answer?.isCorrect,
@@ -2455,9 +2543,17 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
           questionImage: q.questionImage,
           options: q.options,
           optionImages: q.optionImages,
+          questionType: q.questionType,
+          assertion: q.assertion,
+          reason: q.reason,
+          columnA: q.columnA,
+          columnB: q.columnB,
           marks: q.marks,
           subject: q.subject,
           topicName: q.topicName,
+          subtopicName: q.subtopicName,
+          system: q.system,
+          difficulty: q.difficulty,
           tags: q.tags,
           userAnswer: answer?.selectedAnswer,
           isCorrect: answer?.isCorrect,
@@ -2732,7 +2828,6 @@ router.get('/analytics/test/:testId', auth, authorize('admin', 'mentor'), async 
 
     let totalAssigned = quiz.assignedStudents?.length || 0;
 
-    // Mentor filtering
     if (req.user.role === 'mentor') {
       const assignments = await MentorStudentAssignment.find({ mentor: req.user._id, isActive: true }).select('student');
       const mentorStudentIds = assignments.map(a => a.student.toString());
@@ -2745,88 +2840,17 @@ router.get('/analytics/test/:testId', auth, authorize('admin', 'mentor'), async 
       }
     }
 
-    // Get all attempts for this test
     const attempts = await QuizAttempt.find(attemptQuery)
       .populate('student', 'name email')
       .sort({ marksObtained: -1 });
 
-    const totalAttempted = attempts.length;
-    const completionRate = totalAssigned > 0 ? Math.round((totalAttempted / totalAssigned) * 100) : 0;
-
-    // Calculate scores
-    const scores = attempts.map(a => a.marksObtained || 0);
-    const avgScore = scores.length > 0 ? Math.round(scores.reduce((sum, s) => sum + s, 0) / scores.length) : 0;
-    const highestScore = scores.length > 0 ? Math.max(...scores) : 0;
-    const lowestScore = scores.length > 0 ? Math.min(...scores) : 0;
-
-    // Calculate performance metrics
     const totalQuestions = quiz.questions.length;
-    let totalCorrect = 0;
-    let totalWrong = 0;
-    let totalSkipped = 0;
-    let totalTime = 0;
-
-    attempts.forEach(attempt => {
-      totalCorrect += attempt.score || 0;
-      const answered = (attempt.answers || []).filter(a => a.selectedAnswer !== -1 && a.selectedAnswer !== undefined).length;
-      totalWrong += answered - (attempt.score || 0);
-      totalSkipped += totalQuestions - answered;
-      totalTime += (attempt.endTime - attempt.startTime) / 1000 / 60; // in minutes
-    });
-
-    const avgCorrect = attempts.length > 0 ? (totalCorrect / attempts.length).toFixed(1) : 0;
-    const avgWrong = attempts.length > 0 ? (totalWrong / attempts.length).toFixed(1) : 0;
-    const avgSkipped = attempts.length > 0 ? (totalSkipped / attempts.length).toFixed(1) : 0;
-    const avgTime = attempts.length > 0 ? Math.round(totalTime / attempts.length) : 0;
-
-    // Question-wise analytics
-    const questionAnalytics = quiz.questions.map((question, index) => {
-      let correctCount = 0;
-      let wrongCount = 0;
-      let skippedCount = 0;
-
-      attempts.forEach(attempt => {
-        const answer = attempt.answers.find(a => a.questionIndex === index);
-        if (!answer || answer.selectedAnswer === -1 || answer.selectedAnswer === undefined) {
-          skippedCount++;
-        } else if (answer.selectedAnswer === question.correctAnswer) {
-          correctCount++;
-        } else {
-          wrongCount++;
-        }
-      });
-
-      const total = attempts.length || 1;
-      return {
-        questionNumber: index + 1,
-        questionText: question.question.substring(0, 100),
-        topicName: question.topicName,
-        percentCorrect: Math.round((correctCount / total) * 100),
-        percentWrong: Math.round((wrongCount / total) * 100),
-        percentSkipped: Math.round((skippedCount / total) * 100),
-        correctCount,
-        wrongCount,
-        skippedCount
-      };
-    });
-
-    // Student performance list
-    const studentPerformance = attempts.map(attempt => ({
-      _id: attempt._id,
-      student: {
-        _id: attempt.student._id,
-        name: attempt.student.name,
-        email: attempt.student.email
-      },
-      score: attempt.score,
-      totalQuestions: attempt.totalQuestions,
-      marksObtained: attempt.marksObtained,
-      totalMarks: attempt.totalMarks,
-      percentage: attempt.totalMarks ? Math.round((attempt.marksObtained / attempt.totalMarks) * 100) : 0,
-      timeSpent: Math.round((attempt.endTime - attempt.startTime) / 1000 / 60), // minutes
-      completedAt: attempt.endTime,
-      tabSwitchCount: attempt.tabSwitchCount
-    }));
+    const overview = computeTestOverview(attempts, totalAssigned);
+    const performanceMetrics = computePerformanceMetricsAverages(attempts, quiz.questions, totalQuestions);
+    const questionAnalytics = computeQuestionAnalytics(attempts, quiz.questions);
+    const { easiest, hardest } = findEasiestHardestQuestions(questionAnalytics);
+    const scoreDistribution = computeScoreDistribution(attempts);
+    const studentPerformance = rankStudentAttempts(attempts, quiz.questions);
 
     res.json({
       test: {
@@ -2837,22 +2861,12 @@ router.get('/analytics/test/:testId', auth, authorize('admin', 'mentor'), async 
         totalMarks: quiz.totalMarks,
         totalQuestions
       },
-      overview: {
-        totalAssigned,
-        totalAttempted,
-        completionRate,
-        avgScore,
-        highestScore,
-        lowestScore
-      },
-      performanceMetrics: {
-        totalQuestions,
-        avgCorrect,
-        avgWrong,
-        avgSkipped,
-        avgTime
-      },
+      overview,
+      performanceMetrics,
       questionAnalytics,
+      easiestQuestion: easiest,
+      hardestQuestion: hardest,
+      scoreDistribution,
       studentPerformance
     });
   } catch (error) {
@@ -2863,9 +2877,7 @@ router.get('/analytics/test/:testId', auth, authorize('admin', 'mentor'), async 
 
 // Get student analytics (admin, mentor)
 router.get('/analytics/student/:studentId', auth, authorize('admin', 'mentor'), async (req, res) => {
-
   try {
-    // If mentor, verify student is assigned to them
     if (req.user.role === 'mentor') {
       const assignment = await MentorStudentAssignment.findOne({
         mentor: req.user._id,
@@ -2877,54 +2889,57 @@ router.get('/analytics/student/:studentId', auth, authorize('admin', 'mentor'), 
         return res.status(403).json({ message: 'Not authorized to view this student\'s analytics' });
       }
     }
-    const attempts = await QuizAttempt.find({
+
+    const { range } = req.query;
+
+    let attempts = await QuizAttempt.find({
       student: req.params.studentId,
       status: { $in: ['completed', 'auto_submitted'] }
     })
       .populate('quiz', 'title subject testType totalMarks')
       .sort({ endTime: -1 });
 
-    // Calculate aggregate stats
-    const totalTests = attempts.length;
-    const totalMarks = attempts.reduce((sum, a) => sum + (a.totalMarks || 0), 0);
-    const obtainedMarks = attempts.reduce((sum, a) => sum + (a.marksObtained || 0), 0);
-    const avgPercentage = totalMarks > 0 ? Math.round((obtainedMarks / totalMarks) * 100) : 0;
+    attempts = filterAttemptsByDateRange(attempts, range);
 
-    // Subject-wise breakdown
+    const summary = aggregateStudentSummary(attempts);
+    const subjectStats = aggregateSubjectStats(attempts);
+    const trend = computeTrend(attempts);
+    const insights = computeInsights({ attempts, summary, subjectStats });
+
     const subjectWise = {};
-    attempts.forEach(a => {
-      const subjectId = a.quiz?.subject?.toString() || 'unknown';
-      if (!subjectWise[subjectId]) {
-        subjectWise[subjectId] = {
-          tests: 0,
-          totalMarks: 0,
-          obtainedMarks: 0
-        };
-      }
-      subjectWise[subjectId].tests++;
-      subjectWise[subjectId].totalMarks += a.totalMarks || 0;
-      subjectWise[subjectId].obtainedMarks += a.marksObtained || 0;
+    subjectStats.forEach((s) => {
+      subjectWise[s.subjectId] = {
+        tests: s.tests,
+        totalMarks: s.totalMarks,
+        obtainedMarks: s.obtainedMarks,
+      };
     });
 
     res.json({
-      summary: {
-        totalTests,
-        totalMarks,
-        obtainedMarks,
-        avgPercentage
-      },
-      attempts: attempts.map(a => ({
-        _id: a._id,
-        quiz: a.quiz,
-        score: a.score,
-        totalQuestions: a.totalQuestions,
-        marksObtained: a.marksObtained,
-        totalMarks: a.totalMarks,
-        percentage: a.totalMarks ? Math.round((a.marksObtained / a.totalMarks) * 100) : 0,
-        endTime: a.endTime,
-        tabSwitchCount: a.tabSwitchCount
-      })),
-      subjectWise
+      summary,
+      attempts: attempts.map(a => {
+        const stats = computeAttemptStats(a);
+        return {
+          _id: a._id,
+          quiz: a.quiz,
+          score: a.score,
+          totalQuestions: stats.totalQuestions,
+          marksObtained: stats.marksObtained,
+          totalMarks: stats.totalMarks,
+          scorePercentage: stats.scorePercentage,
+          accuracy: stats.accuracy,
+          correct: stats.correct,
+          incorrect: stats.incorrect,
+          skipped: stats.skipped,
+          attempted: stats.attempted,
+          percentage: stats.percentage,
+          endTime: a.endTime,
+          tabSwitchCount: a.tabSwitchCount
+        };
+      }),
+      subjectWise,
+      trend,
+      insights,
     });
   } catch (error) {
     console.error(error);
@@ -3100,10 +3115,29 @@ router.get('/:id/share-status', auth, authorize('admin'), async (req, res) => {
 // Get attempt details by ID (used for retrieving quizId)
 router.get('/attempt/:id', auth, async (req, res) => {
   try {
-    const attempt = await QuizAttempt.findById(req.params.id);
+    const attempt = await QuizAttempt.findById(req.params.id).populate('quiz', 'createdBy assignedMentors');
     if (!attempt) {
       return res.status(404).json({ message: 'Attempt not found' });
     }
+
+    // SECURITY: only the owning student, an admin, or a mentor assigned to
+    // that student may view this attempt. Do not rely on frontend routing alone.
+    const isOwner = attempt.student.toString() === req.user._id.toString();
+    const isAdmin = req.user.role === 'admin';
+    let isAuthorizedMentor = false;
+    if (!isOwner && !isAdmin && req.user.role === 'mentor') {
+      const assignment = await MentorStudentAssignment.findOne({
+        mentor: req.user._id,
+        student: attempt.student,
+        isActive: true
+      });
+      isAuthorizedMentor = !!assignment;
+    }
+
+    if (!isOwner && !isAdmin && !isAuthorizedMentor) {
+      return res.status(403).json({ message: 'You are not authorized to view this attempt' });
+    }
+
     res.json(attempt);
   } catch (error) {
     console.error('Get attempt error:', error);

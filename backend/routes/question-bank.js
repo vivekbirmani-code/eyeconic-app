@@ -1,13 +1,25 @@
 const express = require('express');
+const mongoose = require('mongoose');
 const QuestionBank = require('../models/QuestionBank');
 const Subject = require('../models/Subject');
-const Chapter = require('../models/Chapter');
-const Topic = require('../models/Topic');
 const { auth, authorize } = require('../middleware/auth');
 const multer = require('multer');
-const XLSX = require('xlsx');
+const { parseExcel } = require('../utils/excelParser');
+const { buildImportTemplateBuffer } = require('../utils/excelTemplate');
+const {
+    QuestionValidationError,
+    normalizeQuestionInput,
+    validateQuestionPayload,
+} = require('../utils/questionValidation');
+const logger = require('../utils/logger');
 
 const router = express.Router();
+
+const STUDENT_HIDDEN_FIELDS = '-correctAnswer -explanation -assertion -reason -columnA -columnB';
+
+const LIST_SELECT_FIELDS = '_id qid question subject topicName subtopicName system questionType tags '
+    + 'difficulty options optionImages questionImage correctAnswer explanation explanationImage '
+    + 'assertion reason columnA columnB isActive createdAt';
 
 // Get question bank stats
 router.get('/stats', auth, authorize('admin'), async (req, res) => {
@@ -15,7 +27,7 @@ router.get('/stats', auth, authorize('admin'), async (req, res) => {
         const total = await QuestionBank.countDocuments({ isActive: true });
         res.json({ total });
     } catch (error) {
-        console.error('Error fetching question stats:', error);
+        logger.error('Error fetching question stats', { error: error.message });
         res.status(500).json({ message: 'Server error' });
     }
 });
@@ -29,10 +41,7 @@ const convertDriveToDirectLink = (url) => {
     const strUrl = url.toString().trim();
     if (!strUrl) return undefined;
 
-    // Check if it's a Google Drive link
     if (strUrl.includes('drive.google.com')) {
-        // Try to find the file ID
-        // Patterns: /file/d/FILE_ID/view, /open?id=FILE_ID, /uc?id=FILE_ID
         const idMatch = strUrl.match(/[-\w]{25,}/);
         if (idMatch) {
             return `https://drive.google.com/uc?export=view&id=${idMatch[0]}`;
@@ -44,13 +53,18 @@ const convertDriveToDirectLink = (url) => {
 // Get all questions (with filters)
 router.get('/', auth, async (req, res) => {
     try {
-        const { subject, chapter, topic, difficulty, search } = req.query;
+        const { subject, chapter, topic, topicName, subtopicName, system, questionType, tag, difficulty, search } = req.query;
 
         const filter = { isActive: true };
 
         if (subject) filter.subject = subject;
         if (chapter) filter.chapter = chapter;
         if (topic) filter.topic = topic;
+        if (topicName) filter.topicName = { $regex: topicName, $options: 'i' };
+        if (subtopicName) filter.subtopicName = { $regex: subtopicName, $options: 'i' };
+        if (system) filter.system = { $regex: system, $options: 'i' };
+        if (questionType) filter.questionType = questionType;
+        if (tag) filter.tags = { $in: [new RegExp(tag, 'i')] };
         if (difficulty) filter.difficulty = difficulty;
         if (search) {
             filter.$or = [
@@ -68,13 +82,13 @@ router.get('/', auth, async (req, res) => {
 
         // Only hide answers for students, show for admin/mentor
         if (req.user.role === 'student') {
-            query = query.select('-correctAnswer -explanation');
+            query = query.select(STUDENT_HIDDEN_FIELDS);
         }
 
         const questions = await query;
         res.json(questions);
     } catch (error) {
-        console.error(error);
+        logger.error('Error listing questions', { error: error.message });
         res.status(500).json({ message: 'Server error' });
     }
 });
@@ -82,27 +96,139 @@ router.get('/', auth, async (req, res) => {
 // Add single question
 router.post('/', auth, authorize('admin'), async (req, res) => {
     try {
+        const normalized = normalizeQuestionInput(req.body);
+        validateQuestionPayload(normalized);
+
         const question = new QuestionBank({
-            ...req.body,
+            ...normalized,
             createdBy: req.user._id
         });
 
-
         await question.save();
+        logger.info('Question created', { questionId: question._id.toString(), userId: req.user._id.toString() });
         res.status(201).json(question);
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: 'Server error', error: error.message });
+        if (error instanceof QuestionValidationError) {
+            return res.status(400).json({ message: 'Validation failed', errors: error.errors });
+        }
+        if (error.name === 'ValidationError') {
+            return res.status(400).json({ message: 'Validation failed', errors: Object.values(error.errors).map(e => e.message) });
+        }
+        logger.error('Error creating question', { error: error.message });
+        res.status(500).json({ message: 'Server error' });
+    }
+});
+
+/**
+ * Shared handler for bulk-import (multipart) and bulk-import-base64 (React Native).
+ * Uses the single canonical Excel parser + validation pipeline so both entry
+ * points enforce identical rules.
+ */
+async function handleBulkImport(req, res, buffer) {
+    const { questions: parsedRows, errors: parseErrors } = await parseExcel(buffer);
+
+    const subjectsMap = {};
+    const allSubjects = await Subject.find();
+    allSubjects.forEach(s => {
+        subjectsMap[s.name.toLowerCase()] = s._id;
+    });
+
+    const errors = [...parseErrors];
+    const questions = [];
+
+    parsedRows.forEach((row, idx) => {
+        const rowLabel = `Row ${idx + 2}`;
+        const subjectId = subjectsMap[row.subjectName.toLowerCase()];
+        if (!subjectId) {
+            errors.push(`${rowLabel}: Unknown subject '${row.subjectName}'. Please use standard subject names.`);
+            return;
+        }
+
+        const candidate = {
+            qid: row.qid,
+            subject: subjectId,
+            topicName: row.topicName,
+            subtopicName: row.subtopicName,
+            system: row.system,
+            questionType: row.questionType,
+            difficulty: row.difficulty,
+            tags: row.tags,
+            question: row.question,
+            questionImage: row.questionImage,
+            options: row.options,
+            optionImages: row.optionImages,
+            assertion: row.assertion,
+            reason: row.reason,
+            columnA: row.columnA,
+            columnB: row.columnB,
+            correctAnswer: row.correctAnswer,
+            explanation: row.explanation,
+            explanationImage: row.explanationImage,
+            marrowCode: row.marrowCode,
+            source: row.source,
+            createdBy: req.user._id
+        };
+
+        try {
+            validateQuestionPayload(candidate, { rowLabel });
+            questions.push(candidate);
+        } catch (err) {
+            if (err instanceof QuestionValidationError) {
+                errors.push(...err.errors);
+            } else {
+                errors.push(`${rowLabel}: ${err.message}`);
+            }
+        }
+    });
+
+    if (questions.length === 0) {
+        const { buildImportValidationPayload } = require('../utils/importErrors');
+        return res.status(400).json({
+            ...buildImportValidationPayload(errors.slice(0, 50), { totalErrors: errors.length }),
+            hint: 'Check that your Excel has columns: SUBJECT, TOPIC, SUBTOPIC, SYSTEM, QUESTION_TYPE, DIFFICULTY, QUESTION, OPTION1, OPTION2, CORRECT',
+        });
+    }
+
+    let inserted = [];
+    try {
+        inserted = await QuestionBank.insertMany(questions, { ordered: false });
+    } catch (bulkError) {
+        if (bulkError.insertedDocs) {
+            inserted = bulkError.insertedDocs;
+        }
+        if (Array.isArray(bulkError.writeErrors)) {
+            bulkError.writeErrors.forEach(we => {
+                errors.push(`Row ${we.index + 2}: ${we.errmsg || we.err?.errmsg || 'Failed to insert'}`);
+            });
+        }
+    }
+
+    logger.info('Question bank import complete', { inserted: inserted.length, errorCount: errors.length, userId: req.user._id.toString() });
+
+    res.json({
+        message: 'Questions imported successfully',
+        count: inserted.length,
+        totalRows: parsedRows.length + parseErrors.length,
+        errors: errors.length > 0 ? errors.slice(0, 50) : undefined
+    });
+}
+
+// Download canonical Excel import template
+router.get('/import-template', auth, authorize('admin'), async (req, res) => {
+    try {
+        const buffer = buildImportTemplateBuffer();
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', 'attachment; filename="Question_Bank_Import_Template.xlsx"');
+        res.send(buffer);
+    } catch (error) {
+        logger.error('Import template generation error', { error: error.message });
+        res.status(500).json({ message: 'Failed to generate import template' });
     }
 });
 
 // Bulk import from Excel
 router.post('/bulk-import', auth, authorize('admin'), upload.single('file'), async (req, res) => {
     try {
-        console.log('=== Bulk Import Request ===');
-        console.log('File:', req.file ? req.file.originalname : 'No file');
-        console.log('File size:', req.file ? req.file.size : 0);
-
         if (!req.file) {
             return res.status(400).json({
                 message: 'No file uploaded',
@@ -110,148 +236,12 @@ router.post('/bulk-import', auth, authorize('admin'), upload.single('file'), asy
             });
         }
 
-        // Parse Excel file
-        console.log('Parsing Excel...');
-        const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
-        const data = XLSX.utils.sheet_to_json(worksheet);
-
-        console.log(`Parsed ${data.length} rows`);
-        console.log('First row columns:', Object.keys(data[0] || {}));
-
-        if (data.length === 0) {
-            return res.status(400).json({
-                message: 'Excel file is empty',
-                hint: 'Make sure the Excel file has data rows below the header'
-            });
-        }
-
-        // Get or create subjects map
-        const subjectsMap = {};
-        const allSubjects = await Subject.find();
-        allSubjects.forEach(s => {
-            subjectsMap[s.name.toLowerCase()] = s._id;
-        });
-
-        const questions = [];
-        const errors = [];
-        const newSubjects = new Set();
-
-        for (let i = 0; i < data.length; i++) {
-            const row = data[i];
-            const rowNum = i + 2; // Excel row number (header is row 1)
-
-            try {
-                // Get subject
-                const subjectName = (row.SUBJECT || row.subject || '').toString().trim();
-                if (!subjectName) {
-                    errors.push(`Row ${rowNum}: Missing SUBJECT`);
-                    continue;
-                }
-
-                let subjectId = subjectsMap[subjectName.toLowerCase()];
-
-                // Error if subject doesn't exist
-                if (!subjectId) {
-                    errors.push(`Row ${rowNum}: Unknown subject '${subjectName}'. Please use standard subject names.`);
-                    continue;
-                }
-
-                // Get question text
-                const questionText = (row.QUESTION || row.question || '').toString().trim();
-                if (!questionText) {
-                    errors.push(`Row ${rowNum}: Missing QUESTION`);
-                    continue;
-                }
-
-                // Get options
-                const option1 = (row.OPTION1 || row.option1 || '').toString().trim();
-                const option2 = (row.OPTION2 || row.option2 || '').toString().trim();
-                const option3 = (row.OPTION3 || row.option3 || '').toString().trim();
-                const option4 = (row.OPTION4 || row.option4 || '').toString().trim();
-
-                if (!option1 || !option2) {
-                    errors.push(`Row ${rowNum}: Missing options (need at least 2 options)`);
-                    continue;
-                }
-
-                // Get correct answer (convert from 1-4 to 0-3 index)
-                let correctAnswer = parseInt(row.CORRECT_ANSWER || row.correct_answer || row.correctAnswer || '1');
-                if (correctAnswer >= 1 && correctAnswer <= 4) {
-                    correctAnswer = correctAnswer - 1; // Convert to 0-based index
-                } else {
-                    correctAnswer = 0; // Default to first option
-                }
-
-                // Get option images
-                const oImage1 = convertDriveToDirectLink(row.O_IMAGE_1 || row.o_image_1 || row.OPTION1_IMAGE || row['OPTION 1 IMAGE']);
-                const oImage2 = convertDriveToDirectLink(row.O_IMAGE_2 || row.o_image_2 || row.OPTION2_IMAGE || row['OPTION 2 IMAGE']);
-                const oImage3 = convertDriveToDirectLink(row.O_IMAGE_3 || row.o_image_3 || row.OPTION3_IMAGE || row['OPTION 3 IMAGE']);
-                const oImage4 = convertDriveToDirectLink(row.O_IMAGE_4 || row.o_image_4 || row.OPTION4_IMAGE || row['OPTION 4 IMAGE']);
-
-                // Parse tags (comma-separated)
-                const tagsRaw = (row.TAGS || row.tags || row.TAG || '').toString().trim();
-                const tags = tagsRaw ? tagsRaw.split(',').map(t => t.trim()).filter(t => t) : [];
-
-                const questionData = {
-                    qid: (row.QID || row.qid || '').toString().trim() || undefined,
-                    subject: subjectId,
-                    topicName: (row.TOPIC || row.topic || '').toString().trim(),
-                    question: questionText,
-                    questionImage: convertDriveToDirectLink(row.Q_IMAGE || row.q_image || ''),
-                    options: [option1, option2, option3 || '', option4 || ''].filter(o => o),
-                    optionImages: [oImage1, oImage2, oImage3, oImage4].filter(o => o).length > 0
-                        ? [oImage1 || '', oImage2 || '', oImage3 || '', oImage4 || '']
-                        : [],
-                    correctAnswer: correctAnswer,
-                    explanation: (row.EXPLANATION || row.explanation || row.EXPLAINATION || '').toString().trim(),
-                    explanationImage: convertDriveToDirectLink(row.EX_IMAGE || row.ex_image || ''),
-                    marks: parseInt(row.MARKS || row.marks || '1') || 1,
-                    positiveMarks: parseInt(row.POSITIVE_MARKS || row.positive_marks || row.positiveMarks || row.MARKS || row.marks || '4') || 4,
-                    negativeMarks: parseInt(row.NEGATIVE_MARKS || row.negative_marks || row.negativeMarks || '0') || 0,
-                    tags: tags,
-                    marrowCode: (row.MARROW_CODE || row['MARROW CODE'] || '').toString().trim() || undefined,
-                    source: (row.SOURCE || row.source || '').toString().trim() || undefined,
-                    createdBy: req.user._id
-                };
-
-                questions.push(questionData);
-            } catch (err) {
-                errors.push(`Row ${rowNum}: ${err.message}`);
-            }
-        }
-
-        console.log(`Processed ${questions.length} valid questions`);
-        console.log(`Errors: ${errors.length}`);
-
-        if (questions.length === 0) {
-            return res.status(400).json({
-                message: 'No valid questions found',
-                errors: errors.slice(0, 10) // Return first 10 errors
-            });
-        }
-
-        // Insert questions
-        const inserted = await QuestionBank.insertMany(questions, { ordered: false });
-
-        console.log(`Successfully inserted ${inserted.length} questions`);
-
-        res.json({
-            message: 'Questions imported successfully',
-            count: inserted.length,
-            totalRows: data.length,
-            errors: errors.length > 0 ? errors.slice(0, 10) : undefined,
-            newSubjects: Array.from(newSubjects)
-        });
-
+        await handleBulkImport(req, res, req.file.buffer);
     } catch (error) {
-        console.error('=== Bulk Import Error ===');
-        console.error(error);
+        logger.error('Bulk import error', { error: error.message });
         res.status(500).json({
             message: 'Error importing questions',
-            error: error.message,
-            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+            error: error.message
         });
     }
 });
@@ -259,8 +249,7 @@ router.post('/bulk-import', auth, authorize('admin'), upload.single('file'), asy
 // Bulk import from Excel (Base64 - for React Native)
 router.post('/bulk-import-base64', auth, authorize('admin'), async (req, res) => {
     try {
-        console.log('=== Bulk Import Base64 Request ===');
-        const { filename, data } = req.body;
+        const { data } = req.body;
 
         if (!data) {
             return res.status(400).json({
@@ -269,159 +258,10 @@ router.post('/bulk-import-base64', auth, authorize('admin'), async (req, res) =>
             });
         }
 
-        // Convert base64 to buffer
         const buffer = Buffer.from(data, 'base64');
-        console.log(`File: ${filename}, Size: ${buffer.length} bytes`);
-
-        // Parse Excel file
-        const workbook = XLSX.read(buffer, { type: 'buffer' });
-        const sheetName = workbook.SheetNames[0];
-        const worksheet = workbook.Sheets[sheetName];
-        const excelData = XLSX.utils.sheet_to_json(worksheet);
-
-        console.log(`Parsed ${excelData.length} rows`);
-        console.log('Columns:', Object.keys(excelData[0] || {}));
-
-        if (excelData.length === 0) {
-            return res.status(400).json({
-                message: 'Excel file is empty',
-                hint: 'Make sure the Excel file has data rows below the header'
-            });
-        }
-
-        // Get or create subjects map
-        const subjectsMap = {};
-        const allSubjects = await Subject.find();
-        allSubjects.forEach(s => {
-            subjectsMap[s.name.toLowerCase()] = s._id;
-        });
-
-        const questions = [];
-        const errors = [];
-        const newSubjects = new Set();
-
-        for (let i = 0; i < excelData.length; i++) {
-            const row = excelData[i];
-            const rowNum = i + 2;
-
-            try {
-                // Get subject
-                const subjectName = (row.SUBJECT || row.subject || '').toString().trim();
-                if (!subjectName) {
-                    errors.push(`Row ${rowNum}: Missing SUBJECT`);
-                    continue;
-                }
-
-                let subjectId = subjectsMap[subjectName.toLowerCase()];
-
-                // Error if subject doesn't exist
-                if (!subjectId) {
-                    errors.push(`Row ${rowNum}: Unknown subject '${subjectName}'. Please use standard subject names.`);
-                    continue;
-                }
-
-                // Get question text
-                const questionText = (row.QUESTION || row.question || '').toString().trim();
-                if (!questionText) {
-                    errors.push(`Row ${rowNum}: Missing QUESTION`);
-                    continue;
-                }
-
-                // Get options
-                const option1 = (row.OPTION1 || row.option1 || row['OPTION 1'] || '').toString().trim();
-                const option2 = (row.OPTION2 || row.option2 || row['OPTION 2'] || '').toString().trim();
-                const option3 = (row.OPTION3 || row.option3 || row['OPTION 3'] || '').toString().trim();
-                const option4 = (row.OPTION4 || row.option4 || row['OPTION 4'] || '').toString().trim();
-
-                if (!option1 || !option2) {
-                    errors.push(`Row ${rowNum}: Missing options`);
-                    continue;
-                }
-
-                // Get correct answer
-                let correctAnswer = 0;
-                const answerVal = (row.CORRECT_ANSWER || row.correct_answer || row.correctAnswer || row.CORRECT || row.correct || row.ANSWER || '1').toString().trim();
-
-                // Check if it's a letter (A, B, C, D)
-                if (['A', 'a'].includes(answerVal)) correctAnswer = 0;
-                else if (['B', 'b'].includes(answerVal)) correctAnswer = 1;
-                else if (['C', 'c'].includes(answerVal)) correctAnswer = 2;
-                else if (['D', 'd'].includes(answerVal)) correctAnswer = 3;
-                else {
-                    // Try numeric
-                    const numVal = parseInt(answerVal);
-                    if (numVal >= 1 && numVal <= 4) correctAnswer = numVal - 1;
-                }
-
-                // Get option images
-                const oImage1 = convertDriveToDirectLink(row.O_IMAGE_1 || row.o_image_1 || row.OPTION1_IMAGE || row['OPTION 1 IMAGE']);
-                const oImage2 = convertDriveToDirectLink(row.O_IMAGE_2 || row.o_image_2 || row.OPTION2_IMAGE || row['OPTION 2 IMAGE']);
-                const oImage3 = convertDriveToDirectLink(row.O_IMAGE_3 || row.o_image_3 || row.OPTION3_IMAGE || row['OPTION 3 IMAGE']);
-                const oImage4 = convertDriveToDirectLink(row.O_IMAGE_4 || row.o_image_4 || row.OPTION4_IMAGE || row['OPTION 4 IMAGE']);
-
-                const questionData = {
-                    qid: (row.QID || row.qid || row.ID || '').toString().trim() || undefined,
-                    subject: subjectId,
-                    topicName: (row.TOPIC || row.topic || row.TAG || row.CHAPTER || '').toString().trim(),
-                    question: questionText,
-                    questionImage: convertDriveToDirectLink(row.Q_IMAGE || row.q_image || row.IMAGE || ''),
-                    options: [option1, option2, option3, option4].filter(o => o),
-                    optionImages: [oImage1, oImage2, oImage3, oImage4].filter(o => o).length > 0
-                        ? [oImage1 || '', oImage2 || '', oImage3 || '', oImage4 || '']
-                        : [],
-                    correctAnswer: correctAnswer,
-                    explanation: (row.EXPLANATION || row.explanation || row.EXPLAINATION || row.REASON || '').toString().trim(),
-                    explanationImage: convertDriveToDirectLink(row.EX_IMAGE || row.ex_image || ''),
-                    marks: parseInt(row.MARKS || row.marks || '4') || 4,
-                    positiveMarks: parseFloat(row['POSITIVE MARKS'] || row.POSITIVE_MARKS || row.positive_marks || row.positiveMarks || row.MARKS || row.marks || '4') || 4,
-                    negativeMarks: Math.abs(parseFloat(row['NEGATIVE MARKS'] || row.NEGATIVE_MARKS || row.negative_marks || row.negativeMarks || '0') || 0),
-                    marrowCode: (row.MARROW_CODE || row['MARROW CODE'] || row.MARROW || '').toString().trim() || undefined,
-                    source: (row.SOURCE || row.source || '').toString().trim() || undefined,
-                    createdBy: req.user._id
-                };
-
-                questions.push(questionData);
-            } catch (err) {
-                errors.push(`Row ${rowNum}: ${err.message}`);
-            }
-        }
-
-        console.log(`Valid questions: ${questions.length}`);
-        console.log(`Errors: ${errors.length}`);
-
-        if (questions.length === 0) {
-            return res.status(400).json({
-                message: 'No valid questions found',
-                errors: errors.slice(0, 20),
-                hint: 'Check that your Excel has columns: SUBJECT, QUESTION, OPTION1, OPTION2, OPTION3, OPTION4'
-            });
-        }
-
-        // Insert questions (skip duplicates)
-        let inserted = [];
-        try {
-            inserted = await QuestionBank.insertMany(questions, { ordered: false });
-        } catch (bulkError) {
-            // Some documents may have failed (duplicates)
-            if (bulkError.insertedDocs) {
-                inserted = bulkError.insertedDocs;
-            }
-            console.log('Bulk insert partial success:', inserted.length);
-        }
-
-        console.log(`Inserted: ${inserted.length}`);
-
-        res.json({
-            message: 'Questions imported successfully',
-            count: inserted.length,
-            totalRows: excelData.length,
-            errors: errors.length > 0 ? errors.slice(0, 10) : undefined,
-            newSubjects: Array.from(newSubjects)
-        });
-
+        await handleBulkImport(req, res, buffer);
     } catch (error) {
-        console.error('=== Bulk Import Base64 Error ===');
-        console.error(error);
+        logger.error('Bulk import (base64) error', { error: error.message });
         res.status(500).json({
             message: 'Error importing questions',
             error: error.message
@@ -432,7 +272,7 @@ router.post('/bulk-import-base64', auth, authorize('admin'), async (req, res) =>
 // Get questions by multiple subjects (for quiz creation - manual selection)
 router.get('/by-subjects', auth, authorize('admin'), async (req, res) => {
     try {
-        let { subjects, search, page = 1, limit = 50, topic, tag } = req.query;
+        let { subjects, search, page = 1, limit = 50, topic, subtopicName, system, questionType, tag, difficulty } = req.query;
 
         if (!subjects) {
             return res.status(400).json({ message: 'Subjects parameter is required' });
@@ -446,7 +286,6 @@ router.get('/by-subjects', auth, authorize('admin'), async (req, res) => {
         const uniqueSubjectIds = [...new Set(subjectIds)];
         const skip = (parseInt(page) - 1) * parseInt(limit);
 
-        const mongoose = require('mongoose');
         const objectIdSubjects = uniqueSubjectIds
             .filter(id => mongoose.Types.ObjectId.isValid(id))
             .map(id => new mongoose.Types.ObjectId(id));
@@ -473,18 +312,17 @@ router.get('/by-subjects', auth, authorize('admin'), async (req, res) => {
             ];
         }
 
-        if (topic) {
-            filter.topicName = { $regex: topic, $options: 'i' };
-        }
-
-        if (tag) {
-            filter.tags = { $in: [new RegExp(tag, 'i')] };
-        }
+        if (topic) filter.topicName = { $regex: topic, $options: 'i' };
+        if (subtopicName) filter.subtopicName = { $regex: subtopicName, $options: 'i' };
+        if (system) filter.system = { $regex: system, $options: 'i' };
+        if (questionType) filter.questionType = questionType;
+        if (difficulty) filter.difficulty = difficulty;
+        if (tag) filter.tags = { $in: [new RegExp(tag, 'i')] };
 
         const total = await QuestionBank.countDocuments(filter);
         const questions = await QuestionBank.find(filter)
             .populate('subject', 'name')
-            .select('_id qid question subject topicName options marks positiveMarks negativeMarks tags questionImage optionImages correctAnswer explanation explanationImage')
+            .select(LIST_SELECT_FIELDS)
             .sort({ subject: 1, createdAt: -1 })
             .skip(skip)
             .limit(parseInt(limit));
@@ -496,8 +334,8 @@ router.get('/by-subjects', auth, authorize('admin'), async (req, res) => {
             pages: Math.ceil(total / limit)
         });
     } catch (error) {
-        console.error('Error fetching questions by subjects:', error);
-        res.status(500).json({ message: 'Server error', error: error.message });
+        logger.error('Error fetching questions by subjects', { error: error.message });
+        res.status(500).json({ message: 'Server error' });
     }
 });
 
@@ -533,7 +371,7 @@ router.get('/stats/summary', auth, async (req, res) => {
 
         res.json({ total, bySubject: stats || [] });
     } catch (error) {
-        console.error('Stats error:', error);
+        logger.error('Stats error', { error: error.message });
         res.status(500).json({ total: 0, bySubject: [] });
     }
 });
@@ -541,24 +379,24 @@ router.get('/stats/summary', auth, async (req, res) => {
 // Get single question (with answer - admin/mentor only)
 router.get('/:id', auth, async (req, res) => {
     try {
-        const question = await QuestionBank.findById(req.params.id)
+        let query = QuestionBank.findById(req.params.id)
             .populate('subject', 'name')
             .populate('chapter', 'name')
             .populate('topic', 'name');
+
+        if (req.user.role === 'student') {
+            query = query.select(STUDENT_HIDDEN_FIELDS);
+        }
+
+        const question = await query;
 
         if (!question) {
             return res.status(404).json({ message: 'Question not found' });
         }
 
-        // Hide answer for students
-        if (req.user.role === 'student') {
-            question.correctAnswer = undefined;
-            question.explanation = undefined;
-        }
-
         res.json(question);
     } catch (error) {
-        console.error(error);
+        logger.error('Error fetching question', { error: error.message });
         res.status(500).json({ message: 'Server error' });
     }
 });
@@ -566,20 +404,37 @@ router.get('/:id', auth, async (req, res) => {
 // Update question
 router.put('/:id', auth, authorize('admin'), async (req, res) => {
     try {
-        const question = await QuestionBank.findByIdAndUpdate(
-            req.params.id,
-            req.body,
-            { new: true, runValidators: true }
-        );
-
-        if (!question) {
+        const existing = await QuestionBank.findById(req.params.id);
+        if (!existing) {
             return res.status(404).json({ message: 'Question not found' });
         }
 
-        res.json(question);
+        const normalized = normalizeQuestionInput(req.body);
+
+        // Validate against the FINAL merged shape so partial updates are held
+        // to the same required-field rules as creation, without needing the
+        // client to resend every field on every edit. validateQuestionPayload
+        // may mutate `merged` to fill in type-derived defaults (e.g. default
+        // assertion/reason options, numeric coercion) — those must be
+        // persisted too, so we assign the full merged+validated object back.
+        const merged = { ...existing.toObject(), ...normalized };
+        validateQuestionPayload(merged);
+
+        const { _id, createdAt, updatedAt, __v, ...safeMerged } = merged;
+        Object.assign(existing, safeMerged);
+
+        await existing.save();
+        logger.info('Question updated', { questionId: existing._id.toString(), userId: req.user._id.toString() });
+        res.json(existing);
     } catch (error) {
-        console.error(error);
-        res.status(500).json({ message: 'Server error', error: error.message });
+        if (error instanceof QuestionValidationError) {
+            return res.status(400).json({ message: 'Validation failed', errors: error.errors });
+        }
+        if (error.name === 'ValidationError') {
+            return res.status(400).json({ message: 'Validation failed', errors: Object.values(error.errors).map(e => e.message) });
+        }
+        logger.error('Error updating question', { error: error.message });
+        res.status(500).json({ message: 'Server error' });
     }
 });
 
@@ -596,9 +451,10 @@ router.delete('/:id', auth, authorize('admin'), async (req, res) => {
             return res.status(404).json({ message: 'Question not found' });
         }
 
+        logger.info('Question deleted (soft)', { questionId: question._id.toString(), userId: req.user._id.toString() });
         res.json({ message: 'Question deleted successfully' });
     } catch (error) {
-        console.error(error);
+        logger.error('Error deleting question', { error: error.message });
         res.status(500).json({ message: 'Server error' });
     }
 });

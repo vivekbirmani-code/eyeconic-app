@@ -2,10 +2,12 @@ import React, { createContext, useContext, useState, useEffect, useCallback } fr
 import { api } from '@/services/api';
 import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { StudentResponse } from '@/types/question';
 
 interface QuizAnswer {
   questionIndex: number;
-  selectedAnswer: number;
+  questionId?: string;
+  selectedAnswer: StudentResponse;
   markedForReview: boolean;
   timeSpent: number;
 }
@@ -22,7 +24,7 @@ interface QuizAttempt {
 interface QuizContextType {
   currentAttempt: QuizAttempt | null;
   startQuiz: (quizId: string) => Promise<void>;
-  saveAnswer: (questionIndex: number, selectedAnswer: number, markedForReview: boolean, timeSpent: number) => Promise<void>;
+  saveAnswer: (questionIndex: number, selectedAnswer: StudentResponse, markedForReview: boolean, timeSpent: number, questionId?: string) => Promise<void>;
   submitQuiz: (isAutoSubmit?: boolean) => Promise<any>;
   loadAttempt: (attemptId: string) => Promise<void>;
   clearAttempt: () => void;
@@ -126,14 +128,16 @@ export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const saveAnswer = async (
     questionIndex: number,
-    selectedAnswer: number,
+    selectedAnswer: StudentResponse,
     markedForReview: boolean = false,
-    timeSpent: number = 0
+    timeSpent: number = 0,
+    questionId?: string
   ) => {
     if (!currentAttempt) return;
 
     const answerData: QuizAnswer = {
       questionIndex,
+      questionId,
       selectedAnswer,
       markedForReview,
       timeSpent

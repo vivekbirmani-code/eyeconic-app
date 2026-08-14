@@ -4,6 +4,7 @@ const MentorStudentAssignment = require('../models/MentorStudentAssignment');
 const StudentSubjectAssignment = require('../models/StudentSubjectAssignment');
 const User = require('../models/User');
 const { auth, authorize } = require('../middleware/auth');
+const { computeMentorStats } = require('../utils/mentorStats');
 
 const router = express.Router();
 
@@ -93,63 +94,14 @@ router.get('/mentors', auth, authorize('admin'), async (req, res) => {
         const mentorStats = [];
 
         for (const mentor of mentors) {
-            // Get assigned students count
-            const assignedStudents = await MentorStudentAssignment.countDocuments({
-                mentor: mentor._id,
-                isActive: true
-            });
-
-            // Get total assignments created
-            const totalAssignments = await Assignment.countDocuments({
-                mentor: mentor._id
-            });
-
-            // Get assignments verified this week
-            const weekStart = new Date();
-            weekStart.setDate(weekStart.getDate() - 7);
-            const verifiedThisWeek = await Assignment.countDocuments({
-                mentor: mentor._id,
-                status: 'verified',
-                verifiedAt: { $gte: weekStart }
-            });
-
-            // Calculate average student completion rate
-            const students = await MentorStudentAssignment.find({
-                mentor: mentor._id,
-                isActive: true
-            }).select('student');
-
-            let totalCompletionRate = 0;
-            for (const studentAssignment of students) {
-                const total = await Assignment.countDocuments({
-                    mentor: mentor._id,
-                    student: studentAssignment.student
-                });
-                const completed = await Assignment.countDocuments({
-                    mentor: mentor._id,
-                    student: studentAssignment.student,
-                    status: { $in: ['completed', 'verified'] }
-                });
-                if (total > 0) {
-                    totalCompletionRate += (completed / total) * 100;
-                }
-            }
-
-            const avgCompletionRate = students.length > 0
-                ? Math.round(totalCompletionRate / students.length)
-                : 0;
+            const stats = await computeMentorStats(mentor._id);
 
             mentorStats.push({
                 _id: mentor._id,
                 name: mentor.name,
                 email: mentor.email,
                 phone: mentor.phone,
-                stats: {
-                    assignedStudents,
-                    totalAssignments,
-                    verifiedThisWeek,
-                    avgStudentCompletionRate: avgCompletionRate
-                }
+                stats
             });
         }
 
@@ -217,8 +169,11 @@ router.get('/mentor/:mentorId/details', auth, authorize('admin'), async (req, re
             });
         }
 
+        const stats = await computeMentorStats(mentorId);
+
         res.json({
             mentor,
+            stats,
             students: studentDetails
         });
     } catch (error) {

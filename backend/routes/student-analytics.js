@@ -3,12 +3,29 @@ const router = express.Router();
 const QuizAttempt = require('../models/QuizAttempt');
 const Quiz = require('../models/Quiz');
 const User = require('../models/User');
+const MentorStudentAssignment = require('../models/MentorStudentAssignment');
 const { auth, authorize } = require('../middleware/auth');
+const {
+    aggregateStudentSummary,
+    computeAttemptStats,
+} = require('../utils/analytics');
 
 // Get student analytics summary
 router.get('/summary/:studentId', auth, authorize('admin', 'mentor'), async (req, res) => {
     try {
         const { studentId } = req.params;
+
+        // SECURITY: a mentor may only view analytics for students assigned to them.
+        if (req.user.role === 'mentor') {
+            const assignment = await MentorStudentAssignment.findOne({
+                mentor: req.user._id,
+                student: studentId,
+                isActive: true
+            });
+            if (!assignment) {
+                return res.status(403).json({ message: 'Not authorized to view this student\'s analytics' });
+            }
+        }
 
         // Get all completed attempts for this student
         const attempts = await QuizAttempt.find({
@@ -20,27 +37,13 @@ router.get('/summary/:studentId', auth, authorize('admin', 'mentor'), async (req
 
         if (attempts.length === 0) {
             return res.json({
-                summary: {
-                    totalTests: 0,
-                    totalMarks: 0,
-                    obtainedMarks: 0,
-                    avgPercentage: 0
-                },
+                summary: aggregateStudentSummary([]),
                 attempts: [],
                 subjectWise: {}
             });
         }
 
-        let totalMarks = 0;
-        let obtainedMarks = 0;
-        const totalTests = attempts.length;
-
-        attempts.forEach(a => {
-            totalMarks += a.totalMarks || 0;
-            obtainedMarks += a.marksObtained || 0;
-        });
-
-        const avgPercentage = totalMarks > 0 ? (obtainedMarks / totalMarks) * 100 : 0;
+        const summary = aggregateStudentSummary(attempts);
 
         // Subject-wise breakdown
         const subjectWise = {};
@@ -59,22 +62,22 @@ router.get('/summary/:studentId', auth, authorize('admin', 'mentor'), async (req
         });
 
         res.json({
-            summary: {
-                totalTests,
-                totalMarks,
-                obtainedMarks,
-                avgPercentage
-            },
-            attempts: attempts.map(a => ({
-                _id: a._id,
-                quiz: a.quiz,
-                score: a.score,
-                marksObtained: a.marksObtained,
-                totalMarks: a.totalMarks,
-                percentage: a.totalMarks ? (a.marksObtained / a.totalMarks) * 100 : 0,
-                endTime: a.endTime,
-                testType: a.quiz?.testType || 'n/a'
-            })),
+            summary,
+            attempts: attempts.map(a => {
+                const stats = computeAttemptStats(a);
+                return {
+                    _id: a._id,
+                    quiz: a.quiz,
+                    score: a.score,
+                    marksObtained: stats.marksObtained,
+                    totalMarks: stats.totalMarks,
+                    scorePercentage: stats.scorePercentage,
+                    accuracy: stats.accuracy,
+                    percentage: stats.percentage,
+                    endTime: a.endTime,
+                    testType: a.quiz?.testType || 'n/a'
+                };
+            }),
             subjectWise
         });
     } catch (error) {

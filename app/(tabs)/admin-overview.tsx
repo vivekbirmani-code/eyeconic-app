@@ -72,6 +72,12 @@ interface MentorDetails {
     email: string;
     phone?: string;
   };
+  stats: {
+    assignedStudents: number;
+    totalAssignments: number;
+    verifiedThisWeek: number;
+    avgStudentCompletionRate: number;
+  };
   students: Array<{
     student: {
       _id: string;
@@ -105,7 +111,9 @@ export default function AdminOverview() {
   const [mentors, setMentors] = useState<MentorStat[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [selectedMentor, setSelectedMentor] = useState<MentorDetails | null>(null);
+  const [selectedMentorId, setSelectedMentorId] = useState<string | null>(null);
   const [isMentorDetailsLoading, setIsMentorDetailsLoading] = useState(false);
+  const [mentorDetailsError, setMentorDetailsError] = useState<string | null>(null);
   const [showMentorModal, setShowMentorModal] = useState(false);
 
   const fetchData = useCallback(async () => {
@@ -148,17 +156,34 @@ export default function AdminOverview() {
   }, [socket, fetchData]);
 
   const fetchMentorDetails = async (mentorId: string) => {
+    setSelectedMentorId(mentorId);
     setIsMentorDetailsLoading(true);
+    setMentorDetailsError(null);
+    setSelectedMentor(null);
     setShowMentorModal(true);
+
     try {
       const response = await api.get(`/admin-overview/mentor/${mentorId}/details`);
       setSelectedMentor(response.data);
     } catch (error) {
       console.error('Error fetching mentor details:', error);
+      setMentorDetailsError('Unable to load mentor details. Please try again.');
     } finally {
       setIsMentorDetailsLoading(false);
     }
   };
+
+  const closeMentorModal = () => {
+    setShowMentorModal(false);
+    setSelectedMentor(null);
+    setSelectedMentorId(null);
+    setMentorDetailsError(null);
+  };
+
+  const selectedMentorName =
+    selectedMentor?.mentor.name ??
+    mentors.find((mentor) => mentor._id === selectedMentorId)?.name ??
+    'Mentor Details';
 
   const getProgressColor = (percentage: number) => {
     if (percentage >= 75) return '#10B981';
@@ -365,110 +390,164 @@ export default function AdminOverview() {
         visible={showMentorModal}
         animationType="slide"
         transparent={true}
-        onRequestClose={() => setShowMentorModal(false)}
+        onRequestClose={closeMentorModal}
       >
         <View style={styles.modalOverlay}>
           <View style={styles.mentorModal}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>
-                {selectedMentor?.mentor.name || 'Mentor Details'}
-              </Text>
-              <TouchableOpacity
-                onPress={() => {
-                  setShowMentorModal(false);
-                  setSelectedMentor(null);
-                }}
-                style={styles.closeButton}
-              >
+              <Text style={styles.modalTitle}>{selectedMentorName}</Text>
+              <TouchableOpacity onPress={closeMentorModal} style={styles.closeButton}>
                 <X color="#6B7280" size={24} />
               </TouchableOpacity>
             </View>
 
             {isMentorDetailsLoading ? (
-              <View style={styles.loadingContainer}>
+              <View style={styles.modalLoadingContainer}>
                 <ActivityIndicator size="large" color="#01b4ae" />
+                <Text style={styles.loadingText}>Loading mentor details...</Text>
               </View>
-            ) : (
+            ) : mentorDetailsError ? (
+              <View style={styles.modalStateContainer}>
+                <AlertCircle color="#EF4444" size={40} />
+                <Text style={styles.modalErrorText}>{mentorDetailsError}</Text>
+                {selectedMentorId && (
+                  <TouchableOpacity
+                    style={styles.retryButton}
+                    onPress={() => fetchMentorDetails(selectedMentorId)}
+                  >
+                    <Text style={styles.retryButtonText}>Try Again</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ) : selectedMentor ? (
               <ScrollView style={styles.modalContent} showsVerticalScrollIndicator={false}>
-                {selectedMentor?.students.map((studentData) => (
-                  <View key={studentData.student._id} style={styles.studentDetailCard}>
-                    <Text style={styles.studentDetailName}>{studentData.student.name}</Text>
-                    <Text style={styles.studentDetailEmail}>{studentData.student.email}</Text>
+                <View style={styles.mentorInfoSection}>
+                  <Text style={styles.mentorInfoEmail}>{selectedMentor.mentor.email}</Text>
+                  {selectedMentor.mentor.phone ? (
+                    <Text style={styles.mentorInfoPhone}>{selectedMentor.mentor.phone}</Text>
+                  ) : null}
+                </View>
 
-                    <View style={styles.subjectsSection}>
-                      <Text style={styles.sectionLabel}>Subjects:</Text>
-                      <View style={styles.subjectTags}>
-                        {studentData.subjects.map(subject => (
-                          <View key={subject._id} style={styles.subjectTag}>
-                            <Text style={styles.subjectTagText}>{subject.name}</Text>
+                <View style={styles.modalStatsGrid}>
+                  <View style={styles.modalStatBox}>
+                    <Text style={[styles.modalStatValue, { color: '#2563EB' }]}>
+                      {selectedMentor.stats.assignedStudents}
+                    </Text>
+                    <Text style={styles.modalStatLabel}>Students</Text>
+                  </View>
+                  <View style={styles.modalStatBox}>
+                    <Text style={styles.modalStatValue}>
+                      {selectedMentor.stats.totalAssignments}
+                    </Text>
+                    <Text style={styles.modalStatLabel}>Tasks</Text>
+                  </View>
+                  <View style={styles.modalStatBox}>
+                    <Text style={[styles.modalStatValue, { color: '#10B981' }]}>
+                      {selectedMentor.stats.verifiedThisWeek}
+                    </Text>
+                    <Text style={styles.modalStatLabel}>This Week</Text>
+                  </View>
+                  <View style={styles.modalStatBox}>
+                    <Text style={[styles.modalStatValue, { color: '#01b4ae' }]}>
+                      {selectedMentor.stats.avgStudentCompletionRate}%
+                    </Text>
+                    <Text style={styles.modalStatLabel}>Avg Rate</Text>
+                  </View>
+                </View>
+
+                <Text style={styles.studentsSectionTitle}>
+                  Assigned Students ({selectedMentor.stats.assignedStudents})
+                </Text>
+
+                {selectedMentor.students.length === 0 ? (
+                  <View style={styles.modalEmptyState}>
+                    <UserCheck color="#9CA3AF" size={40} />
+                    <Text style={styles.modalEmptyText}>
+                      No students assigned to this mentor yet.
+                    </Text>
+                  </View>
+                ) : (
+                  selectedMentor.students.map((studentData) => (
+                    <View key={studentData.student._id} style={styles.studentDetailCard}>
+                      <Text style={styles.studentDetailName}>{studentData.student.name}</Text>
+                      <Text style={styles.studentDetailEmail}>{studentData.student.email}</Text>
+
+                      {studentData.subjects.length > 0 && (
+                        <View style={styles.subjectsSection}>
+                          <Text style={styles.sectionLabel}>Subjects:</Text>
+                          <View style={styles.subjectTags}>
+                            {studentData.subjects.map(subject => (
+                              <View key={subject._id} style={styles.subjectTag}>
+                                <Text style={styles.subjectTagText}>{subject.name}</Text>
+                              </View>
+                            ))}
                           </View>
-                        ))}
-                      </View>
-                    </View>
+                        </View>
+                      )}
 
-                    <View style={styles.miniStatsGrid}>
-                      <View style={styles.miniStat}>
-                        <Text style={styles.miniStatValue}>{studentData.stats.total}</Text>
-                        <Text style={styles.miniStatLabel}>Total</Text>
+                      <View style={styles.miniStatsGrid}>
+                        <View style={styles.miniStat}>
+                          <Text style={styles.miniStatValue}>{studentData.stats.total}</Text>
+                          <Text style={styles.miniStatLabel}>Total</Text>
+                        </View>
+                        <View style={styles.miniStat}>
+                          <Text style={[styles.miniStatValue, { color: '#F59E0B' }]}>
+                            {studentData.stats.pending}
+                          </Text>
+                          <Text style={styles.miniStatLabel}>Pending</Text>
+                        </View>
+                        <View style={styles.miniStat}>
+                          <Text style={[styles.miniStatValue, { color: '#10B981' }]}>
+                            {studentData.stats.verified}
+                          </Text>
+                          <Text style={styles.miniStatLabel}>Done</Text>
+                        </View>
                       </View>
-                      <View style={styles.miniStat}>
-                        <Text style={[styles.miniStatValue, { color: '#F59E0B' }]}>
-                          {studentData.stats.pending}
-                        </Text>
-                        <Text style={styles.miniStatLabel}>Pending</Text>
-                      </View>
-                      <View style={styles.miniStat}>
-                        <Text style={[styles.miniStatValue, { color: '#10B981' }]}>
-                          {studentData.stats.verified}
-                        </Text>
-                        <Text style={styles.miniStatLabel}>Done</Text>
-                      </View>
-                    </View>
 
-                    {/* Assignment Details */}
-                    {studentData.assignments.length > 0 && (
-                      <View style={styles.assignmentsSection}>
-                        <Text style={styles.assignmentsSectionTitle}>Recent Assignments:</Text>
-                        {studentData.assignments.slice(0, 5).map((assignment: any) => (
-                          <View key={assignment._id} style={styles.assignmentItem}>
-                            <View style={styles.assignmentHeader}>
-                              <Text style={styles.assignmentTitle}>{assignment.title}</Text>
-                              <View style={[
-                                styles.assignmentStatusBadge,
-                                {
-                                  backgroundColor:
-                                    assignment.status === 'verified' ? '#D1FAE5' :
-                                      assignment.status === 'completed' ? '#DBEAFE' :
-                                        assignment.status === 'redo' ? '#FEF3C7' : '#F3F4F6'
-                                }
-                              ]}>
-                                <Text style={[
-                                  styles.assignmentStatusText,
+                      {studentData.assignments.length > 0 && (
+                        <View style={styles.assignmentsSection}>
+                          <Text style={styles.assignmentsSectionTitle}>Recent Assignments:</Text>
+                          {studentData.assignments.slice(0, 5).map((assignment: any) => (
+                            <View key={assignment._id} style={styles.assignmentItem}>
+                              <View style={styles.assignmentHeader}>
+                                <Text style={styles.assignmentTitle}>{assignment.title}</Text>
+                                <View style={[
+                                  styles.assignmentStatusBadge,
                                   {
-                                    color:
-                                      assignment.status === 'verified' ? '#047857' :
-                                        assignment.status === 'completed' ? '#1E40AF' :
-                                          assignment.status === 'redo' ? '#92400E' : '#6B7280'
+                                    backgroundColor:
+                                      assignment.status === 'verified' ? '#D1FAE5' :
+                                        assignment.status === 'completed' ? '#DBEAFE' :
+                                          assignment.status === 'redo' ? '#FEF3C7' : '#F3F4F6'
                                   }
                                 ]}>
-                                  {assignment.status.toUpperCase()}
-                                </Text>
+                                  <Text style={[
+                                    styles.assignmentStatusText,
+                                    {
+                                      color:
+                                        assignment.status === 'verified' ? '#047857' :
+                                          assignment.status === 'completed' ? '#1E40AF' :
+                                            assignment.status === 'redo' ? '#92400E' : '#6B7280'
+                                    }
+                                  ]}>
+                                    {assignment.status.toUpperCase()}
+                                  </Text>
+                                </View>
                               </View>
+                              <Text style={styles.assignmentSubject}>
+                                {assignment.subject?.name || 'N/A'} • {assignment.taskType}
+                              </Text>
+                              <Text style={styles.assignmentDate}>
+                                Due: {new Date(assignment.scheduledDate).toLocaleDateString()}
+                              </Text>
                             </View>
-                            <Text style={styles.assignmentSubject}>
-                              {assignment.subject?.name || 'N/A'} • {assignment.taskType}
-                            </Text>
-                            <Text style={styles.assignmentDate}>
-                              Due: {new Date(assignment.scheduledDate).toLocaleDateString()}
-                            </Text>
-                          </View>
-                        ))}
-                      </View>
-                    )}
-                  </View>
-                ))}
+                          ))}
+                        </View>
+                      )}
+                    </View>
+                  ))
+                )}
               </ScrollView>
-            )}
+            ) : null}
           </View>
         </View>
       </Modal>
@@ -688,6 +767,7 @@ const styles = StyleSheet.create({
     maxWidth: 500,
     maxHeight: '95%',
     minHeight: '85%',
+    flex: 1,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 10 },
     shadowOpacity: 0.3,
@@ -713,6 +793,97 @@ const styles = StyleSheet.create({
   modalContent: {
     flex: 1,
     padding: 20,
+  },
+  modalLoadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 40,
+  },
+  modalStateContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+    gap: 12,
+  },
+  modalErrorText: {
+    fontSize: 15,
+    color: '#6B7280',
+    textAlign: 'center',
+    lineHeight: 22,
+  },
+  retryButton: {
+    marginTop: 8,
+    backgroundColor: '#01b4ae',
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  mentorInfoSection: {
+    marginBottom: 16,
+  },
+  mentorInfoEmail: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginBottom: 4,
+  },
+  mentorInfoPhone: {
+    fontSize: 14,
+    color: '#6B7280',
+  },
+  modalStatsGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  modalStatBox: {
+    alignItems: 'center',
+    flex: 1,
+  },
+  modalStatValue: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 4,
+  },
+  modalStatLabel: {
+    fontSize: 11,
+    color: '#6B7280',
+    fontWeight: '500',
+    textAlign: 'center',
+  },
+  studentsSectionTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#111827',
+    marginBottom: 12,
+  },
+  modalEmptyState: {
+    alignItems: 'center',
+    paddingVertical: 32,
+    paddingHorizontal: 16,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  modalEmptyText: {
+    marginTop: 12,
+    fontSize: 14,
+    color: '#6B7280',
+    textAlign: 'center',
+    lineHeight: 20,
   },
   studentDetailCard: {
     backgroundColor: '#F9FAFB',

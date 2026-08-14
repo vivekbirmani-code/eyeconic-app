@@ -6,7 +6,6 @@ const cors = require('cors');
 require('dotenv').config();
 
 const logger = require('./utils/logger');
-const { getMongoUri } = require('./utils/mongoUri');
 const requestId = require('./middleware/requestId');
 const errorHandler = require('./middleware/errorHandler');
 const healthRoutes = require('./routes/health');
@@ -87,36 +86,27 @@ app.use((req, res, next) => {
   next();
 });
 
-// MongoDB connection with automatic recovery
-const connectDatabase = async () => {
+// MongoDB connection — mongoose auto-reconnects after the first connect()
+const {
+  connectDatabase,
+  registerDatabaseEventHandlers,
+} = require('./utils/database');
+
+registerDatabaseEventHandlers();
+
+const startDatabase = async () => {
   try {
-    await mongoose.connect(getMongoUri(), {
-      serverSelectionTimeoutMS: 10000,
-      socketTimeoutMS: 45000,
-      maxPoolSize: 10,
-      minPoolSize: 2,
-      retryWrites: true,
+    await connectDatabase(() => {
+      cleanupExpiredMedia();
+      setInterval(cleanupExpiredMedia, 24 * 60 * 60 * 1000);
     });
-    logger.info('Connected to MongoDB');
-    cleanupExpiredMedia();
-    setInterval(cleanupExpiredMedia, 24 * 60 * 60 * 1000);
-  } catch (err) {
-    logger.error('MongoDB connection error', { errorMessage: err.message });
-    // Retry connection after delay — keeps service alive for health checks
-    setTimeout(connectDatabase, 5000);
+  } catch {
+    // Retry initial connection only — ongoing reconnects are handled by mongoose.
+    setTimeout(startDatabase, 5000);
   }
 };
 
-mongoose.connection.on('disconnected', () => {
-  logger.warn('MongoDB disconnected — attempting reconnection');
-  setTimeout(connectDatabase, 3000);
-});
-
-mongoose.connection.on('reconnected', () => {
-  logger.info('MongoDB reconnected');
-});
-
-connectDatabase();
+startDatabase();
 
 // Health endpoints (no auth required — used by load balancers and monitoring)
 app.use('/health', healthRoutes);

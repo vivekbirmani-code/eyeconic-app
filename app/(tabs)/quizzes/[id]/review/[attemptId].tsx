@@ -25,10 +25,15 @@ interface QuestionResult {
   _id: string;
   question: string;
   questionImage?: string;
+  questionType?: string;
   options: string[];
   optionImages?: string[];
-  selectedAnswer: number;
-  correctAnswer: number;
+  assertion?: string;
+  reason?: string;
+  columnA?: string[];
+  columnB?: string[];
+  selectedAnswer: any;
+  correctAnswer: any;
   isCorrect: boolean;
   markedForReview?: boolean;
   timeSpent?: number;
@@ -39,6 +44,33 @@ interface QuestionResult {
   questionIndex: number; // Global index
   sectionQuestionIndex?: number; // Index within its section
 }
+
+const formatResponseForDisplay = (
+  questionType: string | undefined,
+  response: any,
+  columnA?: string[],
+  columnB?: string[]
+): string => {
+  if (response === undefined || response === null || response === -1) return 'Not answered';
+  switch (questionType) {
+    case 'multiple_correct':
+      return Array.isArray(response) && response.length > 0
+        ? response.map((i: number) => String.fromCharCode(65 + i)).join(', ')
+        : 'Not answered';
+    case 'match_the_following': {
+      if (!response || typeof response !== 'object') return 'Not answered';
+      const entries = Object.entries(response);
+      if (entries.length === 0) return 'Not answered';
+      return entries
+        .map(([a, b]) => `${Number(a) + 1} → ${String.fromCharCode(65 + Number(b))}`)
+        .join(', ');
+    }
+    case 'numerical':
+      return String(response);
+    default:
+      return typeof response === 'number' ? String.fromCharCode(65 + response) : 'Not answered';
+  }
+};
 
 interface ReviewData {
   attemptId: string;
@@ -368,8 +400,47 @@ export default function QuizReview() {
             <Image source={{ uri: currentQuestion.questionImage }} style={styles.questionImage} resizeMode="contain" />
           ) : null}
 
+          {currentQuestion.questionType === 'assertion_reason' && (
+            <View style={{ marginBottom: 16 }}>
+              <View style={styles.notAnsweredCard}>
+                <Text style={styles.notAnsweredText}>Assertion: {currentQuestion.assertion}</Text>
+              </View>
+              <View style={[styles.notAnsweredCard, { marginTop: 8 }]}>
+                <Text style={styles.notAnsweredText}>Reason: {currentQuestion.reason}</Text>
+              </View>
+            </View>
+          )}
+
+          {(currentQuestion.questionType === 'multiple_correct'
+            || currentQuestion.questionType === 'match_the_following'
+            || currentQuestion.questionType === 'numerical') ? (
+            <View style={styles.optionsContainer}>
+              <View style={styles.optionContainer}>
+                <Text style={styles.optionText}>
+                  Your answer: {formatResponseForDisplay(currentQuestion.questionType, currentQuestion.selectedAnswer, currentQuestion.columnA, currentQuestion.columnB)}
+                </Text>
+              </View>
+              {reviewData.quiz.shareSolution && (
+                <View style={[styles.optionContainer, styles.correctOption]}>
+                  <Text style={styles.optionText}>
+                    Correct answer: {formatResponseForDisplay(currentQuestion.questionType, currentQuestion.correctAnswer, currentQuestion.columnA, currentQuestion.columnB)}
+                  </Text>
+                </View>
+              )}
+              {currentQuestion.questionType === 'match_the_following' && (
+                <View style={styles.optionContainer}>
+                  {(currentQuestion.columnA || []).map((a, i) => (
+                    <Text key={i} style={styles.optionText}>{i + 1}. {a}</Text>
+                  ))}
+                  {(currentQuestion.columnB || []).map((b, i) => (
+                    <Text key={i} style={styles.optionText}>{String.fromCharCode(65 + i)}. {b}</Text>
+                  ))}
+                </View>
+              )}
+            </View>
+          ) : (
           <View style={styles.optionsContainer}>
-            {currentQuestion.options.map((option, index) => {
+            {(currentQuestion.options || []).map((option, index) => {
               const isSelected = currentQuestion.selectedAnswer === index;
               const isCorrect = reviewData.quiz.shareSolution ? (currentQuestion.correctAnswer === index) : false;
               const isWrongSelection = reviewData.quiz.shareSolution ? (isSelected && !isCorrect) : false;
@@ -410,6 +481,7 @@ export default function QuizReview() {
               );
             })}
           </View>
+          )}
 
           {currentQuestion.selectedAnswer === -1 && (
             <View style={styles.notAnsweredCard}>

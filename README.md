@@ -88,16 +88,16 @@ npm run dev
 
 The backend server will run on `http://localhost:3000`
 
-### Frontend Setup
+### Frontend Setup (Expo / React Native)
 
 1. In the root directory, install dependencies:
 ```bash
 npm install
 ```
 
-2. Update the API base URL in `services/api.ts` if needed:
-```typescript
-baseURL: 'http://localhost:3000/api', // Update if your backend runs on different port
+2. Optional: copy `.env.example` to `.env` if you need to override the development API URL:
+```bash
+cp .env.example .env
 ```
 
 3. Start the Expo development server:
@@ -105,7 +105,55 @@ baseURL: 'http://localhost:3000/api', // Update if your backend runs on differen
 npm run dev
 ```
 
-4. Use Expo Go app on your mobile device or an emulator to run the application
+4. Run the app:
+   - **iOS Simulator** — press `i` in the Expo terminal
+   - **Physical iPhone (Expo Go)** — scan the QR code; phone and PC must be on the same Wi‑Fi
+   - **Android Emulator** — press `a` in the Expo terminal
+   - **Web** — press `w` in the Expo terminal
+
+### API URL configuration (mobile)
+
+All mobile API URLs are resolved in `services/config.ts`.
+
+| Environment | Platform | API base URL |
+|---|---|---|
+| Production build | iOS / Android | `https://eyeconic-app-prod-1r8o.onrender.com/api` |
+| Development | Web | `http://localhost:3000/api` |
+| Development | iOS Simulator | `http://localhost:3000/api` |
+| Development | Android Emulator | `http://10.0.2.2:3000/api` |
+| Development | Physical device | `http://<your-pc-lan-ip>:3000/api` (inferred from Expo Metro) |
+
+**Physical iPhone / Android device:** Expo normally infers your PC's LAN IP from Metro. If login fails with a network error, set an explicit override in `.env`:
+
+```env
+EXPO_PUBLIC_API_URL=http://192.168.x.x:3000/api
+```
+
+Replace `192.168.x.x` with your development machine's LAN IP (`ipconfig` on Windows, `ifconfig` on macOS/Linux).
+
+**Verify backend connectivity from your phone:** open `http://<your-pc-lan-ip>:3000/health` in mobile Safari/Chrome. You should see `"status":"healthy"` when MongoDB and JWT are configured.
+
+**Development diagnostics (in app code):**
+```typescript
+import { logApiDiagnostics } from '@/services/apiDiagnostics';
+await logApiDiagnostics(); // logs environment, API host, and /health reachability in __DEV__
+```
+
+### Troubleshooting login / API connectivity
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| `NETWORK_ERROR` on physical device | Phone cannot reach your PC | Same Wi‑Fi, set `EXPO_PUBLIC_API_URL`, check firewall allows port 3000 |
+| `SERVER_UNAVAILABLE` / `DATABASE_UNAVAILABLE` with ~instant failure | Backend returned HTTP 503 | Ensure MongoDB is running and `MONGODB_URI` is valid in `backend/.env` |
+| `Invalid credentials` | Auth reached backend successfully | Use correct email/password |
+| Red LogBox on handled login failure | Expected dev logging | Transient/validation errors now log as warnings, not errors |
+
+**MongoDB in local development:** prefer a local MongoDB instance (`mongodb://localhost:27017/eyeconic`) for stable development. If using MongoDB Atlas and seeing `querySrv ETIMEOUT` in backend logs, check DNS/network or use Atlas's standard connection string (non-SRV) from the Atlas dashboard.
+
+**Backend health check:**
+```bash
+curl http://localhost:3000/health
+```
 
 ## Default Admin Account
 
@@ -172,6 +220,36 @@ After setting up the backend, you'll need to create an admin account manually in
 - `POST /api/quizzes` - Create quiz (Admin)
 - `GET /api/quizzes/:id` - Get quiz details
 - `POST /api/quizzes/:id/attempt` - Submit quiz attempt (Student)
+
+## Question Bank: Metadata, Types, and Student Tracking
+
+Every question in the Question Bank carries seven classification parameters:
+
+| Parameter | Required | Notes |
+| :--- | :--- | :--- |
+| Subject | Yes | Existing `Subject` reference |
+| Topic | Yes | Free-text `topicName` |
+| Subtopic | Yes | Free-text `subtopicName` |
+| System | Yes | Free-text `system` (e.g. organ system) |
+| Question Type | Yes | One of six canonical enum values (below) |
+| Tag | No | `tags: string[]`, independent of the other fields |
+| Difficulty | Yes | `easy` \| `medium` \| `hard` |
+
+### Question Types
+
+`mcq_single`, `assertion_reason`, `match_the_following`, `image_based`, `multiple_correct`, `numerical`. Each type has its own content shape, validation rules, renderer, and grading logic — see [backend/constants/question.js](backend/constants/question.js), [backend/utils/questionValidation.js](backend/utils/questionValidation.js), [backend/utils/grading.js](backend/utils/grading.js), and [components/quiz/QuestionPrompt.tsx](components/quiz/QuestionPrompt.tsx). Canonical values and labels for the frontend live in [types/question.ts](types/question.ts) — keep both files in sync.
+
+### Canonical data vs. historical snapshot
+
+`QuestionBank` is the single canonical source for a question's current metadata. Every graded `QuizAttempt`/`GuestAttempt` answer stores a **server-derived `metadataSnapshot`** (subject, topic, subtopic, system, question type, tags, difficulty) captured at submit time — so later edits to a question (e.g. reclassifying its Subtopic) never rewrite past student analytics. Student performance breakdowns by all seven dimensions are available via `GET /api/quizzes/analytics/student/:studentId/performance` and shown on the Student Analytics screen.
+
+### Bulk import
+
+Question Bank bulk import (Excel/CSV) requires all six required metadata columns plus type-specific columns. See [Format.md](Format.md) for the full column reference, accepted Question Type / Difficulty aliases, and per-type `CORRECT` formats. Invalid rows are rejected with row-numbered error messages; valid rows in the same file still import.
+
+### Resetting the Question Bank
+
+There is no automatic migration or deletion of existing questions — new required fields only apply to newly created/updated/imported questions, and legacy documents are treated as `mcq_single` / `medium` difficulty at read/grade time. To manually wipe the bank and start fresh, run `backend/clear_quiz_data.js` **yourself**; it is never invoked by the application.
 
 ## Real-time Features
 

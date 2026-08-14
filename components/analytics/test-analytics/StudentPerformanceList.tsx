@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, FlatList, StyleSheet, TouchableOpacity } from 'react-native';
 import { User, Clock } from 'lucide-react-native';
+import { formatPercent } from '@/types/analytics';
 
 interface Student {
     _id: string;
@@ -15,7 +16,14 @@ interface StudentPerformance {
     totalQuestions: number;
     marksObtained: number;
     totalMarks: number;
+    scorePercentage?: number | null;
+    accuracy?: number | null;
+    correct?: number;
+    incorrect?: number;
+    skipped?: number;
+    attempted?: number;
     percentage: number;
+    rank?: number | null;
     timeSpent: number;
     completedAt: string;
     tabSwitchCount: number;
@@ -34,41 +42,58 @@ export default function StudentPerformanceList({ students, onStudentClick }: Stu
                 <FlatList
                     data={students}
                     keyExtractor={(item) => item._id}
-                    renderItem={({ item }) => (
+                    renderItem={({ item }) => {
+                        const scorePct = item.scorePercentage ?? item.percentage;
+                        return (
                         <TouchableOpacity
                             style={styles.studentItem}
                             onPress={() => onStudentClick(item._id)}
                         >
                             <View style={styles.avatar}>
-                                <User color="#6B7280" size={20} />
+                                {item.rank ? (
+                                    <Text style={styles.rank}>#{item.rank}</Text>
+                                ) : (
+                                    <User color="#6B7280" size={20} />
+                                )}
                             </View>
                             <View style={styles.studentInfo}>
                                 <Text style={styles.studentName}>{item.student.name}</Text>
+                                <View style={styles.scoreRow}>
+                                    <Text style={[
+                                        styles.score,
+                                        (scorePct ?? 0) >= 60 ? styles.passScore : styles.failScore
+                                    ]}>
+                                        {formatPercent(scorePct)}
+                                    </Text>
+                                    <Text style={styles.marks}>
+                                        {item.marksObtained}/{item.totalMarks} marks
+                                    </Text>
+                                </View>
+                                <Text style={styles.cws}>
+                                    {item.correct ?? item.score}/{item.attempted ?? item.totalQuestions} correct
+                                    {' • '}
+                                    Acc {formatPercent(item.accuracy, 'N/A')}
+                                </Text>
+                                <Text style={styles.cws}>
+                                    C {item.correct ?? '—'} / W {item.incorrect ?? '—'} / S {item.skipped ?? '—'}
+                                </Text>
                                 <View style={styles.metaRow}>
-                                    <View style={styles.scoreContainer}>
-                                        <Text style={[
-                                            styles.score,
-                                            item.percentage >= 60 ? styles.passScore : styles.failScore
-                                        ]}>
-                                            {item.marksObtained}/{item.totalMarks}
-                                        </Text>
-                                        <Text style={styles.percentage}>({item.percentage}%)</Text>
-                                    </View>
                                     <View style={styles.timeContainer}>
                                         <Clock color="#9CA3AF" size={12} />
                                         <Text style={styles.time}>{item.timeSpent} min</Text>
                                     </View>
+                                    <Text style={styles.date}>
+                                        {new Date(item.completedAt).toLocaleDateString('en-US', {
+                                            month: 'short',
+                                            day: 'numeric',
+                                            year: 'numeric'
+                                        })}
+                                    </Text>
                                 </View>
-                                <Text style={styles.date}>
-                                    {new Date(item.completedAt).toLocaleDateString('en-US', {
-                                        month: 'short',
-                                        day: 'numeric',
-                                        year: 'numeric'
-                                    })}
-                                </Text>
                             </View>
                         </TouchableOpacity>
-                    )}
+                        );
+                    }}
                     ListEmptyComponent={
                         <View style={styles.emptyContainer}>
                             <User color="#9CA3AF" size={48} />
@@ -106,7 +131,7 @@ const styles = StyleSheet.create({
         padding: 16,
         borderBottomWidth: 1,
         borderBottomColor: '#F3F4F6',
-        alignItems: 'center',
+        alignItems: 'flex-start',
     },
     avatar: {
         width: 48,
@@ -117,6 +142,11 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         marginRight: 12,
     },
+    rank: {
+        fontSize: 14,
+        fontWeight: '700',
+        color: '#01b4ae',
+    },
     studentInfo: {
         flex: 1,
     },
@@ -126,20 +156,15 @@ const styles = StyleSheet.create({
         color: '#1F2937',
         marginBottom: 4,
     },
-    metaRow: {
+    scoreRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 12,
+        gap: 8,
         marginBottom: 4,
     },
-    scoreContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
-    },
     score: {
-        fontSize: 15,
-        fontWeight: '600',
+        fontSize: 16,
+        fontWeight: '700',
     },
     passScore: {
         color: '#10B981',
@@ -147,9 +172,20 @@ const styles = StyleSheet.create({
     failScore: {
         color: '#EF4444',
     },
-    percentage: {
+    marks: {
         fontSize: 13,
         color: '#6B7280',
+    },
+    cws: {
+        fontSize: 12,
+        color: '#6B7280',
+        marginBottom: 2,
+    },
+    metaRow: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginTop: 6,
     },
     timeContainer: {
         flexDirection: 'row',
