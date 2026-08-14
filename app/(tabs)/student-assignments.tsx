@@ -10,8 +10,10 @@ import {
   Platform,
   StatusBar,
   FlatList,
-  Alert
+  Alert,
+  useWindowDimensions,
 } from 'react-native';
+import { KpiStatCard } from '@/components/KpiStatCard';
 import {
   BookOpen,
   Calendar,
@@ -55,7 +57,13 @@ interface Assignment {
 type TabType = 'all' | 'thisWeek' | 'completed';
 type GroupBy = 'week' | 'subject';
 
+const STAT_CARD_GAP = 12;
+const STAT_HORIZONTAL_PADDING = 16;
+const STAT_CARD_MIN_WIDTH = 96;
+const STAT_CARD_MAX_WIDTH = 120;
+
 export default function StudentAssignments() {
+  const { width: screenWidth } = useWindowDimensions();
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<TabType>('all');
   const [groupBy, setGroupBy] = useState<GroupBy>('week');
@@ -299,6 +307,59 @@ export default function StudentAssignments() {
   const stats = getStats();
   const filteredAssignments = getFilteredAssignments();
 
+  const statCardWidth = Math.min(
+    STAT_CARD_MAX_WIDTH,
+    Math.max(
+      STAT_CARD_MIN_WIDTH,
+      Math.floor(
+        (screenWidth - STAT_HORIZONTAL_PADDING * 2 - STAT_CARD_GAP * 3) / 3.15
+      )
+    )
+  );
+
+  const kpiCards = [
+    {
+      key: 'total',
+      icon: BookOpen,
+      value: stats.total,
+      label: 'Total',
+      backgroundColor: '#DBEAFE',
+      iconColor: '#2563EB',
+      valueColor: '#1E40AF',
+      labelColor: '#1E3A8A',
+    },
+    {
+      key: 'pending',
+      icon: Clock,
+      value: stats.pending,
+      label: 'Pending',
+      backgroundColor: '#FEF3C7',
+      iconColor: '#F59E0B',
+      valueColor: '#D97706',
+      labelColor: '#92400E',
+    },
+    {
+      key: 'verified',
+      icon: CheckCircle,
+      value: stats.verified,
+      label: 'Verified',
+      backgroundColor: '#D1FAE5',
+      iconColor: '#10B981',
+      valueColor: '#059669',
+      labelColor: '#047857',
+    },
+    {
+      key: 'completion',
+      icon: TrendingUp,
+      value: `${stats.completionRate}%`,
+      label: 'Completion',
+      backgroundColor: '#E0F7F6',
+      iconColor: '#01b4ae',
+      valueColor: '#01b4ae',
+      labelColor: '#0d9488',
+    },
+  ] as const;
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
@@ -310,32 +371,22 @@ export default function StudentAssignments() {
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        style={styles.statsContainer}
+        style={styles.statsScroll}
         contentContainerStyle={styles.statsContent}
       >
-        <View style={[styles.statCard, { backgroundColor: '#DBEAFE' }]}>
-          <BookOpen color="#2563EB" size={24} />
-          <Text style={[styles.statNumber, { color: '#1E40AF' }]}>{stats.total}</Text>
-          <Text style={[styles.statLabel, { color: '#1E3A8A' }]}>Total</Text>
-        </View>
-
-        <View style={[styles.statCard, { backgroundColor: '#FEF3C7' }]}>
-          <Clock color="#F59E0B" size={24} />
-          <Text style={[styles.statNumber, { color: '#D97706' }]}>{stats.pending}</Text>
-          <Text style={[styles.statLabel, { color: '#92400E' }]}>Pending</Text>
-        </View>
-
-        <View style={[styles.statCard, { backgroundColor: '#D1FAE5' }]}>
-          <CheckCircle color="#10B981" size={24} />
-          <Text style={[styles.statNumber, { color: '#059669' }]}>{stats.verified}</Text>
-          <Text style={[styles.statLabel, { color: '#047857' }]}>Verified</Text>
-        </View>
-
-        <View style={[styles.statCard, { backgroundColor: '#E0F7F6' }]}>
-          <TrendingUp color="#01b4ae" size={24} />
-          <Text style={[styles.statNumber, { color: '#01b4ae' }]}>{stats.completionRate}%</Text>
-          <Text style={[styles.statLabel, { color: '#0d9488' }]}>Completion</Text>
-        </View>
+        {kpiCards.map((card) => (
+          <KpiStatCard
+            key={card.key}
+            icon={card.icon}
+            value={card.value}
+            label={card.label}
+            backgroundColor={card.backgroundColor}
+            iconColor={card.iconColor}
+            valueColor={card.valueColor}
+            labelColor={card.labelColor}
+            width={statCardWidth}
+          />
+        ))}
       </ScrollView>
 
       {/* Tab Navigation */}
@@ -434,28 +485,15 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#E0F7F6',
   },
-  statsContainer: {
-    maxHeight: 120,
+  statsScroll: {
+    flexGrow: 0,
+    flexShrink: 0,
   },
   statsContent: {
-    paddingHorizontal: 16,
+    paddingHorizontal: STAT_HORIZONTAL_PADDING,
     paddingVertical: 16,
-    gap: 12,
-  },
-  statCard: {
-    width: 110,
-    padding: 16,
-    borderRadius: 16,
-    alignItems: 'center',
-    gap: 6,
-  },
-  statNumber: {
-    fontSize: 24,
-    fontWeight: '700',
-  },
-  statLabel: {
-    fontSize: 12,
-    fontWeight: '600',
+    gap: STAT_CARD_GAP,
+    alignItems: 'flex-start',
   },
   tabContainer: {
     flexDirection: 'row',

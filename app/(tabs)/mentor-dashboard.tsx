@@ -72,6 +72,7 @@ interface Assignment {
 type TabType = 'students' | 'create' | 'thisWeek' | 'verify' | 'analytics';
 
 import { useRouter } from 'expo-router';
+import { ScrollableUnderlineTabBar } from '@/components/ScrollableUnderlineTabBar';
 
 export default function MentorDashboard() {
   const router = useRouter();
@@ -398,77 +399,57 @@ export default function MentorDashboard() {
       </View>
 
       {/* Tab Navigation */}
-      <View style={styles.tabContainer}>
-        <TouchableOpacity
-          style={[styles.tab, activeTab === 'students' && styles.tabActive]}
-          onPress={() => {
-            setActiveTab('students');
-            Haptics.selectionAsync();
-          }}
-        >
-          <Users color={activeTab === 'students' ? '#01b4ae' : '#6B7280'} size={20} />
-          <Text style={[styles.tabText, activeTab === 'students' && styles.tabTextActive]}>
-            Students
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tab, activeTab === 'create' && styles.tabActive]}
-          onPress={() => {
-            setActiveTab('create');
-            Haptics.selectionAsync();
-          }}
-        >
-          <Plus color={activeTab === 'create' ? '#01b4ae' : '#6B7280'} size={20} />
-          <Text style={[styles.tabText, activeTab === 'create' && styles.tabTextActive]}>
-            Create
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tab, activeTab === 'thisWeek' && styles.tabActive]}
-          onPress={() => {
-            setActiveTab('thisWeek');
-            Haptics.selectionAsync();
-          }}
-        >
-          <Calendar color={activeTab === 'thisWeek' ? '#01b4ae' : '#6B7280'} size={20} />
-          <Text style={[styles.tabText, activeTab === 'thisWeek' && styles.tabTextActive]}>
-            This Week
-          </Text>
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={[styles.tab, activeTab === 'verify' && styles.tabActive]}
-          onPress={() => {
-            setActiveTab('verify');
-            Haptics.selectionAsync();
-          }}
-        >
-          <CheckCircle color={activeTab === 'verify' ? '#01b4ae' : '#6B7280'} size={20} />
-          <Text style={[styles.tabText, activeTab === 'verify' && styles.tabTextActive]}>
-            Verify
-          </Text>
-          {pendingVerification.length > 0 && (
-            <View style={styles.badge}>
-              <Text style={styles.badgeText}>{pendingVerification.length}</Text>
-            </View>
-          )}
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.tab}
-          onPress={() => {
-            Haptics.selectionAsync();
-            router.push('/quizzes/student-analytics');
-          }}
-        >
-          <TrendingUp color="#6B7280" size={20} />
-          <Text style={styles.tabText}>
-            Analytics
-          </Text>
-        </TouchableOpacity>
-      </View>
+      <ScrollableUnderlineTabBar
+        activeTabId={activeTab}
+        tabs={[
+          {
+            id: 'students',
+            label: 'Students',
+            icon: Users,
+            onPress: () => {
+              setActiveTab('students');
+              Haptics.selectionAsync();
+            },
+          },
+          {
+            id: 'create',
+            label: 'Create',
+            icon: Plus,
+            onPress: () => {
+              setActiveTab('create');
+              Haptics.selectionAsync();
+            },
+          },
+          {
+            id: 'thisWeek',
+            label: 'This Week',
+            icon: Calendar,
+            onPress: () => {
+              setActiveTab('thisWeek');
+              Haptics.selectionAsync();
+            },
+          },
+          {
+            id: 'verify',
+            label: 'Verify',
+            icon: CheckCircle,
+            badge: pendingVerification.length,
+            onPress: () => {
+              setActiveTab('verify');
+              Haptics.selectionAsync();
+            },
+          },
+          {
+            id: 'analytics',
+            label: 'Analytics',
+            icon: TrendingUp,
+            onPress: () => {
+              Haptics.selectionAsync();
+              router.push('/quizzes/student-analytics');
+            },
+          },
+        ]}
+      />
 
       {/* Tab Content */}
       <View style={styles.content}>
@@ -712,49 +693,6 @@ const styles = StyleSheet.create({
   headerSubtitle: {
     fontSize: 14,
     color: '#E0F7F6',
-  },
-  tabContainer: {
-    flexDirection: 'row',
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-    paddingHorizontal: 4,
-  },
-  tab: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 14,
-    gap: 6,
-    borderBottomWidth: 2,
-    borderBottomColor: 'transparent',
-  },
-  tabActive: {
-    borderBottomColor: '#01b4ae',
-  },
-  tabText: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#6B7280',
-  },
-  tabTextActive: {
-    color: '#01b4ae',
-    fontWeight: '700',
-  },
-  badge: {
-    backgroundColor: '#EF4444',
-    borderRadius: 10,
-    minWidth: 18,
-    height: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginLeft: 4,
-  },
-  badgeText: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: '700',
   },
   content: {
     flex: 1,
