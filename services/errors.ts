@@ -42,6 +42,8 @@ const USER_MESSAGES: Record<ApiErrorCode, string> = {
   FORBIDDEN: 'You do not have permission to perform this action.',
   NOT_FOUND: 'The requested resource was not found.',
   VALIDATION_ERROR: 'Please check your input and try again.',
+  IMPORT_VALIDATION_ERROR:
+    'Some rows in the import file are invalid. Please review the errors and try again.',
   CONFLICT: 'This action conflicts with existing data. Please refresh and try again.',
   RATE_LIMITED: 'Too many requests. Please wait a moment and try again.',
   CONFIGURATION_ERROR:

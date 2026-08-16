@@ -2,7 +2,7 @@
   "expo": {
     "name": "Eyeconic Mentorship",
     "slug": "neet-mentorship-app",
-    "version": "1.0.1",
+    "version": "1.0.2",
     "sdkVersion": "54.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/Logo.png",
