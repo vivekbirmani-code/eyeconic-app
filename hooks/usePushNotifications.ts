@@ -158,11 +158,18 @@ async function registerForPushNotificationsAsync(): Promise<{ expoToken: string 
         return { expoToken: null, fcmToken: null };
     }
 
-    // Get Expo push token
+    // Get Expo push token — resolve project ID from Expo/EAS config (app.json extra.eas.projectId)
+    const projectId =
+        Constants.expoConfig?.extra?.eas?.projectId ??
+        Constants.easConfig?.projectId;
+
+    if (!projectId) {
+        console.error('EAS project ID not found in Expo config; cannot register for Expo push notifications.');
+        return { expoToken: null, fcmToken: null };
+    }
+
     try {
-        const tokenData = await Notifications.getExpoPushTokenAsync({
-            projectId: 'b339dc67-5b70-425b-acd0-585b6954dd02',
-        });
+        const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
         expoToken = tokenData.data;
     } catch (error) {
         console.error('Error getting Expo push token:', error);
