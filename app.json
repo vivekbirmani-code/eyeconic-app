@@ -1,7 +1,7 @@
 {
   "expo": {
     "name": "Eyeconic Mentorship",
-    "slug": "neet-mentorship-app",
+    "slug": "eyeconic-mentorship",
     "version": "1.0.2",
     "sdkVersion": "54.0.0",
     "orientation": "portrait",
@@ -51,7 +51,8 @@
         "android.permission.BLUETOOTH",
         "android.permission.VIBRATE",
         "android.permission.RECEIVE_BOOT_COMPLETED",
-        "android.permission.FOREGROUND_SERVICE"
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.CAMERA"
       ],
       "package": "com.eyeconicbydrlalla.mentorship",
       "versionCode": 9,
@@ -111,8 +112,9 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "b339dc67-5b70-425b-acd0-585b6954dd02"
+        "projectId": "79a4fa15-58b4-4244-aaab-5c4c5c2d848c"
       }
-    }
+    },
+    "owner": "vivekbirmani"
   }
 }
