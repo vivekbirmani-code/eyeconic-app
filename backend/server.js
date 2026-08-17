@@ -112,6 +112,14 @@ startDatabase();
 app.use('/health', healthRoutes);
 app.use('/api/health', healthRoutes);
 
+// Root endpoint — service identity for uptime checks and human verification
+app.get('/', (req, res) => {
+  res.json({
+    status: 'ok',
+    service: 'eyeconic-api',
+  });
+});
+
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
@@ -768,20 +776,30 @@ io.on('connection', (socket) => {
   });
 });
 
-// 404 handler for unknown API routes
-app.use('/api', (req, res) => {
+const notFoundResponse = (req, res) => {
   res.status(404).json({
     message: 'The requested resource was not found.',
     code: 'NOT_FOUND',
     requestId: req.requestId,
   });
-});
+};
+
+// 404 handler for unknown API routes
+app.use('/api', notFoundResponse);
+
+// 404 handler for all other unknown routes (avoids Express HTML "Cannot GET /path")
+app.use(notFoundResponse);
 
 // Global error handler — must be last
 app.use(errorHandler);
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  logger.info('Server started', { port: PORT, nodeEnv: process.env.NODE_ENV || 'development' });
-});
+
+if (require.main === module) {
+  server.listen(PORT, () => {
+    logger.info('Server started', { port: PORT, nodeEnv: process.env.NODE_ENV || 'development' });
+  });
+}
+
+module.exports = { app, server };
 
