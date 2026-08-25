@@ -57,6 +57,15 @@ const validateEnvironment = () => {
   if (!process.env.MONGODB_URI) {
     warnings.push('MONGODB_URI is not set — database connection will fail');
   }
+  const hasResend = Boolean(process.env.RESEND_API_KEY?.trim());
+  const hasSmtp = Boolean(
+    process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS
+  );
+  if (!hasResend && !hasSmtp && process.env.NODE_ENV === 'production') {
+    warnings.push(
+      'RESEND_API_KEY or SMTP credentials are not set — OTP emails will fail in production'
+    );
+  }
   warnings.forEach((warning) => logger.warn(warning));
 };
 

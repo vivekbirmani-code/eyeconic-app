@@ -2,6 +2,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
 const logger = require('../utils/logger');
+const { getEmailStatus } = require('../utils/mailer');
 
 const router = express.Router();
 
@@ -29,10 +30,25 @@ const getAuthStatus = () => {
   };
 };
 
+const getEmailHealthStatus = () => {
+  const email = getEmailStatus();
+  const isHealthy =
+    email.configured || email.status === 'mock';
+
+  return {
+    status: isHealthy ? 'healthy' : 'unhealthy',
+    ...email,
+  };
+};
+
 router.get('/', (req, res) => {
   const database = getDatabaseStatus();
   const auth = getAuthStatus();
-  const isHealthy = database.status === 'healthy' && auth.status === 'healthy';
+  const email = getEmailHealthStatus();
+  const isHealthy =
+    database.status === 'healthy' &&
+    auth.status === 'healthy' &&
+    email.status === 'healthy';
 
   const payload = {
     status: isHealthy ? 'healthy' : 'degraded',
@@ -43,6 +59,7 @@ router.get('/', (req, res) => {
     dependencies: {
       database,
       auth,
+      email,
     },
   };
 
@@ -51,6 +68,8 @@ router.get('/', (req, res) => {
       requestId: req.requestId,
       database: database.state,
       jwtConfigured: auth.jwtConfigured,
+      emailStatus: email.status,
+      emailProvider: email.provider,
     });
   }
 

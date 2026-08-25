@@ -84,6 +84,9 @@ const mapServerCode = (serverCode?: string): ApiErrorCode | null => {
       return 'DATABASE_UNAVAILABLE';
     case 'SERVICE_UNAVAILABLE':
       return 'SERVER_UNAVAILABLE';
+    case 'EMAIL_DELIVERY_FAILED':
+    case 'EMAIL_NOT_CONFIGURED':
+      return 'SERVER_UNAVAILABLE';
     case 'VALIDATION_ERROR':
     case 'IMPORT_VALIDATION_ERROR':
       return 'VALIDATION_ERROR';

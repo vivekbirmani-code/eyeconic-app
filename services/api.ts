@@ -25,13 +25,21 @@ const getRetryDelay = (attempt: number): number => {
   return exponential + jitter;
 };
 
+const RETRYABLE_AUTH_POST_URLS = new Set([
+  '/auth/login',
+  '/auth/send-otp',
+  '/auth/forgot-password-send-otp',
+]);
+
 const shouldRetryRequest = (error: AxiosError, config?: RetryableAxiosRequestConfig): boolean => {
   if (!config) return false;
 
   const method = (config.method || 'get').toLowerCase();
-  if (method !== 'get' && method !== 'head' && config.url !== '/auth/login') {
-    // Only retry safe/idempotent requests and login (transient infra failures)
-    if (config.url !== '/auth/login') return false;
+  const url = config.url || '';
+  const isRetryablePost = method === 'post' && RETRYABLE_AUTH_POST_URLS.has(url);
+
+  if (method !== 'get' && method !== 'head' && !isRetryablePost) {
+    return false;
   }
 
   const retryCount = config._retryCount ?? 0;

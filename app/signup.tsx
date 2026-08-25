@@ -19,7 +19,7 @@ import { useAuth } from '@/context/AuthContext';
 import { Eye, EyeOff, ShieldCheck, Mail, Phone, User, Lock, ChevronLeft, Check } from 'lucide-react-native';
 import * as Haptics from '@/utils/haptics';
 import { LinearGradient } from 'expo-linear-gradient';
-import { api } from '@/services/api';
+import { api, getUserMessage } from '@/services/api';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function Signup() {
@@ -108,7 +108,7 @@ export default function Signup() {
       setOtpModalVisible(true);
     } catch (error: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      const message = error?.response?.data?.message || 'Failed to send verification email. Please check the address.';
+      const message = getUserMessage(error);
       Alert.alert('Error', message);
     } finally {
       setIsLoading(false);
@@ -153,7 +153,7 @@ export default function Signup() {
       router.replace('/(tabs)/dashboard');
     } catch (error: any) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
-      const message = error?.response?.data?.message || 'Invalid or expired OTP code. Please try again.';
+      const message = getUserMessage(error);
       Alert.alert('Verification Failed', message);
     } finally {
       setIsVerifying(false);

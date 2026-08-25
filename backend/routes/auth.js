@@ -4,7 +4,11 @@ const User = require('../models/User');
 const GuestAttempt = require('../models/GuestAttempt');
 const QuizAttempt = require('../models/QuizAttempt');
 const Otp = require('../models/Otp');
-const { sendOtpMail, sendPasswordResetMail } = require('../utils/mailer');
+const {
+  EmailDeliveryError,
+  sendOtpMail,
+  sendPasswordResetMail,
+} = require('../utils/mailer');
 const { auth } = require('../middleware/auth');
 const requireDatabase = require('../middleware/requireDatabase');
 const logger = require('../utils/logger');
@@ -158,7 +162,7 @@ router.get('/me', auth, async (req, res) => {
 });
 
 // Send verification email OTP
-router.post('/send-otp', async (req, res) => {
+router.post('/send-otp', requireDatabase, async (req, res) => {
   try {
     const { email } = req.body;
 
@@ -189,8 +193,28 @@ router.post('/send-otp', async (req, res) => {
 
     res.json({ message: 'Verification code sent to email.' });
   } catch (error) {
-    console.error('Error sending OTP:', error);
-    res.status(500).json({ message: 'Server error' });
+    if (error instanceof EmailDeliveryError) {
+      logger.error('OTP email delivery failed', {
+        requestId: req.requestId,
+        errorMessage: error.message,
+        code: error.code,
+      });
+      return res.status(error.statusCode || 503).json({
+        message: error.message,
+        code: error.code,
+        requestId: req.requestId,
+      });
+    }
+
+    logger.error('Error sending OTP', {
+      requestId: req.requestId,
+      errorMessage: error.message,
+    });
+    res.status(500).json({
+      message: 'Server error',
+      code: 'INTERNAL_ERROR',
+      requestId: req.requestId,
+    });
   }
 });
 
@@ -260,7 +284,7 @@ router.post('/signup', async (req, res) => {
 });
 
 // Send password reset OTP
-router.post('/forgot-password-send-otp', async (req, res) => {
+router.post('/forgot-password-send-otp', requireDatabase, async (req, res) => {
   try {
     const { email } = req.body;
 
@@ -291,8 +315,28 @@ router.post('/forgot-password-send-otp', async (req, res) => {
 
     res.json({ message: 'Password reset verification code sent to email.' });
   } catch (error) {
-    console.error('Error sending reset OTP:', error);
-    res.status(500).json({ message: 'Server error' });
+    if (error instanceof EmailDeliveryError) {
+      logger.error('Password reset email delivery failed', {
+        requestId: req.requestId,
+        errorMessage: error.message,
+        code: error.code,
+      });
+      return res.status(error.statusCode || 503).json({
+        message: error.message,
+        code: error.code,
+        requestId: req.requestId,
+      });
+    }
+
+    logger.error('Error sending reset OTP', {
+      requestId: req.requestId,
+      errorMessage: error.message,
+    });
+    res.status(500).json({
+      message: 'Server error',
+      code: 'INTERNAL_ERROR',
+      requestId: req.requestId,
+    });
   }
 });
 
