@@ -168,7 +168,7 @@ export default function Signup() {
       Alert.alert('Code Resent', response.data.message || 'A new verification code has been emailed.');
       setOtp('');
     } catch (error: any) {
-      Alert.alert('Error', error?.response?.data?.message || 'Failed to resend code');
+      Alert.alert('Error', getUserMessage(error));
     }
   };
 

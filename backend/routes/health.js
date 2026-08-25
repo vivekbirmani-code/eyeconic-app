@@ -1,10 +1,9 @@
-const express = require('express');
 const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
 const logger = require('../utils/logger');
 const { getEmailStatus } = require('../utils/mailer');
 
-const router = express.Router();
+const router = require('express').Router();
 
 const getDatabaseStatus = () => {
   const state = mongoose.connection.readyState;
@@ -32,12 +31,27 @@ const getAuthStatus = () => {
 
 const getEmailHealthStatus = () => {
   const email = getEmailStatus();
-  const isHealthy =
-    email.configured || email.status === 'mock';
+
+  if (email.configured) {
+    return {
+      status: 'healthy',
+      provider: email.provider,
+      configured: true,
+    };
+  }
+
+  if (email.status === 'mock') {
+    return {
+      status: 'healthy',
+      provider: email.provider,
+      configured: false,
+    };
+  }
 
   return {
-    status: isHealthy ? 'healthy' : 'unhealthy',
-    ...email,
+    status: 'unconfigured',
+    provider: null,
+    configured: false,
   };
 };
 
@@ -45,17 +59,20 @@ router.get('/', (req, res) => {
   const database = getDatabaseStatus();
   const auth = getAuthStatus();
   const email = getEmailHealthStatus();
-  const isHealthy =
+
+  const isReady =
     database.status === 'healthy' &&
     auth.status === 'healthy' &&
     email.status === 'healthy';
 
   const payload = {
-    status: isHealthy ? 'healthy' : 'degraded',
+    status: isReady ? 'healthy' : 'degraded',
+    ready: isReady,
     service: 'eyeconic-api',
     timestamp: new Date().toISOString(),
     uptimeSeconds: Math.floor(process.uptime()),
     requestId: req.requestId,
+    email,
     dependencies: {
       database,
       auth,
@@ -63,7 +80,7 @@ router.get('/', (req, res) => {
     },
   };
 
-  if (!isHealthy) {
+  if (!isReady) {
     logger.warn('Health check degraded', {
       requestId: req.requestId,
       database: database.state,
@@ -73,7 +90,9 @@ router.get('/', (req, res) => {
     });
   }
 
-  res.status(isHealthy ? 200 : 503).json(payload);
+  // Always return HTTP 200 so Render/load balancers can confirm the process is up.
+  // Use the `ready` and `status` fields for dependency health.
+  res.status(200).json(payload);
 });
 
 router.get('/database', (req, res) => {

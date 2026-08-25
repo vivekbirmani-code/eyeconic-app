@@ -78,6 +78,24 @@ app.use(requestId);
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+// Return a clean 400 for malformed JSON instead of an unhandled parser error
+app.use((err, req, res, next) => {
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    logger.warn('Malformed JSON request body', {
+      requestId: req.requestId,
+      method: req.method,
+      path: req.originalUrl,
+    });
+    return res.status(400).json({
+      success: false,
+      message: 'Invalid request data.',
+      code: 'INVALID_JSON',
+      requestId: req.requestId,
+    });
+  }
+  return next(err);
+});
+
 // Structured request logging (never log bodies — may contain credentials)
 app.use((req, res, next) => {
   const start = Date.now();

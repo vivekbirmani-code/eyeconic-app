@@ -6,14 +6,50 @@ const QuizAttempt = require('../models/QuizAttempt');
 const Otp = require('../models/Otp');
 const {
   EmailDeliveryError,
+  EMAIL_DELIVERY_USER_MESSAGE,
   sendOtpMail,
   sendPasswordResetMail,
 } = require('../utils/mailer');
+const {
+  generateOtp,
+  normalizeEmail,
+  isValidEmail,
+  isOtpExpired,
+} = require('../utils/otpHelpers');
+const {
+  otpSendRateLimit,
+  otpVerifyRateLimit,
+  recordVerifyFailure,
+  clearVerifyAttempts,
+} = require('../middleware/otpRateLimit');
 const { auth } = require('../middleware/auth');
 const requireDatabase = require('../middleware/requireDatabase');
 const logger = require('../utils/logger');
 
 const router = express.Router();
+
+const invalidRequestResponse = (res, req, message = 'Invalid request data.') =>
+  res.status(400).json({
+    success: false,
+    message,
+    code: 'VALIDATION_ERROR',
+    requestId: req.requestId,
+  });
+
+const handleEmailDeliveryError = (error, req, res, context) => {
+  logger.error(`[OTP] ${context} email delivery failed`, {
+    requestId: req.requestId,
+    code: error.code,
+    errorMessage: error.message,
+  });
+
+  return res.status(error.statusCode || 503).json({
+    success: false,
+    message: EMAIL_DELIVERY_USER_MESSAGE,
+    code: error.code || 'EMAIL_DELIVERY_FAILED',
+    requestId: req.requestId,
+  });
+};
 
 // Login
 router.post('/login', requireDatabase, async (req, res) => {
@@ -162,56 +198,65 @@ router.get('/me', auth, async (req, res) => {
 });
 
 // Send verification email OTP
-router.post('/send-otp', requireDatabase, async (req, res) => {
+router.post('/send-otp', requireDatabase, otpSendRateLimit, async (req, res) => {
   try {
     const { email } = req.body;
 
-    if (!email) {
-      return res.status(400).json({ message: 'Email address is required' });
+    if (!email || typeof email !== 'string') {
+      return invalidRequestResponse(res, req, 'Email address is required.');
     }
 
-    const normalizedEmail = email.trim().toLowerCase();
+    if (!isValidEmail(email)) {
+      return invalidRequestResponse(res, req, 'Please enter a valid email address.');
+    }
+
+    const normalizedEmail = normalizeEmail(email);
 
     // Check if user already exists
     const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
-      return res.status(400).json({ message: 'This email is already registered.' });
+      return res.status(400).json({
+        success: false,
+        message: 'This email is already registered.',
+        code: 'VALIDATION_ERROR',
+        requestId: req.requestId,
+      });
     }
 
-    // Generate a 6-digit OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = generateOtp();
 
-    // Store OTP in database (overwrite any existing OTP for this email)
+    try {
+      await sendOtpMail(normalizedEmail, otp);
+    } catch (error) {
+      if (error instanceof EmailDeliveryError) {
+        return handleEmailDeliveryError(error, req, res, 'Signup OTP');
+      }
+      throw error;
+    }
+
     await Otp.findOneAndUpdate(
       { email: normalizedEmail },
       { otp, createdAt: new Date() },
       { upsert: true, new: true }
     );
 
-    // Send email
-    await sendOtpMail(normalizedEmail, otp);
+    logger.info('[OTP] Signup verification code sent', {
+      requestId: req.requestId,
+      email: normalizedEmail,
+    });
 
-    res.json({ message: 'Verification code sent to email.' });
+    res.json({
+      success: true,
+      message: 'Verification code sent to email.',
+    });
   } catch (error) {
-    if (error instanceof EmailDeliveryError) {
-      logger.error('OTP email delivery failed', {
-        requestId: req.requestId,
-        errorMessage: error.message,
-        code: error.code,
-      });
-      return res.status(error.statusCode || 503).json({
-        message: error.message,
-        code: error.code,
-        requestId: req.requestId,
-      });
-    }
-
-    logger.error('Error sending OTP', {
+    logger.error('[OTP] Error sending signup OTP', {
       requestId: req.requestId,
       errorMessage: error.message,
     });
     res.status(500).json({
-      message: 'Server error',
+      success: false,
+      message: "We're unable to process your request right now. Please try again shortly.",
       code: 'INTERNAL_ERROR',
       requestId: req.requestId,
     });
@@ -219,15 +264,23 @@ router.post('/send-otp', requireDatabase, async (req, res) => {
 });
 
 // Verify OTP and complete signup
-router.post('/signup', async (req, res) => {
+router.post('/signup', requireDatabase, otpVerifyRateLimit, async (req, res) => {
   try {
     const { name, email, phone, password, otp } = req.body;
 
     if (!name || !email || !password || !otp) {
-      return res.status(400).json({ message: 'Please fill in all required fields (Name, Email, Password, OTP)' });
+      return invalidRequestResponse(
+        res,
+        req,
+        'Please fill in all required fields (Name, Email, Password, OTP).'
+      );
     }
 
-    const normalizedEmail = email.trim().toLowerCase();
+    if (!isValidEmail(email)) {
+      return invalidRequestResponse(res, req, 'Please enter a valid email address.');
+    }
+
+    const normalizedEmail = normalizeEmail(email);
 
     // Check if user already exists
     const existingUser = await User.findOne({ email: normalizedEmail });
@@ -237,7 +290,14 @@ router.post('/signup', async (req, res) => {
 
     // Find OTP record
     const otpRecord = await Otp.findOne({ email: normalizedEmail });
-    if (!otpRecord || otpRecord.otp !== otp.trim()) {
+    if (!otpRecord || otpRecord.otp !== String(otp).trim()) {
+      recordVerifyFailure(normalizedEmail);
+      return res.status(400).json({ message: 'Invalid or expired verification code' });
+    }
+
+    if (isOtpExpired(otpRecord.createdAt)) {
+      await Otp.deleteOne({ _id: otpRecord._id });
+      recordVerifyFailure(normalizedEmail);
       return res.status(400).json({ message: 'Invalid or expired verification code' });
     }
 
@@ -254,6 +314,14 @@ router.post('/signup', async (req, res) => {
 
     await user.save();
 
+    if (!process.env.JWT_SECRET) {
+      return res.status(503).json({
+        message: 'Our servers are temporarily unavailable. Please try again in a few moments.',
+        code: 'SERVICE_UNAVAILABLE',
+        requestId: req.requestId,
+      });
+    }
+
     // Generate JWT
     const token = jwt.sign(
       { userId: user._id, role: user.role },
@@ -263,6 +331,7 @@ router.post('/signup', async (req, res) => {
 
     // Delete OTP record
     await Otp.deleteOne({ _id: otpRecord._id });
+    clearVerifyAttempts(normalizedEmail);
 
     res.status(201).json({
       token,
@@ -284,56 +353,65 @@ router.post('/signup', async (req, res) => {
 });
 
 // Send password reset OTP
-router.post('/forgot-password-send-otp', requireDatabase, async (req, res) => {
+router.post('/forgot-password-send-otp', requireDatabase, otpSendRateLimit, async (req, res) => {
   try {
     const { email } = req.body;
 
-    if (!email) {
-      return res.status(400).json({ message: 'Email address is required' });
+    if (!email || typeof email !== 'string') {
+      return invalidRequestResponse(res, req, 'Email address is required.');
     }
 
-    const normalizedEmail = email.trim().toLowerCase();
+    if (!isValidEmail(email)) {
+      return invalidRequestResponse(res, req, 'Please enter a valid email address.');
+    }
+
+    const normalizedEmail = normalizeEmail(email);
 
     // Check if user exists
     const user = await User.findOne({ email: normalizedEmail });
     if (!user) {
-      return res.status(404).json({ message: 'No account found with this email address.' });
+      return res.status(404).json({
+        success: false,
+        message: 'No account found with this email address.',
+        code: 'NOT_FOUND',
+        requestId: req.requestId,
+      });
     }
 
-    // Generate a 6-digit OTP
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otp = generateOtp();
 
-    // Store OTP in database
+    try {
+      await sendPasswordResetMail(normalizedEmail, otp);
+    } catch (error) {
+      if (error instanceof EmailDeliveryError) {
+        return handleEmailDeliveryError(error, req, res, 'Password reset OTP');
+      }
+      throw error;
+    }
+
     await Otp.findOneAndUpdate(
       { email: normalizedEmail },
       { otp, createdAt: new Date() },
       { upsert: true, new: true }
     );
 
-    // Send email
-    await sendPasswordResetMail(normalizedEmail, otp);
+    logger.info('[OTP] Password reset verification code sent', {
+      requestId: req.requestId,
+      email: normalizedEmail,
+    });
 
-    res.json({ message: 'Password reset verification code sent to email.' });
+    res.json({
+      success: true,
+      message: 'Password reset verification code sent to email.',
+    });
   } catch (error) {
-    if (error instanceof EmailDeliveryError) {
-      logger.error('Password reset email delivery failed', {
-        requestId: req.requestId,
-        errorMessage: error.message,
-        code: error.code,
-      });
-      return res.status(error.statusCode || 503).json({
-        message: error.message,
-        code: error.code,
-        requestId: req.requestId,
-      });
-    }
-
-    logger.error('Error sending reset OTP', {
+    logger.error('[OTP] Error sending reset OTP', {
       requestId: req.requestId,
       errorMessage: error.message,
     });
     res.status(500).json({
-      message: 'Server error',
+      success: false,
+      message: "We're unable to process your request right now. Please try again shortly.",
       code: 'INTERNAL_ERROR',
       requestId: req.requestId,
     });
@@ -341,23 +419,38 @@ router.post('/forgot-password-send-otp', requireDatabase, async (req, res) => {
 });
 
 // Reset password using OTP
-router.post('/forgot-password-reset', async (req, res) => {
+router.post('/forgot-password-reset', requireDatabase, otpVerifyRateLimit, async (req, res) => {
   try {
     const { email, otp, newPassword } = req.body;
 
     if (!email || !otp || !newPassword) {
-      return res.status(400).json({ message: 'Please provide email, verification code, and new password.' });
+      return invalidRequestResponse(
+        res,
+        req,
+        'Please provide email, verification code, and new password.'
+      );
+    }
+
+    if (!isValidEmail(email)) {
+      return invalidRequestResponse(res, req, 'Please enter a valid email address.');
     }
 
     if (newPassword.length < 6) {
       return res.status(400).json({ message: 'New password must be at least 6 characters.' });
     }
 
-    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedEmail = normalizeEmail(email);
 
     // Find OTP record
     const otpRecord = await Otp.findOne({ email: normalizedEmail });
-    if (!otpRecord || otpRecord.otp !== otp.trim()) {
+    if (!otpRecord || otpRecord.otp !== String(otp).trim()) {
+      recordVerifyFailure(normalizedEmail);
+      return res.status(400).json({ message: 'Invalid or expired verification code.' });
+    }
+
+    if (isOtpExpired(otpRecord.createdAt)) {
+      await Otp.deleteOne({ _id: otpRecord._id });
+      recordVerifyFailure(normalizedEmail);
       return res.status(400).json({ message: 'Invalid or expired verification code.' });
     }
 
@@ -373,6 +466,7 @@ router.post('/forgot-password-reset', async (req, res) => {
 
     // Delete OTP record
     await Otp.deleteOne({ _id: otpRecord._id });
+    clearVerifyAttempts(normalizedEmail);
 
     res.json({ message: 'Password reset successful! You can now log in with your new password.' });
   } catch (error) {

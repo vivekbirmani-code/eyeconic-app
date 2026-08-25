@@ -52,19 +52,21 @@ describe('Server public routes', () => {
     expect(response.headers['content-type']).toMatch(/json/);
   });
 
-  it('GET /health returns health payload', async () => {
+  it('GET /health returns health payload with HTTP 200', async () => {
     const response = await request(app).get('/health');
 
-    expect(response.status).toBeGreaterThanOrEqual(200);
+    expect(response.status).toBe(200);
     expect(response.body.service).toBe('eyeconic-api');
     expect(response.body).toHaveProperty('status');
+    expect(response.body).toHaveProperty('ready');
+    expect(response.body).toHaveProperty('email');
     expect(response.body).toHaveProperty('dependencies');
   });
 
   it('GET /api/health mirrors /health', async () => {
     const response = await request(app).get('/api/health');
 
-    expect(response.status).toBeGreaterThanOrEqual(200);
+    expect(response.status).toBe(200);
     expect(response.body.service).toBe('eyeconic-api');
   });
 

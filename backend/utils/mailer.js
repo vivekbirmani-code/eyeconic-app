@@ -1,11 +1,14 @@
 const nodemailer = require('nodemailer');
 const logger = require('./logger');
 
-const SMTP_TIMEOUT_MS = 15000;
+const SMTP_TIMEOUT_MS = 10000;
 const RESEND_TIMEOUT_MS = 15000;
 
+const EMAIL_DELIVERY_USER_MESSAGE =
+  'Unable to send verification code right now. Please try again in a moment.';
+
 class EmailDeliveryError extends Error {
-  constructor(message, code = 'EMAIL_DELIVERY_FAILED') {
+  constructor(message = EMAIL_DELIVERY_USER_MESSAGE, code = 'EMAIL_DELIVERY_FAILED') {
     super(message);
     this.name = 'EmailDeliveryError';
     this.statusCode = 503;
@@ -25,10 +28,19 @@ const isEmailConfigured = () => isResendConfigured() || isSmtpConfigured();
 
 const getFromAddress = () => {
   const fromName = process.env.SMTP_FROM_NAME || 'Eyeconic Mentors';
-  const fromEmail =
-    process.env.SMTP_FROM_EMAIL ||
-    process.env.RESEND_FROM_EMAIL ||
-    (isResendConfigured() ? 'onboarding@resend.dev' : 'no-reply@eyeconicmentors.com');
+
+  let fromEmail;
+  if (isResendConfigured()) {
+    fromEmail =
+      process.env.RESEND_FROM_EMAIL?.trim() ||
+      process.env.SMTP_FROM_EMAIL?.trim() ||
+      'onboarding@resend.dev';
+  } else {
+    fromEmail =
+      process.env.SMTP_FROM_EMAIL?.trim() ||
+      process.env.RESEND_FROM_EMAIL?.trim() ||
+      'no-reply@eyeconicmentors.com';
+  }
 
   return {
     fromName,
@@ -102,10 +114,18 @@ const getTransporter = () => {
   });
 };
 
+const sanitizeProviderError = (message) => {
+  if (!message) return 'Unknown provider error';
+  return message.replace(/Bearer\s+\S+/gi, '[REDACTED]').slice(0, 300);
+};
+
 const sendViaResend = async (email, subject, html, text) => {
   const { from } = getFromAddress();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), RESEND_TIMEOUT_MS);
+
+  logger.info('[EMAIL] Provider: resend');
+  logger.info('[EMAIL] Sending verification email', { to: email, subject });
 
   try {
     const response = await fetch('https://api.resend.com/emails', {
@@ -126,17 +146,20 @@ const sendViaResend = async (email, subject, html, text) => {
 
     if (!response.ok) {
       const body = await response.text();
-      throw new Error(`Resend API error ${response.status}: ${body}`);
+      throw new Error(`Resend API error ${response.status}: ${sanitizeProviderError(body)}`);
     }
 
-    logger.info('Verification email sent via Resend', { to: email, subject });
+    logger.info('[EMAIL] Email provider request completed successfully', {
+      provider: 'resend',
+      to: email,
+    });
   } catch (error) {
     const message = error.name === 'AbortError' ? 'Resend API timed out' : error.message;
-    logger.error('Resend email delivery failed', { to: email, errorMessage: message });
-    throw new EmailDeliveryError(
-      'Unable to send verification email right now. Please try again in a few moments.',
-      'EMAIL_DELIVERY_FAILED'
-    );
+    logger.error('[EMAIL] Resend request failed', {
+      to: email,
+      errorMessage: sanitizeProviderError(message),
+    });
+    throw new EmailDeliveryError(EMAIL_DELIVERY_USER_MESSAGE, 'EMAIL_DELIVERY_FAILED');
   } finally {
     clearTimeout(timeout);
   }
@@ -146,30 +169,40 @@ const sendViaSmtp = async (mailOptions) => {
   const transporter = getTransporter();
   if (!transporter) {
     throw new EmailDeliveryError(
-      'Email service is not configured on the server.',
+      EMAIL_DELIVERY_USER_MESSAGE,
       'EMAIL_NOT_CONFIGURED'
     );
   }
 
+  logger.info('[EMAIL] Provider: smtp');
+  logger.info('[EMAIL] Sending verification email', {
+    to: mailOptions.to,
+    subject: mailOptions.subject,
+  });
+
   try {
     await transporter.sendMail(mailOptions);
-    logger.info('Verification email sent via SMTP', { to: mailOptions.to, subject: mailOptions.subject });
-  } catch (error) {
-    logger.error('SMTP email delivery failed', {
+    logger.info('[EMAIL] Email provider request completed successfully', {
+      provider: 'smtp',
       to: mailOptions.to,
-      errorMessage: error.message,
     });
-    throw new EmailDeliveryError(
-      'Unable to send verification email right now. Please try again in a few moments.',
-      'EMAIL_DELIVERY_FAILED'
-    );
+  } catch (error) {
+    logger.error('[EMAIL] SMTP request failed', {
+      to: mailOptions.to,
+      errorMessage: sanitizeProviderError(error.message),
+    });
+    throw new EmailDeliveryError(EMAIL_DELIVERY_USER_MESSAGE, 'EMAIL_DELIVERY_FAILED');
   }
 };
 
-const logDevOtp = (email, otp, label) => {
+const logDevOtp = (email, label) => {
+  if (isProduction()) {
+    return;
+  }
+
   console.log('\n==================================================');
-  console.log(`📧 [DEV EMAILER] ${label} for ${email}:`);
-  console.log(`👉 OTP CODE: ${otp} 👈`);
+  console.log(`📧 [DEV EMAILER] ${label} requested for ${email}`);
+  console.log('👉 OTP was generated (value hidden — check email provider or database in dev)');
   console.log('==================================================\n');
 };
 
@@ -192,14 +225,12 @@ const deliverEmail = async (email, subject, html, text, devLabel) => {
   }
 
   if (!isProduction()) {
-    logDevOtp(email, text.match(/\d{6}/)?.[0] || 'unknown', devLabel);
+    logDevOtp(email, devLabel);
     return;
   }
 
-  throw new EmailDeliveryError(
-    'Email verification is temporarily unavailable. Please contact support.',
-    'EMAIL_NOT_CONFIGURED'
-  );
+  logger.error('[EMAIL] No email provider configured in production');
+  throw new EmailDeliveryError(EMAIL_DELIVERY_USER_MESSAGE, 'EMAIL_NOT_CONFIGURED');
 };
 
 const sendOtpMail = async (email, otp) => {
@@ -220,8 +251,11 @@ const sendPasswordResetMail = async (email, otp) => {
 
 module.exports = {
   EmailDeliveryError,
+  EMAIL_DELIVERY_USER_MESSAGE,
   sendOtpMail,
   sendPasswordResetMail,
   isEmailConfigured,
   getEmailStatus,
+  isResendConfigured,
+  isSmtpConfigured,
 };
