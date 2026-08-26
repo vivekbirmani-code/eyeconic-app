@@ -16,6 +16,7 @@ import {
   Platform
 } from 'react-native';
 import { useAuth } from '@/context/AuthContext';
+import { GtLog, loadGtLogs, saveGtLogs } from '@/utils/gtTracker';
 import { 
   User, 
   HelpCircle, 
@@ -34,7 +35,6 @@ import {
   Sparkles
 } from 'lucide-react-native';
 import * as Haptics from '@/utils/haptics';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { LinearGradient } from 'expo-linear-gradient';
 
 const { width, height } = Dimensions.get('window');
@@ -59,7 +59,7 @@ export default function FreeUserSidebar({ isOpen, onClose }: SidebarProps) {
   const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
 
   // GT Tracker States
-  const [gtHistory, setGtHistory] = useState<any[]>([]);
+  const [gtHistory, setGtHistory] = useState<GtLog[]>([]);
   const [gtName, setGtName] = useState('');
   const [gtCorrects, setGtCorrects] = useState('');
   const [gtScore, setGtScore] = useState('');
@@ -92,7 +92,7 @@ export default function FreeUserSidebar({ isOpen, onClose }: SidebarProps) {
   useEffect(() => {
     if (isOpen) {
       // Load GT tracker logs
-      loadGtLogs();
+      loadGtLogsFromStorage();
 
       // Animate sidebar open
       Animated.parallel([
@@ -141,15 +141,13 @@ export default function FreeUserSidebar({ isOpen, onClose }: SidebarProps) {
   };
 
   // GT Tracker functions
-  const loadGtLogs = async () => {
-    try {
-      const stored = await AsyncStorage.getItem(`gt_logs_${user?._id}`);
-      if (stored) {
-        setGtHistory(JSON.parse(stored));
-      }
-    } catch (e) {
-      console.log('Error loading logs:', e);
+  const loadGtLogsFromStorage = async () => {
+    if (!user?._id) {
+      setGtHistory([]);
+      return;
     }
+    const logs = await loadGtLogs(user._id);
+    setGtHistory(logs);
   };
 
   const saveGtLog = async () => {
@@ -159,9 +157,14 @@ export default function FreeUserSidebar({ isOpen, onClose }: SidebarProps) {
     }
     
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    const newLog = {
+    if (!user?._id) {
+      Alert.alert('Error', 'Please sign in to save GT logs.');
+      return;
+    }
+
+    const newLog: GtLog = {
       id: Date.now().toString(),
-      name: gtName,
+      name: gtName.trim(),
       corrects: parseInt(gtCorrects) || 0,
       score: parseInt(gtScore) || 0,
       rank: gtRank ? parseInt(gtRank) : '-',
@@ -171,7 +174,7 @@ export default function FreeUserSidebar({ isOpen, onClose }: SidebarProps) {
     const updated = [newLog, ...gtHistory];
     setGtHistory(updated);
     try {
-      await AsyncStorage.setItem(`gt_logs_${user?._id}`, JSON.stringify(updated));
+      await saveGtLogs(user._id, updated);
       Alert.alert('Success', 'Grand Test details saved successfully!');
       // Clear inputs
       setGtName('');
@@ -184,11 +187,13 @@ export default function FreeUserSidebar({ isOpen, onClose }: SidebarProps) {
   };
 
   const deleteGtLog = async (id: string) => {
+    if (!user?._id) return;
+
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     const updated = gtHistory.filter(item => item.id !== id);
     setGtHistory(updated);
     try {
-      await AsyncStorage.setItem(`gt_logs_${user?._id}`, JSON.stringify(updated));
+      await saveGtLogs(user._id, updated);
     } catch (e) {
       console.log('Error deleting log:', e);
     }

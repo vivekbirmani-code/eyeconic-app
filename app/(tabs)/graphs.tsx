@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -6,17 +6,23 @@ import {
   SafeAreaView,
   ScrollView,
   TouchableOpacity,
-  Dimensions,
   Animated,
   Platform,
   StatusBar
 } from 'react-native';
-import { Menu, BarChart2, TrendingUp, Info, Percent, AlertCircle } from 'lucide-react-native';
+import { useFocusEffect } from '@react-navigation/native';
+import { Menu, BarChart2, TrendingUp, Info, Percent, Activity } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from '@/utils/haptics';
 import FreeUserSidebar from '@/components/FreeUserSidebar';
-
-const { width } = Dimensions.get('window');
+import { useAuth } from '@/context/AuthContext';
+import {
+  CHART_Y_AXIS_MAX,
+  GtChartEntry,
+  getBarHeightPercent,
+  loadGtLogs,
+  toChartEntries,
+} from '@/utils/gtTracker';
 
 const subjectAccuracy = [
   { name: 'Anatomy', accuracy: 72, color: '#10B981' },
@@ -26,17 +32,22 @@ const subjectAccuracy = [
   { name: 'General Medicine', accuracy: 82, color: '#EC4899' }
 ];
 
-const mockGts = [
-  { testName: 'GT 1', score: 92, date: 'May 10' },
-  { testName: 'GT 2', score: 104, date: 'May 24' },
-  { testName: 'GT 3', score: 118, date: 'Jun 05' },
-  { testName: 'GT 4', score: 132, date: 'Jun 12' }
-];
-
 export default function Graphs() {
+  const { user } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [gtChartData, setGtChartData] = useState<GtChartEntry[]>([]);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
+
+  const refreshGtChart = useCallback(async () => {
+    if (!user?._id) {
+      setGtChartData([]);
+      return;
+    }
+
+    const logs = await loadGtLogs(user._id);
+    setGtChartData(toChartEntries(logs));
+  }, [user?._id]);
 
   useEffect(() => {
     Animated.parallel([
@@ -53,6 +64,17 @@ export default function Graphs() {
       })
     ]).start();
   }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      refreshGtChart();
+    }, [refreshGtChart])
+  );
+
+  const handleSidebarClose = () => {
+    setSidebarOpen(false);
+    refreshGtChart();
+  };
 
   return (
     <SafeAreaView style={styles.container}>
@@ -94,41 +116,49 @@ export default function Graphs() {
             </View>
           </View>
 
-          {/* Grand Test Progression Chart (Custom styled React Native layout) */}
+          {/* Grand Test Progression Chart */}
           <View style={styles.chartCard}>
             <Text style={styles.chartTitle}>GT Corrects progression</Text>
-            <Text style={styles.chartSubtitle}>Progress across recent mock tests</Text>
+            <Text style={styles.chartSubtitle}>Progress across your logged mock tests</Text>
 
-            <View style={styles.chartContainer}>
-              {/* Y axis helpers */}
-              <View style={styles.yAxis}>
-                <Text style={styles.axisText}>160</Text>
-                <Text style={styles.axisText}>120</Text>
-                <Text style={styles.axisText}>80</Text>
-                <Text style={styles.axisText}>40</Text>
+            {gtChartData.length === 0 ? (
+              <View style={styles.emptyChartCard}>
+                <Activity color="#CBD5E1" size={36} />
+                <Text style={styles.emptyChartTitle}>No GT logs yet</Text>
+                <Text style={styles.emptyChartText}>
+                  Open the menu and use GT Tracker to log your mock test corrects. Your bars will appear here automatically.
+                </Text>
               </View>
+            ) : (
+              <View style={styles.chartContainer}>
+                <View style={styles.yAxis}>
+                  <Text style={styles.axisText}>{CHART_Y_AXIS_MAX}</Text>
+                  <Text style={styles.axisText}>120</Text>
+                  <Text style={styles.axisText}>80</Text>
+                  <Text style={styles.axisText}>40</Text>
+                </View>
 
-              {/* Bars */}
-              <View style={styles.barsContainer}>
-                {mockGts.map((gt, idx) => {
-                  const barHeight = (gt.score / 160) * 100; // Percentage of height
-                  return (
-                    <View key={idx} style={styles.barColumn}>
-                      <View style={styles.barTrack}>
-                        <LinearGradient
-                          colors={['#01b4ae', 'rgba(1, 180, 174, 0.4)']}
-                          style={[styles.barFill, { height: `${barHeight}%` }]}
-                        >
-                          <Text style={styles.barValueText}>{gt.score}</Text>
-                        </LinearGradient>
+                <View style={styles.barsContainer}>
+                  {gtChartData.map((gt) => {
+                    const barHeight = getBarHeightPercent(gt.corrects);
+                    return (
+                      <View key={gt.id} style={styles.barColumn}>
+                        <View style={styles.barTrack}>
+                          <LinearGradient
+                            colors={['#01b4ae', 'rgba(1, 180, 174, 0.4)']}
+                            style={[styles.barFill, { height: `${barHeight}%` }]}
+                          >
+                            <Text style={styles.barValueText}>{gt.corrects}</Text>
+                          </LinearGradient>
+                        </View>
+                        <Text style={styles.barLabel} numberOfLines={2}>{gt.testName}</Text>
+                        <Text style={styles.barDate}>{gt.date}</Text>
                       </View>
-                      <Text style={styles.barLabel}>{gt.testName}</Text>
-                      <Text style={styles.barDate}>{gt.date}</Text>
-                    </View>
-                  );
-                })}
+                    );
+                  })}
+                </View>
               </View>
-            </View>
+            )}
           </View>
 
           {/* Subject Strengths & Weaknesses */}
@@ -163,15 +193,14 @@ export default function Graphs() {
           <View style={styles.infoCard}>
             <Info color="#6B7280" size={18} />
             <Text style={styles.infoCardText}>
-              Quizzes assigned by Eyeconic Mentors admins directly update your graphs in real time. Keep testing to refine these graphs!
+              Log your Grand Test scores in GT Tracker to update this chart. Quizzes assigned by Eyeconic Mentors admins also refine your subject accuracy over time.
             </Text>
           </View>
 
         </Animated.View>
       </ScrollView>
 
-      {/* Global Free User Sidebar */}
-      <FreeUserSidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
+      <FreeUserSidebar isOpen={sidebarOpen} onClose={handleSidebarClose} />
     </SafeAreaView>
   );
 }
@@ -261,6 +290,29 @@ const styles = StyleSheet.create({
     marginTop: 2,
     marginBottom: 20,
   },
+  emptyChartCard: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 28,
+    paddingHorizontal: 16,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    gap: 8,
+  },
+  emptyChartTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#334155',
+    marginTop: 4,
+  },
+  emptyChartText: {
+    fontSize: 12,
+    color: '#64748B',
+    textAlign: 'center',
+    lineHeight: 18,
+  },
   chartContainer: {
     flexDirection: 'row',
     height: 180,
@@ -288,7 +340,9 @@ const styles = StyleSheet.create({
   },
   barColumn: {
     alignItems: 'center',
-    width: 50,
+    flex: 1,
+    maxWidth: 72,
+    minWidth: 44,
   },
   barTrack: {
     height: 120,
@@ -311,15 +365,17 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   barLabel: {
-    fontSize: 11,
+    fontSize: 10,
     fontWeight: '700',
     color: '#334155',
     marginTop: 6,
+    textAlign: 'center',
   },
   barDate: {
     fontSize: 9,
     color: '#94A3B8',
     marginTop: 1,
+    textAlign: 'center',
   },
   accuracyHeader: {
     flexDirection: 'row',
