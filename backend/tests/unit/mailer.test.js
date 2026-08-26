@@ -13,13 +13,30 @@ describe('mailer configuration', () => {
     process.env = { ...originalEnv };
   });
 
-  it('prefers Resend when RESEND_API_KEY is set', () => {
+  it('prefers SMTP when both SMTP and Resend are configured', () => {
+    process.env.RESEND_API_KEY = 're_test_key';
+    process.env.SMTP_HOST = 'smtp.example.com';
+    process.env.SMTP_USER = 'user';
+    process.env.SMTP_PASS = 'pass';
+
+    expect(isResendConfigured()).toBe(true);
+    expect(isSmtpConfigured()).toBe(true);
+    expect(getEmailStatus()).toEqual({
+      status: 'configured',
+      provider: 'smtp',
+      configured: true,
+      fallback: 'resend',
+    });
+  });
+
+  it('uses Resend when SMTP is not configured', () => {
     process.env.RESEND_API_KEY = 're_test_key';
     delete process.env.SMTP_HOST;
     delete process.env.SMTP_USER;
     delete process.env.SMTP_PASS;
 
     expect(isResendConfigured()).toBe(true);
+    expect(isSmtpConfigured()).toBe(false);
     expect(getEmailStatus()).toEqual({
       status: 'configured',
       provider: 'resend',
@@ -27,7 +44,7 @@ describe('mailer configuration', () => {
     });
   });
 
-  it('falls back to SMTP only when Resend is not configured', () => {
+  it('uses SMTP when Resend is not configured', () => {
     delete process.env.RESEND_API_KEY;
     process.env.SMTP_HOST = 'smtp.example.com';
     process.env.SMTP_USER = 'user';
@@ -39,6 +56,7 @@ describe('mailer configuration', () => {
       status: 'configured',
       provider: 'smtp',
       configured: true,
+      fallback: null,
     });
   });
 

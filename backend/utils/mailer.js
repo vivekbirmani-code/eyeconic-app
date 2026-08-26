@@ -30,7 +30,13 @@ const getFromAddress = () => {
   const fromName = process.env.SMTP_FROM_NAME || 'Eyeconic Mentors';
 
   let fromEmail;
-  if (isResendConfigured()) {
+  if (isSmtpConfigured()) {
+    fromEmail =
+      process.env.SMTP_FROM_EMAIL?.trim() ||
+      process.env.SMTP_USER?.trim() ||
+      process.env.RESEND_FROM_EMAIL?.trim() ||
+      'no-reply@eyeconicmentors.com';
+  } else if (isResendConfigured()) {
     fromEmail =
       process.env.RESEND_FROM_EMAIL?.trim() ||
       process.env.SMTP_FROM_EMAIL?.trim() ||
@@ -50,11 +56,16 @@ const getFromAddress = () => {
 };
 
 const getEmailStatus = () => {
+  if (isSmtpConfigured()) {
+    return {
+      status: 'configured',
+      provider: 'smtp',
+      configured: true,
+      fallback: isResendConfigured() ? 'resend' : null,
+    };
+  }
   if (isResendConfigured()) {
     return { status: 'configured', provider: 'resend', configured: true };
-  }
-  if (isSmtpConfigured()) {
-    return { status: 'configured', provider: 'smtp', configured: true };
   }
   if (!isProduction()) {
     return { status: 'mock', provider: 'console', configured: false };
@@ -207,20 +218,34 @@ const logDevOtp = (email, label) => {
 };
 
 const deliverEmail = async (email, subject, html, text, devLabel) => {
-  if (isResendConfigured()) {
-    await sendViaResend(email, subject, html, text);
-    return;
-  }
+  const { fromName, fromEmail } = getFromAddress();
+  const mailOptions = {
+    from: `"${fromName}" <${fromEmail}>`,
+    to: email,
+    subject,
+    text,
+    html,
+  };
 
   if (isSmtpConfigured()) {
-    const { fromName, fromEmail } = getFromAddress();
-    await sendViaSmtp({
-      from: `"${fromName}" <${fromEmail}>`,
-      to: email,
-      subject,
-      text,
-      html,
-    });
+    try {
+      await sendViaSmtp(mailOptions);
+      return;
+    } catch (smtpError) {
+      if (isResendConfigured()) {
+        logger.warn('[EMAIL] SMTP failed, attempting Resend fallback', {
+          to: email,
+          errorMessage: sanitizeProviderError(smtpError.message),
+        });
+        await sendViaResend(email, subject, html, text);
+        return;
+      }
+      throw smtpError;
+    }
+  }
+
+  if (isResendConfigured()) {
+    await sendViaResend(email, subject, html, text);
     return;
   }
 
