@@ -12,7 +12,8 @@
     "backend": "cd backend && npm run dev",
     "install:backend": "cd backend && npm install",
     "android": "expo run:android",
-    "ios": "expo run:ios"
+    "ios": "expo run:ios",
+    "generate:icons": "python scripts/generate-app-icons.py"
   },
   "dependencies": {
     "@config-plugins/react-native-webrtc": "^13.0.0",

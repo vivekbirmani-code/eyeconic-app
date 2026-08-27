@@ -1,672 +1,325 @@
 # Eyeconic Mentorship App
-## Implementation Status & Completion Report
+## Project Status Report
 
 | | |
 |---|---|
-| **Document Type** | Project Status & Completion Report |
-| **Audience** | Leadership / Stakeholders |
-| **Prepared For** | Project Review |
-| **Report Date** | 30 July 2026 |
+| **Prepared for** | Leadership review |
+| **Report date** | 27 August 2026 |
 | **Product** | Eyeconic Mentorship Platform (NEET / MBBS) |
-| **Primary Platform** | Mobile Application |
-| **Supporting Platforms** | Backend Services · Web Admin Console (secondary) |
-| **Report Version** | 3.0 |
+| **Main product** | Mobile app (Android / iOS) |
+| **Supporting tools** | Backend services · Web admin console (for desktop convenience) |
 
 ---
 
-# 1. Executive Summary
+## Executive summary
 
-### Project Overview
+Eyeconic is a mentorship platform for NEET and MBBS students. It connects **admins**, **mentors**, **students**, and **free users** in one place — for learning, communication, testing, and progress tracking.
 
-Eyeconic is a role-based mentorship platform for NEET/MBBS preparation, serving **Admins**, **Mentors**, **Students**, and **Free Users**.
+**The core product is built and working.** Users can sign in, join mentorship groups, take quizzes, complete assignments, view analytics, receive notifications, and join live audio calls. The project is now in the **final stretch before launch** — polishing a few areas, strengthening production readiness, and preparing for store release.
 
-The platform already delivers a complete mentorship operating model on mobile — from onboarding and communication through assessments, assignments, analytics, and notifications — supported by a shared backend.
+### At a glance
 
-> **Primary platform:** Mobile Application  
-> **Secondary platform:** Web Admin Console (supporting admin convenience; not the primary product)
+| | |
+|---|---|
+| **Overall progress** | **~72%** of planned product features delivered *(approximate estimate)* |
+| **Where we are** | Final feature polish → production launch preparation |
+| **Health** | **On track** — strong delivery with a clear finish line |
+| **Main platform** | Mobile app |
+
+> **Note for leadership:** ~72% means the majority of the product is already live and usable. The remaining work is mostly polish, quality assurance, and launch preparation — not rebuilding from scratch.
+
+### What is already working today
+
+| Area | Status |
+|------|--------|
+| Sign-in, signup, and secure access | ✅ Delivered |
+| User and mentor management | ✅ Delivered |
+| Groups and real-time chat | ✅ Delivered |
+| Audio calling in mentorship groups | ✅ Delivered |
+| Question bank and bulk content import | ✅ Delivered |
+| Full quiz system (create → take → review → retest) | ✅ Delivered |
+| Mentor assignments and task tracking | ✅ Delivered |
+| Analytics, insights, and report export | ✅ Delivered |
+| Push notifications | ✅ Delivered |
+| Role-based dashboards and profiles | ✅ Delivered |
+| File and media uploads | ✅ Delivered |
+| Backend and data services | ✅ Delivered |
+
+**Bottom line:** The mentorship operating model is in place on mobile. What remains is finishing selected enhancements and getting ready for a confident public launch.
 
 ---
 
-### What Has Already Been Delivered
+## One-page dashboard
 
-Eyeconic has moved well beyond early development. The following major capabilities are **implemented and operational** on the primary mobile platform:
+| Overall progress | Current phase | Project health |
+|------------------|---------------|----------------|
+| **~72%** | Launch preparation | **On track** |
 
-| Capability Area | Status |
-| --------------- | ------ |
-| Authentication & Role-Based Access | Delivered |
-| User & Mentor Management | Delivered |
-| Real-Time Group Communication | Delivered |
-| Audio Calling | Delivered |
-| Question Bank & Content Import | Delivered |
-| Full Quiz Platform | Delivered |
-| Assignment Management | Delivered |
-| Analytics & Reporting | Delivered |
-| Notifications | Delivered |
-| Dashboards & Profiles | Delivered |
-| File Uploads | Delivered |
-| Backend Services | Delivered |
+| Main platform | Launch readiness | Next goal |
+|---------------|------------------|-----------|
+| Mobile app | Hardening in progress | Production-ready release |
 
-**In short:** the core product has been built. The project is now in the **final completion and launch-preparation phase**.
+### Module overview
+
+**Completed and in daily use**
+- Authentication and role-based access
+- User, mentor, and subject management
+- Groups, chat, and attachments
+- Audio calling
+- Question bank and Excel import
+- Quiz creation, attempts, results, and sharing
+- Assignments (create, complete, verify, redo)
+- Analytics and CSV export
+- Admin activity overview
+- Mentor dashboard with student progress
+- Past tests and quiz history
+- Notifications (in-app and push)
+- Free-user onboarding, GT score tracking, and inspirational content
+
+**Being refined (already usable)**
+- Audio call reliability across networks
+- Notification tap-to-open (deep links)
+- Guest quiz result screens
+- Free-user quiz navigation (quizzes can be assigned; app entry path being improved)
+- Dashboard KPI summaries
+- Free-user inspirational content sections
+- Web admin console (quiz and user tools)
+
+**Planned after launch baseline**
+- Full offline mode
+- Payment / premium upgrade
+- Expanded automated test coverage on mobile
+- Advanced reporting and search features
 
 ---
 
-### Primary Project KPI
+## Major milestones achieved
+
+The project has passed **12 major delivery milestones** on the mobile app:
+
+1. **Authentication** — Email login, OTP signup, password recovery, session restore, and role-based access (admin, mentor, student).
+
+2. **User & mentor management** — Create and manage users, search and filter, password reset, free vs paid student controls, mentor–student linking, and assigning subjects to students from the organisation’s subject catalog.
+
+3. **Groups & chat** — Group creation, real-time messaging, image/document attachments, edit/delete, read receipts, unread badges, and member management.
+
+4. **Audio calling** — In-app calls for mentorship groups: join, leave, mute, end, incoming-call experience, and push alerts for incoming calls.
+
+5. **Question bank** — Create and edit questions, image support, bulk Excel import, and subject organisation.
+
+6. **Quiz platform** — End-to-end flow: create, edit, duplicate, share, Excel import, timed attempts with autosave, results and review, retest request and approval, public/guest links, and live attempt monitoring.
+
+7. **Assignments** — Mentors assign tasks; students complete them; mentors verify or request redo; admins see an activity overview.
+
+8. **Analytics & reporting** — Test and student performance views, insight screens, CSV export, and admin overview.
+
+9. **Dashboards & profiles** — Separate experiences for admin, mentor, student, and free users; profile completion flows; session and logout controls.
+
+10. **Notifications** — In-app unread indicators, push registration, and alerts for key events (messages, tests, calls).
+
+11. **File uploads** — Media support in questions, chat, and imports (via Cloudinary).
+
+12. **Web admin console** — Browser-based tools for quiz administration, question bank, analytics, retests, user/group lists, and basic chat. Supports desktop workflows; mobile remains the primary product.
+
+**Additional capabilities delivered** (not always visible in a feature list):
+- First-launch disclaimer and permission onboarding
+- Mentor dashboard with per-student assignment stats
+- Admin overview with organisation-wide activity metrics
+- Past tests library with sharing and guest-link management
+- Free-user GT (Grand Test) score tracker with personal charts
+- Quiz attempt autosave (local backup during tests)
+- Backend automated tests for critical flows (auth, quizzes, analytics, grading)
+
+---
+
+## What users can do today
+
+### Everyone
+- Sign in securely and stay signed in across sessions
+- Complete profile information
+- Receive push notifications for important events
+
+### Admins (on mobile)
+- Manage users and mentors; assign subjects to students
+- Oversee groups and organisation activity
+- Run the full quiz and question-bank workflow
+- Review analytics and export data
+- Approve retest requests
+- Monitor assignments across mentors and students
+
+### Mentors
+- View assigned students and their progress
+- Create and manage assignments
+- Communicate in groups (chat and audio)
+- Review student test analytics and performance
+
+### Students
+- Join groups and chat with mentors and peers
+- Take assigned quizzes with timer and autosave
+- View results, review answers, and request retests
+- Complete mentor assignments
+
+### Free users
+- Onboarding flow tailored to their prep stage
+- Personal GT score tracking and charts
+- Inspirational success stories, sidebar navigation, and sample resource listings
+- Admins can assign quizzes to all free users (backend ready; dedicated quiz tab entry in the app is being improved)
+- Path to sign up for full paid access
+
+---
+
+## Work in progress (polish, not missing foundations)
+
+These items improve on features that already work. They are **completion and quality work**, not new product areas.
+
+| Area | Today | What's left |
+|------|-------|-------------|
+| Retest flow | Request and approve works | Smoother retake rules in edge cases |
+| Guest quiz results | Guests can attempt and submit | Clearer score presentation without sign-in |
+| Mentor quiz view | Mentors can see tests | Clearer view vs attempt behaviour |
+| Audio calls | Live on native builds | Better success on varied networks |
+| Notifications | Push delivery works | Tap notification → open the right screen |
+| Dashboards | Role homes are live | Richer summary KPIs for admins/mentors |
+| Free-user quiz access | Admins can assign; GT tracker live | Clearer in-app path to take assigned quizzes |
+| Free-user content | Stories, sidebar, sample resources live | More dynamic motivational content |
+| Profile & settings | Profile completion exists | Dedicated settings screen |
+| Web admin console | Strong quiz tools | A few user/group actions still on mobile only |
+
+---
+
+## Planned before and after launch
+
+### Before launch (priority)
+- Production security and reliability hardening
+- Critical polish (guest results, retest edge cases)
+- Expanded quality checks on key user journeys
+- App store / release checklist
+- Selected web admin improvements where they help operations
+
+### After launch baseline (medium term)
+- Dedicated settings screen
+- Stronger dashboard summaries
+- Notification deep-link experience
+- Call reliability improvements
+- More free-user content
+- Broader chat parity on web admin
+
+### Future growth
+- Full offline mode
+- Payment and premium upgrade
+- Message search
+- Advanced reporting automation
+- Broader browser-based student experience
+
+---
+
+## Launch readiness
+
+| Area | Assessment |
+|------|------------|
+| Product features | **Strong** — core journeys implemented |
+| Mobile app | **Strong** — primary users can work end-to-end |
+| Backend services | **Strong** — business logic and data layer in place |
+| Architecture | **Strong** — mobile, backend, and real-time foundation |
+| Web admin console | **Good** — useful for quiz ops; not the main product |
+| Performance | **Good** — adequate for current scale |
+| Security hardening | **In progress** — required before broad public launch |
+| Automated testing | **Partial** — backend test suite in place; mobile coverage expanding |
+| Deployment | **In progress** — release path documented; final checklist remaining |
+
+**Launch readiness status:** Production hardening in progress. The platform is suitable for controlled and staging use; public launch follows security, quality, and polish gates.
+
+---
+
+## Timeline
 
 ```
-OVERALL FEATURE COMPLETION
-████████████████████░░░░░░░░  ~72%
-```
-
-| Primary Indicator | Value |
-| ----------------- | ----- |
-| **Overall Feature Completion** | **~72%** |
-| **Current Development Phase** | Late Feature Development → Production Hardening |
-| **Project Health** | **On Track (Amber)** — strong delivery progress with a defined launch-prep backlog |
-| **Primary Delivery Platform** | Mobile Application |
-
-### Launch Readiness (Supporting Indicator)
-
-Launch readiness is **not** the same as feature completion. Most core workflows are already built; remaining effort is concentrated on production hardening, quality assurance, polish, and selected secondary items.
-
-| Supporting Indicator | Status |
-| -------------------- | ------ |
-| **Launch Readiness** | **Production Hardening In Progress** |
-| **Interpretation** | Platform is feature-mature; preparing for production launch |
-
-> Important for stakeholders: **~72% feature completion** means the majority of planned product capability is already implemented. Launch readiness work (security hardening, testing, optimisation, final polish) is a separate maturity track and should not be read as “the project is only halfway done.”
-
----
-
-### Current Focus
-
-1. Close remaining partial features on the primary mobile platform  
-2. Complete production hardening and quality preparation for launch  
-3. Advance selected secondary admin-console improvements where they support operations  
-4. Finalise release / store readiness checklist  
-
----
-
-# 2. Project Snapshot (Executive Dashboard)
-
-> **One-page view for senior leadership — designed to be understood in under one minute.**
-
----
-
-### A. Status Cards
-
-| | | |
-|---|---|---|
-| **Overall Feature Completion** | **Current Phase** | **Project Health** |
-| **~72%** | Late Feature Development → Production Hardening | **On Track (Amber)** |
-| Majority of core product delivered | Final completion & launch prep | Strong progress; defined remaining work |
-
-| | | |
-|---|---|---|
-| **Primary Platform** | **Launch Readiness** | **Next Release Goal** |
-| **Mobile Application** | Production Hardening In Progress | Production-ready mobile release baseline |
-| Main user-facing product | Separate from feature % | After hardening + critical polish |
-
----
-
-### B. Module Snapshot
-
-| Completed Modules | In Progress | Pending / Later |
-| ----------------- | ----------- | --------------- |
-| Authentication & Access | Audio Call Reliability | Full Offline Support |
-| User & Mentor Management | Notifications Polish | Automated Testing Program |
-| Groups & Real-Time Chat | Guest Quiz Result Presentation | Payment / Premium Upgrade |
-| Question Bank | Dashboard KPI Enrichment | Advanced Expansion Features |
-| Quiz Platform | Profile & Settings Completeness | |
-| Assignments | Free-User Content Experience | |
-| Analytics & Reporting | Secondary Admin Console Gaps | |
-| File Uploads | | |
-| Notifications (core) | | |
-| Dashboards (core) | | |
-
-```
-Completed core modules     ████████████████████░░  Strong
-In-progress polish items   ████████░░░░░░░░░░░░░░  Active
-Pending / future items     ███░░░░░░░░░░░░░░░░░░░  Backlog
-```
-
----
-
-### C. Major Milestones Delivered
-
-**12 major milestones achieved**, including:
-
-Foundation · Authentication · User Management · Communication · Audio Calling · Question Bank · Quiz Platform · Assignments · Analytics · Dashboards · Notifications · Uploads
-
----
-
-### D. Current Focus & Next Goal
-
-| Current Focus | Next Release Goal |
-| ------------- | ----------------- |
-| Feature closure + launch preparation | Production-ready baseline for the **mobile** platform |
-| Quality, hardening, and critical polish | Controlled production / store-ready release path |
-
----
-
-# 3. Overall Project Progress
-
-### Narrative
-
-The project has successfully completed the majority of its **feature implementation journey**. Core mentorship workflows are live on mobile and supported by backend services. Remaining work is primarily:
-
-- Final feature polish on already-built modules  
-- Production hardening and operational readiness  
-- Selected secondary-platform improvements  
-- Future enhancements beyond the launch baseline  
-
-This is a **maturity and launch-preparation stage**, not an early build stage.
-
----
-
-### Completed Work
-
-Already delivered on the primary mobile platform:
-
-- Identity, authentication, and role-based access  
-- Organisation management (users, mentors, subjects)  
-- Real-time communication and audio calling  
-- Full assessment ecosystem (question bank → quiz → results → analytics)  
-- Mentor assignments and admin activity overview  
-- Notifications and media uploads  
-
-### Work In Progress
-
-- Final polish on selected live modules (retest behaviour, guest results, call reliability, notification routing)  
-- Production hardening and quality baseline  
-- Free-user content maturity  
-- Settings / richer profile experience  
-- Secondary admin-console improvements (supporting operations; not primary product scope)
-
-### Pending Work
-
-- Dedicated Settings experience  
-- Full offline support  
-- Formal automated testing program  
-- Payment / premium conversion  
-- Longer-term expansion features  
-
-### Expected Next Phase
-
-**Final Completion & Launch Preparation** — close critical polish items, complete hardening/quality gates, and establish a production-ready mobile release baseline.
-
----
-
-# 4. Milestone Timeline
-
-Visual progression of delivery to date:
-
-```
-[✓] Foundation & Backend Services
-            ↓
-[✓] Authentication & Role-Based Access
-            ↓
-[✓] User & Mentor Management
-            ↓
-[✓] Groups & Real-Time Communication
-            ↓
-[✓] Audio Calling
-            ↓
-[✓] Question Bank & Content Import
-            ↓
-[✓] Quiz Platform (Create → Attempt → Review)
-            ↓
-[✓] Assignments & Mentor Tasking
-            ↓
-[✓] Analytics & Reporting
-            ↓
-[✓] Notifications & File Uploads
-            ↓
-[●] Final Feature Polish & Secondary Admin Tools   ← CURRENT
-            ↓
-[○] Production Hardening & Quality Assurance
-            ↓
-[○] Launch Readiness / Production Release
-```
-
-| Stage | Status |
-| ----- | ------ |
-| Foundation through Analytics | **Completed** |
-| Final polish & secondary tools | **In Progress** |
-| Production hardening | **Next** |
-| Production launch | **Upcoming** |
-
-**Reading the timeline:** The project has already traversed the major capability stages. Current work sits in the final pre-launch segment.
-
----
-
-# 5. Major Milestones Achieved
-
-Everything below is **already delivered** and available on the primary mobile platform (unless noted).
-
----
-
-### Milestone 1 — Authentication & Access Control ✅
-
-Users can securely sign in and maintain sessions.
-
-- Email/password login  
-- OTP-based signup  
-- Forgot-password recovery  
-- Session restore  
-- Role-based access (Admin / Mentor / Student)
-
----
-
-### Milestone 2 — User & Mentor Management ✅
-
-Admins can operate the mentorship organisation from mobile.
-
-- Create and manage users  
-- Search and filter  
-- Password reset  
-- Free vs paid student controls  
-- Mentor–student assignment  
-- Subject assignment  
-
----
-
-### Milestone 3 — Groups & Real-Time Chat ✅
-
-Mentorship communication is live.
-
-- Group creation and management  
-- Real-time messaging  
-- Image/document attachments  
-- Edit/delete controls  
-- Read receipts and unread badges  
-- Member management  
-
----
-
-### Milestone 4 — Audio Calling ✅
-
-In-app audio calling is available for mentorship groups (native mobile builds).
-
-- Call initiate / incoming experience  
-- Join, leave, mute, end  
-- Push wake support for incoming calls  
-- Active-call indicator  
-
----
-
-### Milestone 5 — Question Bank & Content Import ✅
-
-Reusable assessment content pipeline is operational.
-
-- Create/edit questions  
-- Image support  
-- Bulk Excel import  
-- Subject organisation  
-
----
-
-### Milestone 6 — Quiz Platform ✅
-
-End-to-end assessment journey is live on mobile.
-
-- Create / edit / duplicate / share quizzes  
-- Excel import  
-- Student attempt flow with autosave  
-- Results and review  
-- Retest request & approval  
-- Public/guest attempt links  
-- Attempt monitoring  
-
----
-
-### Milestone 7 — Assignments ✅
-
-Mentor-to-student tasking is operational.
-
-- Create and schedule assignments  
-- Student completion  
-- Mentor verify / redo  
-- Admin activity overview  
-
----
-
-### Milestone 8 — Analytics & Reporting ✅
-
-Performance visibility for admins and mentors.
-
-- Test and student analytics  
-- Insight views  
-- CSV export  
-- Admin overview  
-
----
-
-### Milestone 9 — Dashboards & Profiles ✅
-
-Role-aware home experiences are in place.
-
-- Admin / Mentor / Student / Free-user dashboards  
-- Profile completion flows  
-- Session/logout controls  
-
----
-
-### Milestone 10 — Notifications ✅
-
-Operational alerting is integrated.
-
-- In-app unread / unseen indicators  
-- Push registration  
-- Event-driven push for key activities  
-
----
-
-### Milestone 11 — File Uploads ✅
-
-Media support across key workflows.
-
-- Question media  
-- Chat media  
-- Import media handling  
-
----
-
-### Milestone 12 — Secondary Admin Console Foundations 🟡
-
-A supporting browser console exists for selected admin quiz operations.
-
-- Admin login  
-- Quiz hub, question bank, create/import, analytics, retests  
-- User/group listing and basic text chat  
-
-> This is a **secondary** surface. Mobile remains the primary delivery platform and the basis for overall project completion.
-
----
-
-# 6. Module Status
-
-| Module | Status | Completion | Remarks |
-| ------ | ------ | ---------- | ------- |
-| Authentication & Access | Completed | 82% | Core flows live |
-| User & Role Management | Completed | 78% | Live on primary mobile platform |
-| Groups & Chat | Completed | 80% | Full mobile communication suite |
-| Question Bank | Completed | 90% | Create, edit, import operational |
-| Quiz System | Completed | 84% | Full mobile lifecycle delivered |
-| Assignments | Completed | 72% | Live on mobile |
-| Analytics & Reports | Completed | 70% | Admin/mentor reporting live |
-| File Uploads | Completed | 80% | In active use |
-| Notifications (core) | Completed | 62%* | Core sending live; polish in progress |
-| Dashboard (core) | In Progress | 65% | Usable; richer KPIs planned |
-| Audio Calls | In Progress | 68% | Live; reliability improvements ongoing |
-| Guest / Public Quiz | In Progress | 75% | Attempt live; result presentation pending |
-| Profile & Settings | Partial | 45% | Profile completion exists; Settings pending |
-| Free-User Experience | Partial | 25% | Shell present; content maturity pending |
-| Secondary Admin Console | In Progress | 55% | Useful for quiz ops; not primary scope |
-| Offline Support | Pending | 15% | Future capability |
-| Automated Testing Program | Pending | 0% | Launch-prep workstream |
-
-\*Notifications core capability is delivered; remaining % reflects polish (e.g., open-from-notification behaviour), not absence of the module.
-
-**Legend**
-- **Completed** — Core intended functionality delivered and usable  
-- **In Progress** — Usable, with defined remaining polish  
-- **Partial** — Present, not yet at full product intent  
-- **Pending** — Not yet a delivered launch capability  
-
-```
-High-maturity modules (Auth → Analytics)   ████████████████████░  Delivered
-Polish / in-progress modules               ████████░░░░░░░░░░░░░  Active
-Pending / future                           ███░░░░░░░░░░░░░░░░░░  Backlog
+[✓] Foundation & backend
+[✓] Authentication & access
+[✓] Users & mentors
+[✓] Groups & chat
+[✓] Audio calling
+[✓] Question bank & import
+[✓] Quiz platform
+[✓] Assignments
+[✓] Analytics & dashboards
+[✓] Notifications & uploads
+[●] Final polish & web admin tools    ← WE ARE HERE
+[○] Production hardening & QA
+[○] Launch / store release
 ```
 
 ---
 
-# 7. Features Completed
-
-Implemented and available today on the **primary mobile platform** (unless noted).
-
-### Authentication
-- ✓ Login  
-- ✓ OTP Signup  
-- ✓ Forgot Password  
-- ✓ Session Restore  
-- ✓ Role-Based Access Control  
-
-### User & Mentor Management
-- ✓ User listing, search, filters  
-- ✓ Create users  
-- ✓ Admin password reset  
-- ✓ Free / Paid controls  
-- ✓ Mentor–student assignment  
-- ✓ Subject assignment  
-
-### Communication
-- ✓ Groups  
-- ✓ Real-time chat  
-- ✓ Attachments  
-- ✓ Edit / delete  
-- ✓ Read receipts / unread badges  
-- ✓ Member management  
-- ✓ Audio calling (native)  
-
-### Assessment Platform
-- ✓ Question bank  
-- ✓ Excel import  
-- ✓ Quiz create / edit / duplicate / share  
-- ✓ Student attempt + autosave  
-- ✓ Results & review  
-- ✓ Retest request & decision  
-- ✓ Guest attempt links  
-- ✓ Analytics views  
-- ✓ CSV export  
-
-### Mentorship Operations
-- ✓ Mentor assignments  
-- ✓ Student completion  
-- ✓ Verify / redo  
-- ✓ Admin assignment overview  
-
-### Platform Services
-- ✓ Role-based dashboards  
-- ✓ Profile completion  
-- ✓ Push notifications (core)  
-- ✓ File uploads  
-
-### Secondary Admin Console (supporting)
-- ✓ Login  
-- ✓ Quiz administration tools  
-- ✓ Analytics / retests  
-- ✓ User & group lists  
-- ✓ Basic text chat  
-
----
-
-# 8. Features Currently Under Development
-
-These items build on already-delivered modules. They represent **completion and polish**, not missing foundations.
-
-| Feature | Current State | Remaining Work | Timing |
-| ------- | ------------- | -------------- | ------ |
-| Retest lifecycle polish | Request + approve available | Consistent retake rules | Near-term |
-| Guest quiz results | Attempt/submit live | Clear outcome presentation | Near-term |
-| Mentor quiz experience clarity | Mentors can view tests | Clearer view-vs-attempt behaviour | Near-term |
-| Audio call reliability | Calls live on native builds | Broader network success | Mid-term |
-| Notification routing | Push sending live | Open-from-notification navigation | Mid-term |
-| Dashboard insights | Role homes live | Richer operational KPIs | Mid-term |
-| Free-user content | Screens exist | Real content/data | Mid-term |
-| Profile & Settings | Profile completion exists | Dedicated settings experience | Mid-term |
-| Secondary admin console gaps | Quiz tools strong | Selected user/group management actions | Near-term |
-
----
-
-# 9. Pending Features
-
-### High Priority (Launch Path)
-- Production hardening package  
-- Critical feature polish (retest, guest results, mentor clarity)  
-- Initial automated quality coverage for critical flows  
-- Release / store readiness verification  
-- Selected secondary admin-console gaps (where they aid operations)
-
-### Medium Priority
-- Dedicated Settings screen  
-- Stronger dashboard KPI summaries  
-- Notification deep-link experience  
-- Call reliability enhancements  
-- Free-user real content  
-- Broader secondary-console chat parity  
-
-### Future Enhancements
-- Full offline mode  
-- Payment / premium upgrade  
-- Broader browser-based student experiences  
-- Advanced content taxonomy tools  
-- Message search  
-- Advanced reporting automation  
-
----
-
-# 10. Current Challenges
-
-Remaining challenges are characteristic of a **late-stage product entering launch preparation** — not of an incomplete early build.
-
-| Challenge | Why It Matters | Status |
-| --------- | -------------- | ------ |
-| Security & production hardening | Required for public production use | Active next focus |
-| Quality assurance baseline | Protects release confidence | Planned |
-| Final feature polish | Closes edge cases on live modules | In progress |
-| Performance & operational monitoring | Supports stable scaled usage | Planned |
-| Free-user content maturity | Improves acquisition experience | Partial |
-| Secondary admin-console completion | Improves desktop admin convenience | In progress |
-| Offline support | Resilience enhancement | Future |
-
-These items are manageable within the planned remaining workstream and do not outweigh the substantial capability already delivered.
-
----
-
-# 11. Launch Readiness Assessment
-
-> This section measures **readiness to launch**, not how much of the product has been built.  
-> Feature implementation is already at **~72%**. Launch readiness is a separate maturity track.
-
-| Area | Assessment | Summary |
-| ---- | ---------- | ------- |
-| Architecture | Strong | Mobile + backend + realtime foundation in place |
-| Backend Services | Strong | Core business capabilities delivered |
-| Mobile Application | Strong | Primary journeys implemented and usable |
-| Secondary Admin Console | Developing | Useful for selected admin quiz operations |
-| Performance | Developing | Adequate for current scale; optimisation planned |
-| Deployment Process | Developing | Mobile release path documented; final checklist remains |
-| Security Hardening | In Progress | Required before broad public launch |
-| Automated Testing | Starting | To be established as part of launch prep |
-| **Launch Readiness Status** | **Production Hardening In Progress** | Suitable for controlled/staging use; public launch follows hardening + critical polish |
-
-```
-Launch Readiness Maturity
-Product capability      ████████████████████░  Strong (feature-mature)
-Architecture / Mobile   ████████████████░░░░░  Strong
-Ops / Deployment        ██████████░░░░░░░░░░░  Developing
-Hardening / QA          ████████░░░░░░░░░░░░░  In progress
-```
-
-**Management interpretation:**  
-Eyeconic has crossed the feature-implementation threshold. The remaining path to production is **launch preparation** — hardening, quality, polish — rather than building the product from scratch.
-
----
-
-# 12. Next Milestones
+## Next milestones
 
 | Priority | Milestone | Outcome |
-| -------- | --------- | ------- |
-| **P0** | Critical Feature Closure | Retest, guest results, and related polish completed |
-| **P0** | Production Hardening Gate | Baseline security & reliability expectations met |
-| **P0** | Quality Baseline | Critical-path checks for key user journeys |
-| **P1** | Mobile Launch Checklist | Store / production release verification complete |
-| **P1** | Notification & Call Polish | Better engagement and call success |
-| **P2** | Free-User Experience Uplift | Real content behind free-user screens |
-| **P2** | Settings & Profile Completeness | Dedicated account experience |
-| **P3** | Expansion Features | Offline, payments, broader secondary-surface growth |
+|----------|-----------|---------|
+| **P0** | Critical feature closure | Retest, guest results, and related polish done |
+| **P0** | Production hardening | Security and reliability baseline met |
+| **P0** | Quality baseline | Critical paths verified before release |
+| **P1** | Launch checklist | Store and production release ready |
+| **P1** | Notification & call polish | Better engagement and call success |
+| **P2** | Free-user uplift | Richer content behind free-user screens |
+| **P2** | Settings & profile | Full account management experience |
+| **P3** | Growth features | Offline, payments, expanded web tools |
 
 ---
 
-# 13. Estimated Remaining Work
+## Estimated remaining effort
 
-### High Priority (Launch Path) — ~3–5 engineering weeks
-- Production hardening package  
-- Critical feature polish  
-- Initial automated checks for critical flows  
-- Mobile release checklist  
-- Selected secondary admin improvements (as needed)
-
-### Medium Priority — ~2–3 engineering weeks
-- Notification routing polish  
-- Call reliability improvements  
-- Dashboard KPI enrichment  
-- Settings / profile expansion  
-- Free-user content wiring  
-
-### Long-term Enhancements — scope-dependent thereafter
-- Offline support  
-- Payments / premium conversion  
-- Broader secondary-surface expansion  
-- Advanced reporting automation  
-
-### Overall
-
-| Scope | Approximate Effort |
-| ----- | ------------------ |
-| Production baseline (mobile launch-ready) | **6–10 engineering weeks** |
+| Scope | Approximate time |
+|-------|------------------|
+| Launch-ready mobile release | **6–10 engineering weeks** |
 | Full long-term product vision | Additional backlog beyond launch |
 
----
-
-# 14. Final Project Status
-
-### Achievement Summary
-
-Eyeconic is a **substantially implemented mentorship platform**. On the primary mobile application, the organisation can already:
-
-- Authenticate and manage users by role  
-- Run mentorship groups with chat and audio calling  
-- Operate a full quiz and question-bank system  
-- Assign and track mentor tasks  
-- View analytics and export reports  
-- Notify users of key events  
-
-### Status Position
-
-| Indicator | Position |
-| --------- | -------- |
-| **Overall Feature Completion** | **~72%** *(primary KPI)* |
-| **Current Phase** | Late Feature Development → Production Hardening |
-| **Launch Readiness** | Production Hardening In Progress *(supporting indicator)* |
-| **Project Health** | **On Track (Amber)** |
-| **Primary Platform** | Mobile Application — largely feature-complete for core workflows |
-| **Remaining Work to Launch Baseline** | Approximately **6–10 engineering weeks** |
-
-### Conclusion
-
-The project has successfully delivered the core mentorship product. The question is no longer “Can we build this platform?” — that answer is already visible in the working mobile application and backend.
-
-The remaining journey is the final stretch every serious product undertakes before launch:
-
-1. Close remaining polish items  
-2. Complete production hardening and quality preparation  
-3. Confirm release readiness  
-4. Continue secondary improvements after the primary launch baseline  
-
-**Bottom line for stakeholders:**  
-Eyeconic has achieved substantial, tangible implementation progress. With a focused final completion and launch-preparation phase, the platform is well positioned to move from a strong, feature-mature mentorship system to a production-ready release — with confidence in both what has already been delivered and the clarity of the path ahead.
+Breakdown:
+- **High priority (launch path):** ~3–5 weeks — hardening, polish, quality checks, release prep
+- **Medium priority:** ~2–3 weeks — notifications, calls, dashboards, settings, free-user content
+- **Long term:** Ongoing — offline, payments, expansion features
 
 ---
 
-### Document Control
+## Challenges (manageable, typical of late-stage products)
 
-| | |
-|---|---|
-| Report version | 3.0 (Executive Status format) |
-| Basis | Implementation progress assessment of current product surfaces |
-| KPI guidance | **Overall Feature Completion** is the primary progress metric. **Launch Readiness** is a separate maturity indicator and should not be interpreted as overall project completion. |
-| Platform guidance | Mobile is the primary product. The web admin console is a secondary supporting surface. |
+| Challenge | Status |
+|-----------|--------|
+| Security & production hardening | Active focus |
+| Quality assurance baseline | Planned |
+| Final feature polish | In progress |
+| Performance monitoring at scale | Planned |
+| Free-user content depth | Partial — core tools already live |
+| Web admin completeness | In progress |
+| Full offline support | Future |
 
-*End of Implementation Status & Completion Report*
+These are normal for a product entering launch preparation. They do not outweigh the substantial capability already delivered.
+
+---
+
+## Conclusion
+
+Eyeconic is a **substantially built mentorship platform**. On the mobile app today, the organisation can:
+
+- Authenticate and manage users by role
+- Run mentorship groups with chat and live audio calls
+- Operate a full quiz and question-bank system
+- Assign and track mentor tasks
+- View analytics and export reports
+- Notify users of key events
+- Support free users with onboarding, GT tracking, and motivational content
+
+The question is no longer *“Can we build this?”* — the working app answers that clearly.
+
+The remaining journey is the **final stretch every serious product takes before launch**: close polish items, complete hardening and quality preparation, confirm release readiness, and continue secondary improvements after the primary launch.
+
+**For stakeholders:** Eyeconic has achieved substantial, tangible progress. With a focused completion phase, the platform is well positioned to move from a feature-rich mentorship system to a confident production release.
+
+---
+
+| Report version | 4.1 (Leadership summary — fact-checked against codebase) |
+|----------------|--------------------------|
+| Basis | Codebase review and implementation assessment |
+| Progress metric | Overall feature completion (~72%) is separate from launch readiness (hardening in progress) |
+| Platform note | Mobile is the primary product; web admin supports desktop operations |
+
+*End of report*
