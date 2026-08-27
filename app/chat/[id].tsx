@@ -33,11 +33,12 @@ import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { Paperclip, FileText, Image as ImageIcon } from 'lucide-react-native';
 import { AttachmentViewer, AttachmentThumbnail } from '@/components/AttachmentViewer';
+import UserAvatar from '@/components/UserAvatar';
 
 interface Message {
   _id: string;
   content: string;
-  sender: { _id: string; name: string };
+  sender: { _id: string; name: string; profilePicture?: string | null };
   createdAt: string;
   status?: 'sent' | 'delivered' | 'read';
   isEdited?: boolean;
@@ -64,6 +65,7 @@ interface User {
   name: string;
   email: string;
   role: string;
+  profilePicture?: string | null;
 }
 
 interface Group {
@@ -76,7 +78,7 @@ interface Group {
 }
 
 interface ReadByUser {
-  user: { _id: string; name: string };
+  user: { _id: string; name: string; profilePicture?: string | null };
   readAt: string;
 }
 
@@ -935,11 +937,11 @@ export default function ChatScreen() {
                 <ScrollView style={styles.readByList}>
                   {readByUsers.map((rb, index) => (
                     <View key={index} style={styles.readByItem}>
-                      <View style={styles.readByAvatar}>
-                        <Text style={styles.readByAvatarText}>
-                          {rb.user.name.charAt(0).toUpperCase()}
-                        </Text>
-                      </View>
+                      <UserAvatar
+                        name={rb.user.name}
+                        imageUrl={rb.user.profilePicture}
+                        size={36}
+                      />
                       <View style={styles.readByInfo}>
                         <Text style={styles.readByName}>{rb.user.name}</Text>
                         <Text style={styles.readByTime}>
@@ -1090,9 +1092,12 @@ export default function ChatScreen() {
                 )}
                 renderItem={({ item: member }) => (
                   <View key={member._id} style={styles.memberRow}>
-                    <View style={styles.memberAvatar}>
-                      <Text style={styles.memberAvatarText}>{member.name.charAt(0).toUpperCase()}</Text>
-                    </View>
+                    <UserAvatar
+                      name={member.name}
+                      role={member.role}
+                      imageUrl={member.profilePicture}
+                      size={40}
+                    />
                     <View style={styles.memberInfo}>
                       <Text style={styles.memberName}>
                         {member._id === user?._id ? 'You' : member.name}
@@ -1156,9 +1161,12 @@ export default function ChatScreen() {
                   style={styles.userSelectRow}
                   onPress={() => toggleUserSelection(item._id)}
                 >
-                  <View style={styles.memberAvatar}>
-                    <Text style={styles.memberAvatarText}>{item.name.charAt(0).toUpperCase()}</Text>
-                  </View>
+                  <UserAvatar
+                    name={item.name}
+                    role={item.role}
+                    imageUrl={item.profilePicture}
+                    size={40}
+                  />
                   <View style={styles.memberInfo}>
                     <Text style={styles.memberName}>{item.name}</Text>
                     <Text style={styles.memberEmail}>{item.email} • {item.role}</Text>

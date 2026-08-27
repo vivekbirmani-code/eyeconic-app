@@ -82,7 +82,15 @@ const userSchema = new mongoose.Schema({
   mentors: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
-  }]
+  }],
+  profilePicture: {
+    type: String,
+    default: null
+  },
+  profilePicturePublicId: {
+    type: String,
+    default: null
+  }
 }, {
   timestamps: true
 });

@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { useAuth } from '@/context/AuthContext';
 import { GtLog, loadGtLogs, saveGtLogs } from '@/utils/gtTracker';
+import ProfilePictureManager from '@/components/ProfilePictureManager';
 import { 
   User, 
   HelpCircle, 
@@ -46,7 +47,7 @@ interface SidebarProps {
 }
 
 export default function FreeUserSidebar({ isOpen, onClose }: SidebarProps) {
-  const { user, logout } = useAuth();
+  const { user, logout, refreshUser, updateUser } = useAuth();
   
   // Navigation modal states
   const [activeModal, setActiveModal] = useState<string | null>(null);
@@ -312,9 +313,17 @@ export default function FreeUserSidebar({ isOpen, onClose }: SidebarProps) {
             </TouchableOpacity>
           </View>
           <ScrollView style={styles.modalScrollBody} contentContainerStyle={styles.modalBodyPadding}>
-            <View style={styles.profileBadgeBig}>
-              <Text style={styles.avatarLetterBig}>{user?.name?.charAt(0).toUpperCase()}</Text>
-            </View>
+            <ProfilePictureManager
+              name={user?.name || 'User'}
+              role={user?.role}
+              imageUrl={user?.profilePicture}
+              size={96}
+              editable
+              onUpdated={(profilePicture) => {
+                updateUser({ profilePicture });
+                refreshUser();
+              }}
+            />
             <Text style={styles.profileTitleName}>{user?.name}</Text>
             
             <View style={styles.profileDetailsList}>

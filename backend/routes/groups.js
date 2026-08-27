@@ -16,16 +16,16 @@ router.get('/', auth, async (req, res) => {
 
     if (req.user.role === 'admin') {
       groups = await Group.find()
-        .populate('members', 'name email role')
-        .populate('mentors', 'name email role')
-        .populate('createdBy', 'name');
+        .populate('members', 'name email role profilePicture')
+        .populate('mentors', 'name email role profilePicture')
+        .populate('createdBy', 'name profilePicture');
     } else {
       groups = await Group.find({
         members: req.user._id
       })
-        .populate('members', 'name email role')
-        .populate('mentors', 'name email role')
-        .populate('createdBy', 'name');
+        .populate('members', 'name email role profilePicture')
+        .populate('mentors', 'name email role profilePicture')
+        .populate('createdBy', 'name profilePicture');
     }
 
     // Calculate unread counts for each group
@@ -121,8 +121,8 @@ router.post('/', auth, authorize('admin'), async (req, res) => {
       );
     }
 
-    await group.populate('members', 'name email role');
-    await group.populate('createdBy', 'name');
+    await group.populate('members', 'name email role profilePicture');
+    await group.populate('createdBy', 'name profilePicture');
 
     // Notify all new members (except the admin creator) about the new group
     if (memberIds && memberIds.length > 0) {
@@ -156,8 +156,8 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
     if (description !== undefined) group.description = description.trim();
     await group.save();
 
-    await group.populate('members', 'name email role');
-    await group.populate('createdBy', 'name');
+    await group.populate('members', 'name email role profilePicture');
+    await group.populate('createdBy', 'name profilePicture');
 
     // Notify members about the update
     group.members.forEach(member => {
@@ -241,7 +241,7 @@ router.post('/:id/members', auth, authorize('admin'), async (req, res) => {
       );
     }
 
-    await group.populate('members', 'name email role');
+    await group.populate('members', 'name email role profilePicture');
 
     // Notify newly added members about the group
     newMembers.forEach(memberId => {
@@ -285,7 +285,7 @@ router.delete('/:id/members/:userId', auth, authorize('admin'), async (req, res)
     );
 
     await group.save();
-    await group.populate('members', 'name email role');
+    await group.populate('members', 'name email role profilePicture');
 
     // Notify removed user
     emitToUser(req.params.userId, 'group_removed', {
@@ -305,8 +305,8 @@ router.delete('/:id/members/:userId', auth, authorize('admin'), async (req, res)
 router.get('/:id', auth, async (req, res) => {
   try {
     const group = await Group.findById(req.params.id)
-      .populate('members', 'name email role')
-      .populate('createdBy', 'name');
+      .populate('members', 'name email role profilePicture')
+      .populate('createdBy', 'name profilePicture');
 
     if (!group) {
       return res.status(404).json({ message: 'Group not found' });

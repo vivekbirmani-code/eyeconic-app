@@ -22,6 +22,8 @@ import * as Haptics from '@/utils/haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
 import FreeUserSidebar from '@/components/FreeUserSidebar';
+import ProfilePictureManager from '@/components/ProfilePictureManager';
+import UserAvatar from '@/components/UserAvatar';
 
 interface StudentProfile {
   mbbsBatch: string;
@@ -37,7 +39,7 @@ interface StudentProfile {
 }
 
 export default function Dashboard() {
-  const { user, logout, refreshUser } = useAuth();
+  const { user, logout, refreshUser, updateUser } = useAuth();
   const router = useRouter();
   const [showProfileModal, setShowProfileModal] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -349,21 +351,50 @@ export default function Dashboard() {
               </>
             ) : (
               <Animated.View style={{ opacity: contentOpacity }}>
-                {/* Label/Value styling for better readability */}
-                <View style={styles.infoRow}>
-                  <Text style={styles.infoLabel}>Name</Text>
-                  <Text style={styles.infoValue}>{user?.name}</Text>
-                </View>
-                <View style={styles.infoRow}>
-                  <Text style={styles.infoLabel}>Email</Text>
-                  <Text style={styles.infoValueEmail}>{user?.email}</Text>
-                </View>
-                <View style={styles.infoRow}>
-                  <Text style={styles.infoLabel}>Role</Text>
-                  <View style={styles.roleBadge}>
-                    <Text style={styles.roleBadgeText}>{getRoleDisplayName(user?.role || '')}</Text>
+                <View style={styles.welcomeCardContent}>
+                  <View style={styles.welcomeCardInfo}>
+                    <View style={styles.infoRow}>
+                      <Text style={styles.infoLabel}>Name</Text>
+                      <Text style={styles.infoValue}>{user?.name}</Text>
+                    </View>
+                    <View style={styles.infoRow}>
+                      <Text style={styles.infoLabel}>Email</Text>
+                      <Text style={styles.infoValueEmail}>{user?.email}</Text>
+                    </View>
+                    <View style={styles.infoRow}>
+                      <Text style={styles.infoLabel}>Role</Text>
+                      <View style={styles.roleBadge}>
+                        <Text style={styles.roleBadgeText}>{getRoleDisplayName(user?.role || '')}</Text>
+                      </View>
+                    </View>
                   </View>
+
+                  {user && (user.role === 'student' || user.role === 'mentor') && (
+                    <UserAvatar
+                      name={user.name}
+                      role={user.role}
+                      imageUrl={user.profilePicture}
+                      size={88}
+                    />
+                  )}
                 </View>
+
+                {user && (user.role === 'student' || user.role === 'mentor') && (
+                  <View style={styles.profilePictureSection}>
+                    <Text style={styles.profilePictureSectionTitle}>Profile Picture</Text>
+                    <ProfilePictureManager
+                      name={user.name}
+                      role={user.role}
+                      imageUrl={user.profilePicture}
+                      size={72}
+                      editable
+                      onUpdated={(profilePicture) => {
+                        updateUser({ profilePicture });
+                        refreshUser();
+                      }}
+                    />
+                  </View>
+                )}
               </Animated.View>
             )}
           </Pressable>
@@ -915,6 +946,29 @@ const styles = StyleSheet.create({
     color: '#01b4ae',
     marginBottom: 16,
     letterSpacing: 0.3,
+  },
+  welcomeCardContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 16,
+  },
+  welcomeCardInfo: {
+    flex: 1,
+  },
+  profilePictureSection: {
+    marginTop: 20,
+    paddingTop: 20,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(1, 180, 174, 0.12)',
+    alignItems: 'center',
+  },
+  profilePictureSectionTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 12,
+    alignSelf: 'flex-start',
   },
   // Enhanced info row styling (label/value pairs)
   infoRow: {

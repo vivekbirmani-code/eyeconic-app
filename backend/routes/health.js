@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
 const logger = require('../utils/logger');
 const { getEmailStatus } = require('../utils/mailer');
+const { getCloudinaryHealthStatus } = require('../utils/cloudinary');
 
 const router = require('express').Router();
 
@@ -59,6 +60,7 @@ router.get('/', (req, res) => {
   const database = getDatabaseStatus();
   const auth = getAuthStatus();
   const email = getEmailHealthStatus();
+  const cloudinary = getCloudinaryHealthStatus();
 
   const isReady =
     database.status === 'healthy' &&
@@ -77,6 +79,7 @@ router.get('/', (req, res) => {
       database,
       auth,
       email,
+      cloudinary,
     },
   };
 
@@ -87,6 +90,7 @@ router.get('/', (req, res) => {
       jwtConfigured: auth.jwtConfigured,
       emailStatus: email.status,
       emailProvider: email.provider,
+      cloudinaryConfigured: cloudinary.configured,
     });
   }
 

@@ -25,6 +25,7 @@ const {
 const { auth } = require('../middleware/auth');
 const requireDatabase = require('../middleware/requireDatabase');
 const logger = require('../utils/logger');
+const { toClientUser } = require('../utils/profilePicture');
 
 const router = express.Router();
 
@@ -162,7 +163,8 @@ router.post('/login', requireDatabase, async (req, res) => {
         freeUserProfile: user.freeUserProfile,
         isProfileComplete: user.isProfileComplete,
         studentProfile: user.studentProfile,
-        unseenQuizzes: user.unseenQuizzes
+        unseenQuizzes: user.unseenQuizzes,
+        profilePicture: user.profilePicture
       },
       linkedAttempts
     });
@@ -184,13 +186,13 @@ router.post('/login', requireDatabase, async (req, res) => {
 router.get('/me', auth, async (req, res) => {
   try {
     // Fetch fresh user data from database to ensure latest changes (e.g., isProfileComplete)
-    const user = await User.findById(req.user._id).select('-password');
+    const user = await User.findById(req.user._id).select('-password -profilePicturePublicId');
 
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
 
-    res.json(user);
+    res.json(toClientUser(user));
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error' });

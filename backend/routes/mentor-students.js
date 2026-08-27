@@ -20,8 +20,8 @@ router.get('/mentor/:mentorId', auth, async (req, res) => {
             mentors: mentorId,
             role: 'student'
         })
-        .select('name email phone role isProfileComplete studentProfile mentors')
-        .populate('mentors', 'name email phone');
+        .select('name email phone role isProfileComplete studentProfile mentors profilePicture')
+        .populate('mentors', 'name email phone role profilePicture');
 
         res.json(students);
     } catch (error) {
@@ -41,7 +41,7 @@ router.get('/student/:studentId', auth, async (req, res) => {
         }
 
         const student = await User.findById(studentId)
-            .populate('mentors', 'name email phone role')
+            .populate('mentors', 'name email phone role profilePicture')
             .select('mentors');
 
         if (!student) {
@@ -133,7 +133,7 @@ router.post('/', auth, authorize('admin'), async (req, res) => {
         // ----------------------------------------------------
 
         // Return updated student with populated mentors
-        await student.populate('mentors', 'name email phone role');
+        await student.populate('mentors', 'name email phone role profilePicture');
         
         res.status(200).json({ 
             message: 'Mentors assigned successfully',

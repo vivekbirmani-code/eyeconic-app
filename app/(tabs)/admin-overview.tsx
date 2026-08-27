@@ -28,12 +28,14 @@ import { useAuth } from '@/context/AuthContext';
 import { useNotifications } from '@/context/NotificationContext';
 import { api } from '@/services/api';
 import { useAppRefresh } from '@/hooks/useAppRefresh';
+import UserAvatar from '@/components/UserAvatar';
 
 interface StudentStat {
   _id: string;
   name: string;
   email: string;
   phone?: string;
+  profilePicture?: string | null;
   isProfileComplete?: boolean;
   mentor?: {
     _id: string;
@@ -57,6 +59,7 @@ interface MentorStat {
   name: string;
   email: string;
   phone?: string;
+  profilePicture?: string | null;
   stats: {
     assignedStudents: number;
     totalAssignments: number;
@@ -195,9 +198,12 @@ export default function AdminOverview() {
     <View style={styles.card}>
       <View style={styles.cardHeader}>
         <View style={styles.studentInfo}>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{item.name.charAt(0).toUpperCase()}</Text>
-          </View>
+          <UserAvatar
+            name={item.name}
+            role="student"
+            imageUrl={item.profilePicture}
+            size={48}
+          />
           <View style={styles.nameContainer}>
             <Text style={styles.cardName}>{item.name}</Text>
             <Text style={styles.cardEmail}>{item.email}</Text>
@@ -270,9 +276,12 @@ export default function AdminOverview() {
     >
       <View style={styles.cardHeader}>
         <View style={styles.studentInfo}>
-          <View style={[styles.avatar, { backgroundColor: '#DBEAFE' }]}>
-            <UserCheck color="#2563EB" size={24} />
-          </View>
+          <UserAvatar
+            name={item.name}
+            role="mentor"
+            imageUrl={item.profilePicture}
+            size={48}
+          />
           <View style={styles.nameContainer}>
             <Text style={styles.cardName}>{item.name}</Text>
             <Text style={styles.cardEmail}>{item.email}</Text>

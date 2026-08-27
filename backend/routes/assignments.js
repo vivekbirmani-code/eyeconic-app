@@ -19,7 +19,7 @@ router.get('/student/:studentId', auth, async (req, res) => {
 
         const assignments = await Assignment.find({ student: studentId })
             .populate('subject', 'name year')
-            .populate('mentor', 'name email')
+            .populate('mentor', 'name email profilePicture')
             .sort({ scheduledDate: -1 });
 
         res.json(assignments);
@@ -57,7 +57,7 @@ router.get('/week/:studentId', auth, async (req, res) => {
             scheduledDate: { $gte: weekStart, $lte: weekEnd }
         })
             .populate('subject', 'name year')
-            .populate('mentor', 'name email')
+            .populate('mentor', 'name email profilePicture')
             .sort({ scheduledDate: 1 });
 
         res.json({
@@ -83,7 +83,7 @@ router.get('/mentor/:mentorId', auth, async (req, res) => {
 
         const assignments = await Assignment.find({ mentor: mentorId })
             .populate('subject', 'name year')
-            .populate('student', 'name email')
+            .populate('student', 'name email profilePicture')
             .sort({ scheduledDate: -1 });
 
         res.json(assignments);
@@ -107,7 +107,7 @@ router.get('/mentor/:mentorId/students', auth, async (req, res) => {
         const mentorAssignments = await MentorStudentAssignment.find({
             mentor: mentorId,
             isActive: true
-        }).populate('student', 'name email phone');
+        }).populate('student', 'name email phone profilePicture');
 
         const students = [];
 
@@ -154,6 +154,7 @@ router.get('/mentor/:mentorId/students', auth, async (req, res) => {
                 name: student.name,
                 email: student.email,
                 phone: student.phone,
+                profilePicture: student.profilePicture,
                 subjects: subjectAssignment ? subjectAssignment.subjects : [],
                 stats: {
                     total: totalAssignments,
@@ -216,8 +217,8 @@ router.post('/', auth, async (req, res) => {
 
         // Populate before returning
         await assignment.populate('subject', 'name year');
-        await assignment.populate('student', 'name email');
-        await assignment.populate('mentor', 'name email');
+        await assignment.populate('student', 'name email profilePicture');
+        await assignment.populate('mentor', 'name email profilePicture');
 
         res.status(201).json(assignment);
     } catch (error) {
@@ -252,8 +253,8 @@ router.put('/:id', auth, async (req, res) => {
         await assignment.save();
 
         await assignment.populate('subject', 'name year');
-        await assignment.populate('student', 'name email');
-        await assignment.populate('mentor', 'name email');
+        await assignment.populate('student', 'name email profilePicture');
+        await assignment.populate('mentor', 'name email profilePicture');
 
         res.json(assignment);
     } catch (error) {
@@ -286,7 +287,7 @@ router.put('/:id/complete', auth, async (req, res) => {
         await assignment.save();
 
         await assignment.populate('subject', 'name year');
-        await assignment.populate('mentor', 'name email');
+        await assignment.populate('mentor', 'name email profilePicture');
 
         res.json(assignment);
     } catch (error) {
@@ -335,7 +336,7 @@ router.put('/:id/verify', auth, async (req, res) => {
         await assignment.save();
 
         await assignment.populate('subject', 'name year');
-        await assignment.populate('student', 'name email');
+        await assignment.populate('student', 'name email profilePicture');
 
         res.json(assignment);
     } catch (error) {

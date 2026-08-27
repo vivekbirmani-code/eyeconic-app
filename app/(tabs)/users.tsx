@@ -35,6 +35,7 @@ import { api } from '@/services/api';
 import SubjectSelectionModal from '@/components/SubjectSelectionModal';
 import MentorSelectionModal, { type Mentor } from '@/components/MentorSelectionModal';
 import { useAppRefresh } from '@/hooks/useAppRefresh';
+import UserAvatar from '@/components/UserAvatar';
 
 interface StudentProfile {
   mbbsBatch?: string;
@@ -55,6 +56,7 @@ interface User {
   email: string;
   role: string;
   phone?: string;
+  profilePicture?: string | null;
   isActive?: boolean;
   isProfileComplete?: boolean;
   isFreeUser?: boolean;
@@ -747,9 +749,12 @@ export default function Users() {
             }
           ]}
         >
-          <View style={styles.userAvatar}>
-            <UserIcon color="#01b4ae" size={24} />
-          </View>
+          <UserAvatar
+            name={item.name}
+            role={item.role}
+            imageUrl={item.profilePicture}
+            size={48}
+          />
           <View style={styles.userInfo}>
             <Text style={styles.userName}>{item.name}</Text>
             <Text style={styles.userEmail}>{item.email}</Text>
@@ -1060,9 +1065,12 @@ export default function Users() {
                 <View style={styles.detailContent}>
                   {/* Avatar */}
                   <View style={styles.avatarContainer}>
-                    <View style={[styles.avatar, { backgroundColor: getRoleBgColor(selectedUser.role) }]}>
-                      <UserIcon color={getRoleColor(selectedUser.role)} size={40} />
-                    </View>
+                    <UserAvatar
+                      name={selectedUser.name}
+                      role={selectedUser.role}
+                      imageUrl={selectedUser.profilePicture}
+                      size={96}
+                    />
                     <Text style={styles.detailName}>{selectedUser.name}</Text>
                     <View style={[styles.roleBadgeLarge, { backgroundColor: getRoleBgColor(selectedUser.role) }]}>
                       <Text style={[styles.roleBadgeText, { color: getRoleColor(selectedUser.role) }]}>

@@ -5,13 +5,12 @@ import {
   Home, 
   Menu, 
   LogOut, 
-  User as UserIcon,
   X,
-  BarChart3,
   MessageCircle,
   BookOpen,
   Users
 } from 'lucide-react';
+import UserAvatar from '../components/UserAvatar';
 
 export default function MainLayout() {
   const { user, logout } = useAuth();
@@ -74,9 +73,12 @@ export default function MainLayout() {
         {/* User Card */}
         <div className="mt-auto border-t border-gray-200 pt-4 pb-2 px-2">
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-400 border border-gray-200">
-              <UserIcon size={20} />
-            </div>
+            <UserAvatar
+              name={user?.name || 'User'}
+              role={user?.role}
+              imageUrl={user?.profilePicture}
+              size={40}
+            />
             <div className="flex-1 min-w-0">
               <p className="text-sm font-semibold text-gray-900 truncate">{user?.name}</p>
               <p className="text-xs text-gray-500 truncate">{user?.email}</p>

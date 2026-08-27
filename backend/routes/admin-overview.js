@@ -12,7 +12,7 @@ const router = express.Router();
 router.get('/students', auth, authorize('admin'), async (req, res) => {
     try {
         const students = await User.find({ role: 'student' })
-            .select('name email phone isProfileComplete')
+            .select('name email phone isProfileComplete profilePicture')
             .sort({ name: 1 });
 
         const studentStats = [];
@@ -51,13 +51,14 @@ router.get('/students', auth, authorize('admin'), async (req, res) => {
             const mentorAssignment = await MentorStudentAssignment.findOne({
                 student: student._id,
                 isActive: true
-            }).populate('mentor', 'name email');
+            }).populate('mentor', 'name email profilePicture');
 
             studentStats.push({
                 _id: student._id,
                 name: student.name,
                 email: student.email,
                 phone: student.phone,
+                profilePicture: student.profilePicture,
                 isProfileComplete: student.isProfileComplete,
                 mentor: mentorAssignment ? mentorAssignment.mentor : null,
                 stats: {
@@ -88,7 +89,7 @@ router.get('/students', auth, authorize('admin'), async (req, res) => {
 router.get('/mentors', auth, authorize('admin'), async (req, res) => {
     try {
         const mentors = await User.find({ role: 'mentor' })
-            .select('name email phone')
+            .select('name email phone profilePicture')
             .sort({ name: 1 });
 
         const mentorStats = [];
@@ -101,6 +102,7 @@ router.get('/mentors', auth, authorize('admin'), async (req, res) => {
                 name: mentor.name,
                 email: mentor.email,
                 phone: mentor.phone,
+                profilePicture: mentor.profilePicture,
                 stats
             });
         }
@@ -118,7 +120,7 @@ router.get('/mentor/:mentorId/details', auth, authorize('admin'), async (req, re
         const mentorId = req.params.mentorId;
 
         // Get mentor info
-        const mentor = await User.findById(mentorId).select('name email phone role');
+        const mentor = await User.findById(mentorId).select('name email phone role profilePicture');
         if (!mentor || mentor.role !== 'mentor') {
             return res.status(404).json({ message: 'Mentor not found' });
         }
@@ -127,7 +129,7 @@ router.get('/mentor/:mentorId/details', auth, authorize('admin'), async (req, re
         const studentAssignments = await MentorStudentAssignment.find({
             mentor: mentorId,
             isActive: true
-        }).populate('student', 'name email phone');
+        }).populate('student', 'name email phone profilePicture');
 
         const studentDetails = [];
 

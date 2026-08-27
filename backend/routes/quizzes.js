@@ -225,7 +225,7 @@ router.get('/retests/pending', auth, authorize('admin', 'mentor'), async (req, r
     const attempts = await QuizAttempt.find({
       retestRequested: true,
       retestApproved: false
-    }).populate('student', 'name email').populate('quiz', 'title');
+    }).populate('student', 'name email profilePicture').populate('quiz', 'title');
     res.json(attempts);
   } catch (error) {
     console.error('Pending retests error:', error);
@@ -1089,7 +1089,7 @@ router.get('/analytics/test-report/:testId', auth, authorize('admin', 'mentor'),
       }
     }
 
-    const attempts = await QuizAttempt.find(attemptQuery).populate('student', 'name email');
+    const attempts = await QuizAttempt.find(attemptQuery).populate('student', 'name email profilePicture');
     const sorted = [...attempts].sort((a, b) => (b.marksObtained || 0) - (a.marksObtained || 0));
     const total = sorted.length;
     const ranked = rankStudentAttempts(sorted, quiz.questions);
@@ -1157,7 +1157,7 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
       }
     }
 
-    const attempts = await QuizAttempt.find(attemptQuery).populate('student', 'name email');
+    const attempts = await QuizAttempt.find(attemptQuery).populate('student', 'name email profilePicture');
     const sorted = [...attempts].sort((a, b) => (b.marksObtained || 0) - (a.marksObtained || 0));
     const total = sorted.length;
     const quizQuestionCount = quiz.questions.length || 0;
@@ -1706,7 +1706,7 @@ router.get('/analytics/heatmap', auth, authorize('admin', 'mentor'), async (req,
     }
 
     // Get all attempts for these quizzes
-    const attempts = await QuizAttempt.find(attemptFilter).populate('student', 'name email');
+    const attempts = await QuizAttempt.find(attemptFilter).populate('student', 'name email profilePicture');
 
     // Build student → quiz → % map
     const studentMap = {};
@@ -1755,7 +1755,7 @@ router.get('/analytics/:id', auth, authorize('admin', 'mentor'), async (req, res
       attemptQuery.student = { $in: mentorStudentIds };
     }
 
-    const attempts = await QuizAttempt.find(attemptQuery).populate('student', 'name email');
+    const attempts = await QuizAttempt.find(attemptQuery).populate('student', 'name email profilePicture');
 
     if (attempts.length === 0) {
       return res.json({
@@ -2389,7 +2389,7 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
           model: 'QuestionBank'
         }
       })
-      .populate('student', 'name email');
+      .populate('student', 'name email profilePicture');
 
     if (!attempt) {
       return res.status(404).json({ message: 'Attempt not found' });
@@ -2678,7 +2678,7 @@ router.get('/retest-requests/pending', auth, authorize('admin'), async (req, res
           }
         ]
       })
-      .populate('student', 'name email')
+      .populate('student', 'name email profilePicture')
       .sort({ retestRequestedAt: -1 });
 
     // Compute subjectNames for each request
@@ -2841,7 +2841,7 @@ router.get('/analytics/test/:testId', auth, authorize('admin', 'mentor'), async 
     }
 
     const attempts = await QuizAttempt.find(attemptQuery)
-      .populate('student', 'name email')
+      .populate('student', 'name email profilePicture')
       .sort({ marksObtained: -1 });
 
     const totalQuestions = quiz.questions.length;

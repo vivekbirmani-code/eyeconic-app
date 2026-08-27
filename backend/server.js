@@ -135,6 +135,20 @@ const startDatabase = async () => {
 
 startDatabase();
 
+const { getCloudinaryHealthStatus } = require('./utils/cloudinary');
+const cloudinaryHealth = getCloudinaryHealthStatus();
+if (!cloudinaryHealth.configured) {
+  logger.warn('Cloudinary is not configured — media and profile picture uploads will fail until CLOUDINARY_* env vars or CLOUDINARY_UPLOAD_PRESET are set.', {
+    missingVars: cloudinaryHealth.missingVars,
+  });
+} else if (cloudinaryHealth.mode === 'unsigned_preset') {
+  logger.info('Cloudinary unsigned upload preset enabled for media uploads.', {
+    cloudName: cloudinaryHealth.cloudName,
+    uploadPreset: cloudinaryHealth.uploadPreset,
+    canDeleteAssets: cloudinaryHealth.canDeleteAssets,
+  });
+}
+
 // Health endpoints (no auth required — used by load balancers and monitoring)
 app.use('/health', healthRoutes);
 app.use('/api/health', healthRoutes);
@@ -261,7 +275,7 @@ const finalizeCallEventMessage = async ({
       messageType: 'call_start'
     })
       .sort({ createdAt: -1 })
-      .populate('sender', 'name');
+      .populate('sender', 'name profilePicture');
 
     if (callStartMessage) {
       callStartMessage.messageType = finalMessageType;

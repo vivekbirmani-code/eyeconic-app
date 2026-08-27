@@ -21,6 +21,7 @@ interface User {
   email: string;
   phone?: string;
   role: string;
+  profilePicture?: string | null;
   isProfileComplete?: boolean;
   studentProfile?: StudentProfile;
   groups?: string[];
@@ -39,6 +40,7 @@ interface AuthContextType {
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
   refreshUser: () => Promise<void>;
+  updateUser: (updates: Partial<User>) => void;
   isLoading: boolean;
 }
 
@@ -96,8 +98,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const updateUser = (updates: Partial<User>) => {
+    setUser((current) => (current ? { ...current, ...updates } : current));
+  };
+
   return (
-    <AuthContext.Provider value={{ user, login, logout, refreshUser, isLoading }}>
+    <AuthContext.Provider value={{ user, login, logout, refreshUser, updateUser, isLoading }}>
       {children}
     </AuthContext.Provider>
   );

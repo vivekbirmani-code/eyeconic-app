@@ -4,7 +4,7 @@ import { api } from '../../../services/api';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { 
   ChevronRight, ChevronLeft, Check, Clock, BookOpen, Users, 
-  Search, X, Minus 
+  Search, X
 } from 'lucide-react';
 
 interface Subject { _id: string; name: string; }

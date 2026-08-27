@@ -1,9 +1,24 @@
 const express = require('express');
+const multer = require('multer');
 const User = require('../models/User');
 const { auth, authorize } = require('../middleware/auth');
 const { emitToAdmins } = require('../utils/socket-helpers');
+const {
+  validateProfilePictureFile,
+  uploadProfilePicture,
+  deleteProfilePictureAsset,
+  toClientUser,
+  MAX_FILE_SIZE_BYTES,
+  CloudinaryConfigError,
+} = require('../utils/profilePicture');
+const { getCloudinaryHealthStatus } = require('../utils/cloudinary');
 
 const router = express.Router();
+
+const profilePictureUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_FILE_SIZE_BYTES },
+});
 
 // Get all users (Admin only)
 router.get('/', auth, authorize('admin'), async (req, res) => {
@@ -13,7 +28,7 @@ router.get('/', auth, authorize('admin'), async (req, res) => {
     if (role) {
       query.role = role;
     }
-    const users = await User.find(query).select('-password');
+    const users = await User.find(query).select('-password -profilePicturePublicId');
     res.json(users);
   } catch (error) {
     console.error(error);
@@ -42,7 +57,7 @@ router.get('/search', auth, authorize('admin'), async (req, res) => {
       query.role = role;
     }
 
-    const users = await User.find(query).select('-password').limit(20);
+    const users = await User.find(query).select('-password -profilePicturePublicId').limit(20);
     res.json(users);
   } catch (error) {
     console.error(error);
@@ -157,6 +172,129 @@ router.put('/profile', auth, async (req, res) => {
   }
 });
 
+// Upload or replace profile picture (authenticated user only — own account)
+router.post('/profile-picture', auth, profilePictureUpload.single('image'), async (req, res) => {
+  try {
+    const cloudinaryStatus = getCloudinaryHealthStatus();
+    if (!cloudinaryStatus.configured) {
+      return res.status(503).json({
+        success: false,
+        message: 'Profile picture uploads are unavailable because Cloudinary is not configured on the server. Please contact support.',
+        code: 'CLOUDINARY_NOT_CONFIGURED',
+        requestId: req.requestId,
+      });
+    }
+
+    const validation = validateProfilePictureFile(req.file);
+    if (!validation.valid) {
+      return res.status(400).json({
+        success: false,
+        message: validation.message,
+        code: 'VALIDATION_ERROR',
+        requestId: req.requestId,
+      });
+    }
+
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    const previousPublicId = user.profilePicturePublicId;
+    const uploadResult = await uploadProfilePicture(
+      req.file.buffer,
+      validation.mimeType,
+      user._id.toString()
+    );
+
+    user.profilePicture = uploadResult.url;
+    user.profilePicturePublicId = uploadResult.publicId;
+    await user.save();
+
+    if (previousPublicId && previousPublicId !== uploadResult.publicId) {
+      await deleteProfilePictureAsset(previousPublicId);
+    }
+
+    emitToAdmins('user_updated', { userId: user._id.toString() });
+
+    res.json({
+      success: true,
+      message: 'Profile picture updated successfully',
+      user: toClientUser(user),
+    });
+  } catch (error) {
+    if (error instanceof CloudinaryConfigError) {
+      console.error('Profile picture upload blocked — Cloudinary not configured:', error.missingVars);
+      return res.status(error.statusCode).json({
+        success: false,
+        message: 'Profile picture uploads are temporarily unavailable. Please try again later or contact support.',
+        code: error.code,
+        requestId: req.requestId,
+      });
+    }
+
+    console.error('Profile picture upload error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to upload profile picture. Please try again.',
+      code: 'UPLOAD_FAILED',
+      requestId: req.requestId,
+    });
+  }
+});
+
+// Remove profile picture (authenticated user only — own account)
+router.delete('/profile-picture', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (!user.profilePicture && !user.profilePicturePublicId) {
+      return res.json({
+        success: true,
+        message: 'No profile picture to remove',
+        user: toClientUser(user),
+      });
+    }
+
+    const previousPublicId = user.profilePicturePublicId;
+    user.profilePicture = null;
+    user.profilePicturePublicId = null;
+    await user.save();
+
+    if (previousPublicId) {
+      await deleteProfilePictureAsset(previousPublicId);
+    }
+
+    emitToAdmins('user_updated', { userId: user._id.toString() });
+
+    res.json({
+      success: true,
+      message: 'Profile picture removed successfully',
+      user: toClientUser(user),
+    });
+  } catch (error) {
+    if (error instanceof CloudinaryConfigError) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: 'Profile picture removal is temporarily unavailable. Please try again later.',
+        code: error.code,
+        requestId: req.requestId,
+      });
+    }
+
+    console.error('Profile picture removal error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to remove profile picture',
+      code: 'DELETE_FAILED',
+      requestId: req.requestId,
+    });
+  }
+});
+
 // Create user (Admin only)
 router.post('/', auth, authorize('admin'), async (req, res) => {
   try {
@@ -210,7 +348,7 @@ router.get('/role/:role', auth, authorize('admin'), async (req, res) => {
 // Get user by ID
 router.get('/:id', auth, async (req, res) => {
   try {
-    const user = await User.findById(req.params.id).select('-password');
+    const user = await User.findById(req.params.id).select('-password -profilePicturePublicId');
     if (!user) {
       return res.status(404).json({ message: 'User not found' });
     }
@@ -243,7 +381,7 @@ router.put('/:id', auth, async (req, res) => {
       req.params.id,
       updateData,
       { new: true }
-    ).select('-password');
+    ).select('-password -profilePicturePublicId');
 
     if (!user) {
       return res.status(404).json({ message: 'User not found' });

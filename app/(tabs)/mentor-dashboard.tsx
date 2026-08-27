@@ -37,6 +37,7 @@ interface Student {
   name: string;
   email: string;
   phone?: string;
+  profilePicture?: string | null;
   subjects: Subject[];
   stats: {
     total: number;
@@ -73,6 +74,7 @@ type TabType = 'students' | 'create' | 'thisWeek' | 'verify' | 'analytics';
 
 import { useRouter } from 'expo-router';
 import { ScrollableUnderlineTabBar } from '@/components/ScrollableUnderlineTabBar';
+import UserAvatar from '@/components/UserAvatar';
 
 export default function MentorDashboard() {
   const router = useRouter();
@@ -247,11 +249,12 @@ export default function MentorDashboard() {
   const renderStudentCard = ({ item }: { item: Student }) => (
     <TouchableOpacity style={styles.studentCard} activeOpacity={0.7}>
       <View style={styles.studentHeader}>
-        <View style={styles.studentAvatar}>
-          <Text style={styles.studentAvatarText}>
-            {item.name.charAt(0).toUpperCase()}
-          </Text>
-        </View>
+        <UserAvatar
+          name={item.name}
+          role="student"
+          imageUrl={item.profilePicture}
+          size={48}
+        />
         <View style={styles.studentInfo}>
           <Text style={styles.studentName}>{item.name}</Text>
           <Text style={styles.studentEmail}>{item.email}</Text>

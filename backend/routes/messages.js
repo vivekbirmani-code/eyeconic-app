@@ -26,7 +26,7 @@ router.get('/group/:groupId', auth, async (req, res) => {
       group: req.params.groupId,
       deletedFor: { $ne: req.user._id } // Don't show messages deleted for this user
     })
-      .populate('sender', 'name')
+      .populate('sender', 'name profilePicture')
       .sort({ createdAt: 1 });
 
     // Transform messages for response
@@ -77,7 +77,7 @@ router.post('/', auth, async (req, res) => {
     });
 
     await message.save();
-    await message.populate('sender', 'name');
+    await message.populate('sender', 'name profilePicture');
 
     // Push notifications for users not currently active in-app.
     // We send to every group member except the sender.
@@ -149,7 +149,7 @@ router.put('/:id', auth, async (req, res) => {
     message.isEdited = true;
     message.editedAt = new Date();
     await message.save();
-    await message.populate('sender', 'name');
+    await message.populate('sender', 'name profilePicture');
 
     res.json(message);
   } catch (error) {
@@ -255,7 +255,7 @@ router.get('/:id/read-status', auth, async (req, res) => {
     }
 
     const readStatuses = await MessageReadStatus.find({ messageId: req.params.id })
-      .populate('userId', 'name')
+      .populate('userId', 'name profilePicture')
       .sort({ readAt: 1 });
 
     const readBy = readStatuses.map(rs => ({
@@ -309,7 +309,7 @@ router.delete('/:id/everyone', auth, async (req, res) => {
     message.deletedForEveryone = true;
     // Keep content so admins can still see it
     await message.save();
-    await message.populate('sender', 'name');
+    await message.populate('sender', 'name profilePicture');
 
     res.json(message);
   } catch (error) {

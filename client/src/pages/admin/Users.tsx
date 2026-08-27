@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { api } from '../../services/api';
 import { Search, Plus, User as UserIcon, AlertTriangle } from 'lucide-react';
+import UserAvatar from '../../components/UserAvatar';
 
 interface User {
   _id: string;
@@ -9,6 +10,7 @@ interface User {
   email: string;
   role: string;
   phone?: string;
+  profilePicture?: string | null;
   isActive?: boolean;
   isProfileComplete?: boolean;
   createdAt?: string;
@@ -182,9 +184,12 @@ export default function Users() {
                 onClick={() => handleOpenUser(usr)}
                 className="bg-white rounded-2xl p-4 md:p-5 border border-gray-100 shadow-[0_2px_10px_-4px_rgba(0,0,0,0.1)] hover:shadow-md cursor-pointer transition-all hover:border-[#01b4ae]/30 group flex items-center gap-4 animate-fade-in-up"
               >
-                <div className="w-12 h-12 md:w-14 md:h-14 rounded-full bg-[#E0F7F6] flex items-center justify-center shrink-0 border border-teal-100 group-hover:scale-105 transition-transform">
-                  <UserIcon className="w-6 h-6 text-[#01b4ae]" />
-                </div>
+                <UserAvatar
+                  name={usr.name}
+                  role={usr.role}
+                  imageUrl={usr.profilePicture}
+                  size={56}
+                />
                 
                 <div className="flex-1 min-w-0">
                   <h3 className="font-bold text-gray-900 text-[16px] md:text-[18px] truncate group-hover:text-[#01b4ae] transition-colors">
@@ -230,9 +235,13 @@ export default function Users() {
             <div className={`p-6 bg-gradient-to-r ${selectedUser.role === 'admin' ? 'from-rose-500 to-rose-600' : selectedUser.role === 'mentor' ? 'from-emerald-500 to-emerald-600' : 'from-[#01b4ae] to-[#01b4ae]'} text-white`}>
               <div className="flex justify-between items-start">
                 <div className="flex gap-4 items-center">
-                  <div className="w-16 h-16 rounded-full bg-white/20 flex items-center justify-center text-2xl font-bold border-2 border-white/30">
-                    {selectedUser.name.charAt(0).toUpperCase()}
-                  </div>
+                  <UserAvatar
+                    name={selectedUser.name}
+                    role={selectedUser.role}
+                    imageUrl={selectedUser.profilePicture}
+                    size={64}
+                    className="border-2 border-white/30"
+                  />
                   <div>
                     <h2 className="text-2xl font-bold">{selectedUser.name}</h2>
                     <p className="text-white/80 font-medium">{selectedUser.email}</p>

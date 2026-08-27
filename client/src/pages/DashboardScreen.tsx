@@ -2,9 +2,11 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { LogOut, BookOpen, MessageCircle, LayoutDashboard, Users } from 'lucide-react';
+import UserAvatar from '../components/UserAvatar';
+import ProfilePictureManager from '../components/ProfilePictureManager';
 
 export default function DashboardScreen() {
-  const { user, logout } = useAuth();
+  const { user, logout, refreshUser, updateUser } = useAuth();
   const navigate = useNavigate();
 
   const [isDataLoading, setIsDataLoading] = useState(true);
@@ -66,23 +68,52 @@ export default function DashboardScreen() {
               <div className="h-6 bg-gray-100 rounded-lg animate-pulse w-1/4 mt-2"></div>
             </div>
           ) : (
-            <div className="space-y-4 animate-fade-in">
-              <div className="flex items-center">
-                <span className="text-[14px] md:text-[15px] font-semibold text-gray-400 w-24 tracking-wide uppercase">Name</span>
-                <span className="flex-1 text-[16px] md:text-[18px] font-bold text-gray-900">{user?.name}</span>
-              </div>
-              <div className="flex items-center">
-                <span className="text-[14px] md:text-[15px] font-semibold text-gray-400 w-24 tracking-wide uppercase">Email</span>
-                <span className="flex-1 text-[15px] md:text-[16px] font-medium text-gray-600">{user?.email}</span>
-              </div>
-              <div className="flex items-center mt-2">
-                <span className="text-[14px] md:text-[15px] font-semibold text-gray-400 w-24 tracking-wide uppercase">Role</span>
-                <div>
-                  <span className="inline-block bg-[#01b4ae]/10 rounded-lg py-1.5 px-4 border border-[#01b4ae]/20 text-[14px] font-bold text-[#01b4ae] tracking-wide">
-                    {getRoleDisplayName(user?.role || '')}
-                  </span>
+            <div className="animate-fade-in">
+              <div className="flex items-start justify-between gap-6">
+                <div className="space-y-4 flex-1">
+                  <div className="flex items-center">
+                    <span className="text-[14px] md:text-[15px] font-semibold text-gray-400 w-24 tracking-wide uppercase">Name</span>
+                    <span className="flex-1 text-[16px] md:text-[18px] font-bold text-gray-900">{user?.name}</span>
+                  </div>
+                  <div className="flex items-center">
+                    <span className="text-[14px] md:text-[15px] font-semibold text-gray-400 w-24 tracking-wide uppercase">Email</span>
+                    <span className="flex-1 text-[15px] md:text-[16px] font-medium text-gray-600">{user?.email}</span>
+                  </div>
+                  <div className="flex items-center mt-2">
+                    <span className="text-[14px] md:text-[15px] font-semibold text-gray-400 w-24 tracking-wide uppercase">Role</span>
+                    <div>
+                      <span className="inline-block bg-[#01b4ae]/10 rounded-lg py-1.5 px-4 border border-[#01b4ae]/20 text-[14px] font-bold text-[#01b4ae] tracking-wide">
+                        {getRoleDisplayName(user?.role || '')}
+                      </span>
+                    </div>
+                  </div>
                 </div>
+
+                {user && (user.role === 'student' || user.role === 'mentor') && (
+                  <UserAvatar
+                    name={user.name}
+                    role={user.role}
+                    imageUrl={user.profilePicture}
+                    size={88}
+                  />
+                )}
               </div>
+
+              {user && (user.role === 'student' || user.role === 'mentor') && (
+                <div className="mt-8 border-t border-gray-100 pt-6">
+                  <h3 className="text-sm font-semibold text-gray-700 mb-4">Profile Picture</h3>
+                  <ProfilePictureManager
+                    name={user.name}
+                    role={user.role}
+                    imageUrl={user.profilePicture}
+                    size={72}
+                    onUpdated={(profilePicture) => {
+                      updateUser({ profilePicture });
+                      refreshUser();
+                    }}
+                  />
+                </div>
+              )}
             </div>
           )}
         </div>
