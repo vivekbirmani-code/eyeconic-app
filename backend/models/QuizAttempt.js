@@ -153,6 +153,7 @@ const attemptSchema = new mongoose.Schema({
 // Indexes for efficient queries
 attemptSchema.index({ quiz: 1, student: 1 });
 attemptSchema.index({ student: 1, status: 1 });
+attemptSchema.index({ student: 1, status: 1, endTime: -1 });
 attemptSchema.index({ retestRequested: 1, retestApproved: 1 });
 attemptSchema.index({ student: 1, 'answers.questionId': 1 });
 

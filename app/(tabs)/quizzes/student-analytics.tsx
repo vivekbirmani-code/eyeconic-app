@@ -45,6 +45,8 @@ import ScoreDistribution from '@/components/analytics/ScoreDistribution';
 import {
   DateRange,
   StudentAnalyticsSummary,
+  StudentPerformanceResponse,
+  StudentPerformanceAttempt,
   StudentPerformanceBreakdown,
   TrendPoint,
   AnalyticsInsight,
@@ -52,6 +54,8 @@ import {
   ScoreDistributionBucket,
   formatPercent,
 } from '@/types/analytics';
+import { FrequentlyMissedSection } from '@/components/quiz/FrequentlyMissedSection';
+import { FrequentlyMissedQuestion } from '@/types/quiz-result';
 
 interface Student {
   _id: string;
@@ -59,30 +63,9 @@ interface Student {
   email: string;
 }
 
-interface AttemptSummary {
-  _id: string;
-  quiz: { title: string; testType: string };
-  score: number;
-  totalQuestions: number;
-  marksObtained: number;
-  totalMarks: number;
-  scorePercentage?: number | null;
-  accuracy?: number | null;
-  correct?: number;
-  incorrect?: number;
-  skipped?: number;
-  attempted?: number;
-  percentage: number;
-  endTime: string;
-  tabSwitchCount: number;
-}
+interface AttemptSummary extends StudentPerformanceAttempt {}
 
-interface StudentAnalytics {
-  summary: StudentAnalyticsSummary;
-  attempts: AttemptSummary[];
-  trend?: TrendPoint[];
-  insights?: AnalyticsInsight[];
-}
+interface StudentAnalytics extends Pick<StudentPerformanceResponse, 'summary' | 'attempts' | 'trend' | 'insights' | 'frequentlyMissedQuestions' | 'pagination'> {}
 
 interface SubjectPerformance {
   subjectId: string;
@@ -755,7 +738,7 @@ export default function Analytics() {
                               {new Date(attempt.endTime).toLocaleDateString()}
                             </Text>
                           </View>
-                          {attempt.tabSwitchCount > 0 && (
+                          {(attempt.tabSwitchCount ?? 0) > 0 && (
                             <View style={styles.tabWarning}>
                               <AlertTriangle color="#F59E0B" size={14} />
                               <Text style={styles.tabWarningText}>
@@ -772,6 +755,13 @@ export default function Analytics() {
                       <Text style={styles.noAttemptsText}>No tests taken yet</Text>
                     </View>
                   )}
+
+                  <FrequentlyMissedSection
+                    questions={(studentAnalytics.frequentlyMissedQuestions || []).map((item) => ({
+                      ...item,
+                      latestResult: item.latestResult === 'correct' ? 'correct' : 'incorrect',
+                    })) as FrequentlyMissedQuestion[]}
+                  />
                 </>
               ) : (
                 <View style={styles.noAttempts}>

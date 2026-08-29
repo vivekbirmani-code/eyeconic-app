@@ -38,9 +38,13 @@ const {
 const {
   aggregateQuestionHistoryForStudent,
   getFrequentlyMissedQuestions,
+  getDetailedQuestionHistory,
   computeTimeTakenSeconds,
   isAnswerRecorded,
+  MIN_INCORRECT_ATTEMPTS_FOR_RECURRING,
 } = require('../utils/questionHistory');
+const { assertStudentPerformanceAccess } = require('../utils/studentPerformanceAuth');
+const { buildStudentPerformanceResponse } = require('../utils/studentPerformance');
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -1639,18 +1643,11 @@ router.get('/analytics/student/:studentId/csv', auth, authorize('admin'), async 
 });
 
 // Student subject-wise performance report
-router.get('/analytics/student/:studentId/subjects', auth, authorize('admin', 'mentor'), async (req, res) => {
+router.get('/analytics/student/:studentId/subjects', auth, async (req, res) => {
   try {
-    if (req.user.role === 'mentor') {
-      const assignment = await MentorStudentAssignment.findOne({
-        mentor: req.user._id,
-        student: req.params.studentId,
-        isActive: true
-      });
-
-      if (!assignment) {
-        return res.status(403).json({ message: 'Not authorized to view this student\'s analytics' });
-      }
+    const access = await assertStudentPerformanceAccess(req, req.params.studentId);
+    if (!access.authorized) {
+      return res.status(access.statusCode).json({ message: access.message });
     }
 
     const { subject, range } = req.query;
@@ -1685,18 +1682,11 @@ router.get('/analytics/student/:studentId/subjects', auth, authorize('admin', 'm
 // Uses the server-derived metadataSnapshot captured at submit time — never the
 // live QuestionBank — so historical accuracy remains stable even if a
 // question's classification is edited later. (admin, mentor)
-router.get('/analytics/student/:studentId/performance', auth, authorize('admin', 'mentor'), async (req, res) => {
+router.get('/analytics/student/:studentId/performance', auth, async (req, res) => {
   try {
-    if (req.user.role === 'mentor') {
-      const assignment = await MentorStudentAssignment.findOne({
-        mentor: req.user._id,
-        student: req.params.studentId,
-        isActive: true
-      });
-
-      if (!assignment) {
-        return res.status(403).json({ message: 'Not authorized to view this student\'s analytics' });
-      }
+    const access = await assertStudentPerformanceAccess(req, req.params.studentId);
+    if (!access.authorized) {
+      return res.status(access.statusCode).json({ message: access.message });
     }
 
     const mongoose = require('mongoose');
@@ -1801,6 +1791,40 @@ router.get('/analytics/heatmap', auth, authorize('admin', 'mentor'), async (req,
     });
   } catch (error) {
     console.error('Heatmap error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get current student's performance (student self-service)
+// NOTE: Must be registered before /analytics/:id to avoid "me" being captured as an id.
+router.get('/analytics/me', auth, authorize('student'), async (req, res) => {
+  try {
+    const {
+      range,
+      page,
+      limit,
+      missedPage,
+      missedLimit,
+      minIncorrectAttempts,
+    } = req.query;
+
+    const payload = await buildStudentPerformanceResponse(req.user._id, {
+      range,
+      page,
+      limit,
+      missedPage,
+      missedLimit,
+      minIncorrectAttempts: minIncorrectAttempts
+        ? parseInt(minIncorrectAttempts, 10)
+        : MIN_INCORRECT_ATTEMPTS_FOR_RECURRING,
+    });
+
+    res.json(payload);
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({ message: error.message });
+    }
+    console.error('Student self analytics error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -2504,9 +2528,10 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
       await QuestionBank.populate(attempt.quiz.questions, { path: 'subject', select: 'name' });
     }
 
-    // Check access
-    if (req.user.role === 'student' && attempt.student._id.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ message: 'Access denied' });
+    // Check access — students own attempts; mentors/admins via assignment rules
+    const access = await assertStudentPerformanceAccess(req, attempt.student._id);
+    if (!access.authorized) {
+      return res.status(access.statusCode).json({ message: access.message });
     }
 
     if (attempt.status !== 'completed' && attempt.status !== 'auto_submitted') {
@@ -3120,73 +3145,103 @@ router.get('/analytics/test/:testId', auth, authorize('admin', 'mentor'), async 
   }
 });
 
-// Get student analytics (admin, mentor)
-router.get('/analytics/student/:studentId', auth, authorize('admin', 'mentor'), async (req, res) => {
+// Share quiz with additional students (for Past Tests feature)
+router.get('/analytics/student/:studentId/frequently-missed', auth, async (req, res) => {
   try {
-    if (req.user.role === 'mentor') {
-      const assignment = await MentorStudentAssignment.findOne({
-        mentor: req.user._id,
-        student: req.params.studentId,
-        isActive: true
-      });
-
-      if (!assignment) {
-        return res.status(403).json({ message: 'Not authorized to view this student\'s analytics' });
-      }
+    const access = await assertStudentPerformanceAccess(req, req.params.studentId);
+    if (!access.authorized) {
+      return res.status(access.statusCode).json({ message: access.message });
     }
 
-    const { range } = req.query;
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10));
+    const minIncorrectAttempts = parseInt(req.query.minIncorrectAttempts, 10)
+      || MIN_INCORRECT_ATTEMPTS_FOR_RECURRING;
+    const skip = (page - 1) * limit;
 
-    let attempts = await QuizAttempt.find({
-      student: req.params.studentId,
-      status: { $in: ['completed', 'auto_submitted'] }
-    })
-      .populate('quiz', 'title subject testType totalMarks')
-      .sort({ endTime: -1 });
-
-    attempts = filterAttemptsByDateRange(attempts, range);
-
-    const summary = aggregateStudentSummary(attempts);
-    const subjectStats = aggregateSubjectStats(attempts);
-    const trend = computeTrend(attempts);
-    const insights = computeInsights({ attempts, summary, subjectStats });
-
-    const subjectWise = {};
-    subjectStats.forEach((s) => {
-      subjectWise[s.subjectId] = {
-        tests: s.tests,
-        totalMarks: s.totalMarks,
-        obtainedMarks: s.obtainedMarks,
-      };
+    const result = await getFrequentlyMissedQuestions(req.params.studentId, {
+      minIncorrectAttempts,
+      limit,
+      skip,
+      includeTotal: true,
     });
 
     res.json({
-      summary,
-      attempts: attempts.map(a => {
-        const stats = computeAttemptStats(a);
-        return {
-          _id: a._id,
-          quiz: a.quiz,
-          score: a.score,
-          totalQuestions: stats.totalQuestions,
-          marksObtained: stats.marksObtained,
-          totalMarks: stats.totalMarks,
-          scorePercentage: stats.scorePercentage,
-          accuracy: stats.accuracy,
-          correct: stats.correct,
-          incorrect: stats.incorrect,
-          skipped: stats.skipped,
-          attempted: stats.attempted,
-          percentage: stats.percentage,
-          endTime: a.endTime,
-          tabSwitchCount: a.tabSwitchCount
-        };
-      }),
-      subjectWise,
-      trend,
-      insights,
+      items: result.items,
+      pagination: {
+        page,
+        limit,
+        total: result.total,
+        totalPages: result.total > 0 ? Math.ceil(result.total / limit) : 0,
+      },
+      minIncorrectAttempts,
     });
   } catch (error) {
+    console.error('Frequently missed questions error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Detailed per-question history for a student
+router.get('/analytics/student/:studentId/questions/:questionId/history', auth, async (req, res) => {
+  try {
+    const access = await assertStudentPerformanceAccess(req, req.params.studentId);
+    if (!access.authorized) {
+      return res.status(access.statusCode).json({ message: access.message });
+    }
+
+    const { page, limit } = req.query;
+    const history = await getDetailedQuestionHistory(
+      req.params.studentId,
+      req.params.questionId,
+      { page, limit }
+    );
+
+    res.json(history);
+  } catch (error) {
+    console.error('Question history error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get student analytics (admin, mentor, or student viewing own data)
+router.get('/analytics/student/:studentId', auth, async (req, res) => {
+  try {
+    const access = await assertStudentPerformanceAccess(req, req.params.studentId);
+    if (!access.authorized) {
+      return res.status(access.statusCode).json({ message: access.message });
+    }
+
+    const {
+      range,
+      page,
+      limit,
+      missedPage,
+      missedLimit,
+      minIncorrectAttempts,
+    } = req.query;
+
+    const includeInsights = req.user.role === 'admin' || req.user.role === 'mentor';
+    const includeSubjectWise = includeInsights;
+
+    const payload = await buildStudentPerformanceResponse(req.params.studentId, {
+      range,
+      page,
+      limit,
+      missedPage,
+      missedLimit,
+      minIncorrectAttempts: minIncorrectAttempts
+        ? parseInt(minIncorrectAttempts, 10)
+        : MIN_INCORRECT_ATTEMPTS_FOR_RECURRING,
+      includeInsights,
+      includeSubjectWise,
+    });
+
+    res.json(payload);
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({ message: error.message });
+    }
     console.error(error);
     res.status(500).json({ message: 'Server error' });
   }

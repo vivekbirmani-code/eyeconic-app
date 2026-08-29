@@ -5,6 +5,7 @@ export default function QuizzesLayout() {
         <Stack screenOptions={{ headerShown: false }}>
             <Stack.Screen name="index" />
             <Stack.Screen name="quiz-hub" />
+            <Stack.Screen name="my-performance" />
             <Stack.Screen name="[id]" />
         </Stack>
     );

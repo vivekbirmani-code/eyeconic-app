@@ -15,7 +15,7 @@ import {
   Pressable
 } from 'react-native';
 import { useRouter, useFocusEffect } from 'expo-router';
-import { BookOpen, Clock, CheckCircle, AlertCircle, RotateCcw, ChevronRight, PlayCircle } from 'lucide-react-native';
+import { BookOpen, Clock, CheckCircle, AlertCircle, RotateCcw, ChevronRight, PlayCircle, TrendingUp } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
 import { useNotifications } from '@/context/NotificationContext';
@@ -369,6 +369,27 @@ function QuizzesContent() {
       </Animated.View>
 
       <View style={styles.mainContent}>
+        <Pressable
+          style={({ pressed }) => [styles.performanceCard, pressed && styles.cardPressed]}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            router.push('/quizzes/my-performance' as any);
+          }}
+          accessibilityRole="button"
+          accessibilityLabel="View my performance analytics"
+        >
+          <View style={styles.performanceIcon}>
+            <TrendingUp color="#01b4ae" size={22} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.performanceTitle}>My Performance</Text>
+            <Text style={styles.performanceSubtitle}>
+              Quiz history, accuracy, and frequently missed questions
+            </Text>
+          </View>
+          <ChevronRight color="#94A3B8" size={20} />
+        </Pressable>
+
         {/* Custom Tabs */}
         <View style={styles.tabContainer}>
           <Pressable
@@ -505,6 +526,36 @@ const styles = StyleSheet.create({
   mainContent: {
     flex: 1,
     paddingHorizontal: 20,
+  },
+  performanceCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+    marginBottom: 12,
+    padding: 14,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(1, 180, 174, 0.2)',
+    gap: 12,
+  },
+  performanceIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: '#F0FDFA',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  performanceTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#1E293B',
+  },
+  performanceSubtitle: {
+    fontSize: 12,
+    color: '#64748B',
+    marginTop: 2,
+    lineHeight: 16,
   },
   content: {
     padding: 20,

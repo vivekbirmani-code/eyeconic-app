@@ -3,6 +3,9 @@ const QuestionBank = require('../models/QuestionBank');
 
 const COMPLETED_STATUSES = ['completed', 'auto_submitted'];
 
+/** Minimum incorrect attempts before a question is listed as frequently missed. */
+const MIN_INCORRECT_ATTEMPTS_FOR_RECURRING = 2;
+
 const toObjectId = (id) => {
   if (!id) return null;
   if (id instanceof mongoose.Types.ObjectId) return id;
@@ -56,6 +59,7 @@ async function aggregateQuestionHistoryForStudent(studentId, questionIds, option
 
   const rows = await mongoose.model('QuizAttempt').aggregate([
     { $match: matchStage },
+    { $sort: { endTime: 1 } },
     { $unwind: '$answers' },
     {
       $match: {
@@ -134,6 +138,7 @@ async function aggregateQuestionHistoryForStudent(studentId, questionIds, option
             ],
           },
         },
+        latestResult: { $last: '$answers.isCorrect' },
       },
     },
   ]);
@@ -150,6 +155,7 @@ async function aggregateQuestionHistoryForStudent(studentId, questionIds, option
       previousIncorrectAttempts: row.incorrectAttempts || 0,
       lastAttemptAt: row.lastAttemptAt || null,
       lastIncorrectAt: row.lastIncorrectAt || null,
+      latestResult: row.latestResult === true ? 'correct' : row.latestResult === false ? 'incorrect' : null,
     });
   });
 
@@ -162,8 +168,10 @@ async function aggregateQuestionHistoryForStudent(studentId, questionIds, option
  */
 async function getFrequentlyMissedQuestions(studentId, options = {}) {
   const {
-    minIncorrectAttempts = 2,
+    minIncorrectAttempts = MIN_INCORRECT_ATTEMPTS_FOR_RECURRING,
     limit = 15,
+    skip = 0,
+    includeTotal = false,
     excludeAttemptId,
     excludeQuestionIds = [],
   } = options;
@@ -189,6 +197,7 @@ async function getFrequentlyMissedQuestions(studentId, options = {}) {
 
   const pipeline = [
     { $match: matchStage },
+    { $sort: { endTime: 1 } },
     { $unwind: '$answers' },
     {
       $match: {
@@ -257,11 +266,27 @@ async function getFrequentlyMissedQuestions(studentId, options = {}) {
       },
     },
     { $sort: { incorrectAttempts: -1, incorrectPercentage: -1, latestAttemptAt: -1 } },
-    { $limit: limit },
   ];
 
-  const rows = await mongoose.model('QuizAttempt').aggregate(pipeline);
-  if (rows.length === 0) return [];
+  const countPipeline = [...pipeline, { $count: 'total' }];
+
+  if (skip > 0) {
+    pipeline.push({ $skip: skip });
+  }
+  pipeline.push({ $limit: limit });
+
+  const [rows, countRows] = await Promise.all([
+    mongoose.model('QuizAttempt').aggregate(pipeline),
+    includeTotal
+      ? mongoose.model('QuizAttempt').aggregate(countPipeline)
+      : Promise.resolve([]),
+  ]);
+
+  const total = includeTotal ? (countRows[0]?.total || 0) : rows.length;
+
+  if (rows.length === 0) {
+    return includeTotal ? { items: [], total } : [];
+  }
 
   const questionDocs = await QuestionBank.find({
     _id: { $in: rows.map((row) => row._id) },
@@ -274,12 +299,13 @@ async function getFrequentlyMissedQuestions(studentId, options = {}) {
     questionDocs.map((doc) => [String(doc._id), doc])
   );
 
-  return rows.map((row) => {
+  const items = rows.map((row) => {
     const questionDoc = questionById.get(String(row._id));
     const subjectName = row.subjectName
       || questionDoc?.subject?.name
       || null;
     const topicName = row.topicName || questionDoc?.topicName || null;
+    const wasAttempted = row.correctAttempts + row.incorrectAttempts > 0;
 
     return {
       questionId: String(row._id),
@@ -288,13 +314,166 @@ async function getFrequentlyMissedQuestions(studentId, options = {}) {
       correctAttempts: row.correctAttempts,
       incorrectAttempts: row.incorrectAttempts,
       incorrectPercentage: Math.round(row.incorrectPercentage || 0),
-      latestResult: row.latestResult === true ? 'correct' : 'incorrect',
+      latestResult: wasAttempted
+        ? (row.latestResult === true ? 'correct' : 'incorrect')
+        : 'unattempted',
       latestAttemptAt: row.latestAttemptAt,
       topicName,
       subjectName,
       section: subjectName || topicName || null,
     };
   });
+
+  return includeTotal ? { items, total } : items;
+}
+
+/**
+ * Chronological per-question attempt history for one student.
+ */
+async function getDetailedQuestionHistory(studentId, questionId, options = {}) {
+  const { limit = 50, page = 1 } = options;
+  const studentObjectId = toObjectId(studentId);
+  const questionObjectId = toObjectId(questionId);
+
+  if (!studentObjectId || !questionObjectId) {
+    return { questionId: String(questionId), attempts: [], pagination: { page: 1, limit, total: 0, totalPages: 0 } };
+  }
+
+  const pageNum = Math.max(1, parseInt(page, 10) || 1);
+  const pageSize = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
+  const skip = (pageNum - 1) * pageSize;
+
+  const matchStage = {
+    student: studentObjectId,
+    status: { $in: COMPLETED_STATUSES },
+    'answers.questionId': questionObjectId,
+  };
+
+  const [attemptRows, summaryRows, totalRows] = await Promise.all([
+    mongoose.model('QuizAttempt').aggregate([
+      { $match: matchStage },
+      { $sort: { endTime: -1 } },
+      { $unwind: '$answers' },
+      {
+        $match: {
+          'answers.questionId': questionObjectId,
+        },
+      },
+      {
+        $lookup: {
+          from: 'quizzes',
+          localField: 'quiz',
+          foreignField: '_id',
+          as: 'quizDoc',
+        },
+      },
+      { $unwind: { path: '$quizDoc', preserveNullAndEmptyArrays: true } },
+      {
+        $project: {
+          attemptId: '$_id',
+          quizId: '$quiz',
+          quizTitle: '$quizDoc.title',
+          endTime: 1,
+          selectedAnswer: '$answers.selectedAnswer',
+          isCorrect: '$answers.isCorrect',
+        },
+      },
+      { $skip: skip },
+      { $limit: pageSize },
+    ]),
+    mongoose.model('QuizAttempt').aggregate([
+      { $match: matchStage },
+      { $sort: { endTime: 1 } },
+      { $unwind: '$answers' },
+      { $match: { 'answers.questionId': questionObjectId } },
+      {
+        $group: {
+          _id: null,
+          totalAttempts: { $sum: 1 },
+          correctAttempts: {
+            $sum: { $cond: [{ $eq: ['$answers.isCorrect', true] }, 1, 0] },
+          },
+          incorrectAttempts: {
+            $sum: {
+              $cond: [
+                {
+                  $and: [
+                    { $eq: ['$answers.isCorrect', false] },
+                    {
+                      $or: [
+                        { $isArray: '$answers.selectedAnswer' },
+                        {
+                          $and: [
+                            { $ne: ['$answers.selectedAnswer', null] },
+                            { $ne: ['$answers.selectedAnswer', -1] },
+                          ],
+                        },
+                      ],
+                    },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
+          },
+          latestResult: { $last: '$answers.isCorrect' },
+        },
+      },
+    ]),
+    mongoose.model('QuizAttempt').aggregate([
+      { $match: matchStage },
+      { $unwind: '$answers' },
+      { $match: { 'answers.questionId': questionObjectId } },
+      { $count: 'total' },
+    ]),
+  ]);
+
+  const total = totalRows[0]?.total || 0;
+  const summaryRow = summaryRows[0] || {
+    totalAttempts: 0,
+    correctAttempts: 0,
+    incorrectAttempts: 0,
+    latestResult: null,
+  };
+
+  const attempts = attemptRows.map((row) => {
+    const answered = isAnswerRecorded(row.selectedAnswer);
+    let result = 'unattempted';
+    if (answered) {
+      result = row.isCorrect === true ? 'correct' : 'incorrect';
+    }
+
+    return {
+      attemptId: String(row.attemptId),
+      quizId: String(row.quizId),
+      quizTitle: row.quizTitle || 'Quiz',
+      completedAt: row.endTime,
+      result,
+      isCorrect: row.isCorrect === true,
+    };
+  });
+
+  return {
+    questionId: String(questionId),
+    summary: {
+      totalAttempts: summaryRow.totalAttempts || 0,
+      correctAttempts: summaryRow.correctAttempts || 0,
+      incorrectAttempts: summaryRow.incorrectAttempts || 0,
+      latestResult: summaryRow.latestResult === true
+        ? 'correct'
+        : summaryRow.latestResult === false
+          ? 'incorrect'
+          : null,
+    },
+    attempts,
+    pagination: {
+      page: pageNum,
+      limit: pageSize,
+      total,
+      totalPages: total > 0 ? Math.ceil(total / pageSize) : 0,
+    },
+  };
 }
 
 /**
@@ -335,8 +514,10 @@ function classifyQuestionResult(answer) {
 }
 
 module.exports = {
+  MIN_INCORRECT_ATTEMPTS_FOR_RECURRING,
   aggregateQuestionHistoryForStudent,
   getFrequentlyMissedQuestions,
+  getDetailedQuestionHistory,
   computeTimeTakenSeconds,
   classifyQuestionResult,
   isAnswerRecorded,

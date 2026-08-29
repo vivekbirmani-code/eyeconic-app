@@ -28,6 +28,67 @@ export interface StudentAnalyticsSummary {
   totalQuestions: number;
 }
 
+export interface PaginationMeta {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  showingFrom?: number;
+  showingTo?: number;
+}
+
+export interface StudentPerformanceAttempt {
+  _id: string;
+  quiz: {
+    _id: string;
+    title: string;
+    testType?: string;
+    totalMarks?: number;
+  };
+  score: number;
+  totalQuestions: number;
+  marksObtained: number;
+  totalMarks: number;
+  scorePercentage: number | null;
+  accuracy: number | null;
+  correct?: number;
+  incorrect?: number;
+  skipped?: number;
+  attempted?: number;
+  percentage: number;
+  endTime: string;
+  tabSwitchCount?: number;
+}
+
+export interface StudentPerformanceResponse {
+  student: {
+    id: string;
+    name: string;
+    email?: string;
+    profilePicture?: string | null;
+  };
+  summary: StudentAnalyticsSummary;
+  trend?: TrendPoint[];
+  attempts: StudentPerformanceAttempt[];
+  pagination: PaginationMeta;
+  frequentlyMissedQuestions: Array<{
+    questionId: string;
+    question: string;
+    totalAttempts: number;
+    correctAttempts: number;
+    incorrectAttempts: number;
+    incorrectPercentage: number;
+    latestResult: 'correct' | 'incorrect' | 'unattempted';
+    latestAttemptAt?: string;
+    topicName?: string | null;
+    subjectName?: string | null;
+    section?: string | null;
+  }>;
+  frequentlyMissedPagination?: PaginationMeta;
+  insights?: AnalyticsInsight[];
+  subjectWise?: Record<string, { tests: number; totalMarks: number; obtainedMarks: number }>;
+}
+
 export interface TrendPoint {
   attemptId: string;
   quizTitle: string;
