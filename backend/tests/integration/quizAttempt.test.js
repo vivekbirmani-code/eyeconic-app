@@ -359,4 +359,165 @@ describe('Quiz attempt lifecycle — type-aware grading + snapshots', () => {
 
     expect(res.status).toBe(403);
   });
+
+  it('returns idempotent full result payload on duplicate submit', async () => {
+    const { quiz, questions } = await setupQuizWithQuestions(admin, student, subject, [
+      { questionType: 'mcq_single', options: ['A', 'B'], correctAnswer: 0 },
+      { questionType: 'mcq_single', options: ['A', 'B'], correctAnswer: 1 },
+    ]);
+
+    const startRes = await request(app)
+      .post(`/api/quizzes/${quiz._id}/start`)
+      .set('Authorization', `Bearer ${student.token}`);
+    const attemptId = startRes.body.attemptId;
+
+    await request(app)
+      .put(`/api/quizzes/${quiz._id}/attempt/${attemptId}/answer`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({ questionIndex: 0, questionId: questions[0]._id, selectedAnswer: 0 });
+
+    const firstSubmit = await request(app)
+      .post(`/api/quizzes/${quiz._id}/attempt/${attemptId}/submit`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({});
+    expect(firstSubmit.status).toBe(200);
+    expect(firstSubmit.body.correctCount).toBe(1);
+
+    const secondSubmit = await request(app)
+      .post(`/api/quizzes/${quiz._id}/attempt/${attemptId}/submit`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({});
+    expect(secondSubmit.status).toBe(200);
+    expect(secondSubmit.body.isAlreadySubmitted).toBe(true);
+    expect(secondSubmit.body.correctCount).toBe(1);
+    expect(secondSubmit.body.marksObtained).toBe(firstSubmit.body.marksObtained);
+  });
+
+  it('returns scorecard analytics on the results endpoint', async () => {
+    const { quiz, questions } = await setupQuizWithQuestions(admin, student, subject, [
+      { questionType: 'mcq_single', options: ['Alpha', 'Beta'], correctAnswer: 0 },
+      { questionType: 'mcq_single', options: ['Gamma', 'Delta'], correctAnswer: 1 },
+    ]);
+
+    const startRes = await request(app)
+      .post(`/api/quizzes/${quiz._id}/start`)
+      .set('Authorization', `Bearer ${student.token}`);
+    const attemptId = startRes.body.attemptId;
+
+    await request(app)
+      .put(`/api/quizzes/${quiz._id}/attempt/${attemptId}/answer`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({ questionIndex: 0, questionId: questions[0]._id, selectedAnswer: 0, markedForReview: true });
+
+    await request(app)
+      .put(`/api/quizzes/${quiz._id}/attempt/${attemptId}/answer`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({ questionIndex: 1, questionId: questions[1]._id, selectedAnswer: 0 });
+
+    await request(app)
+      .post(`/api/quizzes/${quiz._id}/attempt/${attemptId}/submit`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({});
+
+    const resultsRes = await request(app)
+      .get(`/api/quizzes/${quiz._id}/attempt/${attemptId}/results?groupBy=subject`)
+      .set('Authorization', `Bearer ${student.token}`);
+
+    expect(resultsRes.status).toBe(200);
+    expect(resultsRes.body.summary.correct).toBe(1);
+    expect(resultsRes.body.summary.incorrect).toBe(1);
+    expect(resultsRes.body.summary.skipped).toBe(0);
+    expect(resultsRes.body.summary.accuracy).toBe(50);
+    expect(resultsRes.body.summary.markedForReviewCount).toBe(1);
+    expect(resultsRes.body.wrongQuestions).toHaveLength(1);
+    expect(resultsRes.body.questionPerformance).toHaveLength(2);
+    expect(resultsRes.body.wrongQuestions[0].selectedAnswerLabel).toBe('A');
+  });
+
+  it('tracks historical incorrect attempts across quizzes for the same question', async () => {
+    const sharedQuestion = await createQuestion(admin, subject, {
+      questionType: 'mcq_single',
+      options: ['A', 'B'],
+      correctAnswer: 0,
+      question: 'Shared historical question',
+    });
+
+    const quizA = await Quiz.create({
+      title: 'Quiz A',
+      subject: subject._id,
+      testType: 'daily',
+      duration: 30,
+      questions: [sharedQuestion._id],
+      positiveMarks: 4,
+      negativeMarks: 1,
+      assignedStudents: [student.user._id],
+      createdBy: admin.user._id,
+    });
+
+    const quizB = await Quiz.create({
+      title: 'Quiz B',
+      subject: subject._id,
+      testType: 'daily',
+      duration: 30,
+      questions: [sharedQuestion._id],
+      positiveMarks: 4,
+      negativeMarks: 1,
+      assignedStudents: [student.user._id],
+      createdBy: admin.user._id,
+    });
+
+  const submitWrong = async (quizId) => {
+      const startRes = await request(app)
+        .post(`/api/quizzes/${quizId}/start`)
+        .set('Authorization', `Bearer ${student.token}`);
+      const attemptId = startRes.body.attemptId;
+
+      await request(app)
+        .put(`/api/quizzes/${quizId}/attempt/${attemptId}/answer`)
+        .set('Authorization', `Bearer ${student.token}`)
+        .send({ questionIndex: 0, questionId: sharedQuestion._id, selectedAnswer: 1 });
+
+      await request(app)
+        .post(`/api/quizzes/${quizId}/attempt/${attemptId}/submit`)
+        .set('Authorization', `Bearer ${student.token}`)
+        .send({});
+
+      return attemptId;
+    };
+
+    await submitWrong(quizA._id);
+    const attemptB = await submitWrong(quizB._id);
+
+    const resultsRes = await request(app)
+      .get(`/api/quizzes/${quizB._id}/attempt/${attemptB}/results?groupBy=subject`)
+      .set('Authorization', `Bearer ${student.token}`);
+
+    expect(resultsRes.status).toBe(200);
+    expect(resultsRes.body.wrongQuestions[0].history.previousIncorrectAttempts).toBe(1);
+    expect(resultsRes.body.frequentlyMissedQuestions.some(
+      (item) => item.questionId === sharedQuestion._id.toString()
+    )).toBe(false);
+  });
+
+  it('rejects results access for another student', async () => {
+    const { quiz } = await setupQuizWithQuestions(admin, student, subject, [
+      { questionType: 'mcq_single', options: ['A', 'B'], correctAnswer: 0 },
+    ]);
+
+    const startRes = await request(app)
+      .post(`/api/quizzes/${quiz._id}/start`)
+      .set('Authorization', `Bearer ${student.token}`);
+    const attemptId = startRes.body.attemptId;
+
+    await request(app)
+      .post(`/api/quizzes/${quiz._id}/attempt/${attemptId}/submit`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({});
+
+    const res = await request(app)
+      .get(`/api/quizzes/${quiz._id}/attempt/${attemptId}/results`)
+      .set('Authorization', `Bearer ${otherStudent.token}`);
+
+    expect(res.status).toBe(403);
+  });
 });

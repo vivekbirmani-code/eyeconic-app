@@ -35,6 +35,12 @@ const {
   getAttemptDurationMinutes,
   computeScorePercentage,
 } = require('../utils/analytics');
+const {
+  aggregateQuestionHistoryForStudent,
+  getFrequentlyMissedQuestions,
+  computeTimeTakenSeconds,
+  isAnswerRecorded,
+} = require('../utils/questionHistory');
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -77,6 +83,65 @@ const optionTextFromIndex = (options, index) => {
   }
   return options[idx] || '';
 };
+
+const formatAnswerForDisplay = (questionType, selectedAnswer, options = [], columnA = [], columnB = []) => {
+  if (!isAnswerRecorded(selectedAnswer)) {
+    return { label: 'Not answered', text: 'Not answered' };
+  }
+
+  switch (questionType) {
+    case 'multiple_correct': {
+      const indices = Array.isArray(selectedAnswer) ? selectedAnswer : [];
+      const labels = indices.map((idx) => optionLabelFromIndex(idx));
+      const texts = indices.map((idx) => optionTextFromIndex(options, idx));
+      return {
+        label: labels.join(', ') || 'Not answered',
+        text: texts.filter(Boolean).join('; ') || labels.join(', '),
+      };
+    }
+    case 'match_the_following': {
+      if (!selectedAnswer || typeof selectedAnswer !== 'object') {
+        return { label: 'Not answered', text: 'Not answered' };
+      }
+      const pairs = Object.entries(selectedAnswer).map(([aIdx, bIdx]) => {
+        const left = columnA[Number(aIdx)] || `Item ${Number(aIdx) + 1}`;
+        const right = columnB[Number(bIdx)] || optionLabelFromIndex(Number(bIdx));
+        return `${left} → ${right}`;
+      });
+      return { label: pairs.join(', '), text: pairs.join('; ') };
+    }
+    case 'numerical':
+      return { label: String(selectedAnswer), text: String(selectedAnswer) };
+    default: {
+      const idx = Number(selectedAnswer);
+      const label = optionLabelFromIndex(idx);
+      const text = optionTextFromIndex(options, idx);
+      return { label: label || String(selectedAnswer), text: text || label };
+    }
+  }
+};
+
+const buildSubmitResponsePayload = (attempt, quiz, stats) => ({
+  message: 'Quiz submitted successfully',
+  attemptId: attempt._id,
+  isAlreadySubmitted: false,
+  score: stats.correct,
+  totalQuestions: stats.totalQuestions,
+  marksObtained: roundTo2(attempt.marksObtained),
+  totalMarks: attempt.totalMarks,
+  scorePercentage: stats.scorePercentage,
+  percentage: stats.scorePercentage ?? 0,
+  accuracy: stats.accuracy,
+  correctCount: stats.correct,
+  incorrectCount: stats.incorrect,
+  skippedCount: stats.skipped,
+  attemptedCount: stats.attempted,
+  markedForReviewCount: Array.isArray(attempt.answers)
+    ? attempt.answers.filter((answer) => answer.markedForReview).length
+    : 0,
+  timeTakenSeconds: computeTimeTakenSeconds(attempt),
+  status: attempt.status,
+});
 
 const notifyQuizAssignedToStudents = async ({ studentIds, quiz, assignedByName = 'Admin' }) => {
   if (!Array.isArray(studentIds) || studentIds.length === 0 || !quiz?._id) return;
@@ -2144,10 +2209,18 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
     // Check if already submitted (idempotent behavior)
     if (attempt.status === 'completed' || attempt.status === 'auto_submitted') {
       console.log(`[Submit Quiz] Already submitted: ${attempt._id}, status: ${attempt.status}`);
+      const stats = computeAttemptStats(attempt, attempt.quiz?.questions || []);
       return res.json({
+        ...buildSubmitResponsePayload(attempt, attempt.quiz, stats),
         message: 'Quiz already submitted',
-        attemptId: attempt._id,
-        isAlreadySubmitted: true
+        isAlreadySubmitted: true,
+      });
+    }
+
+    if (attempt.status !== 'in_progress') {
+      return res.status(400).json({
+        message: 'This quiz attempt cannot be submitted.',
+        errorCode: 'INVALID_ATTEMPT_STATUS',
       });
     }
 
@@ -2256,21 +2329,62 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
 
     marksObtained = roundTo2(marksObtained);
 
-    // Update attempt
-    attempt.status = isAutoSubmit ? 'auto_submitted' : 'completed';
-    attempt.endTime = new Date();
-    attempt.score = correctCount;
-    attempt.totalQuestions = quiz.questions.length;
-    attempt.marksObtained = marksObtained;
-    attempt.totalMarks = quiz.totalMarks;
-    attempt.sectionPerformance = sectionPerformanceArray;
+    const finalStatus = isAutoSubmit ? 'auto_submitted' : 'completed';
+    const endTime = new Date();
+    const shareSolutionAtSubmission = quiz.shareSolution !== undefined ? quiz.shareSolution : true;
 
-    // SECURITY: Store shareSolution value at submission time for audit trail
-    attempt.shareSolutionAtSubmission = quiz.shareSolution !== undefined ? quiz.shareSolution : true;
+    // Atomic finalize — only one concurrent submit can succeed.
+    const finalizedAttempt = await QuizAttempt.findOneAndUpdate(
+      {
+        _id: attempt._id,
+        student: req.user._id,
+        status: 'in_progress',
+      },
+      {
+        $set: {
+          status: finalStatus,
+          endTime,
+          score: correctCount,
+          totalQuestions: quiz.questions.length,
+          marksObtained,
+          totalMarks: quiz.totalMarks,
+          sectionPerformance: sectionPerformanceArray,
+          shareSolutionAtSubmission,
+          answers: attempt.answers,
+        },
+      },
+      { new: true }
+    );
 
-    await attempt.save();
+    if (!finalizedAttempt) {
+      const existingAttempt = await QuizAttempt.findOne({
+        _id: attempt._id,
+        student: req.user._id,
+      }).populate({
+        path: 'quiz',
+        populate: { path: 'questions', model: 'QuestionBank' },
+      });
 
-    console.log(`[Submit Quiz] Successfully submitted: ${attempt._id}, Score: ${correctCount}/${quiz.questions.length}`);
+      if (
+        existingAttempt
+        && (existingAttempt.status === 'completed' || existingAttempt.status === 'auto_submitted')
+      ) {
+        console.log(`[Submit Quiz] Duplicate submit detected, returning existing result: ${attempt._id}`);
+        const stats = computeAttemptStats(existingAttempt, existingAttempt.quiz?.questions || []);
+        return res.json({
+          ...buildSubmitResponsePayload(existingAttempt, existingAttempt.quiz, stats),
+          message: 'Quiz already submitted',
+          isAlreadySubmitted: true,
+        });
+      }
+
+      return res.status(409).json({
+        message: 'Quiz submission is already in progress. Please wait.',
+        errorCode: 'SUBMIT_IN_PROGRESS',
+      });
+    }
+
+    console.log(`[Submit Quiz] Successfully submitted: ${finalizedAttempt._id}, Score: ${correctCount}/${quiz.questions.length}`);
 
     // Emit quiz_submitted event back to the student
     const io = req.app.get('io');
@@ -2279,10 +2393,10 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
       const socketHelpers = require('../utils/socket-helpers');
       if (socketHelpers && socketHelpers.emitToUser) {
         socketHelpers.emitToUser(req.user._id.toString(), 'quiz_submitted', {
-          quizId: attempt.quiz._id,
-          attemptId: attempt._id,
+          quizId: quiz._id,
+          attemptId: finalizedAttempt._id,
           score: correctCount,
-          status: attempt.status
+          status: finalizedAttempt.status
         });
       }
 
@@ -2291,7 +2405,7 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
         const studentObj = await User.findById(req.user._id).select('name');
         const studentName = studentObj ? studentObj.name : 'A student';
         const attemptDetails = {
-          quizId: attempt.quiz._id,
+          quizId: quiz._id,
           quizTitle: quiz.title,
           studentId: req.user._id,
           studentName: studentName,
@@ -2337,18 +2451,8 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
       }
     }
 
-    res.json({
-      message: 'Quiz submitted successfully',
-      attemptId: attempt._id,
-      score: correctCount,
-      totalQuestions: quiz.questions.length,
-      marksObtained: roundTo2(marksObtained),
-      totalMarks: quiz.totalMarks,
-      percentage: quiz.totalMarks > 0 ? Math.round((marksObtained / quiz.totalMarks) * 100) : 0,
-      correctCount,
-      incorrectCount,
-      skippedCount
-    });
+    const stats = computeAttemptStats(finalizedAttempt, quiz.questions);
+    res.json(buildSubmitResponsePayload(finalizedAttempt, quiz, stats));
   } catch (error) {
     console.error('[Submit Quiz] ERROR:', error);
     console.error('[Submit Quiz] Error stack:', error.stack);
@@ -2403,6 +2507,13 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
     // Check access
     if (req.user.role === 'student' && attempt.student._id.toString() !== req.user._id.toString()) {
       return res.status(403).json({ message: 'Access denied' });
+    }
+
+    if (attempt.status !== 'completed' && attempt.status !== 'auto_submitted') {
+      return res.status(400).json({
+        message: 'Results are only available after the quiz has been submitted.',
+        errorCode: 'ATTEMPT_NOT_COMPLETED',
+      });
     }
 
     // SECURITY CRITICAL: Fetch current shareSolution setting dynamically
@@ -2588,7 +2699,134 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
       };
     });
 
+    const stats = computeAttemptStats(attempt, attempt.quiz.questions || []);
+    const markedForReviewCount = Array.isArray(attempt.answers)
+      ? attempt.answers.filter((answer) => answer.markedForReview).length
+      : 0;
+    const timeTakenSeconds = computeTimeTakenSeconds(attempt, attempt.quiz.questions || []);
+
+    const questionIds = questionsWithAnswers
+      .map((question) => question._id)
+      .filter(Boolean);
+
+    const historyMap = await aggregateQuestionHistoryForStudent(
+      attempt.student._id,
+      questionIds,
+      { excludeAttemptId: attempt._id }
+    );
+
+    const questionPerformance = questionsWithAnswers.map((question) => {
+      const history = historyMap.get(String(question._id)) || {
+        questionId: String(question._id),
+        totalAttempts: 0,
+        correctAttempts: 0,
+        incorrectAttempts: 0,
+        skippedAttempts: 0,
+        previousIncorrectAttempts: 0,
+      };
+
+      const answered = isAnswerRecorded(question.userAnswer);
+      let status = 'unattempted';
+      if (answered) {
+        status = question.isCorrect ? 'correct' : 'incorrect';
+      }
+
+      return {
+        questionId: String(question._id),
+        questionIndex: question.globalIndex,
+        section: question.section,
+        status,
+        isCorrect: question.isCorrect === true,
+        markedForReview: question.markedForReview === true,
+        timeSpent: question.timeSpent || 0,
+        history,
+      };
+    });
+
+    const wrongQuestions = questionsWithAnswers
+      .filter((question) => {
+        const answered = isAnswerRecorded(question.userAnswer);
+        return answered && question.isCorrect === false;
+      })
+      .map((question) => {
+        const history = historyMap.get(String(question._id)) || {
+          totalAttempts: 0,
+          correctAttempts: 0,
+          incorrectAttempts: 0,
+          skippedAttempts: 0,
+          previousIncorrectAttempts: 0,
+        };
+
+        const selected = formatAnswerForDisplay(
+          question.questionType,
+          question.userAnswer,
+          question.options,
+          question.columnA,
+          question.columnB
+        );
+
+        const correct = shareSolution
+          ? formatAnswerForDisplay(
+            question.questionType,
+            question.correctAnswer,
+            question.options,
+            question.columnA,
+            question.columnB
+          )
+          : null;
+
+        return {
+          questionId: String(question._id),
+          questionIndex: question.globalIndex,
+          displayNumber: (question.globalIndex ?? 0) + 1,
+          question: question.question,
+          questionImage: question.questionImage,
+          questionType: question.questionType,
+          section: question.section,
+          topicName: question.topicName,
+          subjectName: question.subject?.name || question.metadataSnapshot?.subjectName || null,
+          selectedAnswer: question.userAnswer,
+          selectedAnswerLabel: selected.label,
+          selectedAnswerText: selected.text,
+          correctAnswer: shareSolution ? question.correctAnswer : undefined,
+          correctAnswerLabel: correct?.label,
+          correctAnswerText: correct?.text,
+          explanation: shareSolution ? question.explanation : undefined,
+          explanationImage: shareSolution ? question.explanationImage : undefined,
+          timeSpent: question.timeSpent || 0,
+          history: {
+            ...history,
+            previousIncorrectAttempts: history.previousIncorrectAttempts || history.incorrectAttempts || 0,
+          },
+        };
+      });
+
+    const frequentlyMissedQuestions = await getFrequentlyMissedQuestions(
+      attempt.student._id,
+      {
+        minIncorrectAttempts: 2,
+        limit: 15,
+        excludeAttemptId: attempt._id,
+      }
+    );
+
+    const hasSectionData = sectionPerformanceArray.length > 0
+      && !(sectionPerformanceArray.length === 1 && sectionPerformanceArray[0].sectionName === 'General');
+
     res.json({
+      summary: {
+        correct: stats.correct,
+        incorrect: stats.incorrect,
+        skipped: stats.skipped,
+        attempted: stats.attempted,
+        totalQuestions: stats.totalQuestions,
+        marksObtained: roundTo2(stats.marksObtained),
+        totalMarks: stats.totalMarks,
+        scorePercentage: stats.scorePercentage,
+        accuracy: stats.accuracy,
+        markedForReviewCount,
+        timeTakenSeconds,
+      },
       attempt: {
         _id: attempt._id,
         status: attempt.status,
@@ -2599,7 +2837,10 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
         marksObtained: roundTo2(attempt.marksObtained),
         totalMarks: attempt.totalMarks,
         sectionPerformance: sectionPerformanceArray,
-        tabSwitchCount: attempt.tabSwitchCount
+        tabSwitchCount: attempt.tabSwitchCount,
+        retestRequested: attempt.retestRequested || false,
+        retestApproved: attempt.retestApproved || false,
+        canRequestRetest: !attempt.retestRequested && !attempt.retestApproved,
       },
       quiz: {
         _id: attempt.quiz._id,
@@ -2614,11 +2855,15 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
           return names.length > 0 ? names : (attempt.quiz.subject?.name ? [attempt.quiz.subject.name] : []);
         })(),
         testType: attempt.quiz.testType,
-        shareSolution  // IMPORTANT: Send this to frontend for UI decisions
+        shareSolution
       },
       student: attempt.student,
       questions: questionsWithAnswers,
-      groupBy // Send back the grouping method for frontend reference
+      questionPerformance,
+      wrongQuestions,
+      frequentlyMissedQuestions,
+      hasSectionData,
+      groupBy
     });
   } catch (error) {
     console.error(error);

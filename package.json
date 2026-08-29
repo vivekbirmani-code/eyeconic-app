@@ -73,7 +73,8 @@
     "preset": "ts-jest",
     "testEnvironment": "node",
     "testMatch": [
-      "<rootDir>/services/**/__tests__/**/*.test.ts"
+      "<rootDir>/services/**/__tests__/**/*.test.ts",
+      "<rootDir>/utils/**/__tests__/**/*.test.ts"
     ],
     "transform": {
       "^.+\\.tsx?$": [

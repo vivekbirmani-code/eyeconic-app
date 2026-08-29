@@ -154,5 +154,6 @@ const attemptSchema = new mongoose.Schema({
 attemptSchema.index({ quiz: 1, student: 1 });
 attemptSchema.index({ student: 1, status: 1 });
 attemptSchema.index({ retestRequested: 1, retestApproved: 1 });
+attemptSchema.index({ student: 1, 'answers.questionId': 1 });
 
 module.exports = mongoose.model('QuizAttempt', attemptSchema);

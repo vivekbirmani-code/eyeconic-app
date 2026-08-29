@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -9,92 +9,99 @@ import {
   ActivityIndicator,
   Alert,
   Platform,
-  StatusBar
+  StatusBar,
+  RefreshControl,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { CheckCircle, XCircle, Clock, Award, BarChart3, FileText } from 'lucide-react-native';
+import {
+  CheckCircle,
+  XCircle,
+  Clock,
+  Award,
+  BarChart3,
+  FileText,
+  AlertTriangle,
+} from 'lucide-react-native';
 import { api } from '@/services/api';
-
-interface ResultData {
-  attemptId: string;
-  quiz: {
-    title: string;
-    subject: string;
-    totalQuestions: number;
-    totalMarks: number;
-    shareSolution: boolean;  // NEW: Whether solutions are shared with students
-  };
-  score: number;
-  marksObtained: number;
-  percentage: number;
-  startTime: string;
-  endTime: string;
-  status: string;
-  sectionPerformance: Array<{
-    sectionName: string;
-    correct: number;
-    incorrect: number;
-    skipped: number;
-    timeSpent: number;
-    accuracy: number;
-  }>;
-  detailedResults: any[];
-  canRequestRetest: boolean;
-  retestRequested: boolean;
-  retestApproved: boolean;
-}
+import { QuizResultData } from '@/types/quiz-result';
+import { formatDuration, formatMarks, formatPercentage, pluralize } from '@/utils/quizFormat';
+import { PerformanceMetricGrid } from '@/components/quiz/PerformanceMetricGrid';
+import { PerformanceChart } from '@/components/quiz/PerformanceChart';
+import { WrongQuestionSection } from '@/components/quiz/WrongQuestionSection';
+import { FrequentlyMissedSection } from '@/components/quiz/FrequentlyMissedSection';
+import { QuestionPerformanceList } from '@/components/quiz/QuestionPerformanceList';
 
 export default function QuizResult() {
-  const { id, attemptId } = useLocalSearchParams();
+  const { id, attemptId } = useLocalSearchParams<{ id: string; attemptId: string }>();
   const router = useRouter();
-  const [result, setResult] = useState<ResultData | null>(null);
+  const [result, setResult] = useState<QuizResultData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    fetchResults();
-  }, []);
+  const fetchResults = useCallback(async (isRefresh = false) => {
+    if (!isRefresh) {
+      setLoading(true);
+    }
+    setError(null);
 
-  const fetchResults = async () => {
     try {
-      // groupBy=subject ensures section analysis groups by actual subject names
       const response = await api.get(`/quizzes/${id}/attempt/${attemptId}/results?groupBy=subject`);
       const data = response.data;
 
-      // Transform backend response to match ResultData interface
-      const formattedResult: ResultData = {
+      const summary = data.summary || {
+        correct: data.attempt?.score || 0,
+        incorrect: 0,
+        skipped: 0,
+        attempted: data.attempt?.score || 0,
+        totalQuestions: data.attempt?.totalQuestions || 0,
+        marksObtained: data.attempt?.marksObtained || 0,
+        totalMarks: data.attempt?.totalMarks || 0,
+        scorePercentage: data.attempt?.totalMarks > 0
+          ? Math.round((data.attempt.marksObtained / data.attempt.totalMarks) * 100)
+          : null,
+        accuracy: null,
+        markedForReviewCount: 0,
+        timeTakenSeconds: 0,
+      };
+
+      const formattedResult: QuizResultData = {
         attemptId: data.attempt._id,
         quiz: {
           title: data.quiz.title,
           subject: typeof data.quiz.subject === 'object' ? data.quiz.subject.name : data.quiz.subject,
           totalQuestions: data.attempt.totalQuestions,
           totalMarks: data.attempt.totalMarks,
-          shareSolution: data.quiz.shareSolution !== undefined ? data.quiz.shareSolution : true
+          shareSolution: data.quiz.shareSolution !== undefined ? data.quiz.shareSolution : true,
         },
-        score: data.attempt.score,
-        marksObtained: data.attempt.marksObtained,
-        // Accuracy = marks / totalMarks to match the admin panel
-        percentage: data.attempt.totalMarks > 0
-          ? Math.round((data.attempt.marksObtained / data.attempt.totalMarks) * 100)
-          : 0,
+        summary,
+        sectionPerformance: data.attempt.sectionPerformance || [],
+        hasSectionData: data.hasSectionData ?? (data.attempt.sectionPerformance?.length > 0),
+        wrongQuestions: data.wrongQuestions || [],
+        frequentlyMissedQuestions: data.frequentlyMissedQuestions || [],
+        questionPerformance: data.questionPerformance || [],
         startTime: data.attempt.startTime,
         endTime: data.attempt.endTime,
         status: data.attempt.status,
-        sectionPerformance: data.attempt.sectionPerformance || [],
-        detailedResults: data.questions || [],
-        canRequestRetest: !data.attempt.retestRequested && !data.attempt.retestApproved,
+        canRequestRetest: data.attempt.canRequestRetest ?? (!data.attempt.retestRequested && !data.attempt.retestApproved),
         retestRequested: data.attempt.retestRequested || false,
-        retestApproved: data.attempt.retestApproved || false
+        retestApproved: data.attempt.retestApproved || false,
       };
 
       setResult(formattedResult);
-    } catch (error: any) {
-      console.error('Error fetching results:', error);
-      Alert.alert('Error', 'Failed to load results');
-      router.back();
+    } catch (fetchError: any) {
+      console.error('Error fetching results:', fetchError);
+      const message = fetchError.response?.data?.message || 'Failed to load quiz results.';
+      setError(message);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
-  };
+  }, [id, attemptId]);
+
+  useEffect(() => {
+    fetchResults();
+  }, [fetchResults]);
 
   const handleRequestRetest = async () => {
     Alert.alert(
@@ -108,12 +115,12 @@ export default function QuizResult() {
             try {
               await api.post(`/quizzes/${id}/attempt/${attemptId}/request-retest`);
               Alert.alert('Success', 'Retest request submitted to admin');
-              fetchResults();
-            } catch (error: any) {
-              Alert.alert('Error', error.response?.data?.message || 'Failed to request retest');
+              fetchResults(true);
+            } catch (requestError: any) {
+              Alert.alert('Error', requestError.response?.data?.message || 'Failed to request retest');
             }
-          }
-        }
+          },
+        },
       ]
     );
   };
@@ -129,57 +136,104 @@ export default function QuizResult() {
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
-        <ActivityIndicator size="large" color="#2563EB" />
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color="#2563EB" />
+          <Text style={styles.loadingText}>Loading your results...</Text>
+        </View>
       </SafeAreaView>
     );
   }
 
-  if (!result) {
+  if (error || !result) {
     return (
       <SafeAreaView style={styles.container}>
-        <Text style={styles.errorText}>Results not found</Text>
+        <View style={styles.centered}>
+          <AlertTriangle color="#EF4444" size={40} />
+          <Text style={styles.errorTitle}>Unable to load results</Text>
+          <Text style={styles.errorText}>{error || 'Results not found'}</Text>
+          <TouchableOpacity style={styles.retryButton} onPress={() => fetchResults()}>
+            <Text style={styles.retryButtonText}>Try Again</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.secondaryButton} onPress={handleBackToQuizzes}>
+            <Text style={styles.secondaryButtonText}>Back to Quizzes</Text>
+          </TouchableOpacity>
+        </View>
       </SafeAreaView>
     );
   }
 
-  const formatTime = (seconds: number) => {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
+  const { summary } = result;
+  const scorePercentage = summary.scorePercentage ?? 0;
+  const accuracyDisplay = formatPercentage(summary.accuracy);
+  const isPassing = scorePercentage >= 50;
+  const questionLabel = pluralize(summary.correct, 'Question');
 
-    if (hours > 0) {
-      return `${hours}h ${minutes}m ${secs}s`;
-    }
-    return `${minutes}m ${secs}s`;
-  };
+  const metricRows = [
+    {
+      key: 'correct',
+      label: 'Correct',
+      value: summary.correct,
+      icon: CheckCircle,
+      iconColor: '#10B981',
+    },
+    {
+      key: 'incorrect',
+      label: 'Incorrect',
+      value: summary.incorrect,
+      icon: XCircle,
+      iconColor: '#EF4444',
+    },
+    {
+      key: 'skipped',
+      label: 'Unattempted',
+      value: summary.skipped,
+      icon: Clock,
+      iconColor: '#F59E0B',
+    },
+    {
+      key: 'marked',
+      label: 'Marked for Review',
+      value: summary.markedForReviewCount,
+      icon: BarChart3,
+      iconColor: '#6B7280',
+    },
+    {
+      key: 'accuracy',
+      label: 'Accuracy',
+      value: accuracyDisplay,
+      icon: Award,
+      iconColor: '#8B5CF6',
+    },
+    {
+      key: 'time',
+      label: 'Time Taken',
+      value: formatDuration(summary.timeTakenSeconds),
+      icon: Clock,
+      iconColor: '#3B82F6',
+    },
+  ];
 
-  // Calculate section accuracy with fallback for backward compatibility
-  const sectionPerformanceWithAccuracy = result.sectionPerformance.map(section => {
-    const totalQuestionsInSection = section.correct + section.incorrect + section.skipped;
-    const accuracy = section.accuracy !== undefined
-      ? section.accuracy
-      : (totalQuestionsInSection > 0 ? Math.round((section.correct / totalQuestionsInSection) * 100) : 0);
-
-    return {
-      ...section,
-      accuracy
-    };
-  });
-
-  const totalTimeSpent = sectionPerformanceWithAccuracy.reduce((sum, section) => sum + section.timeSpent, 0);
-  const correctCount = sectionPerformanceWithAccuracy.reduce((sum, section) => sum + section.correct, 0);
-  const incorrectCount = sectionPerformanceWithAccuracy.reduce((sum, section) => sum + section.incorrect, 0);
-  const skippedCount = sectionPerformanceWithAccuracy.reduce((sum, section) => sum + section.skipped, 0);
-  const markedCount = result.detailedResults.filter(r => r.markedForReview).length;
+  const chartData = [
+    { key: 'correct', label: 'Correct', count: summary.correct, color: '#10B981' },
+    { key: 'incorrect', label: 'Wrong', count: summary.incorrect, color: '#EF4444' },
+    { key: 'skipped', label: 'Unattempted', count: summary.skipped, color: '#F59E0B' },
+  ];
 
   return (
     <SafeAreaView style={styles.container}>
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        {/* Header */}
+      <ScrollView
+        style={styles.scrollView}
+        showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchResults(true); }} />
+        }
+      >
         <View style={styles.header}>
+          <Text style={styles.headerBadge}>Quiz Completed</Text>
           <Text style={styles.title}>{result.quiz.title}</Text>
           <Text style={styles.subtitle}>
             {new Date(result.endTime).toLocaleDateString()} • {new Date(result.endTime).toLocaleTimeString()}
+            {result.status === 'auto_submitted' ? ' • Auto-submitted' : ''}
           </Text>
 
           <View style={styles.actionButtons}>
@@ -193,7 +247,6 @@ export default function QuizResult() {
                 <Text style={styles.pendingText}>Retest Pending</Text>
               </View>
             )}
-            {/* View Solutions Button - Only show if shareSolution is true */}
             {result.quiz.shareSolution && (
               <TouchableOpacity style={styles.solutionsButton} onPress={handleViewSolutions}>
                 <FileText color="#2563EB" size={20} />
@@ -203,129 +256,91 @@ export default function QuizResult() {
           </View>
         </View>
 
-        {/* Score Card */}
         <View style={styles.scoreCard}>
           <View style={styles.scoreIconContainer}>
-            {result.percentage >= 50 ? (
+            {isPassing ? (
               <CheckCircle color="#10B981" size={64} />
             ) : (
               <XCircle color="#EF4444" size={64} />
             )}
           </View>
           <Text style={styles.scoreText}>
-            {result.score}/{result.quiz.totalQuestions}
+            {summary.correct}/{summary.totalQuestions}
           </Text>
-          <Text style={styles.scoreSubtext}>Questions Correct</Text>
+          <Text style={styles.scoreSubtext}>{questionLabel} Correct</Text>
 
-          {/* Marks Score */}
           <View style={styles.marksScoreContainer}>
             <Award color="#8B5CF6" size={18} />
             <Text style={styles.marksScoreText}>
-              Score: <Text style={styles.marksScoreValue}>{result.marksObtained}</Text>
-              <Text style={styles.marksScoreTotal}>/{result.quiz.totalMarks} marks</Text>
+              Score: <Text style={styles.marksScoreValue}>{formatMarks(summary.marksObtained)}</Text>
+              <Text style={styles.marksScoreTotal}>/{formatMarks(summary.totalMarks)} marks</Text>
             </Text>
           </View>
 
           <View style={styles.percentageContainer}>
-            <Text style={[
-              styles.percentageText,
-              result.percentage >= 50 ? styles.passPercentage : styles.failPercentage
-            ]}>
-              {result.percentage}%
+            <Text style={[styles.percentageText, isPassing ? styles.passPercentage : styles.failPercentage]}>
+              {formatPercentage(summary.scorePercentage, '0%')}
             </Text>
+            <Text style={styles.percentageLabel}>Overall Score</Text>
           </View>
         </View>
 
-        {/* Metrics Grid */}
-        <View style={styles.metricsContainer}>
-          <View style={styles.metricCard}>
-            <CheckCircle color="#10B981" size={24} />
-            <Text style={styles.metricValue}>{correctCount}</Text>
-            <Text style={styles.metricLabel}>Correct</Text>
+        <PerformanceMetricGrid metrics={metricRows} columns={3} />
+        <PerformanceChart data={chartData} />
+
+        {result.hasSectionData && result.sectionPerformance.length > 0 && (
+          <View style={styles.section}>
+            <Text style={styles.sectionTitle}>Section Performance</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+              <View style={styles.tableContainer}>
+                <View style={styles.tableHeader}>
+                  <Text style={[styles.tableHeaderText, styles.colSection]}>Section</Text>
+                  <Text style={[styles.tableHeaderText, styles.colStat]}>Correct</Text>
+                  <Text style={[styles.tableHeaderText, styles.colStat]}>Wrong</Text>
+                  <Text style={[styles.tableHeaderText, styles.colStat]}>Skip</Text>
+                  <Text style={[styles.tableHeaderText, styles.colStat]}>Acc%</Text>
+                  <Text style={[styles.tableHeaderText, styles.colTime]}>Time</Text>
+                </View>
+
+                {result.sectionPerformance.map((section, index) => (
+                  <TouchableOpacity
+                    key={`${section.sectionName}-${index}`}
+                    style={styles.tableRow}
+                    onPress={() => router.push(`/quizzes/${id}/review/${attemptId}?section=${encodeURIComponent(section.sectionName)}`)}
+                    disabled={!result.quiz.shareSolution}
+                  >
+                    <Text style={[styles.tableCell, styles.colSection]} numberOfLines={1}>
+                      {section.sectionName}
+                    </Text>
+                    <Text style={[styles.tableCell, styles.colStat, styles.correctText]}>{section.correct}</Text>
+                    <Text style={[styles.tableCell, styles.colStat, styles.incorrectText]}>{section.incorrect}</Text>
+                    <Text style={[styles.tableCell, styles.colStat, styles.skippedText]}>{section.skipped}</Text>
+                    <Text style={[styles.tableCell, styles.colStat]}>{section.accuracy}%</Text>
+                    <Text style={[styles.tableCell, styles.colTime]}>{formatDuration(section.timeSpent)}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </ScrollView>
           </View>
+        )}
 
-          <View style={styles.metricCard}>
-            <XCircle color="#EF4444" size={24} />
-            <Text style={styles.metricValue}>{incorrectCount}</Text>
-            <Text style={styles.metricLabel}>Incorrect</Text>
-          </View>
+        <WrongQuestionSection
+          questions={result.wrongQuestions}
+          shareSolution={result.quiz.shareSolution}
+        />
 
-          <View style={styles.metricCard}>
-            <Clock color="#F59E0B" size={24} />
-            <Text style={styles.metricValue}>{skippedCount}</Text>
-            <Text style={styles.metricLabel}>Skipped</Text>
-          </View>
-        </View>
+        <FrequentlyMissedSection questions={result.frequentlyMissedQuestions} />
 
-        <View style={styles.metricsContainer}>
-          <View style={styles.metricCard}>
-            <BarChart3 color="#6B7280" size={24} />
-            <Text style={styles.metricValue}>{markedCount}</Text>
-            <Text style={styles.metricLabel}>Marked for Review</Text>
-          </View>
+        <QuestionPerformanceList
+          items={result.questionPerformance}
+          wrongQuestionDetails={result.wrongQuestions}
+          shareSolution={result.quiz.shareSolution}
+          onViewSolutions={handleViewSolutions}
+        />
 
-          <View style={styles.metricCard}>
-            <Award color="#8B5CF6" size={24} />
-            <Text style={styles.metricValue}>{result.percentage}%</Text>
-            <Text style={styles.metricLabel}>Accuracy</Text>
-          </View>
-
-          <View style={styles.metricCard}>
-            <Clock color="#3B82F6" size={24} />
-            <Text style={styles.metricValue}>{formatTime(totalTimeSpent)}</Text>
-            <Text style={styles.metricLabel}>Time Taken</Text>
-          </View>
-        </View>
-
-        {/* Section Performance */}
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Section Performance</Text>
-          <View style={styles.tableContainer}>
-            {/* Table Header */}
-            <View style={styles.tableHeader}>
-              <Text style={[styles.tableHeaderText, styles.colSection]}>Section</Text>
-              <Text style={[styles.tableHeaderText, styles.colStat]}>Correct</Text>
-              <Text style={[styles.tableHeaderText, styles.colStat]}>Wrong</Text>
-              <Text style={[styles.tableHeaderText, styles.colStat]}>Skip</Text>
-              <Text style={[styles.tableHeaderText, styles.colStat]}>Acc%</Text>
-              <Text style={[styles.tableHeaderText, styles.colTime]}>Time</Text>
-            </View>
-
-            {/* Table Rows */}
-            {sectionPerformanceWithAccuracy.map((section, index) => (
-              <TouchableOpacity 
-                key={index} 
-                style={styles.tableRow}
-                onPress={() => router.push(`/quizzes/${id}/review/${attemptId}?section=${encodeURIComponent(section.sectionName)}`)}
-                disabled={!result.quiz.shareSolution}
-              >
-                <Text style={[styles.tableCell, styles.colSection]} numberOfLines={1}>
-                  {section.sectionName}
-                </Text>
-                <Text style={[styles.tableCell, styles.colStat, styles.correctText]}>
-                  {section.correct}
-                </Text>
-                <Text style={[styles.tableCell, styles.colStat, styles.incorrectText]}>
-                  {section.incorrect}
-                </Text>
-                <Text style={[styles.tableCell, styles.colStat, styles.skippedText]}>
-                  {section.skipped}
-                </Text>
-                <Text style={[styles.tableCell, styles.colStat]}>
-                  {section.accuracy}%
-                </Text>
-                <Text style={[styles.tableCell, styles.colTime]}>
-                  {formatTime(section.timeSpent)}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </View>
-        </View>
-
-        <View style={{ height: 20 }} />
+        <View style={{ height: 24 }} />
       </ScrollView>
 
-      {/* Bottom Button */}
       <View style={styles.footer}>
         <TouchableOpacity style={styles.backButton} onPress={handleBackToQuizzes}>
           <Text style={styles.backButtonText}>Back to Quizzes</Text>
@@ -344,11 +359,62 @@ const styles = StyleSheet.create({
   scrollView: {
     flex: 1,
   },
+  centered: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+    gap: 12,
+  },
+  loadingText: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginTop: 8,
+  },
+  errorTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#1F2937',
+    marginTop: 8,
+  },
+  errorText: {
+    fontSize: 14,
+    color: '#6B7280',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  retryButton: {
+    marginTop: 8,
+    backgroundColor: '#2563EB',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 10,
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '600',
+  },
+  secondaryButton: {
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+  },
+  secondaryButtonText: {
+    color: '#2563EB',
+    fontWeight: '600',
+  },
   header: {
     padding: 20,
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
+  },
+  headerBadge: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#2563EB',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 6,
   },
   title: {
     fontSize: 20,
@@ -456,13 +522,16 @@ const styles = StyleSheet.create({
   },
   percentageContainer: {
     marginTop: 16,
-    paddingHorizontal: 20,
-    paddingVertical: 8,
-    borderRadius: 20,
+    alignItems: 'center',
   },
   percentageText: {
-    fontSize: 24,
+    fontSize: 28,
     fontWeight: 'bold',
+  },
+  percentageLabel: {
+    fontSize: 13,
+    color: '#6B7280',
+    marginTop: 4,
   },
   passPercentage: {
     color: '#10B981',
@@ -470,38 +539,9 @@ const styles = StyleSheet.create({
   failPercentage: {
     color: '#EF4444',
   },
-  metricsContainer: {
-    flexDirection: 'row',
-    paddingHorizontal: 20,
-    gap: 12,
-    marginBottom: 12,
-  },
-  metricCard: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 16,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  metricValue: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#1F2937',
-    marginTop: 8,
-  },
-  metricLabel: {
-    fontSize: 11,
-    color: '#6B7280',
-    marginTop: 4,
-    textAlign: 'center',
-  },
   section: {
-    margin: 20,
+    marginHorizontal: 20,
+    marginBottom: 16,
   },
   sectionTitle: {
     fontSize: 18,
@@ -513,6 +553,7 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
     overflow: 'hidden',
+    minWidth: 520,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
@@ -544,14 +585,14 @@ const styles = StyleSheet.create({
     color: '#4B5563',
   },
   colSection: {
-    flex: 2,
+    width: 140,
   },
   colStat: {
-    flex: 1,
+    width: 56,
     textAlign: 'center',
   },
   colTime: {
-    flex: 1.2,
+    width: 72,
     textAlign: 'right',
   },
   correctText: {
@@ -582,10 +623,5 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
     color: '#FFFFFF',
-  },
-  errorText: {
-    fontSize: 16,
-    color: '#EF4444',
-    textAlign: 'center',
   },
 });
