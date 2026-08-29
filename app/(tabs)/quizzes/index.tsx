@@ -259,11 +259,11 @@ function QuizzesContent() {
                 try {
                   const response = await api.post(`/quizzes/${quiz._id}/start`);
                   if (response.data.attemptId) {
-                    router.push(`/quizzes/${quiz._id}/review/${response.data.attemptId}`);
+                    router.push(`/quizzes/${quiz._id}/result/${response.data.attemptId}`);
                   }
                 } catch (err: any) {
                   if (err.response?.status === 400 && err.response?.data?.attemptId) {
-                    router.push(`/quizzes/${quiz._id}/review/${err.response.data.attemptId}`);
+                    router.push(`/quizzes/${quiz._id}/result/${err.response.data.attemptId}`);
                   } else {
                     Alert.alert('Error', 'Could not retrieve quiz results');
                   }

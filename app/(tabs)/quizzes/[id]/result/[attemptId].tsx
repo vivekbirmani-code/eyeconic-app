@@ -25,6 +25,7 @@ import {
 import { api } from '@/services/api';
 import { QuizResultData } from '@/types/quiz-result';
 import { formatDuration, formatMarks, formatPercentage, pluralize } from '@/utils/quizFormat';
+import { buildPerformanceChartData, mapQuizResultsResponse } from '@/utils/quizResult';
 import { PerformanceMetricGrid } from '@/components/quiz/PerformanceMetricGrid';
 import { PerformanceChart } from '@/components/quiz/PerformanceChart';
 import { WrongQuestionSection } from '@/components/quiz/WrongQuestionSection';
@@ -47,48 +48,7 @@ export default function QuizResult() {
 
     try {
       const response = await api.get(`/quizzes/${id}/attempt/${attemptId}/results?groupBy=subject`);
-      const data = response.data;
-
-      const summary = data.summary || {
-        correct: data.attempt?.score || 0,
-        incorrect: 0,
-        skipped: 0,
-        attempted: data.attempt?.score || 0,
-        totalQuestions: data.attempt?.totalQuestions || 0,
-        marksObtained: data.attempt?.marksObtained || 0,
-        totalMarks: data.attempt?.totalMarks || 0,
-        scorePercentage: data.attempt?.totalMarks > 0
-          ? Math.round((data.attempt.marksObtained / data.attempt.totalMarks) * 100)
-          : null,
-        accuracy: null,
-        markedForReviewCount: 0,
-        timeTakenSeconds: 0,
-      };
-
-      const formattedResult: QuizResultData = {
-        attemptId: data.attempt._id,
-        quiz: {
-          title: data.quiz.title,
-          subject: typeof data.quiz.subject === 'object' ? data.quiz.subject.name : data.quiz.subject,
-          totalQuestions: data.attempt.totalQuestions,
-          totalMarks: data.attempt.totalMarks,
-          shareSolution: data.quiz.shareSolution !== undefined ? data.quiz.shareSolution : true,
-        },
-        summary,
-        sectionPerformance: data.attempt.sectionPerformance || [],
-        hasSectionData: data.hasSectionData ?? (data.attempt.sectionPerformance?.length > 0),
-        wrongQuestions: data.wrongQuestions || [],
-        frequentlyMissedQuestions: data.frequentlyMissedQuestions || [],
-        questionPerformance: data.questionPerformance || [],
-        startTime: data.attempt.startTime,
-        endTime: data.attempt.endTime,
-        status: data.attempt.status,
-        canRequestRetest: data.attempt.canRequestRetest ?? (!data.attempt.retestRequested && !data.attempt.retestApproved),
-        retestRequested: data.attempt.retestRequested || false,
-        retestApproved: data.attempt.retestApproved || false,
-      };
-
-      setResult(formattedResult);
+      setResult(mapQuizResultsResponse(response.data));
     } catch (fetchError: any) {
       console.error('Error fetching results:', fetchError);
       const message = fetchError.response?.data?.message || 'Failed to load quiz results.';
@@ -213,11 +173,7 @@ export default function QuizResult() {
     },
   ];
 
-  const chartData = [
-    { key: 'correct', label: 'Correct', count: summary.correct, color: '#10B981' },
-    { key: 'incorrect', label: 'Wrong', count: summary.incorrect, color: '#EF4444' },
-    { key: 'skipped', label: 'Unattempted', count: summary.skipped, color: '#F59E0B' },
-  ];
+  const chartData = buildPerformanceChartData(summary);
 
   return (
     <SafeAreaView style={styles.container}>

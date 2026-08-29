@@ -2314,11 +2314,11 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
       }
     });
 
-    // Calculate accuracy for each section before storing
+    // Calculate accuracy for each section before storing (correct / attempted)
     const sectionPerformanceArray = Object.values(sectionPerformance).map(section => {
-      const totalQuestionsInSection = section.correct + section.incorrect + section.skipped;
-      const accuracy = totalQuestionsInSection > 0
-        ? Math.round((section.correct / totalQuestionsInSection) * 100)
+      const attemptedInSection = section.correct + section.incorrect;
+      const accuracy = attemptedInSection > 0
+        ? Math.round((section.correct / attemptedInSection) * 100)
         : 0;
 
       return {
@@ -2685,17 +2685,17 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
       });
     }
 
-    // Calculate accuracy for each section
+    // Calculate accuracy for each section (correct / attempted, skips excluded)
     const sectionPerformanceArray = Object.values(sectionPerformance).map(section => {
-      const totalQuestionsInSection = section.correct + section.incorrect + section.skipped;
-      const accuracy = totalQuestionsInSection > 0
-        ? Math.round((section.correct / totalQuestionsInSection) * 100)
+      const attemptedInSection = section.correct + section.incorrect;
+      const accuracy = attemptedInSection > 0
+        ? Math.round((section.correct / attemptedInSection) * 100)
         : 0;
 
       return {
         ...section,
         accuracy,
-        total: totalQuestionsInSection
+        total: section.correct + section.incorrect + section.skipped
       };
     });
 

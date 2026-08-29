@@ -499,6 +499,66 @@ describe('Quiz attempt lifecycle — type-aware grading + snapshots', () => {
     )).toBe(false);
   });
 
+  it('lists frequently missed questions after multiple incorrect attempts', async () => {
+    const sharedQuestion = await createQuestion(admin, subject, {
+      questionType: 'mcq_single',
+      options: ['A', 'B'],
+      correctAnswer: 0,
+      question: 'Often missed question',
+    });
+
+    const makeQuiz = async (title) => Quiz.create({
+      title,
+      subject: subject._id,
+      testType: 'daily',
+      duration: 30,
+      questions: [sharedQuestion._id],
+      positiveMarks: 4,
+      negativeMarks: 1,
+      assignedStudents: [student.user._id],
+      createdBy: admin.user._id,
+    });
+
+    const submitWrong = async (quizId) => {
+      const startRes = await request(app)
+        .post(`/api/quizzes/${quizId}/start`)
+        .set('Authorization', `Bearer ${student.token}`);
+      const attemptId = startRes.body.attemptId;
+
+      await request(app)
+        .put(`/api/quizzes/${quizId}/attempt/${attemptId}/answer`)
+        .set('Authorization', `Bearer ${student.token}`)
+        .send({ questionIndex: 0, questionId: sharedQuestion._id, selectedAnswer: 1 });
+
+      await request(app)
+        .post(`/api/quizzes/${quizId}/attempt/${attemptId}/submit`)
+        .set('Authorization', `Bearer ${student.token}`)
+        .send({});
+
+      return attemptId;
+    };
+
+    const quizA = await makeQuiz('Quiz A');
+    const quizB = await makeQuiz('Quiz B');
+    const quizC = await makeQuiz('Quiz C');
+
+    await submitWrong(quizA._id);
+    await submitWrong(quizB._id);
+    const attemptC = await submitWrong(quizC._id);
+
+    const resultsRes = await request(app)
+      .get(`/api/quizzes/${quizC._id}/attempt/${attemptC}/results?groupBy=subject`)
+      .set('Authorization', `Bearer ${student.token}`);
+
+    expect(resultsRes.status).toBe(200);
+    const missed = resultsRes.body.frequentlyMissedQuestions.find(
+      (item) => item.questionId === sharedQuestion._id.toString()
+    );
+    expect(missed).toBeDefined();
+    expect(missed.incorrectAttempts).toBeGreaterThanOrEqual(2);
+    expect(missed.question).toContain('Often missed');
+  });
+
   it('rejects results access for another student', async () => {
     const { quiz } = await setupQuizWithQuestions(admin, student, subject, [
       { questionType: 'mcq_single', options: ['A', 'B'], correctAnswer: 0 },
