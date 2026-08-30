@@ -11,6 +11,8 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: ALLOWED_ORIGINS
+        value: https://eyeconicmentors.vercel.app
       - key: JWT_SECRET
         sync: false
       - key: MONGODB_URI

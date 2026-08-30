@@ -25,7 +25,7 @@ export interface NormalizedApiError {
 
 const USER_MESSAGES: Record<ApiErrorCode, string> = {
   NETWORK_ERROR:
-    'Unable to connect. Please check your internet connection and try again.',
+    'Unable to connect to the server. Please try again.',
   TIMEOUT: 'The request timed out. Please try again.',
   SERVER_UNAVAILABLE:
     'Our servers are temporarily unavailable. Please try again in a few moments.',

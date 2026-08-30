@@ -286,8 +286,10 @@ The app uses Socket.IO for real-time communication:
    - Check connection string in `.env` file
 
 2. **CORS Errors**
-   - Verify API base URL in frontend
-   - Check CORS configuration in backend
+   - Verify the production web app uses the active Render API URL (`VITE_API_URL`)
+   - Ensure `ALLOWED_ORIGINS` on Render includes `https://eyeconicmentors.vercel.app`
+   - Do not point production at suspended Render services (for example `eyeconic-dev.onrender.com`)
+   - Check CORS configuration in `backend/config/cors.js`
 
 3. **Authentication Issues**
    - Ensure JWT secret is consistent

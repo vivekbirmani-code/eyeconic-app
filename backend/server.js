@@ -6,6 +6,7 @@ const cors = require('cors');
 require('dotenv').config();
 
 const logger = require('./utils/logger');
+const { createCorsOptions, createSocketCorsOptions } = require('./config/cors');
 const requestId = require('./middleware/requestId');
 const errorHandler = require('./middleware/errorHandler');
 const healthRoutes = require('./routes/health');
@@ -35,12 +36,7 @@ const { sendPushNotification, sendPushToUser } = require('./utils/notifications'
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  }
-});
+const io = socketIo(server, createSocketCorsOptions());
 
 // Expose io to routes
 app.set('io', io);
@@ -71,8 +67,8 @@ const validateEnvironment = () => {
 
 validateEnvironment();
 
-// Middleware
-app.use(cors());
+// Middleware — CORS must run before auth/body parsing so preflight succeeds.
+app.use(cors(createCorsOptions()));
 app.use(requestId);
 // Increase body size limit for large Excel file uploads (base64 encoded)
 app.use(express.json({ limit: '50mb' }));
