@@ -2,16 +2,14 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
-  Platform,
-  StatusBar,
   FlatList,
-  Modal
+  Modal,
 } from 'react-native';
+import { ScreenContainer } from '@/components/layout';
 import {
   Users,
   UserCheck,
@@ -319,14 +317,14 @@ export default function AdminOverview() {
 
   if (user?.role !== 'admin') {
     return (
-      <SafeAreaView style={styles.container}>
+      <ScreenContainer style={styles.container}>
         <Text style={styles.errorText}>Access Denied - Admins Only</Text>
-      </SafeAreaView>
+      </ScreenContainer>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       <View style={styles.header}>
         <View>
           <Text style={styles.headerTitle}>Admin Overview</Text>
@@ -560,7 +558,7 @@ export default function AdminOverview() {
           </View>
         </View>
       </Modal>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 
@@ -568,7 +566,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FAFCFC',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   header: {
     flexDirection: 'row',

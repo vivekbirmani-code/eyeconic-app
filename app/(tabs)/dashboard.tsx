@@ -4,17 +4,15 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   Modal,
   TextInput,
   ScrollView,
   Alert,
-  Platform,
-  StatusBar,
   Animated,
   Pressable,
-  ActivityIndicator
+  ActivityIndicator,
 } from 'react-native';
+import { ScreenContainer, FullScreenContainer } from '@/components/layout';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
 import { LogOut, AlertTriangle, Check, MessageCircle, BookOpen, Users, LayoutDashboard, Menu, Sparkles } from 'lucide-react-native';
@@ -271,7 +269,7 @@ export default function Dashboard() {
   const batchTypes = ['FOUNDATION', 'REGULAR', 'CRASH COURSE', 'TEST SERIES'];
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       {/* Minimal premium top glow effect */}
       <LinearGradient
         colors={[
@@ -498,7 +496,7 @@ export default function Dashboard() {
 
       {/* Student Profile Completion Modal */}
       <Modal visible={showProfileModal} animationType="slide" transparent={false}>
-        <SafeAreaView style={styles.modalContainer}>
+        <FullScreenContainer style={styles.modalContainer}>
           {user?.isFreeUser ? (
             // FREE USER PERSONA QUESTIONNAIRE
             <View style={{ flex: 1 }}>
@@ -816,7 +814,7 @@ export default function Dashboard() {
               </ScrollView>
             </View>
           )}
-        </SafeAreaView>
+        </FullScreenContainer>
       </Modal>
 
       {/* Free User Sidebar Panel */}
@@ -841,7 +839,7 @@ export default function Dashboard() {
           </View>
         </Modal>
       )}
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 
@@ -849,7 +847,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF', // Clean white background
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   // Minimal premium top glow effect
   topGlow: {

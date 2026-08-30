@@ -3,16 +3,15 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   Alert,
   ActivityIndicator,
-  Platform,
   StatusBar,
   BackHandler,
-  Image
+  Image,
 } from 'react-native';
+import { FullScreenContainer } from '@/components/layout';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ChevronLeft, ChevronRight, Flag, Clock, AlertCircle } from 'lucide-react-native';
 import { useGuestQuiz } from '@/context/GuestQuizContext';
@@ -257,18 +256,18 @@ export default function GuestQuizTaking() {
 
   if (!quizData || !currentAttempt) {
     return (
-      <SafeAreaView style={styles.container}>
+      <FullScreenContainer style={styles.container}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#6366f1" />
         </View>
-      </SafeAreaView>
+      </FullScreenContainer>
     );
   }
 
   const currentQuestion = quizData.questions[currentQuestionIndex];
 
   return (
-    <SafeAreaView style={styles.container}>
+    <FullScreenContainer style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
       
       {/* Header */}
@@ -422,7 +421,7 @@ export default function GuestQuizTaking() {
           )}
         </TouchableOpacity>
       </View>
-    </SafeAreaView>
+    </FullScreenContainer>
   );
 }
 
@@ -430,7 +429,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f8fafc',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   loadingContainer: {
     flex: 1,

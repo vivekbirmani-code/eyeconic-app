@@ -3,14 +3,12 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   FlatList,
   TouchableOpacity,
   Alert,
   ActivityIndicator,
-  Platform,
-  StatusBar
 } from 'react-native';
+import { ScreenContainer } from '@/components/layout';
 import { CheckCircle, XCircle, Clock } from 'lucide-react-native';
 import { api } from '@/services/api';
 
@@ -159,14 +157,14 @@ export default function RetestRequests() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <ScreenContainer style={styles.container}>
         <ActivityIndicator size="large" color="#2563EB" />
-      </SafeAreaView>
+      </ScreenContainer>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.title}>Retest Requests</Text>
         <Text style={styles.subtitle}>
@@ -186,7 +184,7 @@ export default function RetestRequests() {
           </View>
         }
       />
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 
@@ -194,7 +192,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F3F4F6',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   header: {
     padding: 20,

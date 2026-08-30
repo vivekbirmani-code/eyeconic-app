@@ -5,11 +5,10 @@ import {
   TouchableOpacity,
   StyleSheet,
   ScrollView,
-  SafeAreaView,
   StatusBar,
   Dimensions,
-  Platform,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Shield, ChevronRight, Check } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -21,6 +20,7 @@ interface DisclaimerScreenProps {
 }
 
 export default function DisclaimerScreen({ onComplete }: DisclaimerScreenProps) {
+  const insets = useSafeAreaInsets();
   const [hasScrolledToBottom, setHasScrolledToBottom] = useState(false);
   const [isAccepted, setIsAccepted] = useState(false);
 
@@ -106,13 +106,13 @@ export default function DisclaimerScreen({ onComplete }: DisclaimerScreenProps) 
         colors={['#01b4ae', '#008f8a']}
         style={styles.headerGradient}
       >
-        <SafeAreaView style={styles.headerContent}>
+        <View style={[styles.headerContent, { paddingTop: insets.top }]}>
           <View style={styles.iconCircle}>
             <Shield color="#01b4ae" size={32} />
           </View>
           <Text style={styles.headerTitle}>Terms & Conditions</Text>
           <Text style={styles.headerSubtitle}>Please review and accept our terms to continue</Text>
-        </SafeAreaView>
+        </View>
       </LinearGradient>
 
       <View style={styles.contentContainer}>
@@ -137,7 +137,7 @@ export default function DisclaimerScreen({ onComplete }: DisclaimerScreenProps) 
           <View style={{ height: 40 }} />
         </ScrollView>
 
-        <View style={styles.footer}>
+        <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 20) }]}>
           <TouchableOpacity 
             style={styles.checkboxContainer}
             onPress={() => setIsAccepted(!isAccepted)}

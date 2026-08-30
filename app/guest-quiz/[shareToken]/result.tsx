@@ -3,11 +3,10 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   TouchableOpacity,
-  Platform,
   StatusBar,
 } from 'react-native';
+import { FullScreenContainer } from '@/components/layout';
 import { useRouter } from 'expo-router';
 import { CheckCircle, LogIn } from 'lucide-react-native';
 import { useGuestQuiz } from '@/context/GuestQuizContext';
@@ -27,7 +26,7 @@ export default function GuestQuizResult() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <FullScreenContainer style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
       
       <View style={styles.content}>
@@ -62,7 +61,7 @@ export default function GuestQuizResult() {
           <Text style={styles.secondaryButtonText}>Go to Home</Text>
         </TouchableOpacity>
       </View>
-    </SafeAreaView>
+    </FullScreenContainer>
   );
 }
 
@@ -70,7 +69,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f8fafc',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   content: {
     flex: 1,

@@ -4,18 +4,16 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   FlatList,
   TextInput,
   Modal,
   Alert,
   ScrollView,
-  Platform,
-  StatusBar,
   Animated,
   Easing,
   Pressable,
 } from 'react-native';
+import { ScreenContainer, FullScreenContainer } from '@/components/layout';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
 import { Plus, MessageCircle, Users, Search, X, Check, ChevronDown, ChevronUp, Pencil, Folder } from 'lucide-react-native';
@@ -594,7 +592,7 @@ export default function Groups() {
   );
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       {/* Premium Teal Gradient Header */}
       <Animated.View
         style={[
@@ -800,7 +798,7 @@ export default function Groups() {
 
       {user?.role === 'admin' && (
         <Modal visible={isModalVisible} animationType="slide">
-          <SafeAreaView style={styles.modalContainer}>
+          <FullScreenContainer style={styles.modalContainer}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Create New Group</Text>
               <TouchableOpacity onPress={resetModal}>
@@ -984,7 +982,7 @@ export default function Groups() {
                 <Text style={styles.createButtonText}>Create Group</Text>
               </TouchableOpacity>
             </ScrollView>
-          </SafeAreaView>
+          </FullScreenContainer>
         </Modal>
       )}
 
@@ -1026,7 +1024,7 @@ export default function Groups() {
           </View>
         </View>
       </Modal>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 
@@ -1035,7 +1033,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   // Premium header with gradient
   headerContainer: {

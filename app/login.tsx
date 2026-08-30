@@ -15,6 +15,7 @@ import {
   ScrollView,
   Modal,
 } from 'react-native';
+import { FullScreenContainer } from '@/components/layout';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
 import { Eye, EyeOff, Mail, Lock, ShieldCheck } from 'lucide-react-native';
@@ -241,10 +242,11 @@ export default function Login() {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
+    <FullScreenContainer>
+      <KeyboardAvoidingView
+        style={styles.container}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
       {/* Gradient Background */}
       <LinearGradient
         colors={['#01b4ae', '#008f8a', '#01b4ae']}
@@ -592,6 +594,7 @@ export default function Login() {
         </View>
       </Modal>
     </KeyboardAvoidingView>
+    </FullScreenContainer>
   );
 }
 

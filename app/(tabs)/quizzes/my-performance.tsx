@@ -3,14 +3,12 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  Platform,
-  StatusBar,
   RefreshControl,
 } from 'react-native';
+import { ScreenContainer } from '@/components/layout';
 import { useRouter, useFocusEffect } from 'expo-router';
 import {
   ChevronLeft,
@@ -82,7 +80,7 @@ export default function MyPerformance() {
   const hasHistory = (data?.summary.totalTests || 0) > 0;
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} accessibilityLabel="Go back">
           <ChevronLeft color="#FFF" size={24} />
@@ -235,7 +233,7 @@ export default function MyPerformance() {
           <View style={{ height: 32 }} />
         </ScrollView>
       )}
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 
@@ -243,7 +241,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F3F4F6',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   header: {
     flexDirection: 'row',

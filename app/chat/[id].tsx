@@ -13,12 +13,12 @@ import {
   ScrollView,
   Pressable,
   Keyboard,
-  StatusBar,
   Dimensions,
   Animated,
   Easing,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { ScreenContainer, FullScreenContainer } from '@/components/layout';
+
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowLeft, Send, Users, UserPlus, X, Search, Check, CheckCheck, Edit2, Trash2, Info, Phone, PhoneOff } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -787,7 +787,7 @@ export default function ChatScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
           <ArrowLeft color="#000000" size={24} />
@@ -1041,7 +1041,7 @@ export default function ChatScreen() {
       <>
         {/* Group Info Modal */}
         <Modal visible={isGroupInfoVisible} animationType="slide">
-          <SafeAreaView style={styles.modalContainer}>
+          <FullScreenContainer style={styles.modalContainer}>
             <View style={styles.modalHeader}>
               <TouchableOpacity onPress={() => setIsGroupInfoVisible(false)} style={styles.backButton}>
                 <ArrowLeft color="#000000" size={24} />
@@ -1121,12 +1121,12 @@ export default function ChatScreen() {
                 )}
               />
             </View>
-          </SafeAreaView>
+          </FullScreenContainer>
         </Modal>
 
         {/* Add Members Modal */}
         <Modal visible={isAddMemberVisible} animationType="slide">
-          <SafeAreaView style={styles.modalContainer}>
+          <FullScreenContainer style={styles.modalContainer}>
             <View style={styles.modalHeader}>
               <TouchableOpacity onPress={() => setIsAddMemberVisible(false)} style={styles.backButton}>
                 <X color="#000000" size={24} />
@@ -1185,10 +1185,10 @@ export default function ChatScreen() {
                 <Text style={styles.emptyText}>No users found</Text>
               }
             />
-          </SafeAreaView>
+          </FullScreenContainer>
         </Modal>
       </>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 

@@ -3,14 +3,13 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   Dimensions,
   Animated,
-  Platform,
-  StatusBar
+  StatusBar,
 } from 'react-native';
+import { ScreenContainer } from '@/components/layout';
 import { Menu, Sparkles, TrendingUp, Award, Quote } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from '@/utils/haptics';
@@ -67,7 +66,7 @@ export default function Transformations() {
   }, []);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       <StatusBar barStyle="dark-content" />
       <LinearGradient
         colors={['rgba(1, 180, 174, 0.15)', 'rgba(1, 180, 174, 0.05)', '#FFFFFF']}
@@ -154,7 +153,7 @@ export default function Transformations() {
 
       {/* Global Free User Sidebar */}
       <FreeUserSidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 
@@ -162,7 +161,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   header: {
     flexDirection: 'row',

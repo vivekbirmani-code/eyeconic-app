@@ -3,17 +3,16 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   TextInput,
   Alert,
   ActivityIndicator,
   Platform,
-  StatusBar,
   Modal,
-  FlatList
+  FlatList,
 } from 'react-native';
+import { ScreenContainer, FullScreenContainer } from '@/components/layout';
 import { useRouter } from 'expo-router';
 import { 
   ChevronLeft, 
@@ -263,14 +262,14 @@ export default function ImportQuiz() {
 
   if (user?.role !== 'admin') {
     return (
-      <SafeAreaView style={styles.container}>
+      <ScreenContainer style={styles.container}>
         <Text style={styles.errorText}>Admin access required</Text>
-      </SafeAreaView>
+      </ScreenContainer>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
           <ChevronLeft color="#FFF" size={24} />
@@ -540,7 +539,7 @@ export default function ImportQuiz() {
 
       {/* Preview Modal */}
       <Modal visible={showPreview} animationType="slide">
-        <SafeAreaView style={styles.modalContainer}>
+        <FullScreenContainer style={styles.modalContainer}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Import Complete</Text>
             <TouchableOpacity onPress={() => { setShowPreview(false); router.back(); }}>
@@ -608,9 +607,9 @@ export default function ImportQuiz() {
           >
             <Text style={styles.doneButtonText}>Done</Text>
           </TouchableOpacity>
-        </SafeAreaView>
+        </FullScreenContainer>
       </Modal>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 
@@ -619,7 +618,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F3F4F6',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   header: {
     flexDirection: 'row',
@@ -866,7 +864,6 @@ const styles = StyleSheet.create({
   modalContainer: {
     flex: 1,
     backgroundColor: '#F3F4F6',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   modalHeader: {
     flexDirection: 'row',

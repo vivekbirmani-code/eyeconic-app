@@ -3,13 +3,12 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   Animated,
-  Platform,
-  StatusBar
+  StatusBar,
 } from 'react-native';
+import { ScreenContainer } from '@/components/layout';
 import { useFocusEffect } from '@react-navigation/native';
 import { Menu, BarChart2, TrendingUp, Info, Percent, Activity } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -77,7 +76,7 @@ export default function Graphs() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       <StatusBar barStyle="dark-content" />
       <LinearGradient
         colors={['rgba(1, 180, 174, 0.15)', 'rgba(1, 180, 174, 0.05)', '#FFFFFF']}
@@ -201,7 +200,7 @@ export default function Graphs() {
       </ScrollView>
 
       <FreeUserSidebar isOpen={sidebarOpen} onClose={handleSidebarClose} />
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 
@@ -209,7 +208,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   header: {
     flexDirection: 'row',

@@ -2,17 +2,15 @@ import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
   TextInput,
   Alert,
-  Platform,
-  StatusBar,
-  FlatList
+  FlatList,
 } from 'react-native';
+import { ScreenContainer } from '@/components/layout';
 import {
   Users,
   Plus,
@@ -388,14 +386,14 @@ export default function MentorDashboard() {
 
   if (user?.role !== 'mentor') {
     return (
-      <SafeAreaView style={styles.container}>
+      <ScreenContainer style={styles.container}>
         <Text style={styles.errorText}>Access Denied - Mentors Only</Text>
-      </SafeAreaView>
+      </ScreenContainer>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Mentor Dashboard</Text>
         <Text style={styles.headerSubtitle}>Manage your students and assignments</Text>
@@ -672,7 +670,7 @@ export default function MentorDashboard() {
           </>
         )}
       </View>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 
@@ -680,7 +678,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FAFCFC',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   header: {
     backgroundColor: '#01b4ae',

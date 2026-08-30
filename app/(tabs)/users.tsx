@@ -4,21 +4,20 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   FlatList,
   TextInput,
   Modal,
   Alert,
   ScrollView,
   Platform,
-  StatusBar,
   Animated,
   Easing,
   LayoutAnimation,
   UIManager,
   Pressable,
-  ActivityIndicator
+  ActivityIndicator,
 } from 'react-native';
+import { ScreenContainer, FullScreenContainer } from '@/components/layout';
 import { Plus, User as UserIcon, Search, X, Mail, Shield, Calendar, Phone, Lock, Key, Users as UsersIcon, Check, Square, CheckSquare, ChevronRight } from 'lucide-react-native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -154,9 +153,9 @@ export default function Users() {
   // Only admin can access this screen
   if (user?.role !== 'admin') {
     return (
-      <SafeAreaView style={styles.container}>
+      <ScreenContainer style={styles.container}>
         <Text style={styles.errorText}>Access Denied</Text>
-      </SafeAreaView>
+      </ScreenContainer>
     );
   }
 
@@ -789,7 +788,7 @@ export default function Users() {
   const renderUser = ({ item }: { item: User }) => <UserCard item={item} />;
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       <Animated.View style={[styles.header, { opacity: headerOpacity }]}>
         <Text style={styles.title}>User Management</Text>
         <TouchableOpacity
@@ -931,7 +930,7 @@ export default function Users() {
 
       {/* Create User Modal */}
       <Modal visible={isCreateModalVisible} animationType="slide">
-        <SafeAreaView style={styles.modalContainer}>
+        <FullScreenContainer style={styles.modalContainer}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Create New User</Text>
             <TouchableOpacity onPress={() => setIsCreateModalVisible(false)}>
@@ -1035,7 +1034,7 @@ export default function Users() {
               <Text style={styles.createButtonText}>Create User</Text>
             </TouchableOpacity>
           </ScrollView>
-        </SafeAreaView>
+        </FullScreenContainer>
       </Modal>
 
       {/* User Details Modal with premium animations */}
@@ -1467,7 +1466,7 @@ export default function Users() {
         </View>
       </Modal>
 
-    </SafeAreaView >
+    </ScreenContainer>
   );
 }
 
@@ -1475,7 +1474,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FAFCFC',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   header: {
     flexDirection: 'row',
@@ -1655,7 +1653,6 @@ const styles = StyleSheet.create({
   modalContainer: {
     flex: 1,
     backgroundColor: '#FFFFFF',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   modalHeader: {
     flexDirection: 'row',

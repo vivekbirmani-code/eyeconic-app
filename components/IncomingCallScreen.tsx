@@ -4,12 +4,12 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  Platform,
   StatusBar,
   Vibration,
   Dimensions,
 } from 'react-native';
-import { Phone, PhoneOff, X } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Phone, PhoneOff } from 'lucide-react-native';
 import { dismissCallNotification } from '@/utils/notificationService';
 
 // Dynamically import expo-av
@@ -36,6 +36,7 @@ export default function IncomingCallScreen({
   onAccept,
   onDecline,
 }: IncomingCallScreenProps) {
+  const insets = useSafeAreaInsets();
   const soundRef = useRef<any>(null); // Type as any since Audio might be missing
   const vibrationIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -104,7 +105,7 @@ export default function IncomingCallScreen({
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, { paddingTop: insets.top }]}>
       <StatusBar barStyle="light-content" backgroundColor="#1F2937" />
       
       {/* Top Section */}
@@ -125,7 +126,7 @@ export default function IncomingCallScreen({
       </View>
 
       {/* Bottom Section - Action Buttons */}
-      <View style={styles.bottomSection}>
+      <View style={[styles.bottomSection, { paddingBottom: Math.max(insets.bottom, 24) }]}>
         <TouchableOpacity
           style={[styles.actionButton, styles.declineButton]}
           onPress={handleDecline}
@@ -160,7 +161,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#1F2937',
     zIndex: 9999,
     elevation: 9999,
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 50,
   },
   topSection: {
     alignItems: 'center',
@@ -214,7 +214,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-around',
     alignItems: 'center',
-    paddingBottom: 60,
     paddingHorizontal: 40,
   },
   actionButton: {

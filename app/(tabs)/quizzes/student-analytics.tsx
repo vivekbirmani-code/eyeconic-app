@@ -3,16 +3,14 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   TextInput,
   FlatList,
   ActivityIndicator,
-  Platform,
-  StatusBar,
-  Alert
+  Alert,
 } from 'react-native';
+import { ScreenContainer } from '@/components/layout';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import {
@@ -357,9 +355,9 @@ export default function Analytics() {
 
   if (user?.role !== 'admin' && user?.role !== 'mentor') {
     return (
-      <SafeAreaView style={styles.container}>
+      <ScreenContainer style={styles.container}>
         <Text style={styles.errorText}>Admin or Mentor access required</Text>
-      </SafeAreaView>
+      </ScreenContainer>
     );
   }
 
@@ -373,7 +371,7 @@ export default function Analytics() {
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
@@ -857,7 +855,7 @@ export default function Analytics() {
           setSelectedAttemptId(null);
         }}
       />
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 
@@ -865,7 +863,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F3F4F6',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   header: {
     flexDirection: 'row',

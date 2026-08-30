@@ -3,13 +3,12 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
-  Platform,
-  StatusBar
+  StatusBar,
 } from 'react-native';
+import { FullScreenContainer } from '@/components/layout';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { BookOpen, Clock, FileText, Award, AlertCircle } from 'lucide-react-native';
 import { useGuestQuiz } from '@/context/GuestQuizContext';
@@ -62,18 +61,18 @@ export default function GuestQuizInstructions() {
 
   if (isLoading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <FullScreenContainer style={styles.container}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#6366f1" />
           <Text style={styles.loadingText}>Loading quiz...</Text>
         </View>
-      </SafeAreaView>
+      </FullScreenContainer>
     );
   }
 
   if (error || !quiz) {
     return (
-      <SafeAreaView style={styles.container}>
+      <FullScreenContainer style={styles.container}>
         <View style={styles.errorContainer}>
           <AlertCircle size={64} color="#ef4444" />
           <Text style={styles.errorTitle}>Quiz Not Found</Text>
@@ -87,12 +86,12 @@ export default function GuestQuizInstructions() {
             <Text style={styles.backButtonText}>Go to Login</Text>
           </TouchableOpacity>
         </View>
-      </SafeAreaView>
+      </FullScreenContainer>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <FullScreenContainer style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
       
       <ScrollView style={styles.scrollView} contentContainerStyle={styles.content}>
@@ -187,7 +186,7 @@ export default function GuestQuizInstructions() {
           )}
         </TouchableOpacity>
       </View>
-    </SafeAreaView>
+    </FullScreenContainer>
   );
 }
 
@@ -195,7 +194,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f8fafc',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   scrollView: {
     flex: 1,

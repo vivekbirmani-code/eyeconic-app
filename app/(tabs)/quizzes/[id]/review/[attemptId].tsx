@@ -3,16 +3,14 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-  Platform,
-  StatusBar,
   Dimensions,
-  Image
+  Image,
 } from 'react-native';
+import { ScreenContainer } from '@/components/layout';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { CheckCircle, XCircle, ChevronLeft, ChevronRight, Clock, Award, BarChart2 } from 'lucide-react-native';
 import Svg, { Circle, G, Text as SvgText, Rect } from 'react-native-svg';
@@ -167,17 +165,17 @@ export default function QuizReview() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <ScreenContainer style={styles.container}>
         <ActivityIndicator size="large" color="#2563EB" />
-      </SafeAreaView>
+      </ScreenContainer>
     );
   }
 
   if (!reviewData) {
     return (
-      <SafeAreaView style={styles.container}>
+      <ScreenContainer style={styles.container}>
         <Text style={styles.errorText}>Review data not found</Text>
-      </SafeAreaView>
+      </ScreenContainer>
     );
   }
 
@@ -537,7 +535,7 @@ export default function QuizReview() {
   );
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <Text style={styles.title}>{reviewData.quiz.title}</Text>
@@ -553,7 +551,7 @@ export default function QuizReview() {
       />
 
       {currentSection === 'Overview' ? renderOverview() : renderQuestionReview()}
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 
@@ -561,7 +559,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F3F4F6',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   header: {
     flexDirection: 'row',

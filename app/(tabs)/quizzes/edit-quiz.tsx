@@ -3,18 +3,17 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   TextInput,
   ActivityIndicator,
   Alert,
   Platform,
-  StatusBar,
   Modal,
   Image,
-  FlatList
+  FlatList,
 } from 'react-native';
+import { ScreenContainer, FullScreenContainer } from '@/components/layout';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { 
   ChevronLeft, 
@@ -553,25 +552,25 @@ export default function EditQuiz() {
 
   if (user?.role !== 'admin') {
     return (
-      <SafeAreaView style={styles.container}>
+      <ScreenContainer style={styles.container}>
         <Text style={styles.errorText}>Admin access required</Text>
-      </SafeAreaView>
+      </ScreenContainer>
     );
   }
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <ScreenContainer style={styles.container}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#2563EB" />
           <Text style={styles.loadingText}>Loading quiz...</Text>
         </View>
-      </SafeAreaView>
+      </ScreenContainer>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
@@ -932,7 +931,7 @@ export default function EditQuiz() {
         animationType="slide"
         onRequestClose={() => setShowQuestionPicker(false)}
       >
-        <SafeAreaView style={styles.modalContainer}>
+        <FullScreenContainer style={styles.modalContainer}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Add Questions</Text>
             <TouchableOpacity onPress={() => setShowQuestionPicker(false)}>
@@ -1040,7 +1039,7 @@ export default function EditQuiz() {
               <Text style={styles.pickerSaveButtonText}>Save Selection</Text>
             </TouchableOpacity>
           </View>
-        </SafeAreaView>
+        </FullScreenContainer>
       </Modal>
 
       {/* Section Question Picker Modal */}
@@ -1049,7 +1048,7 @@ export default function EditQuiz() {
         animationType="slide"
         onRequestClose={closeSectionQuestionPicker}
       >
-        <SafeAreaView style={styles.modalContainer}>
+        <FullScreenContainer style={styles.modalContainer}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>
               {activeSectionIndex !== null ? `Section ${activeSectionIndex + 1} Questions` : 'Section Questions'}
@@ -1138,7 +1137,7 @@ export default function EditQuiz() {
               <Text style={styles.pickerSaveButtonText}>Save Selection</Text>
             </TouchableOpacity>
           </View>
-        </SafeAreaView>
+        </FullScreenContainer>
       </Modal>
 
       {/* Question Preview Modal */}
@@ -1147,7 +1146,7 @@ export default function EditQuiz() {
         animationType="slide"
         onRequestClose={() => setPreviewQuestion(null)}
       >
-        <SafeAreaView style={styles.modalContainer}>
+        <FullScreenContainer style={styles.modalContainer}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Question Preview</Text>
             <TouchableOpacity onPress={() => setPreviewQuestion(null)}>
@@ -1255,9 +1254,9 @@ export default function EditQuiz() {
               <View style={{ height: 40 }} />
             </ScrollView>
           )}
-        </SafeAreaView>
+        </FullScreenContainer>
       </Modal>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 
@@ -1265,7 +1264,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F3F4F6',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   loadingContainer: {
     flex: 1,
@@ -1585,7 +1583,6 @@ const styles = StyleSheet.create({
   modalContainer: {
     flex: 1,
     backgroundColor: '#F3F4F6',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   modalHeader: {
     flexDirection: 'row',

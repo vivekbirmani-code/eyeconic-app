@@ -3,19 +3,18 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   TextInput,
   Modal,
   Alert,
   ActivityIndicator,
-  Platform,
   StatusBar,
   Image,
   Animated,
-  Pressable
+  Pressable,
 } from 'react-native';
+import { ScreenContainer } from '@/components/layout';
 import { useRouter } from 'expo-router';
 import {
   Plus,
@@ -693,9 +692,9 @@ export default function QuestionBankManagement() {
 
   if (user?.role !== 'admin') {
     return (
-      <SafeAreaView style={styles.container}>
+      <ScreenContainer style={styles.container}>
         <Text style={styles.errorText}>Admin access required</Text>
-      </SafeAreaView>
+      </ScreenContainer>
     );
   }
 
@@ -909,7 +908,7 @@ export default function QuestionBankManagement() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       <StatusBar barStyle="light-content" />
 
       {/* Top Glow */}
@@ -1444,7 +1443,7 @@ export default function QuestionBankManagement() {
         </View>
       </Modal>
 
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 
@@ -1462,7 +1461,6 @@ const styles = StyleSheet.create({
     zIndex: 0,
   },
   headerGradient: {
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight! + 10 : 50,
     paddingBottom: 20,
     paddingHorizontal: 20,
     borderBottomLeftRadius: 24,

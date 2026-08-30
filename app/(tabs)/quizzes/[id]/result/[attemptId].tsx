@@ -3,15 +3,13 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
   Alert,
-  Platform,
-  StatusBar,
   RefreshControl,
 } from 'react-native';
+import { ScreenContainer } from '@/components/layout';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
   CheckCircle,
@@ -95,18 +93,18 @@ export default function QuizResult() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <ScreenContainer style={styles.container}>
         <View style={styles.centered}>
           <ActivityIndicator size="large" color="#2563EB" />
           <Text style={styles.loadingText}>Loading your results...</Text>
         </View>
-      </SafeAreaView>
+      </ScreenContainer>
     );
   }
 
   if (error || !result) {
     return (
-      <SafeAreaView style={styles.container}>
+      <ScreenContainer style={styles.container}>
         <View style={styles.centered}>
           <AlertTriangle color="#EF4444" size={40} />
           <Text style={styles.errorTitle}>Unable to load results</Text>
@@ -118,7 +116,7 @@ export default function QuizResult() {
             <Text style={styles.secondaryButtonText}>Back to Quizzes</Text>
           </TouchableOpacity>
         </View>
-      </SafeAreaView>
+      </ScreenContainer>
     );
   }
 
@@ -176,7 +174,7 @@ export default function QuizResult() {
   const chartData = buildPerformanceChartData(summary);
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       <ScrollView
         style={styles.scrollView}
         showsVerticalScrollIndicator={false}
@@ -302,7 +300,7 @@ export default function QuizResult() {
           <Text style={styles.backButtonText}>Back to Quizzes</Text>
         </TouchableOpacity>
       </View>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 
@@ -310,7 +308,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F3F4F6',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   scrollView: {
     flex: 1,

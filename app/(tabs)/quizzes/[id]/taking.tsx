@@ -3,20 +3,18 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   Alert,
   ActivityIndicator,
-  Platform,
-  StatusBar,
   BackHandler,
   Animated,
   Dimensions,
   AccessibilityInfo,
   Image,
-  Modal
+  Modal,
 } from 'react-native';
+import { ScreenContainer, FullScreenContainer } from '@/components/layout';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ChevronLeft, ChevronRight, Flag, AlertCircle, X } from 'lucide-react-native';
 import { api } from '@/services/api';
@@ -587,26 +585,26 @@ function QuizTakingContent() {
   // Loading state
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <ScreenContainer style={styles.container}>
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#2563EB" />
           <Text style={styles.loadingText}>Loading quiz...</Text>
         </View>
-      </SafeAreaView>
+      </ScreenContainer>
     );
   }
 
   // Error state
   if (error || !quiz || !currentAttempt) {
     return (
-      <SafeAreaView style={styles.container}>
+      <ScreenContainer style={styles.container}>
         <View style={styles.errorContainer}>
           <AlertCircle color="#EF4444" size={64} />
           <Text style={styles.errorText}>{error || 'Failed to load quiz'}</Text>
           <TouchableOpacity style={styles.retryButton} onPress={fetchQuizDetails}>
           </TouchableOpacity>
         </View>
-      </SafeAreaView>
+      </ScreenContainer>
     );
   }
 
@@ -636,7 +634,7 @@ function QuizTakingContent() {
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <Text
@@ -833,7 +831,7 @@ function QuizTakingContent() {
         animationType="slide"
         onRequestClose={() => setShowReviewModal(false)}
       >
-        <SafeAreaView style={styles.modalOverlay}>
+        <FullScreenContainer style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Review Before Submission</Text>
@@ -933,9 +931,9 @@ function QuizTakingContent() {
               </TouchableOpacity>
             </View>
           </View>
-        </SafeAreaView>
+        </FullScreenContainer>
       </Modal>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 
@@ -952,7 +950,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F3F4F6',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   loadingContainer: {
     flex: 1,

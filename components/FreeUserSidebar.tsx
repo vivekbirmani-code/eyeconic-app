@@ -6,15 +6,14 @@ import {
   Modal,
   TouchableOpacity,
   Animated,
-  Dimensions,
   ScrollView,
   TextInput,
   Alert,
   Share,
   Pressable,
-  SafeAreaView,
-  Platform
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ModalScreenLayout } from '@/components/layout';
 import { useAuth } from '@/context/AuthContext';
 import { GtLog, loadGtLogs, saveGtLogs } from '@/utils/gtTracker';
 import ProfilePictureManager from '@/components/ProfilePictureManager';
@@ -26,7 +25,6 @@ import {
   BookOpen, 
   LogOut, 
   Scale, 
-  X, 
   Plus, 
   ChevronDown, 
   ChevronUp, 
@@ -38,7 +36,6 @@ import {
 import * as Haptics from '@/utils/haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 
-const { width, height } = Dimensions.get('window');
 const SIDEBAR_WIDTH = 290;
 
 interface SidebarProps {
@@ -47,6 +44,7 @@ interface SidebarProps {
 }
 
 export default function FreeUserSidebar({ isOpen, onClose }: SidebarProps) {
+  const insets = useSafeAreaInsets();
   const { user, logout, refreshUser, updateUser } = useAuth();
   
   // Navigation modal states
@@ -230,7 +228,7 @@ export default function FreeUserSidebar({ isOpen, onClose }: SidebarProps) {
             colors={['#01b4ae', '#008f8a']}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
-            style={styles.sidebarHeader}
+            style={[styles.sidebarHeader, { paddingTop: insets.top + 24 }]}
           >
             <View style={styles.logoRow}>
               <Sparkles color="#FFFFFF" size={24} />
@@ -294,7 +292,7 @@ export default function FreeUserSidebar({ isOpen, onClose }: SidebarProps) {
             </TouchableOpacity>
           </ScrollView>
 
-          <View style={styles.sidebarFooter}>
+          <View style={[styles.sidebarFooter, { paddingBottom: Math.max(insets.bottom, 16) }]}>
             <Text style={styles.footerVersion}>Version 1.0.0 (Free Account)</Text>
             <Text style={styles.footerCopyright}>© Eyeconic Mentors</Text>
           </View>
@@ -305,283 +303,233 @@ export default function FreeUserSidebar({ isOpen, onClose }: SidebarProps) {
       
       {/* 1. My Profile Modal */}
       <Modal visible={activeModal === 'profile'} animationType="slide" transparent={false}>
-        <SafeAreaView style={styles.modalFullContainer}>
-          <View style={styles.modalHeaderRow}>
-            <Text style={styles.modalTitleText}>My Profile</Text>
-            <TouchableOpacity style={styles.closeBtn} onPress={() => setActiveModal(null)}>
-              <X size={24} color="#111827" />
-            </TouchableOpacity>
-          </View>
-          <ScrollView style={styles.modalScrollBody} contentContainerStyle={styles.modalBodyPadding}>
-            <ProfilePictureManager
-              name={user?.name || 'User'}
-              role={user?.role}
-              imageUrl={user?.profilePicture}
-              size={96}
-              editable
-              onUpdated={(profilePicture) => {
-                updateUser({ profilePicture });
-                refreshUser();
-              }}
-            />
-            <Text style={styles.profileTitleName}>{user?.name}</Text>
-            
-            <View style={styles.profileDetailsList}>
-              <View style={styles.detailCard}>
-                <Text style={styles.detailLabel}>Email Address</Text>
-                <Text style={styles.detailValue}>{user?.email}</Text>
-              </View>
-              {user?.phone && (
-                <View style={styles.detailCard}>
-                  <Text style={styles.detailLabel}>Mobile Number</Text>
-                  <Text style={styles.detailValue}>{user?.phone}</Text>
-                </View>
-              )}
-              
-              <Text style={styles.sectionHeaderSub}>Persona Information</Text>
+        <ModalScreenLayout title="My Profile" onClose={() => setActiveModal(null)}>
+          <ProfilePictureManager
+            name={user?.name || 'User'}
+            role={user?.role}
+            imageUrl={user?.profilePicture}
+            size={96}
+            editable
+            onUpdated={(profilePicture) => {
+              updateUser({ profilePicture });
+              refreshUser();
+            }}
+          />
+          <Text style={styles.profileTitleName}>{user?.name}</Text>
 
+          <View style={styles.profileDetailsList}>
+            <View style={styles.detailCard}>
+              <Text style={styles.detailLabel}>Email Address</Text>
+              <Text style={styles.detailValue}>{user?.email}</Text>
+            </View>
+            {user?.phone && (
               <View style={styles.detailCard}>
-                <Text style={styles.detailLabel}>Current MBBS Year</Text>
-                <Text style={styles.detailValue}>{user?.freeUserProfile?.year || 'Not Set'}</Text>
+                <Text style={styles.detailLabel}>Mobile Number</Text>
+                <Text style={styles.detailValue}>{user?.phone}</Text>
               </View>
-              <View style={styles.detailCard}>
-                <Text style={styles.detailLabel}>Current Challenge/Issue</Text>
-                <Text style={styles.detailValue}>{user?.freeUserProfile?.issues || 'Not Set'}</Text>
-              </View>
-              <View style={styles.detailCard}>
-                <Text style={styles.detailLabel}>Current Platforms/Resources</Text>
-                <View style={styles.badgeRow}>
-                  {user?.freeUserProfile?.resources && user.freeUserProfile.resources.length > 0 ? (
-                    user.freeUserProfile.resources.map((res: string, idx: number) => (
-                      <View key={idx} style={styles.resourceBadgeChip}>
-                        <Text style={styles.resourceBadgeChipText}>{res}</Text>
-                      </View>
-                    ))
-                  ) : (
-                    <Text style={styles.detailValue}>None</Text>
-                  )}
-                </View>
+            )}
+
+            <Text style={styles.sectionHeaderSub}>Personal Information</Text>
+
+            <View style={styles.detailCard}>
+              <Text style={styles.detailLabel}>Current MBBS Year</Text>
+              <Text style={styles.detailValue}>{user?.freeUserProfile?.year || 'Not Set'}</Text>
+            </View>
+            <View style={styles.detailCard}>
+              <Text style={styles.detailLabel}>Current Challenge/Issue</Text>
+              <Text style={styles.detailValue}>{user?.freeUserProfile?.issues || 'Not Set'}</Text>
+            </View>
+            <View style={styles.detailCard}>
+              <Text style={styles.detailLabel}>Current Platforms/Resources</Text>
+              <View style={styles.badgeRow}>
+                {user?.freeUserProfile?.resources && user.freeUserProfile.resources.length > 0 ? (
+                  user.freeUserProfile.resources.map((res: string, idx: number) => (
+                    <View key={idx} style={styles.resourceBadgeChip}>
+                      <Text style={styles.resourceBadgeChipText}>{res}</Text>
+                    </View>
+                  ))
+                ) : (
+                  <Text style={styles.detailValue}>None</Text>
+                )}
               </View>
             </View>
-          </ScrollView>
-        </SafeAreaView>
+          </View>
+        </ModalScreenLayout>
       </Modal>
 
       {/* 2. FAQs Modal */}
       <Modal visible={activeModal === 'faqs'} animationType="slide" transparent={false}>
-        <SafeAreaView style={styles.modalFullContainer}>
-          <View style={styles.modalHeaderRow}>
-            <Text style={styles.modalTitleText}>FAQs</Text>
-            <TouchableOpacity style={styles.closeBtn} onPress={() => setActiveModal(null)}>
-              <X size={24} color="#111827" />
-            </TouchableOpacity>
-          </View>
-          <ScrollView style={styles.modalScrollBody} contentContainerStyle={styles.modalBodyPadding}>
-            <Text style={styles.faqSubtitle}>Frequently Asked Questions</Text>
-            {faqs.map((faq, idx) => (
-              <View key={idx} style={styles.faqCard}>
-                <TouchableOpacity 
-                  style={styles.faqQuestionRow} 
-                  onPress={() => {
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    setExpandedFaq(expandedFaq === idx ? null : idx);
-                  }}
-                  activeOpacity={0.7}
-                >
-                  <Text style={styles.faqQuestionText}>{faq.q}</Text>
-                  {expandedFaq === idx ? <ChevronUp size={20} color="#01b4ae" /> : <ChevronDown size={20} color="#6B7280" />}
-                </TouchableOpacity>
-                {expandedFaq === idx && (
-                  <View style={styles.faqAnswerContainer}>
-                    <Text style={styles.faqAnswerText}>{faq.a}</Text>
-                  </View>
-                )}
-              </View>
-            ))}
-          </ScrollView>
-        </SafeAreaView>
+        <ModalScreenLayout title="FAQs" onClose={() => setActiveModal(null)}>
+          <Text style={styles.faqSubtitle}>Frequently Asked Questions</Text>
+          {faqs.map((faq, idx) => (
+            <View key={idx} style={styles.faqCard}>
+              <TouchableOpacity
+                style={styles.faqQuestionRow}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setExpandedFaq(expandedFaq === idx ? null : idx);
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.faqQuestionText}>{faq.q}</Text>
+                {expandedFaq === idx ? <ChevronUp size={20} color="#01b4ae" /> : <ChevronDown size={20} color="#6B7280" />}
+              </TouchableOpacity>
+              {expandedFaq === idx && (
+                <View style={styles.faqAnswerContainer}>
+                  <Text style={styles.faqAnswerText}>{faq.a}</Text>
+                </View>
+              )}
+            </View>
+          ))}
+        </ModalScreenLayout>
       </Modal>
 
       {/* 3. GT Tracker Modal */}
       <Modal visible={activeModal === 'gt-tracker'} animationType="slide" transparent={false}>
-        <SafeAreaView style={styles.modalFullContainer}>
-          <View style={styles.modalHeaderRow}>
-            <Text style={styles.modalTitleText}>GT Tracker</Text>
-            <TouchableOpacity style={styles.closeBtn} onPress={() => setActiveModal(null)}>
-              <X size={24} color="#111827" />
-            </TouchableOpacity>
-          </View>
-          
-          <ScrollView style={styles.modalScrollBody} contentContainerStyle={styles.modalBodyPadding}>
-            
-            {/* Input Log Card */}
-            <View style={styles.loggerCard}>
-              <Text style={styles.loggerTitle}>Log New Mock Score</Text>
-              
-              <View style={styles.loggerForm}>
+        <ModalScreenLayout title="GT Tracker" onClose={() => setActiveModal(null)}>
+          {/* Input Log Card */}
+          <View style={styles.loggerCard}>
+            <Text style={styles.loggerTitle}>Log New Mock Score</Text>
+
+            <View style={styles.loggerForm}>
+              <TextInput
+                style={styles.loggerInput}
+                placeholder="GT Name (e.g. Marrow GT 10)"
+                placeholderTextColor="#9CA3AF"
+                value={gtName}
+                onChangeText={setGtName}
+              />
+              <View style={styles.loggerFormRow}>
                 <TextInput
-                  style={styles.loggerInput}
-                  placeholder="GT Name (e.g. Marrow GT 10)"
+                  style={[styles.loggerInput, { flex: 1, marginRight: 8 }]}
+                  placeholder="Corrects (e.g. 110)"
                   placeholderTextColor="#9CA3AF"
-                  value={gtName}
-                  onChangeText={setGtName}
-                />
-                <View style={styles.loggerFormRow}>
-                  <TextInput
-                    style={[styles.loggerInput, { flex: 1, marginRight: 8 }]}
-                    placeholder="Corrects (e.g. 110)"
-                    placeholderTextColor="#9CA3AF"
-                    value={gtCorrects}
-                    onChangeText={setGtCorrects}
-                    keyboardType="numeric"
-                  />
-                  <TextInput
-                    style={[styles.loggerInput, { flex: 1, marginLeft: 8 }]}
-                    placeholder="Score (e.g. 440)"
-                    placeholderTextColor="#9CA3AF"
-                    value={gtScore}
-                    onChangeText={setGtScore}
-                    keyboardType="numeric"
-                  />
-                </View>
-                <TextInput
-                  style={styles.loggerInput}
-                  placeholder="Rank (e.g. 2500, optional)"
-                  placeholderTextColor="#9CA3AF"
-                  value={gtRank}
-                  onChangeText={setGtRank}
+                  value={gtCorrects}
+                  onChangeText={setGtCorrects}
                   keyboardType="numeric"
                 />
-                
-                <TouchableOpacity style={styles.loggerSubmitBtn} onPress={saveGtLog}>
-                  <Plus size={18} color="#FFFFFF" />
-                  <Text style={styles.loggerSubmitBtnText}>Add Log Details</Text>
+                <TextInput
+                  style={[styles.loggerInput, { flex: 1, marginLeft: 8 }]}
+                  placeholder="Score (e.g. 440)"
+                  placeholderTextColor="#9CA3AF"
+                  value={gtScore}
+                  onChangeText={setGtScore}
+                  keyboardType="numeric"
+                />
+              </View>
+              <TextInput
+                style={styles.loggerInput}
+                placeholder="Rank (e.g. 2500, optional)"
+                placeholderTextColor="#9CA3AF"
+                value={gtRank}
+                onChangeText={setGtRank}
+                keyboardType="numeric"
+              />
+
+              <TouchableOpacity style={styles.loggerSubmitBtn} onPress={saveGtLog}>
+                <Plus size={18} color="#FFFFFF" />
+                <Text style={styles.loggerSubmitBtnText}>Add Log Details</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Logs History */}
+          <Text style={styles.loggerSectionTitle}>Test History Logs</Text>
+          {gtHistory.length === 0 ? (
+            <View style={styles.emptyLogsCard}>
+              <Activity size={36} color="#CBD5E1" />
+              <Text style={styles.emptyLogsText}>No tests logged yet. Enter score details above.</Text>
+            </View>
+          ) : (
+            gtHistory.map(item => (
+              <View key={item.id} style={styles.gtLogItem}>
+                <View style={styles.gtLogDetails}>
+                  <Text style={styles.gtLogTitle}>{item.name}</Text>
+                  <View style={styles.gtLogStatsRow}>
+                    <Text style={styles.gtLogStatText}>Corrects: <Text style={styles.gtLogStatHighlight}>{item.corrects}</Text></Text>
+                    <Text style={styles.gtLogStatText}>Score: <Text style={styles.gtLogStatHighlight}>{item.score}</Text></Text>
+                    <Text style={styles.gtLogStatText}>Rank: <Text style={styles.gtLogStatHighlight}>{item.rank}</Text></Text>
+                  </View>
+                  <View style={styles.gtLogDateRow}>
+                    <Calendar size={12} color="#9CA3AF" />
+                    <Text style={styles.gtLogDate}>{item.date}</Text>
+                  </View>
+                </View>
+                <TouchableOpacity style={styles.deleteLogBtn} onPress={() => deleteGtLog(item.id)}>
+                  <Trash2 size={18} color="#EF4444" />
                 </TouchableOpacity>
               </View>
-            </View>
-
-            {/* Logs History */}
-            <Text style={styles.loggerSectionTitle}>Test History Logs</Text>
-            {gtHistory.length === 0 ? (
-              <View style={styles.emptyLogsCard}>
-                <Activity size={36} color="#CBD5E1" />
-                <Text style={styles.emptyLogsText}>No tests logged yet. Enter score details above.</Text>
-              </View>
-            ) : (
-              gtHistory.map(item => (
-                <View key={item.id} style={styles.gtLogItem}>
-                  <View style={styles.gtLogDetails}>
-                    <Text style={styles.gtLogTitle}>{item.name}</Text>
-                    <View style={styles.gtLogStatsRow}>
-                      <Text style={styles.gtLogStatText}>Corrects: <Text style={styles.gtLogStatHighlight}>{item.corrects}</Text></Text>
-                      <Text style={styles.gtLogStatText}>Score: <Text style={styles.gtLogStatHighlight}>{item.score}</Text></Text>
-                      <Text style={styles.gtLogStatText}>Rank: <Text style={styles.gtLogStatHighlight}>{item.rank}</Text></Text>
-                    </View>
-                    <View style={styles.gtLogDateRow}>
-                      <Calendar size={12} color="#9CA3AF" />
-                      <Text style={styles.gtLogDate}>{item.date}</Text>
-                    </View>
-                  </View>
-                  <TouchableOpacity style={styles.deleteLogBtn} onPress={() => deleteGtLog(item.id)}>
-                    <Trash2 size={18} color="#EF4444" />
-                  </TouchableOpacity>
-                </View>
-              ))
-            )}
-          </ScrollView>
-        </SafeAreaView>
+            ))
+          )}
+        </ModalScreenLayout>
       </Modal>
 
       {/* 4. Resources Modal */}
       <Modal visible={activeModal === 'resources'} animationType="slide" transparent={false}>
-        <SafeAreaView style={styles.modalFullContainer}>
-          <View style={styles.modalHeaderRow}>
-            <Text style={styles.modalTitleText}>Free Resources</Text>
-            <TouchableOpacity style={styles.closeBtn} onPress={() => setActiveModal(null)}>
-              <X size={24} color="#111827" />
-            </TouchableOpacity>
-          </View>
-          <ScrollView style={styles.modalScrollBody} contentContainerStyle={styles.modalBodyPadding}>
-            <Text style={styles.faqSubtitle}>Curated Study Materials & Guides</Text>
-            {resourcesList.map((res, idx) => (
-              <View key={idx} style={styles.resourceCard}>
-                <View style={styles.resourceInfo}>
-                  <Text style={styles.resourceTitle}>{res.title}</Text>
-                  <View style={styles.resourceMetaRow}>
-                    <View style={styles.docTypeBadge}>
-                      <Text style={styles.docTypeBadgeText}>{res.type}</Text>
-                    </View>
-                    <Text style={styles.resourceSizeText}>{res.size}</Text>
+        <ModalScreenLayout title="Free Resources" onClose={() => setActiveModal(null)}>
+          <Text style={styles.faqSubtitle}>Curated Study Materials & Guides</Text>
+          {resourcesList.map((res, idx) => (
+            <View key={idx} style={styles.resourceCard}>
+              <View style={styles.resourceInfo}>
+                <Text style={styles.resourceTitle}>{res.title}</Text>
+                <View style={styles.resourceMetaRow}>
+                  <View style={styles.docTypeBadge}>
+                    <Text style={styles.docTypeBadgeText}>{res.type}</Text>
                   </View>
+                  <Text style={styles.resourceSizeText}>{res.size}</Text>
                 </View>
-                <TouchableOpacity style={styles.shareButton} onPress={() => shareResource(res.title)}>
-                  <Share2 size={18} color="#01b4ae" />
-                </TouchableOpacity>
               </View>
-            ))}
-          </ScrollView>
-        </SafeAreaView>
+              <TouchableOpacity style={styles.shareButton} onPress={() => shareResource(res.title)}>
+                <Share2 size={18} color="#01b4ae" />
+              </TouchableOpacity>
+            </View>
+          ))}
+        </ModalScreenLayout>
       </Modal>
 
       {/* 5. Free Content Modal */}
       <Modal visible={activeModal === 'free-content'} animationType="slide" transparent={false}>
-        <SafeAreaView style={styles.modalFullContainer}>
-          <View style={styles.modalHeaderRow}>
-            <Text style={styles.modalTitleText}>Free Content</Text>
-            <TouchableOpacity style={styles.closeBtn} onPress={() => setActiveModal(null)}>
-              <X size={24} color="#111827" />
-            </TouchableOpacity>
-          </View>
-          <ScrollView style={styles.modalScrollBody} contentContainerStyle={styles.modalBodyPadding}>
-            <Text style={styles.faqSubtitle}>Tips, Articles & High-Yield Information</Text>
-            {freeContentFeed.map((item, idx) => (
-              <View key={idx} style={styles.feedCard}>
-                <Text style={styles.feedCategoryText}>{item.category}</Text>
-                <Text style={styles.feedTitleText}>{item.title}</Text>
-                <View style={styles.feedMetaRow}>
-                  <Text style={styles.feedTimeText}>{item.readTime}</Text>
-                  <TouchableOpacity 
-                    style={styles.readMoreBtn} 
-                    onPress={() => Alert.alert('Premium Mentorship Content', 'Upgrade to our Premium Mentorship plan to fully unlock video breakdowns and targeted high-yield study documents.')}
-                  >
-                    <Text style={styles.readMoreBtnText}>View Content</Text>
-                  </TouchableOpacity>
-                </View>
+        <ModalScreenLayout title="Free Content" onClose={() => setActiveModal(null)}>
+          <Text style={styles.faqSubtitle}>Tips, Articles & High-Yield Information</Text>
+          {freeContentFeed.map((item, idx) => (
+            <View key={idx} style={styles.feedCard}>
+              <Text style={styles.feedCategoryText}>{item.category}</Text>
+              <Text style={styles.feedTitleText}>{item.title}</Text>
+              <View style={styles.feedMetaRow}>
+                <Text style={styles.feedTimeText}>{item.readTime}</Text>
+                <TouchableOpacity
+                  style={styles.readMoreBtn}
+                  onPress={() => Alert.alert('Premium Mentorship Content', 'Upgrade to our Premium Mentorship plan to fully unlock video breakdowns and targeted high-yield study documents.')}
+                >
+                  <Text style={styles.readMoreBtnText}>View Content</Text>
+                </TouchableOpacity>
               </View>
-            ))}
-          </ScrollView>
-        </SafeAreaView>
+            </View>
+          ))}
+        </ModalScreenLayout>
       </Modal>
 
       {/* 7. Terms & Conditions Modal */}
       <Modal visible={activeModal === 'terms'} animationType="slide" transparent={false}>
-        <SafeAreaView style={styles.modalFullContainer}>
-          <View style={styles.modalHeaderRow}>
-            <Text style={styles.modalTitleText}>Terms & Conditions</Text>
-            <TouchableOpacity style={styles.closeBtn} onPress={() => setActiveModal(null)}>
-              <X size={24} color="#111827" />
-            </TouchableOpacity>
-          </View>
-          <ScrollView style={styles.modalScrollBody} contentContainerStyle={styles.modalBodyPadding}>
-            <Text style={styles.termsParagraphBold}>Terms of Service & Rules of Engagement</Text>
-            <Text style={styles.termsText}>
-              Welcome to Eyeconic Mentors. By utilizing our mobile application, you agree to comply with our Terms & Conditions. 
-              The study schedules, quiz questions, and guidance resources are copyrighted properties and must not be distributed without written permission.
-            </Text>
-            <Text style={styles.termsText}>
-              1. **User Account Security**: Unregistered/free accounts are for personal medical licensing exam preparation. Sharing login details with other users will result in account lock constraints.
-            </Text>
-            <Text style={styles.termsText}>
-              2. **Content Ownership**: Question banks, flashcards, visual revision PDF charts are properties of Eyeconic Mentors. Unauthorized copying is prohibited.
-            </Text>
-            <Text style={styles.termsText}>
-              3. **Fair Usage Constraints**: Continuous tab switching or running scripts during test taking will invalidate your exam results, and might result in temporary bans from quiz panels.
-            </Text>
-            <Text style={styles.termsText}>
-              Please contact team@eyeconicmentors.com if you have questions regarding the terms of service.
-            </Text>
-          </ScrollView>
-        </SafeAreaView>
+        <ModalScreenLayout title="Terms & Conditions" onClose={() => setActiveModal(null)}>
+          <Text style={styles.termsParagraphBold}>Terms of Service & Rules of Engagement</Text>
+          <Text style={styles.termsText}>
+            Welcome to Eyeconic Mentors. By utilizing our mobile application, you agree to comply with our Terms & Conditions.
+            The study schedules, quiz questions, and guidance resources are copyrighted properties and must not be distributed without written permission.
+          </Text>
+          <Text style={styles.termsText}>
+            1. **User Account Security**: Unregistered/free accounts are for personal medical licensing exam preparation. Sharing login details with other users will result in account lock constraints.
+          </Text>
+          <Text style={styles.termsText}>
+            2. **Content Ownership**: Question banks, flashcards, visual revision PDF charts are properties of Eyeconic Mentors. Unauthorized copying is prohibited.
+          </Text>
+          <Text style={styles.termsText}>
+            3. **Fair Usage Constraints**: Continuous tab switching or running scripts during test taking will invalidate your exam results, and might result in temporary bans from quiz panels.
+          </Text>
+          <Text style={styles.termsText}>
+            Please contact team@eyeconicmentors.com if you have questions regarding the terms of service.
+          </Text>
+        </ModalScreenLayout>
       </Modal>
     </Modal>
   );
@@ -598,7 +546,7 @@ const styles = StyleSheet.create({
   },
   sidebarPanel: {
     width: SIDEBAR_WIDTH,
-    height: '100%',
+    alignSelf: 'stretch',
     backgroundColor: '#FFFFFF',
     borderTopRightRadius: 20,
     borderBottomRightRadius: 20,
@@ -610,8 +558,8 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
   },
   sidebarHeader: {
-    padding: 24,
-    paddingTop: Platform.OS === 'ios' ? 60 : 40,
+    paddingHorizontal: 24,
+    paddingBottom: 24,
   },
   logoRow: {
     flexDirection: 'row',
@@ -702,37 +650,6 @@ const styles = StyleSheet.create({
     color: '#D1D5DB',
     marginTop: 2,
   },
-  // Submodal Styles
-  modalFullContainer: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
-  modalHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-  },
-  modalTitleText: {
-    fontSize: 20,
-    fontWeight: '700',
-    color: '#111827',
-  },
-  closeBtn: {
-    padding: 4,
-    borderRadius: 8,
-    backgroundColor: '#F3F4F6',
-  },
-  modalScrollBody: {
-    flex: 1,
-  },
-  modalBodyPadding: {
-    padding: 20,
-    paddingBottom: 40,
-  },
   // Profile Submodal
   profileBadgeBig: {
     width: 80,
@@ -779,6 +696,7 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     color: '#111827',
+    flexShrink: 1,
   },
   sectionHeaderSub: {
     fontSize: 16,
@@ -934,6 +852,7 @@ const styles = StyleSheet.create({
   },
   gtLogStatsRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 14,
     marginTop: 6,
   },

@@ -2,17 +2,15 @@ import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   StyleSheet,
   ActivityIndicator,
-  Platform,
-  StatusBar,
   FlatList,
   Alert,
   useWindowDimensions,
 } from 'react-native';
+import { ScreenContainer } from '@/components/layout';
 import { KpiStatCard } from '@/components/KpiStatCard';
 import {
   BookOpen,
@@ -298,9 +296,9 @@ export default function StudentAssignments() {
 
   if (user?.role !== 'student') {
     return (
-      <SafeAreaView style={styles.container}>
+      <ScreenContainer style={styles.container}>
         <Text style={styles.errorText}>Access Denied - Students Only</Text>
-      </SafeAreaView>
+      </ScreenContainer>
     );
   }
 
@@ -361,7 +359,7 @@ export default function StudentAssignments() {
   ] as const;
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>My Assignments</Text>
         <Text style={styles.headerSubtitle}>Track your learning progress</Text>
@@ -460,7 +458,7 @@ export default function StudentAssignments() {
           />
         )}
       </View>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 
@@ -468,7 +466,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FAFCFC',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   header: {
     backgroundColor: '#01b4ae',

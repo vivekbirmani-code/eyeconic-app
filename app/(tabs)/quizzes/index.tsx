@@ -3,17 +3,15 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   TouchableOpacity,
   FlatList,
   ActivityIndicator,
   Alert,
-  Platform,
-  StatusBar,
   RefreshControl,
   Animated,
-  Pressable
+  Pressable,
 } from 'react-native';
+import { ScreenContainer } from '@/components/layout';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { BookOpen, Clock, CheckCircle, AlertCircle, RotateCcw, ChevronRight, PlayCircle, TrendingUp } from 'lucide-react-native';
 import { api } from '@/services/api';
@@ -290,7 +288,7 @@ function QuizzesContent() {
   // Admin view
   if (user?.role === 'admin') {
     return (
-      <SafeAreaView style={styles.container}>
+      <ScreenContainer style={styles.container}>
         <LinearGradient
           colors={['rgba(1, 180, 174, 0.18)', 'rgba(1, 180, 174, 0.05)', 'rgba(255, 255, 255, 0)']}
           locations={[0, 0.5, 1]}
@@ -340,13 +338,13 @@ function QuizzesContent() {
             </View>
           </Pressable>
         </Animated.View>
-      </SafeAreaView>
+      </ScreenContainer>
     );
   }
 
   // Student view
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       <LinearGradient
         colors={['rgba(1, 180, 174, 0.18)', 'rgba(1, 180, 174, 0.05)', 'rgba(255, 255, 255, 0)']}
         locations={[0, 0.5, 1]}
@@ -466,7 +464,7 @@ function QuizzesContent() {
           />
         )}
       </View>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 
@@ -482,7 +480,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF', // Clean white background
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   topGlow: {
     position: 'absolute',

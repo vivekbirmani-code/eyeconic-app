@@ -3,14 +3,12 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
-  Platform,
-  StatusBar,
   Animated,
-  Pressable
+  Pressable,
 } from 'react-native';
+import { ScreenContainer } from '@/components/layout';
 import { useRouter } from 'expo-router';
 import {
   BookOpen,
@@ -187,9 +185,9 @@ export default function AdminQuizHub() {
 
   if (user?.role !== 'admin') {
     return (
-      <SafeAreaView style={styles.container}>
+      <ScreenContainer style={styles.container}>
         <Text style={styles.errorText}>Admin access required</Text>
-      </SafeAreaView>
+      </ScreenContainer>
     );
   }
 
@@ -259,7 +257,7 @@ export default function AdminQuizHub() {
   );
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       {/* Top glow effect */}
       <LinearGradient
         colors={[
@@ -508,7 +506,7 @@ export default function AdminQuizHub() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 
@@ -516,7 +514,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   // Top glow effect
   topGlow: {

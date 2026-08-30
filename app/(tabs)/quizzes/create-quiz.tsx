@@ -3,19 +3,18 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   TextInput,
   Alert,
   ActivityIndicator,
   Platform,
-  StatusBar,
   Modal,
   Image,
   Switch,
-  FlatList
+  FlatList,
 } from 'react-native';
+import { ScreenContainer, FullScreenContainer } from '@/components/layout';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import {
   ChevronDown,
@@ -1589,14 +1588,14 @@ export default function CreateQuiz() {
 
   if (user?.role !== 'admin') {
     return (
-      <SafeAreaView style={styles.container}>
+      <ScreenContainer style={styles.container}>
         <Text style={styles.errorText}>Admin access required</Text>
-      </SafeAreaView>
+      </ScreenContainer>
     );
   }
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()}>
@@ -1702,7 +1701,7 @@ export default function CreateQuiz() {
 
       {/* Question Detail Modal */}
       <Modal visible={!!selectedQuestion} animationType="slide" onRequestClose={() => setSelectedQuestion(null)}>
-        <SafeAreaView style={styles.modalContainer}>
+        <FullScreenContainer style={styles.modalContainer}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Question Preview</Text>
             <TouchableOpacity onPress={() => setSelectedQuestion(null)}>
@@ -1830,9 +1829,9 @@ export default function CreateQuiz() {
               <View style={{ height: 40 }} />
             </ScrollView>
           )}
-        </SafeAreaView>
+        </FullScreenContainer>
       </Modal>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 
@@ -1841,7 +1840,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F3F4F6',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   header: {
     flexDirection: 'row',
@@ -2402,7 +2400,6 @@ const styles = StyleSheet.create({
   modalContainer: {
     flex: 1,
     backgroundColor: '#F3F4F6',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   modalHeader: {
     flexDirection: 'row',

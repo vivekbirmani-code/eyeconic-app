@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { View, Text as RNText, TouchableOpacity as RNTouchable, Platform, Alert } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Linking from 'expo-linking';
 import * as SplashScreen from 'expo-splash-screen';
@@ -287,19 +288,21 @@ export default function RootLayout() {
   // }, []);
 
   return (
-    <ErrorBoundary>
-      <AuthProvider>
-        <NotificationProvider>
-          <CallProvider>
-            <QuizProvider>
-              <GuestQuizProvider>
-                <AppContent />
-                <StatusBar style="dark" backgroundColor="#FFFFFF" />
-              </GuestQuizProvider>
-            </QuizProvider>
-          </CallProvider>
-        </NotificationProvider>
-      </AuthProvider>
-    </ErrorBoundary>
+    <SafeAreaProvider>
+      <ErrorBoundary>
+        <AuthProvider>
+          <NotificationProvider>
+            <CallProvider>
+              <QuizProvider>
+                <GuestQuizProvider>
+                  <AppContent />
+                  <StatusBar style="dark" backgroundColor="#FFFFFF" />
+                </GuestQuizProvider>
+              </QuizProvider>
+            </CallProvider>
+          </NotificationProvider>
+        </AuthProvider>
+      </ErrorBoundary>
+    </SafeAreaProvider>
   );
 }

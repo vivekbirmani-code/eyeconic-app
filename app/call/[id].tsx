@@ -4,15 +4,14 @@ import {
   Text,
   TouchableOpacity,
   StyleSheet,
-  SafeAreaView,
   Platform,
-  StatusBar,
   FlatList,
   Modal,
   ScrollView,
   Alert,
   ActivityIndicator,
 } from 'react-native';
+import { FullScreenContainer } from '@/components/layout';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ArrowLeft, Phone, PhoneOff, Mic, MicOff, UserPlus, X, Check, Volume2, VolumeX } from 'lucide-react-native';
 import { useCall } from '@/context/CallContext';
@@ -191,7 +190,7 @@ export default function CallScreen() {
   // If not in a call, show the call initiation screen
   if (!callState.isInCall) {
     return (
-      <SafeAreaView style={styles.container}>
+      <FullScreenContainer style={styles.container}>
         <View style={styles.header}>
           <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
             <ArrowLeft color="#000000" size={24} />
@@ -283,7 +282,7 @@ export default function CallScreen() {
             </View>
           </View>
         </Modal>
-      </SafeAreaView>
+      </FullScreenContainer>
     );
   }
 
@@ -316,7 +315,7 @@ export default function CallScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.callContainer}>
+    <FullScreenContainer style={styles.callContainer}>
       {/* RTCView components for remote audio - positioned off-screen but NOT hidden */}
       {renderAudioStreams()}
 
@@ -433,7 +432,7 @@ export default function CallScreen() {
           </View>
         </View>
       </Modal>
-    </SafeAreaView>
+    </FullScreenContainer>
   );
 }
 
@@ -441,7 +440,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   header: {
     flexDirection: 'row',
@@ -554,7 +552,6 @@ const styles = StyleSheet.create({
   callContainer: {
     flex: 1,
     backgroundColor: '#1F2937',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   callHeader: {
     flexDirection: 'row',

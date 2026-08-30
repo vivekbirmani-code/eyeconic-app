@@ -1,10 +1,12 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Platform } from 'react-native';
+import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Phone, PhoneOff, Mic, MicOff } from 'lucide-react-native';
 import { useCall } from '@/context/CallContext';
 import { useRouter } from 'expo-router';
 
 export default function FloatingCallBar() {
+  const insets = useSafeAreaInsets();
   const { callState, leaveCall, endCall, toggleMute, maximizeCall } = useCall();
   const router = useRouter();
 
@@ -34,8 +36,8 @@ export default function FloatingCallBar() {
   };
 
   return (
-    <TouchableOpacity 
-      style={styles.container}
+    <TouchableOpacity
+      style={[styles.container, { top: insets.top + 8 }]}
       onPress={handleReturnToCall}
       activeOpacity={0.9}
     >
@@ -77,7 +79,6 @@ export default function FloatingCallBar() {
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    top: Platform.OS === 'ios' ? 50 : 10,
     left: 10,
     right: 10,
     backgroundColor: '#10B981',

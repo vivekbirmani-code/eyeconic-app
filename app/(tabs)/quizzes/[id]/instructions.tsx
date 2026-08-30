@@ -3,14 +3,12 @@ import {
   View,
   Text,
   StyleSheet,
-  SafeAreaView,
   ScrollView,
   TouchableOpacity,
   Alert,
   ActivityIndicator,
-  Platform,
-  StatusBar
 } from 'react-native';
+import { ScreenContainer } from '@/components/layout';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { BookOpen, Clock, FileText, Award } from 'lucide-react-native';
 import { api } from '@/services/api';
@@ -112,17 +110,17 @@ export default function QuizInstructions() {
 
   if (loading) {
     return (
-      <SafeAreaView style={styles.container}>
+      <ScreenContainer style={styles.container}>
         <ActivityIndicator size="large" color="#2563EB" />
-      </SafeAreaView>
+      </ScreenContainer>
     );
   }
 
   if (!quiz) {
     return (
-      <SafeAreaView style={styles.container}>
+      <ScreenContainer style={styles.container}>
         <Text style={styles.errorText}>Quiz not found</Text>
-      </SafeAreaView>
+      </ScreenContainer>
     );
   }
 
@@ -173,7 +171,7 @@ export default function QuizInstructions() {
   })();
 
   return (
-    <SafeAreaView style={styles.container}>
+    <ScreenContainer style={styles.container}>
       <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
         {/* Header */}
         <View style={styles.header}>
@@ -300,7 +298,7 @@ export default function QuizInstructions() {
           )}
         </TouchableOpacity>
       </View>
-    </SafeAreaView>
+    </ScreenContainer>
   );
 }
 
@@ -308,7 +306,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F3F4F6',
-    paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
   },
   scrollView: {
     flex: 1,
