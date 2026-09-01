@@ -1143,26 +1143,24 @@ export default function Users() {
                     </View>
 
                     {selectedUser.role === 'student' && (
-                      <View style={[styles.infoRow, { justifyContent: 'space-between', alignItems: 'center' }]}>
-                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-                          <UsersIcon color="#6B7280" size={20} />
-                          <View style={styles.infoContent}>
-                            <Text style={styles.infoLabel}>Student Tier</Text>
-                            <Text style={[styles.infoValue, { fontWeight: 'bold', color: selectedUser.isFreeUser ? '#D97706' : '#059669' }]}>
-                              {selectedUser.isFreeUser ? 'Free User' : 'Paid User'}
-                            </Text>
-                          </View>
+                      <View style={styles.infoRow}>
+                        <UsersIcon color="#6B7280" size={20} />
+                        <View style={styles.infoContent}>
+                          <Text style={styles.infoLabel}>Student Tier</Text>
+                          <Text style={[styles.infoValue, { fontWeight: 'bold', color: selectedUser.isFreeUser ? '#D97706' : '#059669' }]}>
+                            {selectedUser.isFreeUser ? 'Free User' : 'Paid User'}
+                          </Text>
                         </View>
                         <TouchableOpacity
-                          style={{
-                            backgroundColor: selectedUser.isFreeUser ? '#01b4ae' : '#EF4444',
-                            paddingVertical: 6,
-                            paddingHorizontal: 12,
-                            borderRadius: 8,
-                          }}
+                          style={[
+                            styles.tierButton,
+                            selectedUser.isFreeUser ? styles.tierButtonFree : styles.tierButtonPaid,
+                          ]}
                           onPress={handleToggleUserTier}
+                          activeOpacity={0.85}
+                          accessibilityLabel={selectedUser.isFreeUser ? 'Convert student to Paid User' : 'Convert student to Free User'}
                         >
-                          <Text style={{ color: '#FFFFFF', fontWeight: 'bold', fontSize: 12 }}>
+                          <Text style={styles.tierButtonText}>
                             {selectedUser.isFreeUser ? 'Make Paid' : 'Make Free'}
                           </Text>
                         </TouchableOpacity>
@@ -1879,6 +1877,25 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#000000',
     fontWeight: '500',
+  },
+  // Student tier action inside the "Student Tier" info row. Layout is shared
+  // by both tier states; only the background color differs so the button is
+  // always laid out inside the row (never pushed past the modal edge).
+  tierButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+  },
+  tierButtonPaid: {
+    backgroundColor: '#EF4444',
+  },
+  tierButtonFree: {
+    backgroundColor: '#01b4ae',
+  },
+  tierButtonText: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    fontSize: 12,
   },
   closeButton: {
     backgroundColor: '#F3F4F6',
