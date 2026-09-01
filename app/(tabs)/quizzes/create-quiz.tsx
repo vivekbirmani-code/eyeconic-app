@@ -1052,14 +1052,22 @@ export default function CreateQuiz() {
 
   // Step 3 - Question Selection
   const renderStep3 = () => (
-    <View style={styles.stepContent}>
-      <Text style={styles.stepTitle}>Select Questions</Text>
+    <View style={styles.step3Content}>
+      <Text style={[styles.stepTitle, styles.step3Title]}>Select Questions</Text>
 
       <View style={styles.selectionHeader}>
         <Text style={styles.selectionCount}>
           {selectedQuestions.length} questions selected
         </Text>
-        <TouchableOpacity onPress={handleSelectAllQuestions}>
+        <TouchableOpacity
+          onPress={handleSelectAllQuestions}
+          accessibilityRole="button"
+          accessibilityLabel={
+            selectedQuestions.length === filteredQuestions.length
+              ? 'Deselect all questions'
+              : 'Select all questions'
+          }
+        >
           <Text style={styles.selectAllText}>
             {selectedQuestions.length === filteredQuestions.length ? 'Deselect All' : 'Select All'}
           </Text>
@@ -1097,9 +1105,9 @@ export default function CreateQuiz() {
       </View>
 
       {/* Difficulty filter */}
-      <View style={styles.filterRow}>
-        <Text style={styles.filterLabel}>Difficulty:</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+      <View style={styles.filterChipRow}>
+        <Text style={styles.filterLabelInline}>Difficulty</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterChipScroll}>
           <TouchableOpacity
             style={[styles.filterChip, !difficultyFilter && styles.filterChipActive]}
             onPress={() => setDifficultyFilter('')}
@@ -1121,9 +1129,9 @@ export default function CreateQuiz() {
       </View>
 
       {/* Question Type filter */}
-      <View style={styles.filterRow}>
-        <Text style={styles.filterLabel}>Type:</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+      <View style={styles.filterChipRow}>
+        <Text style={styles.filterLabelInline}>Type</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterChipScroll}>
           <TouchableOpacity
             style={[styles.filterChip, !questionTypeFilter && styles.filterChipActive]}
             onPress={() => setQuestionTypeFilter('')}
@@ -1145,9 +1153,9 @@ export default function CreateQuiz() {
       </View>
 
       {/* Subject filter for questions - only show selected subjects */}
-      <View style={styles.filterRow}>
-        <Text style={styles.filterLabel}>Filter by subject:</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+      <View style={styles.filterChipRow}>
+        <Text style={styles.filterLabelInline}>Subject</Text>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterChipScroll}>
           <TouchableOpacity
             style={[styles.filterChip, !questionSubjectFilter && styles.filterChipActive]}
             onPress={() => setQuestionSubjectFilter('')}
@@ -1168,8 +1176,10 @@ export default function CreateQuiz() {
         </ScrollView>
       </View>
 
-      {/* Question list */}
-      <View style={[styles.studentList, { flex: 1 }]}>
+      {/* Question list - flexes into all vertical space left by the fixed controls above,
+          inside a bounded parent so the FlatList virtualizes properly and never slides
+          under the wizard footer or tab bar. */}
+      <View style={styles.questionList}>
         {loadingQuestions && page === 1 ? (
           <ActivityIndicator color="#2563EB" style={{ marginTop: 20 }} />
         ) : filteredQuestions.length === 0 ? (
@@ -1178,6 +1188,9 @@ export default function CreateQuiz() {
           <FlatList
             data={filteredQuestions}
             keyExtractor={(item: Question) => item._id}
+            extraData={selectedQuestions}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
             renderItem={({ item }: { item: Question }) => (
               <TouchableOpacity
                 style={[
@@ -1218,7 +1231,7 @@ export default function CreateQuiz() {
                 <ActivityIndicator color="#2563EB" style={{ marginVertical: 20 }} />
               ) : null
             )}
-            contentContainerStyle={{ paddingBottom: 20 }}
+            contentContainerStyle={{ paddingBottom: 12 }}
           />
         )}
       </View>
@@ -1845,7 +1858,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 16,
+    padding: 12,
     backgroundColor: '#2563EB',
   },
   headerTitle: {
@@ -1858,7 +1871,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingVertical: 8,
     backgroundColor: '#FFF',
     borderBottomWidth: 1,
     borderBottomColor: '#F3F4F6',
@@ -1912,6 +1925,20 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#1F2937',
     marginBottom: 20,
+  },
+  // Step 3 uses a fixed-chrome + flexible-list layout: the controls below keep
+  // their natural height while questionList (flex: 1) takes all remaining space.
+  step3Content: {
+    flex: 1,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+  },
+  step3Title: {
+    marginBottom: 8,
+  },
+  questionList: {
+    flex: 1,
   },
   testTypeContainer: {
     flexDirection: 'row',
@@ -2229,12 +2256,22 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   filterRow: {
-    marginBottom: 12,
+    marginBottom: 10,
   },
-  filterLabel: {
+  // Compact single-line filter group: fixed label + horizontally scrollable chips
+  filterChipRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  filterLabelInline: {
     fontSize: 12,
+    fontWeight: '600',
     color: '#6B7280',
-    marginBottom: 8,
+    marginRight: 8,
+  },
+  filterChipScroll: {
+    flex: 1,
   },
   filterChip: {
     paddingHorizontal: 12,
@@ -2310,7 +2347,7 @@ const styles = StyleSheet.create({
   },
   bottomNav: {
     flexDirection: 'row',
-    padding: 16,
+    padding: 12,
     backgroundColor: '#FFF',
     borderTopWidth: 1,
     borderTopColor: '#E5E7EB',

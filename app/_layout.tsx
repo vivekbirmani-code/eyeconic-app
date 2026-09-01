@@ -214,15 +214,6 @@ function AppContent() {
         <Stack.Screen name="guest-quiz/[shareToken]" />
         <Stack.Screen name="chat/[id]" />
         <Stack.Screen name="call/[id]" />
-        <Stack.Screen name="quiz/[id]/instructions" />
-        <Stack.Screen name="quiz/[id]/taking" />
-        <Stack.Screen name="quiz/[id]/result/[attemptId]" />
-        <Stack.Screen name="quiz/[id]/review/[attemptId]" />
-        <Stack.Screen name="quiz/retest-requests" />
-        <Stack.Screen name="admin/quiz-hub" />
-        <Stack.Screen name="admin/question-bank" />
-        <Stack.Screen name="admin/create-quiz" />
-        <Stack.Screen name="admin/student-analytics" />
         <Stack.Screen name="+not-found" />
       </Stack>
     </View>
