@@ -16,6 +16,7 @@ import {
   UIManager,
   Pressable,
   ActivityIndicator,
+  LayoutChangeEvent,
 } from 'react-native';
 import { ScreenContainer, FullScreenContainer } from '@/components/layout';
 import { Plus, User as UserIcon, Search, X, Mail, Shield, Calendar, Phone, Lock, Key, Users as UsersIcon, Check, Square, CheckSquare, ChevronRight } from 'lucide-react-native';
@@ -35,6 +36,8 @@ import SubjectSelectionModal from '@/components/SubjectSelectionModal';
 import MentorSelectionModal, { type Mentor } from '@/components/MentorSelectionModal';
 import { useAppRefresh } from '@/hooks/useAppRefresh';
 import UserAvatar from '@/components/UserAvatar';
+
+const SEGMENT_TRACK_INSET = 4;
 
 interface StudentProfile {
   mbbsBatch?: string;
@@ -133,8 +136,12 @@ export default function Users() {
   const modalTranslateY = useRef(new Animated.Value(30)).current;
   const modalScale = useRef(new Animated.Value(0.95)).current;
 
-  // Role selector animation for segmented control
+  // Role selector animation for segmented control.
+  // Position is 0 (Student) or 1 (Mentor); actual pixel offset is
+  // multiplied by the measured half-width so both states stay symmetrical.
   const roleIndicatorPosition = useRef(new Animated.Value(0)).current;
+  const roleSegmentWidthAnim = useRef(new Animated.Value(0)).current;
+  const [roleSegmentWidth, setRoleSegmentWidth] = useState(0);
 
   // Card list animations
   const cardAnimations = useRef<Animated.Value[]>([]).current;
@@ -259,6 +266,7 @@ export default function Users() {
     try {
       await api.post('/users', newUser);
       setNewUser({ name: '', email: '', password: '', phone: '', role: 'student' });
+      roleIndicatorPosition.setValue(0);
       setIsCreateModalVisible(false);
       fetchUsers();
       Alert.alert('Success', 'User created successfully');
@@ -974,21 +982,35 @@ export default function Users() {
 
             <View style={styles.roleSelector}>
               <Text style={styles.roleLabel}>Role:</Text>
-              <View style={styles.segmentedControl}>
-                {/* Animated sliding indicator */}
-                <Animated.View
-                  style={[
-                    styles.segmentIndicator,
-                    {
-                      transform: [{
-                        translateX: roleIndicatorPosition.interpolate({
-                          inputRange: [0, 1],
-                          outputRange: [0, 150], // Adjust based on button width
-                        })
-                      }]
-                    }
-                  ]}
-                />
+              <View
+                style={styles.segmentedControl}
+                onLayout={(event: LayoutChangeEvent) => {
+                  const trackWidth = event.nativeEvent.layout.width;
+                  const segmentWidth =
+                    (trackWidth - SEGMENT_TRACK_INSET * 2) / 2;
+                  if (segmentWidth > 0 && segmentWidth !== roleSegmentWidth) {
+                    setRoleSegmentWidth(segmentWidth);
+                    roleSegmentWidthAnim.setValue(segmentWidth);
+                  }
+                }}
+              >
+                {roleSegmentWidth > 0 && (
+                  <Animated.View
+                    pointerEvents="none"
+                    style={[
+                      styles.segmentIndicator,
+                      {
+                        width: roleSegmentWidth,
+                        transform: [{
+                          translateX: Animated.multiply(
+                            roleIndicatorPosition,
+                            roleSegmentWidthAnim
+                          ),
+                        }],
+                      },
+                    ]}
+                  />
+                )}
                 <TouchableOpacity
                   style={styles.segmentButton}
                   onPress={() => {
@@ -1002,6 +1024,9 @@ export default function Users() {
                     setNewUser({ ...newUser, role: 'student' });
                   }}
                   activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Student"
+                  accessibilityState={{ selected: newUser.role === 'student' }}
                 >
                   <Text style={[
                     styles.segmentButtonText,
@@ -1021,6 +1046,9 @@ export default function Users() {
                     setNewUser({ ...newUser, role: 'mentor' });
                   }}
                   activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Mentor"
+                  accessibilityState={{ selected: newUser.role === 'mentor' }}
                 >
                   <Text style={[
                     styles.segmentButtonText,
@@ -2273,15 +2301,14 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     backgroundColor: '#F3F4F6',
     borderRadius: 12,
-    padding: 4,
+    padding: SEGMENT_TRACK_INSET,
     position: 'relative',
   },
   segmentIndicator: {
     position: 'absolute',
-    top: 4,
-    left: 4,
-    width: 150,
-    height: '100%',
+    top: SEGMENT_TRACK_INSET,
+    bottom: SEGMENT_TRACK_INSET,
+    left: SEGMENT_TRACK_INSET,
     backgroundColor: '#01b4ae',
     borderRadius: 10,
     shadowColor: '#01b4ae',
@@ -2292,6 +2319,7 @@ const styles = StyleSheet.create({
   },
   segmentButton: {
     flex: 1,
+    flexBasis: 0,
     paddingVertical: 12,
     paddingHorizontal: 16,
     alignItems: 'center',
@@ -2302,6 +2330,8 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#6B7280',
+    textAlign: 'center',
+    width: '100%',
   },
   segmentButtonTextActive: {
     color: '#FFFFFF',
