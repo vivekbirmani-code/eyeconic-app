@@ -8,7 +8,6 @@ import {
   TextInput,
   ActivityIndicator,
   Alert,
-  Platform,
   Modal,
   Image,
   FlatList,
@@ -28,7 +27,8 @@ import {
 } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import { DateTimeField } from '@/components/DateTimeField';
+import { isValidQuizWindow } from '@/utils/quizDateTime';
 
 interface Question {
   _id: string;
@@ -133,10 +133,6 @@ export default function EditQuiz() {
   // Time Window
   const [scheduledDate, setScheduledDate] = useState<Date | null>(null);
   const [expiryDate, setExpiryDate] = useState<Date | null>(null);
-  const [showStartPicker, setShowStartPicker] = useState(false);
-  const [showEndPicker, setShowEndPicker] = useState(false);
-  const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date');
-  const [tempDate, setTempDate] = useState<Date>(new Date());
 
   // Question Picker Modal
   const [showQuestionPicker, setShowQuestionPicker] = useState(false);
@@ -363,6 +359,11 @@ export default function EditQuiz() {
       return;
     }
 
+    if (!isValidQuizWindow(scheduledDate, expiryDate)) {
+      Alert.alert('Error', 'End date must be after start date');
+      return;
+    }
+
     const validQuestionIds = new Set(selectedQuestions.map(q => q._id));
     const sectionPayload = quizSections.map(section => ({
       name: section.name.trim(),
@@ -438,9 +439,12 @@ export default function EditQuiz() {
       // Refresh local quiz state so screen shows updated values immediately
       await loadQuiz();
       Alert.alert('Success', 'Quiz updated successfully');
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving quiz:', error);
-      Alert.alert('Error', 'Failed to save quiz');
+      const data = error.response?.data;
+      const message = data?.message || 'Failed to save quiz';
+      const detail = typeof data?.error === 'string' && data.error !== message ? data.error : undefined;
+      Alert.alert('Error', detail ? `${message}\n${detail}` : message);
     } finally {
       setSaving(false);
     }
@@ -653,81 +657,19 @@ export default function EditQuiz() {
 
           {/* Time Window */}
           <View style={styles.inputGroup}>
-            <Text style={styles.label}>Start Date & Time</Text>
-            <TouchableOpacity
-              style={styles.datePickerButton}
-              onPress={() => {
-                setTempDate(scheduledDate || new Date());
-                setPickerMode('date');
-                setShowStartPicker(true);
-              }}
-            >
-              <Text style={[styles.datePickerText, !scheduledDate && { color: '#9CA3AF' }]}>
-                {scheduledDate ? scheduledDate.toLocaleString() : 'Select start date & time'}
-              </Text>
-            </TouchableOpacity>
-            {showStartPicker && (
-              <DateTimePicker
-                value={tempDate}
-                mode={pickerMode}
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={(event: any, selected?: Date) => {
-                  if (event.type === 'dismissed') {
-                    setShowStartPicker(false);
-                    return;
-                  }
-                  if (selected) {
-                    if (pickerMode === 'date') {
-                      setTempDate(selected);
-                      setPickerMode('time');
-                    } else {
-                      setScheduledDate(selected);
-                      setShowStartPicker(false);
-                      setPickerMode('date');
-                    }
-                  }
-                }}
-              />
-            )}
-          </View>
+            <DateTimeField
+              label="Start Date & Time"
+              value={scheduledDate}
+              placeholder="Select start date & time"
+              onCommit={setScheduledDate}
+            />
 
-          <View style={styles.inputGroup}>
-            <Text style={styles.label}>End Date & Time</Text>
-            <TouchableOpacity
-              style={styles.datePickerButton}
-              onPress={() => {
-                setTempDate(expiryDate || new Date());
-                setPickerMode('date');
-                setShowEndPicker(true);
-              }}
-            >
-              <Text style={[styles.datePickerText, !expiryDate && { color: '#9CA3AF' }]}>
-                {expiryDate ? expiryDate.toLocaleString() : 'Select end date & time'}
-              </Text>
-            </TouchableOpacity>
-            {showEndPicker && (
-              <DateTimePicker
-                value={tempDate}
-                mode={pickerMode}
-                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                onChange={(event: any, selected?: Date) => {
-                  if (event.type === 'dismissed') {
-                    setShowEndPicker(false);
-                    return;
-                  }
-                  if (selected) {
-                    if (pickerMode === 'date') {
-                      setTempDate(selected);
-                      setPickerMode('time');
-                    } else {
-                      setExpiryDate(selected);
-                      setShowEndPicker(false);
-                      setPickerMode('date');
-                    }
-                  }
-                }}
-              />
-            )}
+            <DateTimeField
+              label="End Date & Time"
+              value={expiryDate}
+              placeholder="Select end date & time"
+              onCommit={setExpiryDate}
+            />
 
             {scheduledDate && expiryDate && expiryDate <= scheduledDate && (
               <Text style={{ color: '#EF4444', fontSize: 12, marginTop: 4 }}>
@@ -1788,19 +1730,5 @@ const styles = StyleSheet.create({
   },
   subjectChipTextActive: {
     color: '#FFF',
-  },
-  datePickerButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F9FAFB',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 8,
-    padding: 12,
-  },
-  datePickerText: {
-    fontSize: 15,
-    color: '#1F2937',
-    flex: 1,
   },
 });

@@ -8,7 +8,6 @@ import {
   TextInput,
   Alert,
   ActivityIndicator,
-  Platform,
   Modal,
   Image,
   Switch,
@@ -31,8 +30,9 @@ import {
 } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import { DateTimeField } from '@/components/DateTimeField';
 import { formatToIST } from '@/utils/date';
+import { isValidQuizWindow } from '@/utils/quizDateTime';
 import useDebounce from '@/hooks/useDebounce';
 import { QUESTION_TYPES, QUESTION_TYPE_LABELS, DIFFICULTY_LEVELS, DIFFICULTY_LABELS } from '@/types/question';
 
@@ -128,10 +128,6 @@ export default function CreateQuiz() {
   // Time Window
   const [scheduledDate, setScheduledDate] = useState<Date | null>(null);
   const [expiryDate, setExpiryDate] = useState<Date | null>(null);
-  const [showStartPicker, setShowStartPicker] = useState(false);
-  const [showEndPicker, setShowEndPicker] = useState(false);
-  const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date');
-  const [tempDate, setTempDate] = useState<Date>(new Date());
 
   // Step 3: Question Selection (NEW)
   const [availableQuestionsList, setAvailableQuestionsList] = useState<Question[]>([]);
@@ -651,6 +647,11 @@ export default function CreateQuiz() {
       Alert.alert('Error', 'Please enter a title');
       return;
     }
+    const parsedDuration = parseInt(duration, 10);
+    if (!Number.isFinite(parsedDuration) || parsedDuration <= 0) {
+      Alert.alert('Error', 'Please enter a valid quiz duration in minutes');
+      return;
+    }
     if (selectedQuestions.length === 0) {
       Alert.alert('Error', 'Please select at least one question');
       return;
@@ -659,8 +660,16 @@ export default function CreateQuiz() {
       Alert.alert('Error', 'Please select at least one student or mentor');
       return;
     }
-    if (scheduledDate && expiryDate && expiryDate <= scheduledDate) {
+    if (!isValidQuizWindow(scheduledDate, expiryDate)) {
       Alert.alert('Error', 'End date must be after start date');
+      return;
+    }
+    const allocatedTime = quizSections.reduce((sum, s) => sum + s.duration, 0);
+    if (quizSections.length > 0 && allocatedTime !== parsedDuration) {
+      Alert.alert(
+        'Error',
+        `Section time allocation (${allocatedTime} mins) must match quiz duration (${parsedDuration} mins)`
+      );
       return;
     }
 
@@ -675,7 +684,7 @@ export default function CreateQuiz() {
           testType,
           numberOfQuestions: selectedQuestions.length,
           questions: selectedQuestions,
-          duration: parseInt(duration),
+          duration: parsedDuration,
           positiveMarks: parseFloat(positiveMarks) || 4,
           negativeMarks: parseFloat(negativeMarks) || 0,
           instructions: instructions.split('\n').filter(i => i.trim()),
@@ -696,7 +705,7 @@ export default function CreateQuiz() {
           testType,
           numberOfQuestions: selectedQuestions.length,
           selectedQuestionIds: selectedQuestions,
-          duration: parseInt(duration),
+          duration: parsedDuration,
           positiveMarks: parseFloat(positiveMarks) || 4,
           negativeMarks: parseFloat(negativeMarks) || 0,
           instructions: instructions.split('\n').filter(i => i.trim()),
@@ -718,7 +727,10 @@ export default function CreateQuiz() {
 
     } catch (error: any) {
       console.error('Create quiz error:', error);
-      Alert.alert('Error', error.response?.data?.message || 'Failed to create quiz');
+      const data = error.response?.data;
+      const message = data?.message || 'Failed to create quiz';
+      const detail = typeof data?.error === 'string' && data.error !== message ? data.error : undefined;
+      Alert.alert('Error', detail ? `${message}\n${detail}` : message);
     } finally {
       setCreating(false);
     }
@@ -941,81 +953,19 @@ export default function CreateQuiz() {
       </View>
 
       {/* Time Window */}
-      <Text style={styles.inputLabel}>Start Date & Time</Text>
-      <TouchableOpacity
-        style={styles.datePickerButton}
-        onPress={() => {
-          setTempDate(scheduledDate || new Date());
-          setPickerMode('date');
-          setShowStartPicker(true);
-        }}
-      >
-        <Clock color="#6B7280" size={18} />
-        <Text style={[styles.datePickerText, !scheduledDate && { color: '#9CA3AF' }]}>
-          {scheduledDate ? scheduledDate.toLocaleString() : 'Select start date & time (Optional)'}
-        </Text>
-      </TouchableOpacity>
-      {showStartPicker && (
-        <DateTimePicker
-          value={tempDate}
-          mode={pickerMode}
-          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-          onChange={(event: any, selected?: Date) => {
-            if (event.type === 'dismissed') {
-              setShowStartPicker(false);
-              return;
-            }
-            if (selected) {
-              if (pickerMode === 'date') {
-                setTempDate(selected);
-                setPickerMode('time');
-              } else {
-                setScheduledDate(selected);
-                setShowStartPicker(false);
-                setPickerMode('date');
-              }
-            }
-          }}
-        />
-      )}
+      <DateTimeField
+        label="Start Date & Time"
+        value={scheduledDate}
+        placeholder="Select start date & time (Optional)"
+        onCommit={setScheduledDate}
+      />
 
-      <Text style={styles.inputLabel}>End Date & Time</Text>
-      <TouchableOpacity
-        style={styles.datePickerButton}
-        onPress={() => {
-          setTempDate(expiryDate || new Date());
-          setPickerMode('date');
-          setShowEndPicker(true);
-        }}
-      >
-        <Clock color="#6B7280" size={18} />
-        <Text style={[styles.datePickerText, !expiryDate && { color: '#9CA3AF' }]}>
-          {expiryDate ? expiryDate.toLocaleString() : 'Select end date & time (Optional)'}
-        </Text>
-      </TouchableOpacity>
-      {showEndPicker && (
-        <DateTimePicker
-          value={tempDate}
-          mode={pickerMode}
-          display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-          onChange={(event: any, selected?: Date) => {
-            if (event.type === 'dismissed') {
-              setShowEndPicker(false);
-              return;
-            }
-            if (selected) {
-              if (pickerMode === 'date') {
-                setTempDate(selected);
-                setPickerMode('time');
-              } else {
-                setExpiryDate(selected);
-                setShowEndPicker(false);
-                setPickerMode('date');
-              }
-            }
-          }}
-        />
-      )}
+      <DateTimeField
+        label="End Date & Time"
+        value={expiryDate}
+        placeholder="Select end date & time (Optional)"
+        onCommit={setExpiryDate}
+      />
 
       {scheduledDate && expiryDate && expiryDate <= scheduledDate && (
         <Text style={{ color: '#EF4444', fontSize: 12, marginTop: 4 }}>
@@ -2575,22 +2525,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: '#6B7280',
     lineHeight: 18,
-  },
-  datePickerButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F9FAFB',
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 12,
-    padding: 14,
-    marginBottom: 12,
-    gap: 10,
-  },
-  datePickerText: {
-    fontSize: 15,
-    color: '#1F2937',
-    flex: 1,
   },
   sectionContainer: {
     marginBottom: 20,

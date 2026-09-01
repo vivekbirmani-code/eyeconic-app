@@ -8,7 +8,6 @@ import {
   TextInput,
   Alert,
   ActivityIndicator,
-  Platform,
   Modal,
   FlatList,
 } from 'react-native';
@@ -26,7 +25,7 @@ import {
 import * as DocumentPicker from 'expo-document-picker';
 import { api, normalizeApiError } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
-import DateTimePicker from '@react-native-community/datetimepicker';
+import { DateTimeField } from '@/components/DateTimeField';
 
 interface Subject {
   _id: string;
@@ -76,11 +75,7 @@ export default function ImportQuiz() {
   // Time Window
   const [scheduledDate, setScheduledDate] = useState<Date | null>(null);
   const [expiryDate, setExpiryDate] = useState<Date | null>(null);
-  const [showStartPicker, setShowStartPicker] = useState(false);
-  const [showEndPicker, setShowEndPicker] = useState(false);
-  const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date');
-  const [tempDate, setTempDate] = useState<Date>(new Date());
-  
+
   // Preview Modal State
   const [showPreview, setShowPreview] = useState(false);
   const [previewQuestions, setPreviewQuestions] = useState<PreviewQuestion[]>([]);
@@ -421,79 +416,19 @@ export default function ImportQuiz() {
           </ScrollView>
 
           {/* Time Window */}
-          <Text style={styles.label}>Start Date & Time (Optional)</Text>
-          <TouchableOpacity
-            style={styles.datePickerButton}
-            onPress={() => {
-              setTempDate(scheduledDate || new Date());
-              setPickerMode('date');
-              setShowStartPicker(true);
-            }}
-          >
-            <Text style={[styles.datePickerText, !scheduledDate && { color: '#9CA3AF' }]}>
-              {scheduledDate ? scheduledDate.toLocaleString() : 'Select start date & time'}
-            </Text>
-          </TouchableOpacity>
-          {showStartPicker && (
-            <DateTimePicker
-              value={tempDate}
-              mode={pickerMode}
-              display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-              onChange={(event: any, selected?: Date) => {
-                if (event.type === 'dismissed') {
-                  setShowStartPicker(false);
-                  return;
-                }
-                if (selected) {
-                  if (pickerMode === 'date') {
-                    setTempDate(selected);
-                    setPickerMode('time');
-                  } else {
-                    setScheduledDate(selected);
-                    setShowStartPicker(false);
-                    setPickerMode('date');
-                  }
-                }
-              }}
-            />
-          )}
+          <DateTimeField
+            label="Start Date & Time (Optional)"
+            value={scheduledDate}
+            placeholder="Select start date & time"
+            onCommit={setScheduledDate}
+          />
 
-          <Text style={styles.label}>End Date & Time (Optional)</Text>
-          <TouchableOpacity
-            style={styles.datePickerButton}
-            onPress={() => {
-              setTempDate(expiryDate || new Date());
-              setPickerMode('date');
-              setShowEndPicker(true);
-            }}
-          >
-            <Text style={[styles.datePickerText, !expiryDate && { color: '#9CA3AF' }]}>
-              {expiryDate ? expiryDate.toLocaleString() : 'Select end date & time'}
-            </Text>
-          </TouchableOpacity>
-          {showEndPicker && (
-            <DateTimePicker
-              value={tempDate}
-              mode={pickerMode}
-              display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-              onChange={(event: any, selected?: Date) => {
-                if (event.type === 'dismissed') {
-                  setShowEndPicker(false);
-                  return;
-                }
-                if (selected) {
-                  if (pickerMode === 'date') {
-                    setTempDate(selected);
-                    setPickerMode('time');
-                  } else {
-                    setExpiryDate(selected);
-                    setShowEndPicker(false);
-                    setPickerMode('date');
-                  }
-                }
-              }}
-            />
-          )}
+          <DateTimeField
+            label="End Date & Time (Optional)"
+            value={expiryDate}
+            placeholder="Select end date & time"
+            onCommit={setExpiryDate}
+          />
 
           {scheduledDate && expiryDate && expiryDate <= scheduledDate && (
             <Text style={{ color: '#EF4444', fontSize: 12, marginBottom: 8 }}>
@@ -978,20 +913,5 @@ const styles = StyleSheet.create({
     fontSize: 12,
     marginTop: 8,
     textAlign: 'center',
-  },
-  datePickerButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F9FAFB',
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 12,
-  },
-  datePickerText: {
-    fontSize: 15,
-    color: '#1F2937',
-    flex: 1,
   },
 });

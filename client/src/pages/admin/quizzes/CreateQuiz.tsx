@@ -16,6 +16,15 @@ interface Question {
 }
 type TestType = 'daily' | 'weekly' | 'grand';
 
+// `datetime-local` inputs hold local wall-time strings. Feeding them
+// `toISOString().slice(0, 16)` (UTC wall-time) shifts the displayed value by
+// the timezone offset (−5:30 for IST), so an edited quiz would show — and on
+// re-save, keep — the wrong time.
+const toLocalDateTimeInput = (date: Date): string => {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+};
+
 export default function CreateQuiz() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -151,8 +160,8 @@ export default function CreateQuiz() {
       setDuration(quiz.duration.toString());
       if (quiz.instructions) setInstructions(quiz.instructions.join('\n'));
       if (quiz.shareSolution !== undefined) setShareSolution(quiz.shareSolution);
-      if (quiz.scheduledDate) setScheduledDate(new Date(quiz.scheduledDate).toISOString().slice(0, 16));
-      if (quiz.expiryDate) setExpiryDate(new Date(quiz.expiryDate).toISOString().slice(0, 16));
+      if (quiz.scheduledDate) setScheduledDate(toLocalDateTimeInput(new Date(quiz.scheduledDate)));
+      if (quiz.expiryDate) setExpiryDate(toLocalDateTimeInput(new Date(quiz.expiryDate)));
       if (quiz.subject) setSelectedSubjects([quiz.subject._id]);
       if (quiz.questions) setSelectedQuestions(quiz.questions.map((q: any) => q._id || q));
       if (!isClone && quiz.assignedStudents) setSelectedStudents(quiz.assignedStudents.map((s: any) => s._id || s));
@@ -203,6 +212,16 @@ export default function CreateQuiz() {
   };
 
   const handleCreate = async () => {
+    const parsedDuration = parseInt(duration, 10);
+    if (!Number.isFinite(parsedDuration) || parsedDuration <= 0) {
+      alert('Please enter a valid duration in minutes');
+      return;
+    }
+    if (scheduledDate && expiryDate && new Date(expiryDate) <= new Date(scheduledDate)) {
+      alert('End date must be after start date');
+      return;
+    }
+
     setCreating(true);
     try {
       const payload = {
@@ -213,7 +232,7 @@ export default function CreateQuiz() {
         numberOfQuestions: selectedQuestions.length,
         questions: selectedQuestions,
         selectedQuestionIds: selectedQuestions,
-        duration: parseInt(duration),
+        duration: parsedDuration,
         instructions: instructions.split('\n').filter(i => i.trim()),
         assignedStudents: selectedStudents,
         shareSolution,

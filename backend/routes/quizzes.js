@@ -1,5 +1,6 @@
 const express = require('express');
 const crypto = require('crypto');
+const mongoose = require('mongoose');
 const Quiz = require('../models/Quiz');
 const QuizAttempt = require('../models/QuizAttempt');
 const QuestionBank = require('../models/QuestionBank');
@@ -184,7 +185,10 @@ const notifyQuizAssignedToStudents = async ({ studentIds, quiz, assignedByName =
 const deriveSectionsForQuestions = (rawSections, rawQuestionIds, totalDuration, options = {}) => {
   const { strictDuration = true } = options;
 
-  if (rawSections === undefined || rawSections === null || rawSections === '') {
+  // An empty array means "no sections configured" (e.g. a legacy quiz being
+  // edited) — same as omitting the field. It must not trip the duration check.
+  if (rawSections === undefined || rawSections === null || rawSections === '' ||
+      (Array.isArray(rawSections) && rawSections.length === 0)) {
     return { sections: [] };
   }
 
@@ -272,6 +276,47 @@ const deriveSectionsForQuestions = (rawSections, rawQuestionIds, totalDuration, 
   });
 
   return { sections };
+};
+
+// Validates the quiz duration. Malformed values (null, NaN, non-positive)
+// must fail as 400 with a clear message — previously they reached Mongoose
+// and surfaced as a generic 500 "Server error" on save.
+const parseQuizDuration = (duration) => {
+  const parsed = parseInt(duration, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return { error: 'Quiz duration must be a positive number of minutes' };
+  }
+  return { value: parsed };
+};
+
+// True when every entry is a well-formed ObjectId, so malformed IDs fail as
+// a 400 instead of throwing a Mongoose CastError (500 "Server error").
+const areValidObjectIds = (ids) => Array.isArray(ids) && ids.every((id) => mongoose.isValidObjectId(id));
+
+// Validates + normalizes the optional quiz time window. Accepts ISO strings
+// (what the apps send) and rejects unparseable values with a clear message
+// instead of letting them become Invalid Dates that crash save() with a 500.
+// Enforces the shared business rule: when both ends are set, end > start.
+const parseQuizTimeWindow = ({ scheduledDate, expiryDate }) => {
+  const value = {};
+  if (scheduledDate !== undefined && scheduledDate !== null && scheduledDate !== '') {
+    const start = new Date(scheduledDate);
+    if (isNaN(start.getTime())) {
+      return { error: 'Start date & time is invalid — please re-select it and try again.' };
+    }
+    value.scheduledDate = start;
+  }
+  if (expiryDate !== undefined && expiryDate !== null && expiryDate !== '') {
+    const end = new Date(expiryDate);
+    if (isNaN(end.getTime())) {
+      return { error: 'End date & time is invalid — please re-select it and try again.' };
+    }
+    value.expiryDate = end;
+  }
+  if (value.scheduledDate && value.expiryDate && value.expiryDate <= value.scheduledDate) {
+    return { error: 'End date must be after start date' };
+  }
+  return { value };
 };
 
 // Get quiz stats
@@ -454,10 +499,31 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
 
     console.log('Creating quiz from bank:', { title, subject, subjects, testType, numberOfQuestions, selectedQuestionIds: selectedQuestionIds?.length, shareSolution });
 
-    const mongoose = require('mongoose');
+    const durationResult = parseQuizDuration(duration);
+    if (durationResult.error) {
+      return res.status(400).json({ message: durationResult.error });
+    }
+
+    const timeWindowResult = parseQuizTimeWindow({ scheduledDate, expiryDate });
+    if (timeWindowResult.error) {
+      return res.status(400).json({ message: timeWindowResult.error });
+    }
 
     // Support both single subject and multiple subjects
     const subjectIds = subjects || (Array.isArray(subject) ? subject : [subject]);
+
+    if (!subjectIds || subjectIds.length === 0 || !subjectIds[0]) {
+      return res.status(400).json({ message: 'At least one subject is required' });
+    }
+    if (assignedStudents && !areValidObjectIds(assignedStudents)) {
+      return res.status(400).json({ message: 'Assigned students contains an invalid ID' });
+    }
+    if (assignedMentors && !areValidObjectIds(assignedMentors)) {
+      return res.status(400).json({ message: 'Assigned mentors contains an invalid ID' });
+    }
+    if (selectedQuestionIds && !areValidObjectIds(selectedQuestionIds)) {
+      return res.status(400).json({ message: 'Selected questions contains an invalid ID' });
+    }
 
     let questions;
 
@@ -524,7 +590,7 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
     const sectionResult = deriveSectionsForQuestions(
       sections,
       questionIds,
-      parseInt(duration)
+      durationResult.value
     );
     if (sectionResult.error) {
       return res.status(400).json({ message: sectionResult.error });
@@ -540,7 +606,7 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
       title,
       subject: subjectIds[0],
       testType,
-      duration: parseInt(duration),
+      duration: durationResult.value,
       instructions: instructions || [],
       questions: questionIds,
       totalMarks,
@@ -549,8 +615,8 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
       assignedStudents: assignedStudents || [],
       createdBy: req.user._id,
       shareSolution: shareSolution !== undefined ? shareSolution : true,  // Default to true
-      scheduledDate: scheduledDate ? new Date(scheduledDate) : undefined,
-      expiryDate: expiryDate ? new Date(expiryDate) : undefined,
+      scheduledDate: timeWindowResult.value.scheduledDate,
+      expiryDate: timeWindowResult.value.expiryDate,
       sections: sectionResult.sections,
       assignedMentors: assignedMentors || [],
       assignToAllFreeUsers
@@ -874,6 +940,11 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
       createdQuestions.map(q => q.subject?.toString()).filter(Boolean)
     )];
 
+    const timeWindowResult = parseQuizTimeWindow({ scheduledDate, expiryDate });
+    if (timeWindowResult.error) {
+      return res.status(400).json({ message: timeWindowResult.error });
+    }
+
     const sectionResult = deriveSectionsForQuestions(
       sections,
       questionIds,
@@ -897,8 +968,8 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
       negativeMarks: negativeMarks !== undefined ? parseFloat(negativeMarks) : 1,
       assignedStudents: [],
       createdBy: req.user._id,
-      scheduledDate: scheduledDate ? new Date(scheduledDate) : undefined,
-      expiryDate: expiryDate ? new Date(expiryDate) : undefined,
+      scheduledDate: timeWindowResult.value.scheduledDate,
+      expiryDate: timeWindowResult.value.expiryDate,
       sections: sectionResult.sections
     });
 
@@ -1003,8 +1074,21 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
     if (finalAssignedStudents) quiz.assignedStudents = finalAssignedStudents;
     if (assignedMentors) quiz.assignedMentors = assignedMentors;
     if (shareSolution !== undefined) quiz.shareSolution = shareSolution;  // Allow toggling solution sharing
-    if (scheduledDate) quiz.scheduledDate = new Date(scheduledDate);
-    if (expiryDate) quiz.expiryDate = new Date(expiryDate);
+
+    const timeWindowResult = parseQuizTimeWindow({ scheduledDate, expiryDate });
+    if (timeWindowResult.error) {
+      return res.status(400).json({ message: timeWindowResult.error });
+    }
+    // Enforce the window invariant on the effective final state, so a new
+    // expiry cannot be set before the quiz's existing scheduled start.
+    const effectiveStart = timeWindowResult.value.scheduledDate || quiz.scheduledDate;
+    const effectiveEnd = timeWindowResult.value.expiryDate || quiz.expiryDate;
+    if (effectiveStart && effectiveEnd && effectiveEnd <= effectiveStart) {
+      return res.status(400).json({ message: 'End date must be after start date' });
+    }
+    if (timeWindowResult.value.scheduledDate) quiz.scheduledDate = timeWindowResult.value.scheduledDate;
+    if (timeWindowResult.value.expiryDate) quiz.expiryDate = timeWindowResult.value.expiryDate;
+
     if (positiveMarks !== undefined) quiz.positiveMarks = positiveMarks;
     if (negativeMarks !== undefined) quiz.negativeMarks = negativeMarks;
 
