@@ -14,7 +14,7 @@ import {
   Image,
   Modal,
 } from 'react-native';
-import { ScreenContainer, FullScreenContainer } from '@/components/layout';
+import { ScreenContainer } from '@/components/layout';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ChevronLeft, ChevronRight, Flag, AlertCircle, X } from 'lucide-react-native';
 import { api } from '@/services/api';
@@ -831,7 +831,10 @@ function QuizTakingContent() {
         animationType="slide"
         onRequestClose={() => setShowReviewModal(false)}
       >
-        <FullScreenContainer style={styles.modalOverlay}>
+        {/* Plain View, not FullScreenContainer: this is a transparent
+            bottom-sheet backdrop — the scrim must stay full-bleed rather than
+            being inset by safe-area padding. */}
+        <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>Review Before Submission</Text>
@@ -931,7 +934,7 @@ function QuizTakingContent() {
               </TouchableOpacity>
             </View>
           </View>
-        </FullScreenContainer>
+        </View>
       </Modal>
     </ScreenContainer>
   );

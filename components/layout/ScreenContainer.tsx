@@ -1,6 +1,6 @@
 import React from 'react';
 import { StyleProp, ViewStyle } from 'react-native';
-import { Edge, SafeAreaView } from 'react-native-safe-area-context';
+import { Edge, SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 export type SafeAreaEdge = Edge;
 
@@ -31,17 +31,28 @@ export function ScreenContainer({
 
 /**
  * Full-screen layout outside the tab navigator (auth, calls, guest flows).
+ *
+ * Also used as the content of full-screen React Native `Modal`s. RN re-parents
+ * Modal content into a separate presentation container on iOS, which detaches
+ * it from the root `SafeAreaProvider`'s view hierarchy — the native
+ * `SafeAreaView` then finds no provider and silently applies zero insets
+ * (content renders under the status bar / Dynamic Island). The nested
+ * `SafeAreaProvider` re-establishes that context inside the Modal container,
+ * and is a no-op for regular screen usage (it measures the same full-screen
+ * frame as the root provider).
  */
 export function FullScreenContainer({
   children,
   style,
 }: Omit<ScreenContainerProps, 'edges'>) {
   return (
-    <SafeAreaView
-      style={[{ flex: 1 }, style]}
-      edges={['top', 'bottom', 'left', 'right']}
-    >
-      {children}
-    </SafeAreaView>
+    <SafeAreaProvider>
+      <SafeAreaView
+        style={[{ flex: 1 }, style]}
+        edges={['top', 'bottom', 'left', 'right']}
+      >
+        {children}
+      </SafeAreaView>
+    </SafeAreaProvider>
   );
 }

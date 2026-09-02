@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -12,18 +12,12 @@ import {
   Modal,
   ScrollView,
   Pressable,
-  Keyboard,
-  Dimensions,
-  Animated,
-  Easing,
-  ActivityIndicator,
 } from 'react-native';
-import { ScreenContainer, FullScreenContainer } from '@/components/layout';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ScreenContainer } from '@/components/layout';
 
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { ArrowLeft, Send, Users, UserPlus, X, Search, Check, CheckCheck, Edit2, Trash2, Info, Phone, PhoneOff } from 'lucide-react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import * as Haptics from '@/utils/haptics';
+import { ArrowLeft, Send, X, Check, CheckCheck, Edit2, Trash2, Info, Phone, PhoneOff } from 'lucide-react-native';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
 import { getSocketURL } from '@/services/config';
@@ -83,31 +77,19 @@ interface ReadByUser {
   readAt: string;
 }
 
-interface Subject {
-  _id: string;
-  name: string;
-  year?: string;
-}
-
 export default function ChatScreen() {
   const { id: groupId } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuth();
   const { markAsRead } = useNotifications();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const [messages, setMessages] = useState<Message[]>([]);
   const [newMessage, setNewMessage] = useState('');
   const [group, setGroup] = useState<Group | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isGroupInfoVisible, setIsGroupInfoVisible] = useState(false);
-  // Each student member's assigned subjects, keyed by student id.
-  // Subjects belong to the student (not the group); the Group Info view
-  // only surfaces the existing per-student assignments.
-  const [subjectsByStudent, setSubjectsByStudent] = useState<Record<string, Subject[]>>({});
-  const [subjectsStatus, setSubjectsStatus] = useState<'loading' | 'ready' | 'error'>('loading');
-  const [isAddMemberVisible, setIsAddMemberVisible] = useState(false);
-  const [allUsers, setAllUsers] = useState<User[]>([]);
-  const [memberSearchQuery, setMemberSearchQuery] = useState('');
-  const [selectedNewMembers, setSelectedNewMembers] = useState<string[]>([]);
+  // Measured header height (safe-area inset excluded) so the keyboard
+  // avoiding offset adapts to every device instead of a hardcoded value.
+  const [headerHeight, setHeaderHeight] = useState(0);
   const flatListRef = useRef<FlatList>(null);
   const socketRef = useRef<Socket | null>(null);
   const pendingAttachmentActionRef = useRef<(() => void) | null>(null);
@@ -197,137 +179,6 @@ export default function ChatScreen() {
       Alert.alert('Error', 'Failed to load group');
       router.back();
     }
-  };
-
-  // Refetch member subjects every time Group Info opens so assignments
-  // changed in User Details are reflected immediately (no stale data).
-  useEffect(() => {
-    if (!isGroupInfoVisible || !groupId) {
-      return;
-    }
-    let cancelled = false;
-    setSubjectsStatus('loading');
-    api.get(`/groups/${groupId}/student-subjects`)
-      .then((response) => {
-        if (cancelled) return;
-        setSubjectsByStudent(response.data?.subjectsByStudent ?? {});
-        setSubjectsStatus('ready');
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        console.error('Error fetching member subjects:', error);
-        setSubjectsStatus('error');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [isGroupInfoVisible, groupId]);
-
-  // Renders a student member's own assigned subjects under their row.
-  // Never blocks or breaks the member list: loading, error and empty
-  // states degrade to small inline hints.
-  const renderMemberSubjects = (member: User) => {
-    if (subjectsStatus === 'loading') {
-      return (
-        <View style={styles.memberSubjectsLoading}>
-          <ActivityIndicator size="small" color="#01b4ae" />
-        </View>
-      );
-    }
-
-    if (subjectsStatus === 'error') {
-      return (
-        <Text style={styles.memberSubjectsHint}>Subjects unavailable</Text>
-      );
-    }
-
-    const subjects = subjectsByStudent[member._id];
-    if (!subjects || subjects.length === 0) {
-      return (
-        <Text style={styles.memberSubjectsHint}>No subjects assigned</Text>
-      );
-    }
-
-    return (
-      <View style={styles.memberSubjectsRow}>
-        {subjects.map((subject) => (
-          <View key={subject._id} style={styles.memberSubjectChip}>
-            <Text style={styles.memberSubjectChipText}>{subject.name}</Text>
-          </View>
-        ))}
-      </View>
-    );
-  };
-
-  const fetchAllUsers = async () => {
-    try {
-      const response = await api.get('/users');
-      setAllUsers(response.data);
-    } catch (error) {
-      console.log('Error fetching users', error);
-    }
-  };
-
-  const openAddMemberModal = () => {
-    fetchAllUsers();
-    setSelectedNewMembers([]);
-    setMemberSearchQuery('');
-    setIsAddMemberVisible(true);
-  };
-
-  const addMembers = async () => {
-    if (selectedNewMembers.length === 0) return;
-
-    try {
-      await api.post(`/groups/${groupId}/members`, { userIds: selectedNewMembers });
-      Alert.alert('Success', 'Members added successfully');
-      setIsAddMemberVisible(false);
-      fetchGroup();
-    } catch (error: any) {
-      Alert.alert('Error', error?.response?.data?.message || 'Failed to add members');
-    }
-  };
-
-  const removeMember = async (userId: string) => {
-    Alert.alert(
-      'Remove Member',
-      'Are you sure you want to remove this member from the group?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await api.delete(`/groups/${groupId}/members/${userId}`);
-              fetchGroup();
-            } catch (error: any) {
-              Alert.alert('Error', error?.response?.data?.message || 'Failed to remove member');
-            }
-          }
-        }
-      ]
-    );
-  };
-
-  const filteredUsersToAdd = useMemo(() => {
-    if (!group) return [];
-
-    const currentMemberIds = group.members.map(m => m._id);
-
-    return allUsers.filter(u =>
-      !currentMemberIds.includes(u._id) &&
-      (u.name.toLowerCase().includes(memberSearchQuery.toLowerCase()) ||
-        u.email.toLowerCase().includes(memberSearchQuery.toLowerCase()))
-    );
-  }, [allUsers, group, memberSearchQuery]);
-
-  const toggleUserSelection = (userId: string) => {
-    setSelectedNewMembers(prev =>
-      prev.includes(userId)
-        ? prev.filter(id => id !== userId)
-        : [...prev, userId]
-    );
   };
 
   const fetchMessages = async () => {
@@ -860,13 +711,22 @@ export default function ChatScreen() {
 
   return (
     <ScreenContainer style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
+      <View
+        style={styles.header}
+        onLayout={(event) => setHeaderHeight(event.nativeEvent.layout.height)}
+      >
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={styles.backButton}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityRole="button"
+          accessibilityLabel="Go back"
+        >
           <ArrowLeft color="#000000" size={24} />
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.headerInfo}
-          onPress={() => setIsGroupInfoVisible(true)}
+          onPress={() => router.push(`/chat/${groupId}/info` as any)}
         >
           <Text style={styles.headerTitle}>{group?.name || 'Chat'}</Text>
           {group?.description && (
@@ -888,7 +748,7 @@ export default function ChatScreen() {
       <KeyboardAvoidingView
         style={styles.chatContainer}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + headerHeight : 0}
       >
         {isLoading ? (
           <View style={styles.loadingContainer}>
@@ -1109,158 +969,6 @@ export default function ChatScreen() {
           }}
         />
       )}
-
-      <>
-        {/* Group Info Modal */}
-        <Modal visible={isGroupInfoVisible} animationType="slide">
-          <FullScreenContainer style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <TouchableOpacity onPress={() => setIsGroupInfoVisible(false)} style={styles.backButton}>
-                <ArrowLeft color="#000000" size={24} />
-              </TouchableOpacity>
-              <Text style={styles.modalTitle}>Group Info</Text>
-              <View style={{ width: 24 }} />
-            </View>
-
-            <View style={{ flex: 1 }}>
-              <FlatList
-                key={isGroupInfoVisible ? 'visible' : 'hidden'}
-                data={group?.members || []}
-                keyExtractor={(item) => item._id}
-                style={{ flex: 1 }}
-                contentContainerStyle={{ paddingBottom: 40 }}
-                showsVerticalScrollIndicator={true}
-                removeClippedSubviews={false}
-                nestedScrollEnabled={true}
-                scrollEnabled={true}
-                ListHeaderComponent={() => (
-                  <>
-                    <View style={styles.groupProfileSection}>
-                      <View style={styles.largeGroupIcon}>
-                        <Users color="#FFFFFF" size={40} />
-                      </View>
-                      <Text style={styles.largeGroupName}>{group?.name}</Text>
-                      {group?.description ? (
-                        <Text style={styles.groupDescription}>{group.description}</Text>
-                      ) : null}
-                      <Text style={styles.groupMeta}>
-                        Created by {group?.createdBy?.name} • {new Date(group?.createdAt || '').toLocaleDateString()}
-                      </Text>
-                    </View>
-
-                    <View style={styles.sectionHeader}>
-                      <Text style={styles.sectionTitle}>{group?.members?.length || 0} participants</Text>
-                    </View>
-
-                    {user?.role === 'admin' && (
-                      <TouchableOpacity style={styles.addMemberRow} onPress={openAddMemberModal}>
-                        <View style={styles.addMemberIcon}>
-                          <UserPlus color="#2563EB" size={20} />
-                        </View>
-                        <Text style={styles.addMemberText}>Add Participants</Text>
-                      </TouchableOpacity>
-                    )}
-                  </>
-                )}
-                renderItem={({ item: member }) => (
-                  <View key={member._id} style={styles.memberRow}>
-                    <UserAvatar
-                      name={member.name}
-                      role={member.role}
-                      imageUrl={member.profilePicture}
-                      size={40}
-                    />
-                    <View style={styles.memberInfo}>
-                      <Text style={styles.memberName}>
-                        {member._id === user?._id ? 'You' : member.name}
-                      </Text>
-                      <Text style={styles.memberEmail}>{member.role}</Text>
-                      {member.role === 'student' && renderMemberSubjects(member)}
-                    </View>
-                    <View style={{ alignItems: 'flex-end' }}>
-                      {group?.createdBy?._id === member._id && (
-                        <Text style={styles.adminBadge}>Group Admin</Text>
-                      )}
-                      {user?.role === 'admin' && member._id !== group?.createdBy?._id && (
-                        <TouchableOpacity
-                          style={styles.removeButton}
-                          onPress={() => removeMember(member._id)}
-                        >
-                          <Text style={styles.removeText}>Remove</Text>
-                        </TouchableOpacity>
-                      )}
-                    </View>
-                  </View>
-                )}
-              />
-            </View>
-          </FullScreenContainer>
-        </Modal>
-
-        {/* Add Members Modal */}
-        <Modal visible={isAddMemberVisible} animationType="slide">
-          <FullScreenContainer style={styles.modalContainer}>
-            <View style={styles.modalHeader}>
-              <TouchableOpacity onPress={() => setIsAddMemberVisible(false)} style={styles.backButton}>
-                <X color="#000000" size={24} />
-              </TouchableOpacity>
-              <Text style={styles.modalTitle}>Add Participants</Text>
-              {selectedNewMembers.length > 0 ? (
-                <TouchableOpacity onPress={addMembers}>
-                  <Text style={styles.doneButtonText}>Add ({selectedNewMembers.length})</Text>
-                </TouchableOpacity>
-              ) : (
-                <View style={{ width: 24 }} />
-              )}
-            </View>
-
-            <View style={styles.searchContainer}>
-              <Search color="#6B7280" size={20} />
-              <TextInput
-                style={styles.searchInput}
-                placeholder="Search users..."
-                placeholderTextColor="#9CA3AF"
-                value={memberSearchQuery}
-                onChangeText={setMemberSearchQuery}
-              />
-            </View>
-
-            <FlatList
-              data={filteredUsersToAdd}
-              keyExtractor={(item) => item._id}
-              contentContainerStyle={styles.userList}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  style={styles.userSelectRow}
-                  onPress={() => toggleUserSelection(item._id)}
-                >
-                  <UserAvatar
-                    name={item.name}
-                    role={item.role}
-                    imageUrl={item.profilePicture}
-                    size={40}
-                  />
-                  <View style={styles.memberInfo}>
-                    <Text style={styles.memberName}>{item.name}</Text>
-                    <Text style={styles.memberEmail}>{item.email} • {item.role}</Text>
-                  </View>
-                  <View style={[
-                    styles.checkbox,
-                    selectedNewMembers.includes(item._id) && styles.checkboxSelected
-                  ]}>
-                    {selectedNewMembers.includes(item._id) && (
-                      <Check color="#FFFFFF" size={16} />
-                    )}
-                  </View>
-                </TouchableOpacity>
-              )}
-              ListEmptyComponent={
-                <Text style={styles.emptyText}>No users found</Text>
-              }
-            />
-          </FullScreenContainer>
-        </Modal>
-      </>
     </ScreenContainer>
   );
 }
@@ -1711,218 +1419,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#FFFFFF',
     fontWeight: '600',
-  },
-  // Existing modal styles
-  modalContainer: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#000000',
-  },
-  modalScroll: {
-    flex: 1,
-  },
-  groupProfileSection: {
-    alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-  },
-  largeGroupIcon: {
-    width: 84,
-    height: 84,
-    borderRadius: 42,
-    backgroundColor: '#01b4ae',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
-    shadowColor: '#01b4ae',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  largeGroupName: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#000000',
-    marginBottom: 5,
-    textAlign: 'center',
-  },
-  groupDescription: {
-    fontSize: 14,
-    color: '#6B7280',
-    textAlign: 'center',
-    marginBottom: 5,
-  },
-  groupMeta: {
-    fontSize: 12,
-    color: '#9CA3AF',
-  },
-  sectionHeader: {
-    padding: 15,
-    backgroundColor: '#F9FAFB',
-  },
-  sectionTitle: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#6B7280',
-  },
-  addMemberRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-  },
-  addMemberIcon: {
-    width: 42,
-    height: 42,
-    borderRadius: 21,
-    backgroundColor: '#E0F7F6',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  addMemberText: {
-    fontSize: 16,
-    color: '#01b4ae',
-    fontWeight: '600',
-  },
-  memberRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-  },
-  memberAvatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#E5E7EB',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginRight: 12,
-  },
-  memberAvatarText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#6B7280',
-  },
-  memberInfo: {
-    flex: 1,
-  },
-  memberName: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#000000',
-  },
-  memberEmail: {
-    fontSize: 13,
-    color: '#6B7280',
-  },
-  // Student subject chips — same palette as the Assigned Subjects chips in
-  // User Details, scaled down to fit the member row.
-  memberSubjectsRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 6,
-    marginTop: 6,
-  },
-  memberSubjectChip: {
-    backgroundColor: '#E0F7F6',
-    paddingVertical: 4,
-    paddingHorizontal: 10,
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#B2F5EA',
-  },
-  memberSubjectChipText: {
-    color: '#00796B',
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  memberSubjectsHint: {
-    fontSize: 12,
-    color: '#9CA3AF',
-    fontStyle: 'italic',
-    marginTop: 4,
-  },
-  memberSubjectsLoading: {
-    marginTop: 6,
-  },
-  adminBadge: {
-    fontSize: 11,
-    color: '#01b4ae',
-    backgroundColor: '#E0F7F6',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    overflow: 'hidden',
-    marginTop: 2,
-    fontWeight: '700',
-  },
-  removeButton: {
-    marginTop: 4,
-  },
-  removeText: {
-    color: '#EF4444',
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  doneButtonText: {
-    color: '#01b4ae',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  searchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 10,
-    backgroundColor: '#F3F4F6',
-    margin: 10,
-    borderRadius: 8,
-  },
-  searchInput: {
-    flex: 1,
-    marginLeft: 10,
-    fontSize: 16,
-    color: '#000000',
-  },
-  userList: {
-    paddingBottom: 20,
-  },
-  userSelectRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-  },
-  checkbox: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#D1D5DB',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  checkboxSelected: {
-    backgroundColor: '#01b4ae',
-    borderColor: '#01b4ae',
   },
   attachButton: {
     padding: 10,

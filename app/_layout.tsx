@@ -219,7 +219,9 @@ function AppContent() {
           }}
         />
         <Stack.Screen name="guest-quiz/[shareToken]" />
-        <Stack.Screen name="chat/[id]" />
+        <Stack.Screen name="chat/[id]/index" />
+        <Stack.Screen name="chat/[id]/info" />
+        <Stack.Screen name="chat/[id]/add-members" />
         <Stack.Screen name="call/[id]" />
         <Stack.Screen name="+not-found" />
       </Stack>
