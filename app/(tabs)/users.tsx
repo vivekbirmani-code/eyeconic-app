@@ -19,7 +19,7 @@ import {
   LayoutChangeEvent,
 } from 'react-native';
 import { ScreenContainer, FullScreenContainer } from '@/components/layout';
-import { Plus, User as UserIcon, Search, X, Mail, Shield, Calendar, Phone, Lock, Key, Users as UsersIcon, Check, Square, CheckSquare, ChevronRight } from 'lucide-react-native';
+import { Plus, User as UserIcon, Search, X, Mail, Shield, Calendar, Phone, Lock, Key, Users as UsersIcon, Check, Square, CheckSquare, ChevronRight, Pencil } from 'lucide-react-native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from '@/utils/haptics';
@@ -38,6 +38,9 @@ import { useAppRefresh } from '@/hooks/useAppRefresh';
 import UserAvatar from '@/components/UserAvatar';
 
 const SEGMENT_TRACK_INSET = 4;
+
+// Same pattern the backend validates with (utils/otpHelpers.js)
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 interface StudentProfile {
   mbbsBatch?: string;
@@ -108,6 +111,12 @@ export default function Users() {
   });
   const [newPassword, setNewPassword] = useState('');
   const [isResettingPassword, setIsResettingPassword] = useState(false);
+
+  // Email correction state
+  const [isEditEmailModalVisible, setIsEditEmailModalVisible] = useState(false);
+  const [newEmail, setNewEmail] = useState('');
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [isUpdatingEmail, setIsUpdatingEmail] = useState(false);
 
   // Mentor group management state
   const [isGroupModalVisible, setIsGroupModalVisible] = useState(false);
@@ -326,6 +335,7 @@ export default function Users() {
   const closeDetailModal = () => {
     setIsMentorModalVisible(false);
     setIsSubjectModalVisible(false);
+    closeEditEmailModal();
     // Animate modal out
     Animated.parallel([
       Animated.timing(modalOpacity, {
@@ -380,6 +390,60 @@ export default function Users() {
       Alert.alert('Error', message);
     } finally {
       setIsResettingPassword(false);
+    }
+  };
+
+  const openEditEmailModal = () => {
+    if (!selectedUser) return;
+    // Prefill with the current email so a typo can be fixed in place
+    setNewEmail(selectedUser.email);
+    setEmailError(null);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setIsEditEmailModalVisible(true);
+  };
+
+  const closeEditEmailModal = () => {
+    if (isUpdatingEmail) return;
+    setIsEditEmailModalVisible(false);
+    setEmailError(null);
+  };
+
+  const updateEmail = async () => {
+    if (!selectedUser || isUpdatingEmail) return;
+
+    const trimmedEmail = newEmail.trim().toLowerCase();
+    if (!trimmedEmail) {
+      setEmailError('Email is required');
+      return;
+    }
+    if (!EMAIL_REGEX.test(trimmedEmail)) {
+      setEmailError('Please enter a valid email address');
+      return;
+    }
+    if (trimmedEmail === selectedUser.email.toLowerCase()) {
+      setEmailError('This is already the current email');
+      return;
+    }
+
+    setIsUpdatingEmail(true);
+    setEmailError(null);
+    try {
+      const response = await api.put(`/users/${selectedUser._id}/email`, { email: trimmedEmail });
+      const updatedEmail = response.data?.email ?? trimmedEmail;
+
+      // Reflect the new email immediately in the detail modal and the list
+      setSelectedUser(prev => (prev && prev._id === selectedUser._id ? { ...prev, email: updatedEmail } : prev));
+      setUsers(prev => prev.map(u => (u._id === selectedUser._id ? { ...u, email: updatedEmail } : u)));
+
+      setIsEditEmailModalVisible(false);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert('Success', 'Email updated successfully');
+    } catch (error: any) {
+      const message = error?.response?.data?.message || 'Failed to update email';
+      setEmailError(message);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setIsUpdatingEmail(false);
     }
   };
 
@@ -1116,6 +1180,16 @@ export default function Users() {
                         <Text style={styles.infoLabel}>Email</Text>
                         <Text style={styles.infoValue}>{selectedUser.email}</Text>
                       </View>
+                      <TouchableOpacity
+                        style={styles.editEmailButton}
+                        onPress={openEditEmailModal}
+                        activeOpacity={0.85}
+                        accessibilityLabel="Edit email"
+                        accessibilityHint="Correct the email address of this user"
+                      >
+                        <Pencil color="#FFFFFF" size={14} />
+                        <Text style={styles.editEmailButtonText}>Edit</Text>
+                      </TouchableOpacity>
                     </View>
 
                     <View style={styles.infoRow}>
@@ -1367,6 +1441,72 @@ export default function Users() {
               </ScrollView>
             )}
           </Animated.View>
+
+          {/* Edit Email dialog — child of the detail modal for iOS modal stacking,
+              same as the assignment modals below */}
+          <Modal
+            visible={isEditEmailModalVisible}
+            transparent
+            animationType="none"
+            onRequestClose={closeEditEmailModal}
+            presentationStyle="overFullScreen"
+            statusBarTranslucent={Platform.OS === 'android'}
+          >
+            <View style={styles.detailOverlay}>
+              <View style={styles.editEmailModal}>
+                <View style={styles.detailHeader}>
+                  <Text style={styles.detailTitle}>Edit Email</Text>
+                  <TouchableOpacity onPress={closeEditEmailModal} disabled={isUpdatingEmail}>
+                    <X color="#6B7280" size={24} />
+                  </TouchableOpacity>
+                </View>
+
+                <View style={styles.editEmailContent}>
+                  <Text style={styles.editEmailLabel}>Current Email</Text>
+                  <Text style={styles.editEmailCurrentValue}>{selectedUser?.email}</Text>
+
+                  <Text style={styles.editEmailLabel}>New Email</Text>
+                  <View style={styles.resetInputRow}>
+                    <Mail color="#6B7280" size={20} />
+                    <TextInput
+                      style={styles.resetInput}
+                      placeholder="Enter new email address"
+                      placeholderTextColor="#9CA3AF"
+                      value={newEmail}
+                      onChangeText={setNewEmail}
+                      keyboardType="email-address"
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      autoComplete="email"
+                      editable={!isUpdatingEmail}
+                    />
+                  </View>
+                  {emailError ? (
+                    <Text style={styles.editEmailError}>{emailError}</Text>
+                  ) : null}
+
+                  <View style={[styles.groupModalButtons, styles.editEmailActions]}>
+                    <TouchableOpacity
+                      style={styles.groupCancelButton}
+                      onPress={closeEditEmailModal}
+                      disabled={isUpdatingEmail}
+                    >
+                      <Text style={styles.groupCancelButtonText}>Cancel</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                      style={[styles.groupSaveButton, isUpdatingEmail && styles.groupSaveButtonDisabled]}
+                      onPress={updateEmail}
+                      disabled={isUpdatingEmail}
+                    >
+                      <Text style={styles.groupSaveButtonText}>
+                        {isUpdatingEmail ? 'Saving...' : 'Save'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              </View>
+            </View>
+          </Modal>
 
           {/* Assignment modals must be children of the detail modal for iOS modal stacking */}
           {selectedUser?.role === 'student' && (
@@ -1898,6 +2038,51 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: 'bold',
     fontSize: 12,
+  },
+  // Email correction action inside the "Email" info row, matching the tier
+  // button pattern used in the "Student Tier" row above.
+  editEmailButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    backgroundColor: '#01b4ae',
+  },
+  editEmailButtonText: {
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+    fontSize: 12,
+  },
+  editEmailModal: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    width: '100%',
+    maxWidth: 400,
+  },
+  editEmailContent: {
+    padding: 20,
+  },
+  editEmailLabel: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginBottom: 4,
+  },
+  editEmailCurrentValue: {
+    fontSize: 15,
+    color: '#000000',
+    fontWeight: '500',
+    marginBottom: 15,
+  },
+  editEmailError: {
+    fontSize: 13,
+    color: '#EF4444',
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  editEmailActions: {
+    marginTop: 20,
   },
   closeButton: {
     backgroundColor: '#F3F4F6',

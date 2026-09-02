@@ -12,6 +12,7 @@ const {
   CloudinaryConfigError,
 } = require('../utils/profilePicture');
 const { getCloudinaryHealthStatus } = require('../utils/cloudinary');
+const { normalizeEmail, isValidEmail } = require('../utils/otpHelpers');
 
 const router = express.Router();
 
@@ -392,6 +393,56 @@ router.put('/:id', auth, async (req, res) => {
 
     res.json(user);
   } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Update user email (Admin only)
+// Email is the login identity, but logins, password-reset OTPs and JWTs are
+// resolved by the user id, so this single record is the only one to update.
+router.put('/:id/email', auth, authorize('admin'), async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email || typeof email !== 'string' || !isValidEmail(email)) {
+      return res.status(400).json({ message: 'Please enter a valid email address.' });
+    }
+
+    const normalizedEmail = normalizeEmail(email);
+
+    const user = await User.findById(req.params.id).select('email');
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (user.email === normalizedEmail) {
+      return res.status(400).json({ message: 'New email is the same as the current email.' });
+    }
+
+    const existingUser = await User.findOne({
+      email: normalizedEmail,
+      _id: { $ne: user._id },
+    }).select('_id');
+    if (existingUser) {
+      return res.status(400).json({ message: 'This email is already in use by another user.' });
+    }
+
+    const updatedUser = await User.findByIdAndUpdate(
+      user._id,
+      { email: normalizedEmail },
+      { new: true }
+    ).select('-password -profilePicturePublicId');
+
+    // Notify all admins that a user was updated
+    emitToAdmins('user_updated', { userId: updatedUser._id.toString() });
+
+    res.json(updatedUser);
+  } catch (error) {
+    // Another request can claim the email between the pre-check and the write
+    if (error && error.code === 11000) {
+      return res.status(400).json({ message: 'This email is already in use by another user.' });
+    }
     console.error(error);
     res.status(500).json({ message: 'Server error' });
   }
