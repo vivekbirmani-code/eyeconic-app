@@ -505,7 +505,9 @@ export default function Users() {
 
     } catch (error: any) {
       console.error('Error saving subjects:', error);
-      alert(error?.response?.data?.message || 'Failed to save subjects');
+      // Alert.alert (not alert): the web-only global throws a ReferenceError
+      // on React Native, which would silently swallow save failures.
+      Alert.alert('Error', error?.response?.data?.message || 'Failed to save subjects');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
 
       // On error, revert to server state (which might be empty or old, but better than broken optimistic state)
@@ -2370,6 +2372,10 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   assignmentTitle: {
+    // flex: 1 lets the title take the space it needs and wrap on narrow
+    // screens, so the "Manage ..." button beside it can never overlap it.
+    flex: 1,
+    marginRight: 12,
     fontSize: 16,
     fontWeight: '600',
     color: '#92400E',

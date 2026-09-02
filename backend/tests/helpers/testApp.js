@@ -9,6 +9,8 @@ const quizRoutes = require('../../routes/quizzes');
 const studentAnalyticsRoutes = require('../../routes/student-analytics');
 const adminOverviewRoutes = require('../../routes/admin-overview');
 const mentorStudentRoutes = require('../../routes/mentor-students');
+const studentSubjectRoutes = require('../../routes/student-subjects');
+const groupRoutes = require('../../routes/groups');
 const userRoutes = require('../../routes/users');
 
 /**
@@ -24,6 +26,8 @@ function buildApp() {
   app.use('/api/student-analytics', studentAnalyticsRoutes);
   app.use('/api/admin-overview', adminOverviewRoutes);
   app.use('/api/mentor-students', mentorStudentRoutes);
+  app.use('/api/student-subjects', studentSubjectRoutes);
+  app.use('/api/groups', groupRoutes);
   app.use('/api/users', userRoutes);
   return app;
 }

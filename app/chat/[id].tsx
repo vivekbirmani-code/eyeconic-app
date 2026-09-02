@@ -16,6 +16,7 @@ import {
   Dimensions,
   Animated,
   Easing,
+  ActivityIndicator,
 } from 'react-native';
 import { ScreenContainer, FullScreenContainer } from '@/components/layout';
 
@@ -82,6 +83,12 @@ interface ReadByUser {
   readAt: string;
 }
 
+interface Subject {
+  _id: string;
+  name: string;
+  year?: string;
+}
+
 export default function ChatScreen() {
   const { id: groupId } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuth();
@@ -92,6 +99,11 @@ export default function ChatScreen() {
   const [group, setGroup] = useState<Group | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isGroupInfoVisible, setIsGroupInfoVisible] = useState(false);
+  // Each student member's assigned subjects, keyed by student id.
+  // Subjects belong to the student (not the group); the Group Info view
+  // only surfaces the existing per-student assignments.
+  const [subjectsByStudent, setSubjectsByStudent] = useState<Record<string, Subject[]>>({});
+  const [subjectsStatus, setSubjectsStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [isAddMemberVisible, setIsAddMemberVisible] = useState(false);
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [memberSearchQuery, setMemberSearchQuery] = useState('');
@@ -185,6 +197,66 @@ export default function ChatScreen() {
       Alert.alert('Error', 'Failed to load group');
       router.back();
     }
+  };
+
+  // Refetch member subjects every time Group Info opens so assignments
+  // changed in User Details are reflected immediately (no stale data).
+  useEffect(() => {
+    if (!isGroupInfoVisible || !groupId) {
+      return;
+    }
+    let cancelled = false;
+    setSubjectsStatus('loading');
+    api.get(`/groups/${groupId}/student-subjects`)
+      .then((response) => {
+        if (cancelled) return;
+        setSubjectsByStudent(response.data?.subjectsByStudent ?? {});
+        setSubjectsStatus('ready');
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.error('Error fetching member subjects:', error);
+        setSubjectsStatus('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isGroupInfoVisible, groupId]);
+
+  // Renders a student member's own assigned subjects under their row.
+  // Never blocks or breaks the member list: loading, error and empty
+  // states degrade to small inline hints.
+  const renderMemberSubjects = (member: User) => {
+    if (subjectsStatus === 'loading') {
+      return (
+        <View style={styles.memberSubjectsLoading}>
+          <ActivityIndicator size="small" color="#01b4ae" />
+        </View>
+      );
+    }
+
+    if (subjectsStatus === 'error') {
+      return (
+        <Text style={styles.memberSubjectsHint}>Subjects unavailable</Text>
+      );
+    }
+
+    const subjects = subjectsByStudent[member._id];
+    if (!subjects || subjects.length === 0) {
+      return (
+        <Text style={styles.memberSubjectsHint}>No subjects assigned</Text>
+      );
+    }
+
+    return (
+      <View style={styles.memberSubjectsRow}>
+        {subjects.map((subject) => (
+          <View key={subject._id} style={styles.memberSubjectChip}>
+            <Text style={styles.memberSubjectChipText}>{subject.name}</Text>
+          </View>
+        ))}
+      </View>
+    );
   };
 
   const fetchAllUsers = async () => {
@@ -1103,6 +1175,7 @@ export default function ChatScreen() {
                         {member._id === user?._id ? 'You' : member.name}
                       </Text>
                       <Text style={styles.memberEmail}>{member.role}</Text>
+                      {member.role === 'student' && renderMemberSubjects(member)}
                     </View>
                     <View style={{ alignItems: 'flex-end' }}>
                       {group?.createdBy?._id === member._id && (
@@ -1759,6 +1832,36 @@ const styles = StyleSheet.create({
   memberEmail: {
     fontSize: 13,
     color: '#6B7280',
+  },
+  // Student subject chips — same palette as the Assigned Subjects chips in
+  // User Details, scaled down to fit the member row.
+  memberSubjectsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 6,
+  },
+  memberSubjectChip: {
+    backgroundColor: '#E0F7F6',
+    paddingVertical: 4,
+    paddingHorizontal: 10,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#B2F5EA',
+  },
+  memberSubjectChipText: {
+    color: '#00796B',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  memberSubjectsHint: {
+    fontSize: 12,
+    color: '#9CA3AF',
+    fontStyle: 'italic',
+    marginTop: 4,
+  },
+  memberSubjectsLoading: {
+    marginTop: 6,
   },
   adminBadge: {
     fontSize: 11,

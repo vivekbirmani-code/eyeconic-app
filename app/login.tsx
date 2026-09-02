@@ -243,9 +243,14 @@ export default function Login() {
 
   return (
     <FullScreenContainer>
+      {/* Android runs edge-to-edge on Expo SDK 54, so the window is never
+          resized for the keyboard and JS must compensate. 'padding' keeps the
+          form (and the password visibility control) above the keyboard and
+          resets cleanly when it closes, unlike 'height' which can leave the
+          layout stuck in its shrunk state after the keyboard is dismissed. */}
       <KeyboardAvoidingView
         style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior="padding"
       >
       {/* Gradient Background */}
       <LinearGradient

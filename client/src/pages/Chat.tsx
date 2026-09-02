@@ -31,6 +31,14 @@ interface Group {
   createdAt: string;
 }
 
+interface Subject {
+  _id: string;
+  name: string;
+  year?: string;
+}
+
+type SubjectsStatus = 'loading' | 'ready' | 'error';
+
 export default function Chat() {
   const { id: groupId } = useParams();
   const { user } = useAuth();
@@ -47,6 +55,11 @@ export default function Chat() {
   const [allUsers, setAllUsers] = useState<UserData[]>([]);
   const [memberSearchQuery, setMemberSearchQuery] = useState('');
   const [selectedNewMembers, setSelectedNewMembers] = useState<string[]>([]);
+  // Each student member's assigned subjects, keyed by student id.
+  // Subjects belong to the student (not the group); this panel only
+  // surfaces the existing per-student assignments.
+  const [subjectsByStudent, setSubjectsByStudent] = useState<Record<string, Subject[]>>({});
+  const [subjectsStatus, setSubjectsStatus] = useState<SubjectsStatus>('loading');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -76,6 +89,55 @@ export default function Chat() {
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Refetch member subjects every time the group info panel opens so
+  // assignments changed elsewhere are reflected immediately.
+  useEffect(() => {
+    if (!isInfoModalOpen || !groupId) {
+      return;
+    }
+    let cancelled = false;
+    setSubjectsStatus('loading');
+    api.get(`/groups/${groupId}/student-subjects`)
+      .then((response) => {
+        if (cancelled) return;
+        setSubjectsByStudent(response.data?.subjectsByStudent ?? {});
+        setSubjectsStatus('ready');
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.error('Error fetching member subjects:', error);
+        setSubjectsStatus('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isInfoModalOpen, groupId]);
+
+  const renderMemberSubjects = (member: UserData) => {
+    if (subjectsStatus === 'loading') {
+      return <p className="text-[10px] text-gray-400 italic mt-1">Loading subjects…</p>;
+    }
+    if (subjectsStatus === 'error') {
+      return <p className="text-[10px] text-gray-400 italic mt-1">Subjects unavailable</p>;
+    }
+    const subjects = subjectsByStudent[member._id];
+    if (!subjects || subjects.length === 0) {
+      return <p className="text-[10px] text-gray-400 italic mt-1">No subjects assigned</p>;
+    }
+    return (
+      <div className="flex flex-wrap gap-1.5 mt-1.5">
+        {subjects.map((subject) => (
+          <span
+            key={subject._id}
+            className="bg-[#E0F7F6] border border-[#B2F5EA] text-[#00796B] text-[10px] font-semibold px-2 py-0.5 rounded-md"
+          >
+            {subject.name}
+          </span>
+        ))}
+      </div>
+    );
+  };
 
   const fetchGroup = async () => {
     try {
@@ -358,6 +420,7 @@ export default function Chat() {
                               {member.role === 'admin' && <Shield size={12} className="text-amber-500" />}
                             </p>
                             <p className="text-[11px] text-gray-500 font-medium">{member.role}</p>
+                            {member.role === 'student' && renderMemberSubjects(member)}
                           </div>
                         </div>
                         

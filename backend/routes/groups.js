@@ -8,6 +8,7 @@ const router = express.Router();
 
 const Message = require('../models/Message');
 const ReadStatus = require('../models/ReadStatus');
+const StudentSubjectAssignment = require('../models/StudentSubjectAssignment');
 
 // Get all groups with unread counts
 router.get('/', auth, async (req, res) => {
@@ -322,6 +323,49 @@ router.get('/:id', auth, async (req, res) => {
     }
 
     res.json(group);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get the assigned subjects of every student member of a group.
+//
+// Subjects are assigned per STUDENT (StudentSubjectAssignment is the single
+// source of truth); the group only surfaces them. Subjects are fetched in one
+// batched query so group views never need one request per student.
+// Access: admins, or members of the group (same rule as GET /:id).
+router.get('/:id/student-subjects', auth, async (req, res) => {
+  try {
+    const group = await Group.findById(req.params.id).populate('members', 'role');
+
+    if (!group) {
+      return res.status(404).json({ message: 'Group not found' });
+    }
+
+    const isMember = group.members.some(
+      member => member._id.toString() === req.user._id.toString()
+    );
+    if (req.user.role !== 'admin' && !isMember) {
+      return res.status(403).json({ message: 'Access denied' });
+    }
+
+    const studentIds = group.members
+      .filter(member => member.role === 'student')
+      .map(member => member._id);
+
+    const subjectsByStudent = {};
+    if (studentIds.length > 0) {
+      const assignments = await StudentSubjectAssignment.find({
+        student: { $in: studentIds }
+      }).populate('subjects', 'name year');
+
+      assignments.forEach(assignment => {
+        subjectsByStudent[assignment.student.toString()] = assignment.subjects;
+      });
+    }
+
+    res.json({ subjectsByStudent });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error' });

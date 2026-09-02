@@ -211,6 +211,13 @@ function AppContent() {
         <Stack.Screen name="index" />
         <Stack.Screen name="login" />
         <Stack.Screen name="(tabs)" />
+        <Stack.Screen
+          name="create-group"
+          options={{
+            presentation: 'modal',
+            animation: 'slide_from_bottom',
+          }}
+        />
         <Stack.Screen name="guest-quiz/[shareToken]" />
         <Stack.Screen name="chat/[id]" />
         <Stack.Screen name="call/[id]" />
