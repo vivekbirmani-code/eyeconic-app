@@ -122,8 +122,12 @@ export default function TestDropdown({ tests, selectedTest, onTestSelect, loadin
                 transparent={true}
                 onRequestClose={() => setModalVisible(false)}
             >
+                {/* 'height' behavior is never used on Android (this app runs
+                    edge-to-edge, where the window is not resized for the
+                    keyboard); iOS keeps 'padding' so the search field stays
+                    visible above the keyboard. */}
                 <KeyboardAvoidingView
-                    behavior={Platform.OS === "ios" ? "padding" : "height"}
+                    behavior={Platform.OS === "ios" ? "padding" : undefined}
                     style={styles.modalOverlay}
                 >
                     <View style={[styles.modalContent, { paddingBottom: Math.max(insets.bottom, 20) }]}>
@@ -257,8 +261,13 @@ const styles = StyleSheet.create({
         borderTopLeftRadius: 20,
         borderTopRightRadius: 20,
         paddingTop: 20,
-        maxHeight: '90%',
-        minHeight: '50%',
+        // A definite height is required: with minHeight/maxHeight the sheet's
+        // height depended on the flex-sized FlatList inside it, and that
+        // feedback loop (amplified by KeyboardAvoidingView re-rendering on
+        // every height change) made the sheet oscillate between two heights —
+        // the visible flicker. A fixed percentage of the overlay resolves in a
+        // single layout pass on every platform.
+        height: '60%',
     },
     modalHeader: {
         flexDirection: 'row',

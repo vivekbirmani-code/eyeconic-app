@@ -1057,7 +1057,12 @@ export default function CreateQuiz() {
       {/* Difficulty filter */}
       <View style={styles.filterChipRow}>
         <Text style={styles.filterLabelInline}>Difficulty</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterChipScroll}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.filterChipScroll}
+          contentContainerStyle={styles.filterChipScrollContent}
+        >
           <TouchableOpacity
             style={[styles.filterChip, !difficultyFilter && styles.filterChipActive]}
             onPress={() => setDifficultyFilter('')}
@@ -1081,7 +1086,12 @@ export default function CreateQuiz() {
       {/* Question Type filter */}
       <View style={styles.filterChipRow}>
         <Text style={styles.filterLabelInline}>Type</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterChipScroll}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.filterChipScroll}
+          contentContainerStyle={styles.filterChipScrollContent}
+        >
           <TouchableOpacity
             style={[styles.filterChip, !questionTypeFilter && styles.filterChipActive]}
             onPress={() => setQuestionTypeFilter('')}
@@ -1105,7 +1115,12 @@ export default function CreateQuiz() {
       {/* Subject filter for questions - only show selected subjects */}
       <View style={styles.filterChipRow}>
         <Text style={styles.filterLabelInline}>Subject</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filterChipScroll}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.filterChipScroll}
+          contentContainerStyle={styles.filterChipScrollContent}
+        >
           <TouchableOpacity
             style={[styles.filterChip, !questionSubjectFilter && styles.filterChipActive]}
             onPress={() => setQuestionSubjectFilter('')}
@@ -2214,14 +2229,23 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 10,
   },
+  // Fixed label column so every filter row (Difficulty/Type/Subject) starts its
+  // chip strip at the same x-origin. minWidth keeps labels from ever wrapping
+  // if a device font renders wider than expected.
   filterLabelInline: {
     fontSize: 12,
     fontWeight: '600',
     color: '#6B7280',
+    minWidth: 68,
     marginRight: 8,
   },
   filterChipScroll: {
     flex: 1,
+  },
+  // Center chips on the row's cross axis so active/inactive pills stay on one
+  // shared baseline regardless of their rendered heights.
+  filterChipScrollContent: {
+    alignItems: 'center',
   },
   filterChip: {
     paddingHorizontal: 12,

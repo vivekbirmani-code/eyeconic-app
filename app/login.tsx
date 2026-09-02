@@ -348,7 +348,14 @@ export default function Login() {
                   />
                   <TouchableOpacity
                     onPress={togglePasswordVisibility}
-                    style={styles.eyeIconAbsolute}
+                    style={[
+                      styles.eyeIconAbsolute,
+                      // On Android, sibling drawing order follows elevation, so
+                      // the focused input's elevation (inputFocused) would paint
+                      // over this zIndex-only overlay and hide the eye toggle.
+                      // Elevate the toggle above the input while it is focused.
+                      passwordFocused && styles.eyeIconAboveFocusedInput,
+                    ]}
                     activeOpacity={0.7}
                     disabled={isLoading}
                   >
@@ -539,7 +546,13 @@ export default function Login() {
                     />
                     <TouchableOpacity
                       onPress={() => setForgotPasswordVisible(!forgotPasswordVisible)}
-                      style={styles.forgotEyeIcon}
+                      style={[
+                        styles.forgotEyeIcon,
+                        // Same elevation rule as the login password field: the
+                        // focused input (inputFocused) would otherwise cover
+                        // this toggle on Android.
+                        forgotPasswordFocused && styles.eyeIconAboveFocusedInput,
+                      ]}
                       activeOpacity={0.7}
                       disabled={forgotLoading}
                     >
@@ -726,6 +739,11 @@ const styles = StyleSheet.create({
     top: 8,
     padding: 12,
     zIndex: 10,
+  },
+  // Must stay above inputFocused's elevation: 3 on Android; iOS/web are
+  // unaffected (elevation is Android-only and zIndex already wins there).
+  eyeIconAboveFocusedInput: {
+    elevation: 4,
   },
   button: {
     backgroundColor: '#01b4ae',
