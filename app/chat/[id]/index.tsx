@@ -12,6 +12,7 @@ import {
   Modal,
   ScrollView,
   Pressable,
+  Keyboard,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ScreenContainer } from '@/components/layout';
@@ -110,6 +111,24 @@ export default function ChatScreen() {
   const [isUploading, setIsUploading] = useState(false);
   const [viewingAttachment, setViewingAttachment] = useState<any>(null);
   const [isViewerVisible, setIsViewerVisible] = useState(false);
+
+  // Keyboard state for the input row's bottom safe-area padding. The keyboard
+  // frame already covers the navigation bar / home-indicator region, so the
+  // bottom inset must be dropped while it is open or the input floats above
+  // the keyboard by the inset height (safe-area-context excludes ime() insets
+  // on Android, so insets.bottom keeps reporting the nav bar).
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+
+  useEffect(() => {
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const showSubscription = Keyboard.addListener(showEvent, () => setIsKeyboardVisible(true));
+    const hideSubscription = Keyboard.addListener(hideEvent, () => setIsKeyboardVisible(false));
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -747,7 +766,7 @@ export default function ChatScreen() {
 
       <KeyboardAvoidingView
         style={styles.chatContainer}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior="padding"
         keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + headerHeight : 0}
       >
         {isLoading ? (
@@ -775,7 +794,15 @@ export default function ChatScreen() {
 
 
 
-        <View style={styles.inputContainer}>
+        <View
+          style={[
+            styles.inputContainer,
+            // Lift the row above the Android navigation bar / iOS home
+            // indicator. ScreenContainer only applies the top edge, and with
+            // edge-to-edge enforced the window draws behind these bars.
+            { paddingBottom: 10 + (isKeyboardVisible ? 0 : insets.bottom) },
+          ]}
+        >
           <TouchableOpacity
             style={styles.attachButton}
             onPress={() => setIsAttachmentMenuVisible(true)}
@@ -894,7 +921,7 @@ export default function ChatScreen() {
       <Modal visible={isEditModalVisible} animationType="slide" transparent>
         <KeyboardAvoidingView
           style={styles.editOverlay}
-          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+          behavior="padding"
         >
           <View style={styles.editContainer}>
             <View style={styles.editHeader}>
@@ -945,7 +972,14 @@ export default function ChatScreen() {
             style={StyleSheet.absoluteFill}
             onPress={() => setIsAttachmentMenuVisible(false)}
           />
-          <View style={[styles.menuContainer, styles.attachmentMenuContainer]}>
+          <View
+            style={[
+              styles.menuContainer,
+              styles.attachmentMenuContainer,
+              // Anchor above the input row, which now includes the bottom inset.
+              { bottom: 100 + insets.bottom },
+            ]}
+          >
             <TouchableOpacity style={styles.menuItem} onPress={handlePickDocument}>
               <FileText color="#374151" size={20} />
               <Text style={styles.menuItemText}>Document</Text>
@@ -1259,9 +1293,9 @@ const styles = StyleSheet.create({
   },
   attachmentMenuContainer: {
     position: 'absolute',
-    bottom: 100,
     left: 20,
     width: 200,
+    // `bottom` is computed inline so the menu clears the safe-area-padded input row.
   },
   menuItem: {
     flexDirection: 'row',
