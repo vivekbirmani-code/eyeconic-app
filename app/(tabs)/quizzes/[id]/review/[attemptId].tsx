@@ -92,7 +92,7 @@ export default function QuizReview() {
   const [loading, setLoading] = useState(true);
   const [currentSection, setCurrentSection] = useState<string>('Overview');
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [groupBy, setGroupBy] = useState<'subject' | 'tag' | 'topic'>('subject');
+  const [groupBy, setGroupBy] = useState<'section' | 'subject' | 'tag' | 'topic'>('section');
   const [showGroupByDropdown, setShowGroupByDropdown] = useState(false);
 
   const formatMarks = (value: number) => {
@@ -130,6 +130,11 @@ export default function QuizReview() {
             section = q.subject?.name || 'General';
           } else if (groupBy === 'tag') {
             section = (q.tags && q.tags.length > 0) ? q.tags[0] : 'Untagged';
+          } else if (groupBy === 'section') {
+            // The backend labels each question with its quiz section (with a
+            // subject fallback for sectionless quizzes); 'General' is the
+            // last-resort label only.
+            section = 'General';
           } else {
             section = q.topicName || 'General';
           }
@@ -317,10 +322,12 @@ export default function QuizReview() {
 
           <View style={styles.chartCard}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <Text style={styles.chartTitle}>Section Analysis</Text>
+              <Text style={styles.chartTitle}>
+                {groupBy === 'subject' ? 'Subject' : groupBy === 'tag' ? 'Tag' : groupBy === 'topic' ? 'Topic' : 'Section'} Analysis
+              </Text>
               <TouchableOpacity style={styles.filterButton} onPress={() => setShowGroupByDropdown(!showGroupByDropdown)}>
                 <Text style={styles.filterButtonText}>
-                  {groupBy === 'subject' ? 'By Subject' : groupBy === 'tag' ? 'By Tag' : 'By Topic'}
+                  {groupBy === 'subject' ? 'By Subject' : groupBy === 'tag' ? 'By Tag' : groupBy === 'topic' ? 'By Topic' : 'By Section'}
                 </Text>
                 <Text style={styles.filterButtonArrow}>▾</Text>
               </TouchableOpacity>
@@ -328,6 +335,9 @@ export default function QuizReview() {
 
             {showGroupByDropdown && (
               <View style={styles.dropdownContainer}>
+                <TouchableOpacity style={styles.dropdownItem} onPress={() => { setGroupBy('section'); setShowGroupByDropdown(false); }}>
+                  <Text style={[styles.dropdownText, groupBy === 'section' && styles.dropdownTextActive]}>By Section</Text>
+                </TouchableOpacity>
                 <TouchableOpacity style={styles.dropdownItem} onPress={() => { setGroupBy('subject'); setShowGroupByDropdown(false); }}>
                   <Text style={[styles.dropdownText, groupBy === 'subject' && styles.dropdownTextActive]}>By Subject</Text>
                 </TouchableOpacity>

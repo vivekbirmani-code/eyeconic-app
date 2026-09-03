@@ -45,7 +45,7 @@ export default function QuizResult() {
     setError(null);
 
     try {
-      const response = await api.get(`/quizzes/${id}/attempt/${attemptId}/results?groupBy=subject`);
+      const response = await api.get(`/quizzes/${id}/attempt/${attemptId}/results?groupBy=section`);
       setResult(mapQuizResultsResponse(response.data));
     } catch (fetchError: any) {
       console.error('Error fetching results:', fetchError);

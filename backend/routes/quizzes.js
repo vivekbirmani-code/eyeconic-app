@@ -2857,7 +2857,15 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
 // Get results (after submission) - SECURITY HARDENED
 router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
   try {
-    const { groupBy = 'topic' } = req.query; // subject, tag, or topic
+    // groupBy controls how the performance rows are aggregated:
+    //   section (default) -> quiz sections; quizzes without sections fall
+    //                        back to subject grouping (historical behaviour)
+    //   subject           -> question subject, merged across all sections
+    //   topic             -> question topicName, merged across all sections
+    //   tag               -> first question tag, merged across all sections
+    const ALLOWED_GROUP_BY = ['section', 'subject', 'topic', 'tag'];
+    const requestedGroupBy = String(req.query.groupBy || '').toLowerCase().trim();
+    const groupBy = ALLOWED_GROUP_BY.includes(requestedGroupBy) ? requestedGroupBy : 'section';
 
     // Step 1: Populate quiz with questions (QuestionBank docs)
     const attempt = await QuizAttempt.findById(req.params.attemptId)
@@ -2897,172 +2905,142 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
     const quiz = await Quiz.findById(attempt.quiz._id);
     const shareSolution = quiz.shareSolution !== undefined ? quiz.shareSolution : true;
 
-    // Calculate section-aware data
+    // Calculate grouped performance data.
+    // The groupBy dimension is honoured for every quiz shape: on sectioned
+    // quizzes "subject" merges questions of the same subject across sections;
+    // "section" on a quiz without sections falls back to subject grouping so
+    // flat quizzes keep a meaningful breakdown (historical behaviour).
     const hasQuizSections = quiz.sections && quiz.sections.length > 0;
-    const questionsWithAnswers = [];
-    const sectionPerformance = {};
+    const effectiveGroupBy = groupBy === 'section' && !hasQuizSections ? 'subject' : groupBy;
 
-    // Helper to determine section for a question
-    const getSectionInfo = (qId, globalIndex) => {
-      if (hasQuizSections) {
-        for (const section of quiz.sections) {
-          const qIdx = section.questions.findIndex(id => id.toString() === qId.toString());
-          if (qIdx !== -1) {
-            return { name: section.name, index: qIdx };
-          }
-        }
+    // Group name for a question under the requested dimension. Null-subject
+    // questions follow the app's existing 'General' convention.
+    const groupNameForQuestion = (q) => {
+      if (effectiveGroupBy === 'subject') {
+        return q?.subject?.name || 'General';
       }
-      
-      // Fallback to groupBy
-      let sectionName = 'General';
-      const q = attempt.quiz.questions[globalIndex];
-      if (groupBy === 'subject') {
-        sectionName = q.subject?.name || 'General';
-      } else if (groupBy === 'tag') {
-        sectionName = (q.tags && q.tags.length > 0) ? q.tags[0] : 'Untagged';
-      } else {
-        sectionName = q.topicName || 'General';
+      if (effectiveGroupBy === 'tag') {
+        return (q?.tags && q.tags.length > 0) ? q.tags[0] : 'Untagged';
       }
-      return { name: sectionName, index: globalIndex }; // Fallback relative index is global index
+      if (effectiveGroupBy === 'topic') {
+        return q?.topicName || 'General';
+      }
+      return 'General';
     };
 
-    // If quiz has sections, follow section order. Otherwise follow global order.
-    if (hasQuizSections) {
-      quiz.sections.forEach(section => {
-        if (!sectionPerformance[section.name]) {
-          sectionPerformance[section.name] = {
-            sectionName: section.name,
-            correct: 0,
-            incorrect: 0,
-            skipped: 0,
-            timeSpent: 0
-          };
-        }
+    // Insertion-ordered so groups appear in first-seen question order while
+    // same-group questions (e.g. one subject spread over sections) accumulate
+    // into a single row — never double-counted, never duplicated.
+    const groupPerformance = new Map();
 
+    // Ordered traversal: section quizzes follow section order (matching how
+    // students saw them), flat quizzes follow the global question order.
+    const questionEntries = [];
+    if (hasQuizSections) {
+      // Pre-seed a row per section so empty sections still surface (historical
+      // behaviour); duplicate section names merge into a single row.
+      if (effectiveGroupBy === 'section') {
+        quiz.sections.forEach(section => {
+          if (!groupPerformance.has(section.name)) {
+            groupPerformance.set(section.name, {
+              sectionName: section.name,
+              correct: 0,
+              incorrect: 0,
+              skipped: 0,
+              timeSpent: 0
+            });
+          }
+        });
+      }
+      quiz.sections.forEach(section => {
         section.questions.forEach((qId, sIdx) => {
           const globalIndex = attempt.quiz.questions.findIndex(qd => qd._id.toString() === qId.toString());
           if (globalIndex !== -1) {
-            const q = attempt.quiz.questions[globalIndex];
-            const answer = attempt.answers.find(a => a.questionIndex === globalIndex);
-            
-            // Process performance
-            const hasAnswer = answer && answer.selectedAnswer != null && answer.selectedAnswer !== -1;
-            if (!hasAnswer) {
-              sectionPerformance[section.name].skipped++;
-            } else if (answer.isCorrect) {
-              sectionPerformance[section.name].correct++;
-            } else {
-              sectionPerformance[section.name].incorrect++;
-            }
-            if (answer) {
-              sectionPerformance[section.name].timeSpent += answer.timeSpent || 0;
-            }
-
-            // Build question data
-            const baseData = {
-              _id: q._id,
-              question: q.question,
-              questionImage: q.questionImage,
-              options: q.options,
-              optionImages: q.optionImages,
-              questionType: q.questionType,
-              assertion: q.assertion,
-              reason: q.reason,
-              columnA: q.columnA,
-              columnB: q.columnB,
-              marks: q.marks,
-              subject: q.subject,
-              topicName: q.topicName,
-              subtopicName: q.subtopicName,
-              system: q.system,
-              difficulty: q.difficulty,
-              tags: q.tags,
-              userAnswer: answer?.selectedAnswer,
-              isCorrect: answer?.isCorrect,
-              timeSpent: answer?.timeSpent,
-              markedForReview: answer?.markedForReview,
-              section: section.name,
+            questionEntries.push({
+              question: attempt.quiz.questions[globalIndex],
+              globalIndex,
               sectionQuestionIndex: sIdx,
-              globalIndex: globalIndex
-            };
-
-            if (shareSolution) {
-              baseData.correctAnswer = q.correctAnswer;
-              baseData.explanation = q.explanation;
-              baseData.explanationImage = q.explanationImage;
-            }
-
-            questionsWithAnswers.push(baseData);
+              groupName: effectiveGroupBy === 'section' ? section.name : null
+            });
           }
         });
       });
     } else {
-      // Original global-order logic with refactored section determination
       attempt.quiz.questions.forEach((q, index) => {
-        const answer = attempt.answers.find(a => a.questionIndex === index);
-        const secInfo = getSectionInfo(q._id, index);
-
-        if (!sectionPerformance[secInfo.name]) {
-          sectionPerformance[secInfo.name] = {
-            sectionName: secInfo.name,
-            correct: 0,
-            incorrect: 0,
-            skipped: 0,
-            timeSpent: 0
-          };
-        }
-
-        const hasAnswer = answer && answer.selectedAnswer != null && answer.selectedAnswer !== -1;
-        if (!hasAnswer) {
-          sectionPerformance[secInfo.name].skipped++;
-        } else if (answer.isCorrect) {
-          sectionPerformance[secInfo.name].correct++;
-        } else {
-          sectionPerformance[secInfo.name].incorrect++;
-        }
-        if (answer) {
-          sectionPerformance[secInfo.name].timeSpent += answer.timeSpent || 0;
-        }
-
-        const baseData = {
-          _id: q._id,
-          question: q.question,
-          questionImage: q.questionImage,
-          options: q.options,
-          optionImages: q.optionImages,
-          questionType: q.questionType,
-          assertion: q.assertion,
-          reason: q.reason,
-          columnA: q.columnA,
-          columnB: q.columnB,
-          marks: q.marks,
-          subject: q.subject,
-          topicName: q.topicName,
-          subtopicName: q.subtopicName,
-          system: q.system,
-          difficulty: q.difficulty,
-          tags: q.tags,
-          userAnswer: answer?.selectedAnswer,
-          isCorrect: answer?.isCorrect,
-          timeSpent: answer?.timeSpent,
-          markedForReview: answer?.markedForReview,
-          section: secInfo.name,
+        questionEntries.push({
+          question: q,
+          globalIndex: index,
           sectionQuestionIndex: index,
-          globalIndex: index
-        };
-
-        if (shareSolution) {
-          baseData.correctAnswer = q.correctAnswer;
-          baseData.explanation = q.explanation;
-          baseData.explanationImage = q.explanationImage;
-        }
-
-        questionsWithAnswers.push(baseData);
+          groupName: null
+        });
       });
     }
 
-    // Calculate accuracy for each section (correct / attempted, skips excluded)
-    const sectionPerformanceArray = Object.values(sectionPerformance).map(section => {
+    const questionsWithAnswers = [];
+
+    questionEntries.forEach(({ question: q, globalIndex, sectionQuestionIndex, groupName }) => {
+      const name = groupName !== null && groupName !== undefined
+        ? groupName
+        : groupNameForQuestion(q);
+      const answer = attempt.answers.find(a => a.questionIndex === globalIndex);
+
+      // Classify with the same type-aware rules as the overall summary so the
+      // group rows always add up to summary.correct/incorrect/skipped.
+      const questionType = resolveQuestionType(answer, q);
+      const result = classifyAnswer(answer, questionType);
+
+      let group = groupPerformance.get(name);
+      if (!group) {
+        group = { sectionName: name, correct: 0, incorrect: 0, skipped: 0, timeSpent: 0 };
+        groupPerformance.set(name, group);
+      }
+
+      if (result.skipped) group.skipped += 1;
+      else if (result.correct) group.correct += 1;
+      else group.incorrect += 1;
+      if (answer) {
+        group.timeSpent += answer.timeSpent || 0;
+      }
+
+      // Build question data
+      const baseData = {
+        _id: q._id,
+        question: q.question,
+        questionImage: q.questionImage,
+        options: q.options,
+        optionImages: q.optionImages,
+        questionType: q.questionType,
+        assertion: q.assertion,
+        reason: q.reason,
+        columnA: q.columnA,
+        columnB: q.columnB,
+        marks: q.marks,
+        subject: q.subject,
+        topicName: q.topicName,
+        subtopicName: q.subtopicName,
+        system: q.system,
+        difficulty: q.difficulty,
+        tags: q.tags,
+        userAnswer: answer?.selectedAnswer,
+        isCorrect: answer?.isCorrect,
+        timeSpent: answer?.timeSpent,
+        markedForReview: answer?.markedForReview,
+        section: name,
+        sectionQuestionIndex,
+        globalIndex
+      };
+
+      if (shareSolution) {
+        baseData.correctAnswer = q.correctAnswer;
+        baseData.explanation = q.explanation;
+        baseData.explanationImage = q.explanationImage;
+      }
+
+      questionsWithAnswers.push(baseData);
+    });
+
+    // Calculate accuracy for each group (correct / attempted, skips excluded)
+    const sectionPerformanceArray = [...groupPerformance.values()].map(section => {
       const attemptedInSection = section.correct + section.incorrect;
       const accuracy = attemptedInSection > 0
         ? Math.round((section.correct / attemptedInSection) * 100)

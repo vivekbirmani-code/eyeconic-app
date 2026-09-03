@@ -19,7 +19,29 @@ interface AttemptDetailModalProps {
     onClose: () => void;
 }
 
+type GroupBy = 'section' | 'subject' | 'topic' | 'tag';
+
+const GROUP_BY_OPTIONS: Array<{ value: GroupBy; label: string; rowLabel: string }> = [
+    { value: 'section', label: 'By Section', rowLabel: 'Section' },
+    { value: 'subject', label: 'By Subject', rowLabel: 'Subject' },
+    { value: 'topic', label: 'By Topic', rowLabel: 'Topic' },
+    { value: 'tag', label: 'By Tag', rowLabel: 'Tag' },
+];
+
 interface AttemptDetail {
+    summary?: {
+        correct: number;
+        incorrect: number;
+        skipped: number;
+        attempted: number;
+        totalQuestions: number;
+        marksObtained: number;
+        totalMarks: number;
+        scorePercentage: number | null;
+        accuracy: number | null;
+        markedForReviewCount: number;
+        timeTakenSeconds: number;
+    };
     attempt: {
         _id: string;
         status: string;
@@ -60,7 +82,7 @@ interface AttemptDetail {
 export default function AttemptDetailModal({ attemptId, visible, onClose }: AttemptDetailModalProps) {
     const [loading, setLoading] = useState(false);
     const [attemptData, setAttemptData] = useState<AttemptDetail | null>(null);
-    const [groupBy, setGroupBy] = useState<'topic' | 'subject' | 'tag'>('topic');
+    const [groupBy, setGroupBy] = useState<GroupBy>('section');
     const [showDropdown, setShowDropdown] = useState(false);
 
     useEffect(() => {
@@ -120,60 +142,59 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
     const calculateStats = () => {
         if (!attemptData) return null;
 
-        const correct = attemptData.attempt.score;
-        // Parsing totalQuestions if it's not directly on attempt (sometimes it's on quiz)
-        const total = attemptData.attempt.totalQuestions || attemptData.quiz.totalQuestions || 0;
-        
-        // Calculate answered based on questions array if available, or fallback
-        const answered = attemptData.questions ? attemptData.questions.filter(q =>
-            q.userAnswer !== undefined && q.userAnswer !== -1
-        ).length : (total - (attemptData.attempt.score + (total - attemptData.attempt.score))); // Fallback logic is tricky without data
+        // Prefer the server-computed summary — the same numbers that drive the
+        // overall quiz statistics — so the overall tiles always agree with the
+        // grouped rows regardless of the selected Group by dimension.
+        const summary = attemptData.summary;
+        if (summary) {
+            const scorePercentage = summary.scorePercentage !== null && summary.scorePercentage !== undefined
+                ? summary.scorePercentage
+                : (attemptData.attempt.totalMarks
+                    ? Math.round((attemptData.attempt.marksObtained / attemptData.attempt.totalMarks) * 10000) / 100
+                    : 0);
 
-        // Use strict counts if available in sectionPerformance
-        let totalCorrect = 0;
-        let totalWrong = 0;
-        let totalSkipped = 0;
-        
-        if (attemptData.attempt.sectionPerformance && attemptData.attempt.sectionPerformance.length > 0) {
-             attemptData.attempt.sectionPerformance.forEach(s => {
-                 totalCorrect += s.correct;
-                 totalWrong += s.incorrect;
-                 totalSkipped += s.skipped;
-             });
-        } else {
-            // Fallback if section performance is missing (legacy attempts)
-            totalCorrect = correct;
-            const computedAnswered = attemptData.questions ? attemptData.questions.filter(q => q.userAnswer !== undefined && q.userAnswer !== -1).length : 0;
-            totalWrong = computedAnswered - totalCorrect;
-            totalSkipped = total - computedAnswered;
+            return {
+                correct: summary.correct,
+                wrong: summary.incorrect,
+                skipped: summary.skipped,
+                total: summary.totalQuestions || attemptData.attempt.totalQuestions || attemptData.quiz.totalQuestions || 0,
+                markedCount: summary.markedForReviewCount,
+                totalTimeSpent: summary.timeTakenSeconds,
+                scorePercentage,
+                accuracy: summary.accuracy,
+                percentage: scorePercentage,
+            };
         }
 
-        const markedCount = attemptData.questions ? attemptData.questions.filter(r => r.markedForReview).length : 0;
-        
-        // Time spent - sometimes available in milliseconds in attempt.endTime - attempt.startTime
-        // or sum of section times
+        // Fallback for payloads without a summary (legacy responses).
+        const correct = attemptData.attempt.score;
+        const total = attemptData.attempt.totalQuestions || attemptData.quiz.totalQuestions || 0;
+        const computedAnswered = attemptData.questions
+            ? attemptData.questions.filter(q => q.userAnswer !== undefined && q.userAnswer !== -1).length
+            : 0;
+
         let totalTimeSpent = 0;
-        if(attemptData.attempt.sectionPerformance) {
+        if (attemptData.attempt.sectionPerformance) {
             totalTimeSpent = attemptData.attempt.sectionPerformance.reduce((sum, section) => sum + section.timeSpent, 0);
         }
         if (totalTimeSpent === 0 && attemptData.attempt.startTime && attemptData.attempt.endTime) {
-             totalTimeSpent = (new Date(attemptData.attempt.endTime).getTime() - new Date(attemptData.attempt.startTime).getTime()) / 1000;
+            totalTimeSpent = (new Date(attemptData.attempt.endTime).getTime() - new Date(attemptData.attempt.startTime).getTime()) / 1000;
         }
 
         const scorePercentage = attemptData.attempt.totalMarks
             ? Math.round((attemptData.attempt.marksObtained / attemptData.attempt.totalMarks) * 10000) / 100
             : 0;
-        const attempted = totalCorrect + totalWrong;
+        const attempted = computedAnswered;
         const accuracy = attempted > 0
-            ? Math.round((totalCorrect / attempted) * 10000) / 100
+            ? Math.round((correct / attempted) * 10000) / 100
             : null;
 
         return {
-            correct: totalCorrect,
-            wrong: totalWrong,
-            skipped: totalSkipped,
+            correct,
+            wrong: Math.max(0, computedAnswered - correct),
+            skipped: Math.max(0, total - computedAnswered),
             total,
-            markedCount,
+            markedCount: attemptData.questions ? attemptData.questions.filter(r => r.markedForReview).length : 0,
             totalTimeSpent,
             scorePercentage,
             accuracy,
@@ -183,18 +204,21 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
 
     const stats = calculateStats();
 
-    // Prepare section performance with accuracy
+    // Prepare grouped performance with accuracy (server sends accuracy; the
+    // fallback mirrors the server formula: correct / attempted, skips excluded)
     const sectionPerformanceWithAccuracy = attemptData?.attempt.sectionPerformance ? attemptData.attempt.sectionPerformance.map(section => {
-        const totalQuestionsInSection = section.correct + section.incorrect + section.skipped;
+        const attemptedInSection = section.correct + section.incorrect;
         const accuracy = section.accuracy !== undefined
             ? section.accuracy
-            : (totalQuestionsInSection > 0 ? Math.round((section.correct / totalQuestionsInSection) * 100) : 0);
+            : (attemptedInSection > 0 ? Math.round((section.correct / attemptedInSection) * 100) : 0);
 
         return {
             ...section,
             accuracy
         };
     }) : [];
+
+    const activeGroupOption = GROUP_BY_OPTIONS.find(option => option.value === groupBy) ?? GROUP_BY_OPTIONS[0];
 
     return (
         <Modal
@@ -298,7 +322,7 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
                                 </View>
                             </View>
 
-                            {/* Section Performance Table */}
+                            {/* Grouped Performance Table */}
                             <View style={styles.filterContainer}>
                                 <Text style={styles.filterLabel}>Group by:</Text>
                                 <TouchableOpacity
@@ -306,7 +330,7 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
                                     onPress={() => setShowDropdown(!showDropdown)}
                                 >
                                     <Text style={styles.dropdownText}>
-                                        {groupBy === 'topic' ? 'By Topic' : groupBy === 'subject' ? 'By Subject' : 'By Tag'}
+                                        {activeGroupOption.label}
                                     </Text>
                                     <ChevronDown size={16} color="#6B7280" />
                                 </TouchableOpacity>
@@ -314,33 +338,26 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
 
                             {showDropdown && (
                                 <View style={styles.dropdownMenu}>
-                                    <TouchableOpacity
-                                        style={styles.dropdownOption}
-                                        onPress={() => { setGroupBy('topic'); setShowDropdown(false); }}
-                                    >
-                                        <Text style={[styles.dropdownOptionText, groupBy === 'topic' && styles.dropdownOptionTextActive]}>By Topic</Text>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity
-                                        style={styles.dropdownOption}
-                                        onPress={() => { setGroupBy('subject'); setShowDropdown(false); }}
-                                    >
-                                        <Text style={[styles.dropdownOptionText, groupBy === 'subject' && styles.dropdownOptionTextActive]}>By Subject</Text>
-                                    </TouchableOpacity>
-                                    <TouchableOpacity
-                                        style={styles.dropdownOption}
-                                        onPress={() => { setGroupBy('tag'); setShowDropdown(false); }}
-                                    >
-                                        <Text style={[styles.dropdownOptionText, groupBy === 'tag' && styles.dropdownOptionTextActive]}>By Tag</Text>
-                                    </TouchableOpacity>
+                                    {GROUP_BY_OPTIONS.map(option => (
+                                        <TouchableOpacity
+                                            key={option.value}
+                                            style={styles.dropdownOption}
+                                            onPress={() => { setGroupBy(option.value); setShowDropdown(false); }}
+                                        >
+                                            <Text style={[styles.dropdownOptionText, groupBy === option.value && styles.dropdownOptionTextActive]}>
+                                                {option.label}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    ))}
                                 </View>
                             )}
 
                              <View style={styles.sectionContainer}>
-                                <Text style={styles.sectionTitle}>Section Performance</Text>
+                                <Text style={styles.sectionTitle}>{activeGroupOption.rowLabel} Performance</Text>
                                 <View style={styles.tableContainer}>
                                     {/* Table Header */}
                                     <View style={styles.tableHeader}>
-                                        <Text style={[styles.tableHeaderText, styles.colSection]}>Section</Text>
+                                        <Text style={[styles.tableHeaderText, styles.colSection]}>{activeGroupOption.rowLabel}</Text>
                                         <Text style={[styles.tableHeaderText, styles.colStat]}>Correct</Text>
                                         <Text style={[styles.tableHeaderText, styles.colStat]}>Wrong</Text>
                                         <Text style={[styles.tableHeaderText, styles.colStat]}>Skip</Text>

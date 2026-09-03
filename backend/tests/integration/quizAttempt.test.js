@@ -581,3 +581,258 @@ describe('Quiz attempt lifecycle — type-aware grading + snapshots', () => {
     expect(res.status).toBe(403);
   });
 });
+
+describe('Results grouping — Group by controls the aggregation', () => {
+  let admin;
+  let student;
+  let physics;
+  let chemistry;
+
+  beforeEach(async () => {
+    await db.clearDatabase();
+    admin = await createUser({ role: 'admin' });
+    student = await createUser({ role: 'student' });
+    physics = await createSubject('Physics');
+    chemistry = await createSubject('Chemistry');
+  });
+
+  function fetchResults(quizId, attemptId, groupBy, token) {
+    const query = groupBy !== undefined ? `?groupBy=${groupBy}` : '';
+    return request(app)
+      .get(`/api/quizzes/${quizId}/attempt/${attemptId}/results${query}`)
+      .set('Authorization', `Bearer ${token}`);
+  }
+
+  // Sectioned quiz where Physics appears in BOTH sections and Chemistry only
+  // in the first — "By Subject" must merge Physics across sections.
+  async function setupSectionedAttempt() {
+    const questionDefs = [
+      { subject: physics, topicName: 'Kinematics' },                                                              // q0 — Section 1, correct (30s)
+      { subject: chemistry, topicName: 'Organic' },                                                               // q1 — Section 1, wrong (20s)
+      { subject: physics, topicName: 'Optics', questionType: 'multiple_correct', options: ['A', 'B', 'C'], correctAnswer: [0, 2] }, // q2 — Section 2, skipped via [] (15s)
+      { subject: physics, topicName: 'Optics' },                                                                  // q3 — Section 2, correct (10s)
+    ];
+
+    const questions = [];
+    for (const def of questionDefs) {
+      questions.push(await createQuestion(admin, def.subject, {
+        topicName: def.topicName,
+        questionType: def.questionType || 'mcq_single',
+        options: def.options || ['A', 'B', 'C'],
+        correctAnswer: def.correctAnswer !== undefined ? def.correctAnswer : 1,
+        question: `${def.topicName} question`,
+      }));
+    }
+
+    const quiz = await Quiz.create({
+      title: 'Grouped Sections Test',
+      subject: physics._id,
+      testType: 'grand',
+      duration: 60,
+      questions: questions.map((q) => q._id),
+      positiveMarks: 4,
+      negativeMarks: 1,
+      assignedStudents: [student.user._id],
+      createdBy: admin.user._id,
+      lockSectionsAfterSubmission: false,
+      sections: [
+        { name: 'Section 1', duration: 30, selectionType: 'manual', questions: [questions[0]._id, questions[1]._id] },
+        { name: 'Section 2', duration: 30, selectionType: 'manual', questions: [questions[2]._id, questions[3]._id] },
+      ],
+    });
+
+    const startRes = await request(app)
+      .post(`/api/quizzes/${quiz._id}/start`)
+      .set('Authorization', `Bearer ${student.token}`);
+    expect(startRes.status).toBe(201);
+    const attemptId = startRes.body.attemptId;
+
+    const saveAnswer = (questionIndex, selectedAnswer, timeSpent) =>
+      request(app)
+        .put(`/api/quizzes/${quiz._id}/attempt/${attemptId}/answer`)
+        .set('Authorization', `Bearer ${student.token}`)
+        .send({ questionIndex, questionId: questions[questionIndex]._id, selectedAnswer, timeSpent });
+
+    await saveAnswer(0, 1, 30).expect(200);  // correct
+    await saveAnswer(1, 0, 20).expect(200);  // wrong
+    await saveAnswer(2, [], 15).expect(200); // multiple_correct [] -> skipped, time still tracked
+    await saveAnswer(3, 1, 10).expect(200);  // correct
+
+    const submitRes = await request(app)
+      .post(`/api/quizzes/${quiz._id}/attempt/${attemptId}/submit`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({});
+    expect(submitRes.status).toBe(200);
+
+    return { quiz, questions, attemptId };
+  }
+
+  it('aggregates by subject across sections when groupBy=subject', async () => {
+    const { quiz, attemptId } = await setupSectionedAttempt();
+
+    const res = await fetchResults(quiz._id, attemptId, 'subject', student.token);
+    expect(res.status).toBe(200);
+    expect(res.body.groupBy).toBe('subject');
+
+    const rows = res.body.attempt.sectionPerformance;
+    expect(rows.map((r) => r.sectionName)).toEqual(['Physics', 'Chemistry']);
+
+    // Physics questions from Section 1 + Section 2 merged into one row.
+    expect(rows[0]).toMatchObject({ correct: 2, incorrect: 0, skipped: 1, timeSpent: 55, accuracy: 100, total: 3 });
+    expect(rows[1]).toMatchObject({ correct: 0, incorrect: 1, skipped: 0, timeSpent: 20, accuracy: 0, total: 1 });
+
+    // Group rows always add up to the overall summary.
+    expect(res.body.summary).toMatchObject({ correct: 2, incorrect: 1, skipped: 1, totalQuestions: 4 });
+    expect(res.body.summary.accuracy).toBe(66.67);
+
+    // Questions are labelled with the active grouping dimension.
+    expect([...new Set(res.body.questions.map((q) => q.section))]).toEqual(['Physics', 'Chemistry']);
+  });
+
+  it('keeps section rows for groupBy=section, the default, and invalid values', async () => {
+    const { quiz, attemptId } = await setupSectionedAttempt();
+
+    for (const groupBy of ['section', undefined, 'bogus']) {
+      const res = await fetchResults(quiz._id, attemptId, groupBy, student.token);
+      expect(res.status).toBe(200);
+      expect(res.body.groupBy).toBe('section');
+      expect(res.body.hasSectionData).toBe(true);
+
+      const rows = res.body.attempt.sectionPerformance;
+      expect(rows.map((r) => r.sectionName)).toEqual(['Section 1', 'Section 2']);
+      expect(rows[0]).toMatchObject({ correct: 1, incorrect: 1, skipped: 0, timeSpent: 50, accuracy: 50, total: 2 });
+      expect(rows[1]).toMatchObject({ correct: 1, incorrect: 0, skipped: 1, timeSpent: 25, accuracy: 100, total: 2 });
+    }
+  });
+
+  it('groups by topic and tag when requested', async () => {
+    const { quiz, attemptId } = await setupSectionedAttempt();
+
+    const topicRes = await fetchResults(quiz._id, attemptId, 'topic', student.token);
+    expect(topicRes.status).toBe(200);
+    const topicRows = topicRes.body.attempt.sectionPerformance;
+    expect(topicRows.map((r) => r.sectionName)).toEqual(['Kinematics', 'Organic', 'Optics']);
+    expect(topicRows[2]).toMatchObject({ correct: 1, incorrect: 0, skipped: 1, timeSpent: 25, accuracy: 100 });
+
+    const tagRes = await fetchResults(quiz._id, attemptId, 'tag', student.token);
+    expect(tagRes.status).toBe(200);
+    // No tags configured -> everything lands in 'Untagged'.
+    expect(tagRes.body.attempt.sectionPerformance).toHaveLength(1);
+    expect(tagRes.body.attempt.sectionPerformance[0]).toMatchObject({
+      sectionName: 'Untagged',
+      correct: 2,
+      incorrect: 1,
+      skipped: 1,
+      timeSpent: 75,
+    });
+  });
+
+  it('groups questions without a subject under General', async () => {
+    const { quiz, questions, attemptId } = await setupSectionedAttempt();
+    // Simulate a legacy question stored before subject was enforced.
+    await QuestionBank.updateOne({ _id: questions[1]._id }, { $unset: { subject: '' } });
+
+    const res = await fetchResults(quiz._id, attemptId, 'subject', student.token);
+    expect(res.status).toBe(200);
+    const rows = res.body.attempt.sectionPerformance;
+    expect(rows.map((r) => r.sectionName)).toEqual(['Physics', 'General']);
+    expect(rows[1]).toMatchObject({ correct: 0, incorrect: 1, skipped: 0 });
+  });
+
+  it('falls back to subject grouping for sectionless quizzes on groupBy=section', async () => {
+    const questions = [
+      await createQuestion(admin, physics, { question: 'Flat physics question' }),
+      await createQuestion(admin, chemistry, { question: 'Flat chemistry question' }),
+    ];
+    const quiz = await Quiz.create({
+      title: 'Flat Quiz',
+      subject: physics._id,
+      testType: 'daily',
+      duration: 20,
+      questions: questions.map((q) => q._id),
+      positiveMarks: 4,
+      negativeMarks: 1,
+      assignedStudents: [student.user._id],
+      createdBy: admin.user._id,
+    });
+
+    const startRes = await request(app)
+      .post(`/api/quizzes/${quiz._id}/start`)
+      .set('Authorization', `Bearer ${student.token}`);
+    expect(startRes.status).toBe(201);
+    const attemptId = startRes.body.attemptId;
+
+    await request(app)
+      .put(`/api/quizzes/${quiz._id}/attempt/${attemptId}/answer`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({ questionIndex: 0, questionId: questions[0]._id, selectedAnswer: 1, timeSpent: 5 })
+      .expect(200);
+    // Question 1 left unanswered -> skipped.
+
+    await request(app)
+      .post(`/api/quizzes/${quiz._id}/attempt/${attemptId}/submit`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({})
+      .expect(200);
+
+    const res = await fetchResults(quiz._id, attemptId, 'section', student.token);
+    expect(res.status).toBe(200);
+    expect(res.body.groupBy).toBe('section');
+
+    const rows = res.body.attempt.sectionPerformance;
+    expect(rows.map((r) => r.sectionName)).toEqual(['Physics', 'Chemistry']);
+    expect(rows[0]).toMatchObject({ correct: 1, skipped: 0 });
+    expect(rows[1]).toMatchObject({ correct: 0, incorrect: 0, skipped: 1 });
+    expect(res.body.summary).toMatchObject({ correct: 1, incorrect: 0, skipped: 1 });
+  });
+
+  it('surfaces empty sections as zero rows when grouping by section', async () => {
+    const questions = [
+      await createQuestion(admin, physics, { question: 'Solo question' }),
+    ];
+    const quiz = await Quiz.create({
+      title: 'Empty Section Quiz',
+      subject: physics._id,
+      testType: 'daily',
+      duration: 20,
+      questions: questions.map((q) => q._id),
+      positiveMarks: 4,
+      negativeMarks: 1,
+      assignedStudents: [student.user._id],
+      createdBy: admin.user._id,
+      lockSectionsAfterSubmission: false,
+      sections: [
+        { name: 'Section 1', duration: 10, selectionType: 'manual', questions: [questions[0]._id] },
+        { name: 'Section 2', duration: 10, selectionType: 'manual', questions: [] },
+      ],
+    });
+
+    const startRes = await request(app)
+      .post(`/api/quizzes/${quiz._id}/start`)
+      .set('Authorization', `Bearer ${student.token}`);
+    expect(startRes.status).toBe(201);
+    const attemptId = startRes.body.attemptId;
+
+    await request(app)
+      .put(`/api/quizzes/${quiz._id}/attempt/${attemptId}/answer`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({ questionIndex: 0, questionId: questions[0]._id, selectedAnswer: 1, timeSpent: 5 })
+      .expect(200);
+
+    await request(app)
+      .post(`/api/quizzes/${quiz._id}/attempt/${attemptId}/submit`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({})
+      .expect(200);
+
+    const res = await fetchResults(quiz._id, attemptId, 'section', student.token);
+    expect(res.status).toBe(200);
+    const rows = res.body.attempt.sectionPerformance;
+    expect(rows.map((r) => r.sectionName)).toEqual(['Section 1', 'Section 2']);
+    expect(rows[1]).toMatchObject({ correct: 0, incorrect: 0, skipped: 0, timeSpent: 0, accuracy: 0, total: 0 });
+
+    // Subject grouping ignores the empty section entirely.
+    const subjectRes = await fetchResults(quiz._id, attemptId, 'subject', student.token);
+    expect(subjectRes.body.attempt.sectionPerformance.map((r) => r.sectionName)).toEqual(['Physics']);
+  });
+});
