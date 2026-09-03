@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   Modal,
   FlatList,
+  Switch,
 } from 'react-native';
 import { ScreenContainer, FullScreenContainer } from '@/components/layout';
 import { useRouter } from 'expo-router';
@@ -68,6 +69,7 @@ export default function ImportQuiz() {
   const [duration, setDuration] = useState('30');
   const [positiveMarks, setPositiveMarks] = useState('4');
   const [negativeMarks, setNegativeMarks] = useState('1');
+  const [lockSectionsAfterSubmission, setLockSectionsAfterSubmission] = useState(true);
   const [subjectId, setSubjectId] = useState('');
   const [file, setFile] = useState<any>(null);
   const [quizSections, setQuizSections] = useState<QuizSection[]>([]);
@@ -217,6 +219,9 @@ export default function ImportQuiz() {
       if (sectionPayload.length > 0) {
         formData.append('sections', JSON.stringify(sectionPayload));
       }
+      // Section locking travels as a string (multer form field); backend
+      // coerces and defaults missing to ON.
+      formData.append('lockSectionsAfterSubmission', String(lockSectionsAfterSubmission));
       // Instructions can be added if needed, defaulted by backend for now
 
       setProgressMessage('Processing questions and uploading images to cloud...\nThis may take a few minutes.');
@@ -352,6 +357,22 @@ export default function ImportQuiz() {
             <Text style={styles.infoHint}>
               Imported questions are auto-distributed across sections when you set sections.
             </Text>
+          </View>
+
+          {/* Lock Sections After Submission Toggle */}
+          <View style={styles.toggleContainer}>
+            <View style={styles.toggleLabelContainer}>
+              <Text style={styles.toggleLabel}>Lock Sections After Submission</Text>
+              <Text style={styles.toggleHelperText}>
+                Students complete sections in order, each with its own timer. Once a section is submitted (or its time ends), they cannot return to it. Applies only when sections are configured.
+              </Text>
+            </View>
+            <Switch
+              value={lockSectionsAfterSubmission}
+              onValueChange={setLockSectionsAfterSubmission}
+              trackColor={{ false: '#D1D5DB', true: '#93C5FD' }}
+              thumbColor={lockSectionsAfterSubmission ? '#2563EB' : '#9CA3AF'}
+            />
           </View>
 
           <View style={styles.quickCountRow}>
@@ -612,6 +633,33 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+  },
+  // Toggle styles (same pattern as create-quiz.tsx)
+  toggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    padding: 16,
+    marginBottom: 16,
+  },
+  toggleLabelContainer: {
+    flex: 1,
+    marginRight: 12,
+  },
+  toggleLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1F2937',
+  },
+  toggleHelperText: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 4,
+    lineHeight: 16,
   },
   infoBox: {
     backgroundColor: '#EBF5FF',

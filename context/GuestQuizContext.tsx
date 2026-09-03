@@ -23,6 +23,22 @@ interface GuestAnswer {
   timeSpent: number;
 }
 
+// Section-locking snapshot shapes (mirror backend models/GuestAttempt.js).
+export interface GuestSectionDefinition {
+  index: number;
+  name: string;
+  duration: number; // minutes
+  questionIds: string[];
+}
+
+export interface GuestSectionState {
+  index: number;
+  status: 'in_progress' | 'submitted' | 'auto_submitted';
+  startedAt?: string;
+  endsAt?: string;
+  submittedAt?: string;
+}
+
 interface GuestAttempt {
   attemptId: string;
   shareToken: string;
@@ -30,7 +46,10 @@ interface GuestAttempt {
   startTime: Date;
   duration: number;
   answers: GuestAnswer[];
-  status: 'in_progress' | 'completed';
+  status: 'in_progress' | 'completed' | 'auto_submitted';
+  sectionLockEnabled?: boolean;
+  sectionDefinitions?: GuestSectionDefinition[];
+  sectionStates?: GuestSectionState[];
 }
 
 interface Quiz {
@@ -50,9 +69,11 @@ interface GuestQuizContextType {
   isLoading: boolean;
   error: string | null;
   fetchQuizByToken: (shareToken: string) => Promise<Quiz | null>;
-  startGuestQuiz: (shareToken: string) => Promise<void>;
+  startGuestQuiz: (shareToken: string) => Promise<any>;
   saveGuestAnswer: (questionIndex: number, selectedAnswer: StudentResponse, markedForReview: boolean, timeSpent: number, questionId?: string) => Promise<void>;
   submitGuestQuiz: () => Promise<any>;
+  submitGuestSection: (sectionIndex: number, isAutoSubmit?: boolean) => Promise<any>;
+  resyncGuestProgress: () => Promise<{ finalized: boolean; status?: string }>;
   clearGuestAttempt: () => void;
 }
 
@@ -154,6 +175,14 @@ export const GuestQuizProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         throw new Error(data.message || 'Failed to start quiz');
       }
 
+      // The attempt ended server-side while the guest was away (section
+      // timers kept running). Route to results instead of the taking screen.
+      if (data.attemptFinalized) {
+        setCurrentAttempt(null);
+        await AsyncStorage.removeItem(GUEST_ATTEMPT_KEY);
+        return data;
+      }
+
       const attempt: GuestAttempt = {
         attemptId: data.attempt._id,
         shareToken,
@@ -161,11 +190,15 @@ export const GuestQuizProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         startTime: new Date(data.attempt.startTime),
         duration: data.quiz.duration,
         answers: data.attempt.answers || [],
-        status: 'in_progress'
+        status: 'in_progress',
+        sectionLockEnabled: data.attempt.sectionLockEnabled === true,
+        sectionDefinitions: data.attempt.sectionDefinitions,
+        sectionStates: data.attempt.sectionStates,
       };
 
       setCurrentAttempt(attempt);
       setQuizData(data.quiz);
+      return data;
     } catch (err: any) {
       console.error('Start guest quiz error:', err);
       setError(err.message || 'Failed to start quiz');
@@ -232,6 +265,26 @@ export const GuestQuizProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         networkAnswers.push(answerData);
       }
 
+      // Section locking: pre-filter the outgoing snapshot to the active
+      // section (the server filters authoritatively as well — this just
+      // avoids shipping writes that are guaranteed to be dropped).
+      const lockEnforced =
+        currentAttempt.sectionLockEnabled === true &&
+        (currentAttempt.sectionDefinitions?.length ?? 0) > 0;
+      const outboundAnswers = lockEnforced
+        ? (() => {
+            const qidToSection = new Map<string, number>();
+            currentAttempt.sectionDefinitions!.forEach(d => {
+              (d.questionIds || []).forEach(qid => qidToSection.set(String(qid), d.index));
+            });
+            const activeIdx = currentAttempt.sectionStates?.find(s => s.status === 'in_progress')?.index;
+            return networkAnswers.filter(a => {
+              const qid = a.questionId ? String(a.questionId) : null;
+              return qid !== null && qidToSection.get(qid) === activeIdx;
+            });
+          })()
+        : networkAnswers;
+
       await fetch(`${API_URL}/public/quiz/${currentAttempt.shareToken}/save-progress`, {
         method: 'POST',
         headers: {
@@ -240,7 +293,7 @@ export const GuestQuizProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         body: JSON.stringify({
           guestId,
           attemptId: currentAttempt.attemptId,
-          answers: networkAnswers
+          answers: outboundAnswers
         }),
       });
     } catch (err) {
@@ -292,6 +345,90 @@ export const GuestQuizProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }
   };
 
+  // Submits a single section of a guest attempt (section locking). Sends the
+  // current answers snapshot so the closing section's final answers flush
+  // atomically with the section close. Returns the server response: either
+  // { nextSection, sectionStates } or the finalize payload.
+  const submitGuestSection = async (sectionIndex: number, isAutoSubmit: boolean = false) => {
+    if (!currentAttempt || !guestId) {
+      throw new Error('No active attempt');
+    }
+
+    setIsLoading(true);
+    try {
+      const response = await fetch(
+        `${API_URL}/public/quiz/${currentAttempt.shareToken}/sections/${sectionIndex}/submit`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            guestId,
+            attemptId: currentAttempt.attemptId,
+            isAutoSubmit,
+            answers: currentAttempt.answers
+          }),
+        }
+      );
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.message || 'Failed to submit section');
+      }
+
+      const finalized = data.attemptFinalized === true || data.submitted === true;
+      if (finalized) {
+        // Whole attempt finished — keep the attempt in memory for the result
+        // page, clear persisted state (mirrors submitGuestQuiz).
+        setCurrentAttempt({
+          ...currentAttempt,
+          status: data.status === 'auto_submitted' ? 'auto_submitted' : 'completed'
+        });
+        await AsyncStorage.removeItem(GUEST_ATTEMPT_KEY);
+      } else if (Array.isArray(data.sectionStates)) {
+        setCurrentAttempt(prev => (prev ? { ...prev, sectionStates: data.sectionStates } : prev));
+      }
+
+      return data;
+    } catch (err: any) {
+      if (!isAutoSubmit) {
+        Alert.alert('Error', err.message || 'Failed to submit section');
+      }
+      throw err;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Lightweight server re-sync for the taking screen: pushes the current
+  // snapshot through save-progress (which lazily applies section expiries)
+  // and reports whether the attempt already ended server-side.
+  const resyncGuestProgress = async (): Promise<{ finalized: boolean; status?: string }> => {
+    if (!currentAttempt || !guestId) return { finalized: false };
+    try {
+      const response = await fetch(`${API_URL}/public/quiz/${currentAttempt.shareToken}/save-progress`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          guestId,
+          attemptId: currentAttempt.attemptId,
+          answers: currentAttempt.answers
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (response.ok) {
+        if (data.attemptFinalized) return { finalized: true, status: data.status };
+        return { finalized: false };
+      }
+      // 404 = no in-progress attempt left server-side (already finalized).
+      if (response.status === 404) return { finalized: true, status: 'completed' };
+      return { finalized: false };
+    } catch {
+      // Offline / transient — keep local state; the next save or section
+      // submit re-syncs anyway.
+      return { finalized: false };
+    }
+  };
+
   const clearGuestAttempt = () => {
     setCurrentAttempt(null);
     setQuizData(null);
@@ -311,6 +448,8 @@ export const GuestQuizProvider: React.FC<{ children: React.ReactNode }> = ({ chi
         startGuestQuiz,
         saveGuestAnswer,
         submitGuestQuiz,
+        submitGuestSection,
+        resyncGuestProgress,
         clearGuestAttempt
       }}
     >

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -46,12 +46,14 @@ const defaultResponseFor = (type?: QuestionType): StudentResponse => {
 export default function GuestQuizTaking() {
   const router = useRouter();
   const { shareToken } = useLocalSearchParams<{ shareToken: string }>();
-  const { 
-    currentAttempt, 
-    quizData, 
-    saveGuestAnswer, 
-    submitGuestQuiz, 
-    isLoading 
+  const {
+    currentAttempt,
+    quizData,
+    saveGuestAnswer,
+    submitGuestQuiz,
+    submitGuestSection,
+    resyncGuestProgress,
+    isLoading
   } = useGuestQuiz();
 
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
@@ -63,12 +65,93 @@ export default function GuestQuizTaking() {
   const [submitting, setSubmitting] = useState(false);
   const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
 
+  // ===== Section locking (the attempt snapshot is the single truth) =====
+  const lockOn =
+    currentAttempt?.sectionLockEnabled === true &&
+    (currentAttempt?.sectionDefinitions?.length ?? 0) > 0;
+  const activeSectionState = lockOn
+    ? currentAttempt?.sectionStates?.find(s => s.status === 'in_progress') ?? null
+    : null;
+  const activeSectionIndex = activeSectionState?.index ?? -1;
+  const activeSectionDef = lockOn
+    ? currentAttempt?.sectionDefinitions?.find(d => d.index === activeSectionIndex) ?? null
+    : null;
+  const isLastSection =
+    lockOn && activeSectionIndex === (currentAttempt?.sectionDefinitions?.length ?? 0) - 1;
+
+  // Definition question ids -> global question indexes (guest questions are
+  // addressed by position in quizData.questions).
+  const sectionQuestionIndexesMap = useMemo(() => {
+    const map: Record<string, number[]> = {};
+    if (!lockOn || !currentAttempt?.sectionDefinitions || !quizData) return map;
+    const idToGlobalIndex: Record<string, number> = {};
+    quizData.questions.forEach((q, index) => {
+      if (q?._id) idToGlobalIndex[String(q._id)] = index;
+    });
+    currentAttempt.sectionDefinitions.forEach(d => {
+      map[d.name] = (d.questionIds || [])
+        .map(qid => idToGlobalIndex[String(qid)])
+        .filter(idx => idx !== undefined);
+    });
+    return map;
+  }, [lockOn, currentAttempt, quizData]);
+
+  const activeQuestionIndexes = useMemo(() => {
+    if (!lockOn || !activeSectionDef) return null;
+    return sectionQuestionIndexesMap[activeSectionDef.name] || [];
+  }, [lockOn, activeSectionDef, sectionQuestionIndexesMap]);
+
+  const currentQuestionPosition = useMemo(() => {
+    if (lockOn) {
+      return activeQuestionIndexes ? activeQuestionIndexes.indexOf(currentQuestionIndex) : -1;
+    }
+    return currentQuestionIndex;
+  }, [lockOn, activeQuestionIndexes, currentQuestionIndex]);
+
+  const sectionStatuses = useMemo(() => {
+    if (!lockOn || !currentAttempt?.sectionDefinitions?.length) return undefined;
+    const map: { [name: string]: 'locked' | 'active' | 'upcoming' } = {};
+    currentAttempt.sectionDefinitions.forEach(d => {
+      if (activeSectionIndex >= 0 && d.index < activeSectionIndex) map[d.name] = 'locked';
+      else if (d.index === activeSectionIndex) map[d.name] = 'active';
+      else map[d.name] = 'upcoming';
+    });
+    return map;
+  }, [lockOn, currentAttempt, activeSectionIndex]);
+
+  const sections = useMemo(() => {
+    if (lockOn && currentAttempt?.sectionDefinitions?.length) {
+      return currentAttempt.sectionDefinitions.map(d => d.name);
+    }
+    return ['All', ...new Set((quizData?.questions || [])
+      .map(q => q.subjectName || 'Uncategorized')
+      .filter(s => s !== 'Uncategorized'))].sort();
+  }, [lockOn, currentAttempt, quizData]);
+
+  const questionCounts = useMemo(() => {
+    if (lockOn && currentAttempt?.sectionDefinitions?.length) {
+      const counts: Record<string, number> = {};
+      currentAttempt.sectionDefinitions.forEach(d => {
+        counts[d.name] = sectionQuestionIndexesMap[d.name]?.length || 0;
+      });
+      return counts;
+    }
+    if (!quizData) return {};
+    const counts: Record<string, number> = { All: quizData.questions.length };
+    quizData.questions.forEach(q => {
+      const s = q.subjectName || 'Uncategorized';
+      counts[s] = (counts[s] || 0) + 1;
+    });
+    return counts;
+  }, [lockOn, currentAttempt, sectionQuestionIndexesMap, quizData]);
+
   const handleImageError = useCallback((url: string) => {
     setFailedImages(prev => new Set(prev).add(url));
   }, []);
 
   const scrollViewRef = useRef<ScrollView>(null);
   const timerRef = useRef<any>(null);
+  const timeUpFiredRef = useRef(false);
 
   // Helper to resolve image URLs (handles relative paths from backend)
   const getImageUrl = useCallback((path?: string) => {
@@ -76,7 +159,7 @@ export default function GuestQuizTaking() {
     if (path.startsWith('http') || path.startsWith('https') || path.startsWith('file://') || path.startsWith('data:')) {
       return { uri: path };
     }
-    
+
     // Prepend base URL for relative paths
     // getSocketURL return the root URL e.g. http://192.168.x.x:3000
     const baseUrl = getSocketURL();
@@ -91,17 +174,27 @@ export default function GuestQuizTaking() {
       return;
     }
 
-    // Calculate remaining time
-    const startTime = new Date(currentAttempt.startTime).getTime();
-    const endTime = startTime + (quizData.duration * 60 * 1000);
-    const remaining = Math.max(0, Math.floor((endTime - Date.now()) / 1000));
-    setTimeRemaining(remaining);
+    // Section locking: the deadline is the server-issued per-section endsAt
+    // (wall-clock, refresh-safe). Re-arms whenever the active section changes.
+    const deadlineFor = (): number => {
+      if (lockOn && activeSectionState?.endsAt) {
+        return new Date(activeSectionState.endsAt).getTime();
+      }
+      const startTime = new Date(currentAttempt.startTime).getTime();
+      return startTime + (quizData.duration * 60 * 1000);
+    };
 
-    // Start timer
+    timeUpFiredRef.current = false;
+    const endTime = deadlineFor();
+    setTimeRemaining(Math.max(0, Math.floor((endTime - Date.now()) / 1000)));
+
     timerRef.current = setInterval(() => {
       setTimeRemaining(prev => {
         if (prev <= 1) {
-          handleTimeUp();
+          if (!timeUpFiredRef.current) {
+            timeUpFiredRef.current = true;
+            handleTimeUp();
+          }
           return 0;
         }
         return prev - 1;
@@ -117,7 +210,42 @@ export default function GuestQuizTaking() {
       if (timerRef.current) clearInterval(timerRef.current);
       backHandler.remove();
     };
-  }, [currentAttempt, quizData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentAttempt, quizData, activeSectionIndex, lockOn]);
+
+  // Keep the current question inside the active section (section submit,
+  // timer expiry while away, re-sync).
+  useEffect(() => {
+    if (!lockOn || !activeQuestionIndexes || activeQuestionIndexes.length === 0) return;
+    if (!activeQuestionIndexes.includes(currentQuestionIndex)) {
+      setCurrentQuestionIndex(activeQuestionIndexes[0]);
+      scrollViewRef.current?.scrollTo({ y: 0, animated: false });
+    }
+  }, [lockOn, activeQuestionIndexes, currentQuestionIndex]);
+
+  useEffect(() => {
+    if (lockOn && activeSectionDef && currentSection !== activeSectionDef.name) {
+      setCurrentSection(activeSectionDef.name);
+    }
+  }, [lockOn, activeSectionDef, currentSection]);
+
+  // Section locking: re-sync once per attempt on mount (refresh / app
+  // restart / tampered local state adopt the server's progress).
+  const syncedAttemptRef = useRef<string | null>(null);
+  useEffect(() => {
+    const attemptId = currentAttempt?.attemptId;
+    if (!attemptId || syncedAttemptRef.current === attemptId) return;
+    syncedAttemptRef.current = attemptId;
+
+    let cancelled = false;
+    (async () => {
+      const result = await resyncGuestProgress();
+      if (cancelled || !result.finalized) return;
+      router.replace(`/guest-quiz/${shareToken}/result` as any);
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentAttempt?.attemptId, shareToken]);
 
   useEffect(() => {
     if (currentAttempt?.answers) {
@@ -133,20 +261,23 @@ export default function GuestQuizTaking() {
     }
     setQuestionStartTime(Date.now());
 
-    // Auto-update section tab based on current question
-    if (quizData) {
+    // Auto-update section tab based on current question (non-locking path)
+    if (!lockOn && quizData) {
       const question = quizData.questions[currentQuestionIndex];
       const subject = question.subjectName || 'Uncategorized';
       if (subject !== 'Uncategorized' && subject !== currentSection) {
         setCurrentSection(subject);
       }
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentQuestionIndex, currentAttempt, quizData]);
 
   const handleBackPress = () => {
     Alert.alert(
       'Exit Quiz?',
-      'Your progress is saved. Are you sure you want to exit?',
+      lockOn
+        ? 'Your progress is saved, but section timers keep running. Are you sure you want to exit?'
+        : 'Your progress is saved. Are you sure you want to exit?',
       [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Exit', style: 'destructive', onPress: () => router.back() }
@@ -156,9 +287,34 @@ export default function GuestQuizTaking() {
 
   const handleTimeUp = useCallback(async () => {
     if (timerRef.current) clearInterval(timerRef.current);
+
+    // Section locking: submit the active section; the server's response
+    // either advances to the next section or finalizes the whole attempt.
+    if (lockOn && activeSectionIndex >= 0) {
+      try {
+        const result = await submitGuestSection(activeSectionIndex, true);
+        const finalized = result?.attemptFinalized === true || result?.submitted === true;
+        if (finalized) {
+          Alert.alert('Time Up!', 'The test time has ended. Your answers have been submitted.', [
+            { text: 'View Results', onPress: () => router.replace(`/guest-quiz/${shareToken}/result` as any) }
+          ]);
+        } else {
+          Alert.alert(
+            'Section Time Up',
+            `"${result?.nextSection?.name ?? 'The next section'}" has started. The previous section has been submitted and locked.`
+          );
+        }
+      } catch (error) {
+        console.error('Guest section auto-submit error:', error);
+        Alert.alert('Section Time Up', 'The section time has ended. Your answers are being submitted.');
+      }
+      return;
+    }
+
     Alert.alert('Time Up!', 'Submitting your answers...');
     await handleSubmit(true);
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lockOn, activeSectionIndex, submitGuestSection, shareToken]);
 
   const handleResponseChange = async (response: StudentResponse) => {
     setSelectedAnswer(response);
@@ -176,7 +332,11 @@ export default function GuestQuizTaking() {
   };
 
   const handleNextQuestion = async () => {
-    if (quizData && currentQuestionIndex < quizData.questions.length - 1) {
+    const canAdvance = lockOn
+      ? currentQuestionPosition >= 0 && currentQuestionPosition < (activeQuestionIndexes?.length ?? 0) - 1
+      : !!quizData && currentQuestionIndex < quizData.questions.length - 1;
+
+    if (canAdvance) {
       // Save current progress/time before moving
       const timeSpent = Math.floor((Date.now() - questionStartTime) / 1000);
       const questionId = quizData?.questions[currentQuestionIndex]?._id;
@@ -186,29 +346,49 @@ export default function GuestQuizTaking() {
         console.error('Save failed on guest skip:', err);
       }
 
-      setCurrentQuestionIndex(prev => prev + 1);
+      setCurrentQuestionIndex(prev =>
+        lockOn && activeQuestionIndexes
+          ? activeQuestionIndexes[currentQuestionPosition + 1]
+          : prev + 1
+      );
       scrollViewRef.current?.scrollTo({ y: 0, animated: false });
     }
   };
 
   const handlePreviousQuestion = async () => {
-    if (currentQuestionIndex > 0) {
-      // Save current progress/time before moving
-      const timeSpent = Math.floor((Date.now() - questionStartTime) / 1000);
-      const questionId = quizData?.questions[currentQuestionIndex]?._id;
-      try {
-        await saveGuestAnswer(currentQuestionIndex, selectedAnswer, markedForReview, timeSpent, questionId);
-      } catch (err) {
-        console.error('Save failed on guest skip back:', err);
-      }
+    if (currentQuestionPosition <= 0) return;
 
-      setCurrentQuestionIndex(prev => prev - 1);
-      scrollViewRef.current?.scrollTo({ y: 0, animated: false });
+    // Save current progress/time before moving
+    const timeSpent = Math.floor((Date.now() - questionStartTime) / 1000);
+    const questionId = quizData?.questions[currentQuestionIndex]?._id;
+    try {
+      await saveGuestAnswer(currentQuestionIndex, selectedAnswer, markedForReview, timeSpent, questionId);
+    } catch (err) {
+      console.error('Save failed on guest skip back:', err);
     }
+
+    setCurrentQuestionIndex(prev =>
+      lockOn && activeQuestionIndexes
+        ? activeQuestionIndexes[currentQuestionPosition - 1]
+        : prev - 1
+    );
+    scrollViewRef.current?.scrollTo({ y: 0, animated: false });
   };
 
   const handleSectionChange = useCallback((section: string) => {
+    // Section locking: only the active section is navigable.
+    if (lockOn && activeSectionDef && section !== activeSectionDef.name) return;
+
     setCurrentSection(section);
+
+    if (lockOn && activeSectionDef) {
+      const indexes = sectionQuestionIndexesMap[activeSectionDef.name] || [];
+      if (indexes.length > 0) {
+        setCurrentQuestionIndex(indexes[0]);
+        scrollViewRef.current?.scrollTo({ y: 0, animated: false });
+      }
+      return;
+    }
 
     if (section !== 'All' && quizData) {
       const firstQuestionInSection = quizData.questions.findIndex(
@@ -218,9 +398,44 @@ export default function GuestQuizTaking() {
         setCurrentQuestionIndex(firstQuestionInSection);
       }
     }
-  }, [quizData]);
+  }, [lockOn, activeSectionDef, sectionQuestionIndexesMap, quizData]);
 
   const handleSubmit = async (isAutoSubmit: boolean = false) => {
+    // Section locking: submitting the active section (the final section
+    // submits the whole quiz through the same server path). There is
+    // deliberately no "end entire quiz early" action when locking is on.
+    if (lockOn && activeSectionIndex >= 0) {
+      Alert.alert(
+        isLastSection ? 'Submit Quiz?' : 'Submit Section?',
+        isLastSection
+          ? 'Are you sure you want to submit? You cannot change answers after submission.'
+          : `Submit "${activeSectionDef?.name ?? 'this section'}"? You cannot return to this section after submitting.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: isLastSection ? 'Submit' : 'Submit Section',
+            style: 'destructive',
+            onPress: async () => {
+              setSubmitting(true);
+              try {
+                const result = await submitGuestSection(activeSectionIndex, false);
+                if (result?.attemptFinalized === true || result?.submitted === true) {
+                  router.replace(`/guest-quiz/${shareToken}/result` as any);
+                }
+                // Otherwise the context adopted the next section's state; the
+                // effects above re-center the UI on it.
+              } catch (error) {
+                // Context already surfaced manual-submit errors via Alert.
+              } finally {
+                setSubmitting(false);
+              }
+            }
+          }
+        ]
+      );
+      return;
+    }
+
     if (!isAutoSubmit) {
       Alert.alert(
         'Submit Quiz?',
@@ -265,11 +480,12 @@ export default function GuestQuizTaking() {
   }
 
   const currentQuestion = quizData.questions[currentQuestionIndex];
+  const totalInScope = lockOn ? (activeQuestionIndexes?.length ?? 0) : quizData.questions.length;
 
   return (
     <FullScreenContainer style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
-      
+
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
@@ -294,21 +510,15 @@ export default function GuestQuizTaking() {
 
       {/* Section Tabs */}
       <SectionTabs
-        sections={['All', ...new Set(quizData.questions.map(q => q.subjectName || 'Uncategorized').filter(s => s !== 'Uncategorized'))].sort()}
+        sections={sections}
         currentSection={currentSection}
         onSectionChange={handleSectionChange}
-        questionCounts={(() => {
-          const counts: Record<string, number> = { All: quizData.questions.length };
-          quizData.questions.forEach(q => {
-            const s = q.subjectName || 'Uncategorized';
-            counts[s] = (counts[s] || 0) + 1;
-          });
-          return counts;
-        })()}
+        questionCounts={questionCounts}
+        sectionStatuses={sectionStatuses}
       />
 
       {/* Question Content */}
-      <ScrollView 
+      <ScrollView
         ref={scrollViewRef}
         style={styles.scrollView}
         contentContainerStyle={styles.content}
@@ -316,7 +526,7 @@ export default function GuestQuizTaking() {
         {/* Question Header */}
         <View style={styles.questionHeader}>
           <Text style={styles.questionNumber}>
-            Question {currentQuestionIndex + 1} of {quizData.questions.length}
+            Question {Math.max(currentQuestionPosition, 0) + 1} of {totalInScope || quizData.questions.length}
           </Text>
           <View style={styles.marksBadge}>
             <Text style={styles.marksText}>{currentQuestion.marks || 1} marks</Text>
@@ -381,30 +591,30 @@ export default function GuestQuizTaking() {
           <TouchableOpacity
             style={[styles.navButton, styles.prevButton]}
             onPress={handlePreviousQuestion}
-            disabled={currentQuestionIndex === 0}
+            disabled={currentQuestionPosition <= 0}
           >
-            <ChevronLeft 
-              size={20} 
-              color={currentQuestionIndex === 0 ? '#9ca3af' : '#6366f1'} 
+            <ChevronLeft
+              size={20}
+              color={currentQuestionPosition <= 0 ? '#9ca3af' : '#6366f1'}
             />
             <Text style={[
               styles.navButtonText,
-              currentQuestionIndex === 0 && styles.disabledText
+              currentQuestionPosition <= 0 && styles.disabledText
             ]}>Prev</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
             style={[styles.navButton, styles.nextButton]}
             onPress={handleNextQuestion}
-            disabled={currentQuestionIndex === quizData.questions.length - 1}
+            disabled={currentQuestionPosition === -1 || currentQuestionPosition >= totalInScope - 1}
           >
             <Text style={[
               styles.navButtonText,
-              currentQuestionIndex === quizData.questions.length - 1 && styles.disabledText
+              (currentQuestionPosition === -1 || currentQuestionPosition >= totalInScope - 1) && styles.disabledText
             ]}>Next</Text>
-            <ChevronRight 
-              size={20} 
-              color={currentQuestionIndex === quizData.questions.length - 1 ? '#9ca3af' : '#6366f1'} 
+            <ChevronRight
+              size={20}
+              color={(currentQuestionPosition === -1 || currentQuestionPosition >= totalInScope - 1) ? '#9ca3af' : '#6366f1'}
             />
           </TouchableOpacity>
         </View>
@@ -412,12 +622,14 @@ export default function GuestQuizTaking() {
         <TouchableOpacity
           style={[styles.navButton, styles.submitButton]}
           onPress={() => handleSubmit(false)}
-          disabled={submitting}
+          disabled={submitting || isLoading}
         >
-          {submitting ? (
+          {submitting || isLoading ? (
             <ActivityIndicator size="small" color="#ffffff" />
           ) : (
-            <Text style={styles.submitButtonText}>Submit</Text>
+            <Text style={styles.submitButtonText}>
+              {lockOn && !isLastSection ? 'Submit Section' : 'Submit'}
+            </Text>
           )}
         </TouchableOpacity>
       </View>

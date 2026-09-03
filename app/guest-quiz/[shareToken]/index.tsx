@@ -21,6 +21,9 @@ interface Quiz {
   instructions: string[];
   totalMarks: number;
   questionCount: number;
+  // Section-locking metadata (structure only, no question content).
+  lockSectionsAfterSubmission?: boolean;
+  sections?: { name: string; duration: number; questionCount: number }[];
 }
 
 export default function GuestQuizInstructions() {
@@ -47,10 +50,15 @@ export default function GuestQuizInstructions() {
 
   const handleStartQuiz = async () => {
     if (!shareToken) return;
-    
+
     setStarting(true);
     try {
-      await startGuestQuiz(shareToken);
+      const result = await startGuestQuiz(shareToken);
+      if (result?.attemptFinalized) {
+        // The attempt ended server-side while the guest was away.
+        router.replace(`/guest-quiz/${shareToken}/result` as any);
+        return;
+      }
       router.replace(`/guest-quiz/${shareToken}/taking`);
     } catch (err) {
       console.error('Failed to start quiz:', err);
@@ -162,6 +170,23 @@ export default function GuestQuizInstructions() {
             )}
           </View>
         </View>
+
+        {/* Sequential sections notice (section locking) */}
+        {quiz.lockSectionsAfterSubmission !== false && (quiz.sections?.length ?? 0) > 0 && (
+          <View style={styles.noticeCard}>
+            <AlertCircle size={20} color="#f59e0b" />
+            <View style={{ flex: 1 }}>
+              <Text style={styles.noticeText}>
+                🔒 Sections are sequential — once you submit a section (or its timer ends), you cannot return to it. Each section has its own timer:
+              </Text>
+              {(quiz.sections || []).map((section, index) => (
+                <Text key={index} style={[styles.noticeText, { marginTop: 4 }]}>
+                  • {section.name}: {section.questionCount} questions ({section.duration} mins)
+                </Text>
+              ))}
+            </View>
+          </View>
+        )}
 
         {/* Guest Notice */}
         <View style={styles.noticeCard}>

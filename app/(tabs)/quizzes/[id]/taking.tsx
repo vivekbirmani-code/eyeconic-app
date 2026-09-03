@@ -83,7 +83,7 @@ const { width: SCREEN_WIDTH } = Dimensions.get('window');
 function QuizTakingContent() {
   const { id } = useLocalSearchParams();
   const router = useRouter();
-  const { currentAttempt, saveAnswer, submitQuiz, isLoading: quizLoading } = useQuiz();
+  const { currentAttempt, saveAnswer, submitQuiz, submitSection, loadAttempt, isLoading: quizLoading } = useQuiz();
 
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [loading, setLoading] = useState(true);
@@ -98,6 +98,20 @@ function QuizTakingContent() {
   const [saveError, setSaveError] = useState(false);
   const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
   const [showReviewModal, setShowReviewModal] = useState(false);
+
+  // ===== Section locking (the attempt snapshot is the single truth) =====
+  const sectionLockOn =
+    currentAttempt?.sectionLockEnabled === true &&
+    (currentAttempt?.sectionDefinitions?.length ?? 0) > 0;
+  const activeSectionState = sectionLockOn
+    ? currentAttempt?.sectionStates?.find(s => s.status === 'in_progress') ?? null
+    : null;
+  const activeSectionIndex = activeSectionState?.index ?? -1;
+  const activeSectionDef = sectionLockOn
+    ? currentAttempt?.sectionDefinitions?.find(d => d.index === activeSectionIndex) ?? null
+    : null;
+  const isLastSection =
+    sectionLockOn && activeSectionIndex === (currentAttempt?.sectionDefinitions?.length ?? 0) - 1;
 
   // Animations
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -133,7 +147,13 @@ function QuizTakingContent() {
   // Memoize sections to avoid recalculation
   const sections = useMemo(() => {
     if (!quiz) return [];
-    
+
+    // Section locking: sections come from the attempt snapshot verbatim —
+    // sequential navigation only, no "All" view.
+    if (sectionLockOn && currentAttempt?.sectionDefinitions?.length) {
+      return currentAttempt.sectionDefinitions.map(d => d.name);
+    }
+
     // Prioritize defined sections
     if (quiz.sections && quiz.sections.length > 0) {
       return ['All', ...quiz.sections.map(s => s.name)];
@@ -141,10 +161,23 @@ function QuizTakingContent() {
 
     const subjects = quiz.questions.map(q => getSubjectName(q));
     return ['All', ...Array.from(new Set(subjects))];
-  }, [quiz, getSubjectName]);
+  }, [quiz, getSubjectName, sectionLockOn, currentAttempt]);
 
   const sectionQuestionIdsMap = useMemo(() => {
-    if (!quiz || !quiz.sections || quiz.sections.length === 0) return {} as Record<string, string[]>;
+    if (!quiz) return {} as Record<string, string[]>;
+
+    // Section locking: the server-authoritative partition, used verbatim.
+    // Never re-derive membership client-side — display must match what the
+    // backend enforces.
+    if (sectionLockOn && currentAttempt?.sectionDefinitions?.length) {
+      const lockedMap: Record<string, string[]> = {};
+      currentAttempt.sectionDefinitions.forEach(d => {
+        lockedMap[d.name] = (d.questionIds || []).map(String).filter(Boolean);
+      });
+      return lockedMap;
+    }
+
+    if (!quiz.sections || quiz.sections.length === 0) return {} as Record<string, string[]>;
 
     const allQuestionIds = quiz.questions.map(q => getQuestionId(q)).filter(Boolean);
     const allQuestionIdSet = new Set(allQuestionIds);
@@ -220,6 +253,44 @@ function QuizTakingContent() {
     });
   }, [quiz, currentAttempt, currentQuestionIndex]);
 
+  // Review-modal scope: with section locking, an intermediate section reviews
+  // only itself; the final section reviews the whole quiz (like today).
+  const reviewIndexes = useMemo(() => {
+    if (sectionLockOn && !isLastSection) return activeQuestionIndexes;
+    return quiz ? quiz.questions.map((_, i) => i) : [];
+  }, [sectionLockOn, isLastSection, activeQuestionIndexes, quiz]);
+
+  const reviewStats = useMemo(() => {
+    let answered = 0;
+    let marked = 0;
+    reviewIndexes.forEach(i => {
+      const status = questionStatuses[i];
+      if (!status) return;
+      if (status.answered) answered++;
+      if (status.markedForReview) marked++;
+    });
+    return {
+      total: reviewIndexes.length,
+      answered,
+      marked,
+      unanswered: reviewIndexes.length - answered
+    };
+  }, [reviewIndexes, questionStatuses]);
+
+  // Per-section tab statuses for the locked UI (✓ Submitted / active /
+  // upcoming). Absent when locking is off — the tabs render exactly as
+  // before the feature existed.
+  const sectionStatuses = useMemo(() => {
+    if (!sectionLockOn || !currentAttempt?.sectionDefinitions?.length) return undefined;
+    const map: { [name: string]: 'locked' | 'active' | 'upcoming' } = {};
+    currentAttempt.sectionDefinitions.forEach(d => {
+      if (activeSectionIndex >= 0 && d.index < activeSectionIndex) map[d.name] = 'locked';
+      else if (d.index === activeSectionIndex) map[d.name] = 'active';
+      else map[d.name] = 'upcoming';
+    });
+    return map;
+  }, [sectionLockOn, currentAttempt, activeSectionIndex]);
+
   // Memoize question counts
   const questionCounts = useMemo(() => {
     if (!quiz) return {};
@@ -291,11 +362,51 @@ function QuizTakingContent() {
     }
   }, [activeQuestionIndexes, currentQuestionIndex]);
 
+  // Section locking: adopt the server-authoritative active section whenever
+  // it changes (section submit, timer expiry while away, mount re-sync).
+  // The currentQuestionIndex then re-centers via the effect above because
+  // activeQuestionIndexes recomputes for the new section.
   useEffect(() => {
+    if (!sectionLockOn || !activeSectionDef) return;
+    if (currentSection !== activeSectionDef.name) {
+      setCurrentSection(activeSectionDef.name);
+    }
+  }, [sectionLockOn, activeSectionDef, currentSection]);
+
+  useEffect(() => {
+    // With section locking there is no 'All' fallback — an empty section
+    // must not kick the student into a nonexistent view.
+    if (sectionLockOn) return;
     if (currentSection !== 'All' && activeQuestionIndexes.length === 0) {
       setCurrentSection('All');
     }
-  }, [currentSection, activeQuestionIndexes]);
+  }, [sectionLockOn, currentSection, activeQuestionIndexes]);
+
+  // Section locking: re-sync with the server once per attempt so refresh,
+  // app restart, a second device, or tampered local state all adopt the
+  // server's progress. If the attempt already ended, route to results.
+  const syncedAttemptRef = useRef<string | null>(null);
+  useEffect(() => {
+    const attemptId = currentAttempt?.attemptId;
+    if (!attemptId || syncedAttemptRef.current === attemptId) return;
+    syncedAttemptRef.current = attemptId;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const data = await loadAttempt(attemptId);
+        if (cancelled) return;
+        if (data?.status && data.status !== 'in_progress') {
+          router.replace(`/quizzes/${id}/result/${attemptId}`);
+        }
+      } catch (error) {
+        // Offline / transient failure: keep local state; the next save or
+        // section submit re-syncs with the server anyway.
+        console.warn('Attempt re-sync failed:', error);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [currentAttempt?.attemptId, id, loadAttempt, router]);
 
   const fetchQuizDetails = async () => {
     try {
@@ -423,18 +534,59 @@ function QuizTakingContent() {
   }, [quiz]);
 
   const handleQuestionSelect = useCallback((index: number) => {
+    // Section locking: navigation (review-modal grid, tablet sidebar) may
+    // only target the active section.
+    if (sectionLockOn && !activeQuestionIndexes.includes(index)) return;
+
     // Sync section so the question is visible
     const targetSection = getSectionForIndex(index);
     setCurrentSection(targetSection);
     setCurrentQuestionIndex(index);
     scrollViewRef.current?.scrollTo({ y: 0, animated: false });
-  }, [getSectionForIndex]);
+  }, [getSectionForIndex, sectionLockOn, activeQuestionIndexes]);
 
   const handleSubmitQuiz = useCallback(() => {
     setShowReviewModal(true);
   }, []);
 
   const handleFinalSubmit = useCallback(() => {
+    // Section locking: submitting the active section (the final section
+    // submits the whole test through the same server path as whole-quiz
+    // submit). There is deliberately no "end entire test early" action —
+    // students proceed section by section only.
+    if (sectionLockOn && activeSectionIndex >= 0) {
+      Alert.alert(
+        isLastSection ? 'Submit Test' : 'Submit Section',
+        isLastSection
+          ? 'Are you sure you want to submit? You cannot change your answers after submission.'
+          : `Submit "${activeSectionDef?.name ?? 'this section'}"? You cannot return to this section after submitting.`,
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: isLastSection ? 'Submit' : 'Submit Section',
+            style: 'destructive',
+            onPress: async () => {
+              try {
+                const result = await submitSection(activeSectionIndex, false);
+                setShowReviewModal(false);
+                const finalized =
+                  result.attemptFinalized === true ||
+                  (result.status && result.status !== 'in_progress');
+                if (finalized) {
+                  router.replace(`/quizzes/${id}/result/${result.attemptId || currentAttempt?.attemptId}`);
+                }
+                // Otherwise the context adopted the next section's state and
+                // the adopt-effect re-centers the UI on it.
+              } catch (error) {
+                // Context already surfaced manual-submit errors via Alert.
+              }
+            }
+          }
+        ]
+      );
+      return;
+    }
+
     Alert.alert(
       'Submit Quiz',
       'Are you sure you want to submit? You cannot change your answers after submission.',
@@ -455,7 +607,57 @@ function QuizTakingContent() {
         }
       ]
     );
-  }, [submitQuiz, id, currentAttempt, router]);
+  }, [sectionLockOn, activeSectionIndex, isLastSection, activeSectionDef, submitSection, submitQuiz, id, currentAttempt, router]);
+
+  // Section locking: the section timer hit zero — the server is the truth.
+  // Submit the section as auto; the response either advances to the next
+  // section or finalizes the whole attempt.
+  const handleSectionTimeUp = useCallback(async () => {
+    if (!sectionLockOn || activeSectionIndex < 0) return;
+    try {
+      const result = await submitSection(activeSectionIndex, true);
+      const finalized =
+        result.attemptFinalized === true ||
+        (result.status && result.status !== 'in_progress');
+      if (finalized) {
+        Alert.alert(
+          'Time Up!',
+          'The test time has ended. Your answers have been submitted.',
+          [{
+            text: 'View Results',
+            onPress: () => router.replace(`/quizzes/${id}/result/${result.attemptId || currentAttempt?.attemptId}`)
+          }]
+        );
+      } else {
+        Alert.alert(
+          'Section Time Up',
+          `"${result.nextSection?.name ?? 'The next section'}" has started. The previous section has been submitted and locked.`,
+          [{ text: 'OK' }]
+        );
+      }
+    } catch (error: any) {
+      console.error('Section auto-submit error:', error);
+      // Most likely the server already advanced the section (deadline passed
+      // server-side first). Re-sync and adopt its truth.
+      const attemptId = currentAttempt?.attemptId;
+      if (attemptId) {
+        try {
+          const data = await loadAttempt(attemptId);
+          if (data?.status && data.status !== 'in_progress') {
+            router.replace(`/quizzes/${id}/result/${attemptId}`);
+            return;
+          }
+        } catch (syncError) {
+          console.warn('Post-timeout re-sync failed:', syncError);
+        }
+      }
+      Alert.alert(
+        'Section Time Up',
+        'The section time has ended. Your answers are being submitted.',
+        [{ text: 'OK' }]
+      );
+    }
+  }, [sectionLockOn, activeSectionIndex, submitSection, loadAttempt, id, currentAttempt, router]);
 
   const handleTimeUp = useCallback(async () => {
     try {
@@ -515,6 +717,10 @@ function QuizTakingContent() {
   }, [submitQuiz, id, currentAttempt, router]);
 
   const handleSectionChange = useCallback((section: string) => {
+    // Section locking: only the active section is navigable (tabs are
+    // disabled too — this guard covers any other trigger path).
+    if (sectionLockOn && activeSectionDef && section !== activeSectionDef.name) return;
+
     setCurrentSection(section);
 
     if (!quiz) return;
@@ -536,7 +742,7 @@ function QuizTakingContent() {
     if (firstQuestionInSection !== -1) {
       setCurrentQuestionIndex(firstQuestionInSection);
     }
-  }, [quiz, getSubjectName, sectionQuestionIdsMap, currentQuestionIndex]);
+  }, [quiz, getSubjectName, sectionQuestionIdsMap, currentQuestionIndex, sectionLockOn, activeSectionDef]);
 
   useEffect(() => {
     // Fetch quiz details only on mount/id change
@@ -652,7 +858,13 @@ function QuizTakingContent() {
           )}
         </View>
         <View style={styles.headerRight}>
-          {currentAttempt && (
+          {currentAttempt && sectionLockOn && activeSectionDef && activeSectionState?.startedAt ? (
+            <QuizTimer
+              duration={activeSectionDef.duration}
+              startTime={new Date(activeSectionState.startedAt)}
+              onTimeUp={handleSectionTimeUp}
+            />
+          ) : currentAttempt && (
             <QuizTimer
               duration={getActualDuration()}
               startTime={currentAttempt.startTime}
@@ -682,6 +894,7 @@ function QuizTakingContent() {
         currentSection={currentSection}
         onSectionChange={handleSectionChange}
         questionCounts={questionCounts}
+        sectionStatuses={sectionStatuses}
       />
 
       <View style={styles.mainContent}>
@@ -819,7 +1032,9 @@ function QuizTakingContent() {
               onPress={handleSubmitQuiz}
               disabled={quizLoading}
             >
-              <Text style={styles.submitButtonText}>Submit</Text>
+              <Text style={styles.submitButtonText}>
+                {sectionLockOn && !isLastSection ? 'Submit Section' : 'Submit'}
+              </Text>
             </TouchableOpacity>
           </View>
       </View>
@@ -837,41 +1052,46 @@ function QuizTakingContent() {
         <View style={styles.modalOverlay}>
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Review Before Submission</Text>
+              <Text style={styles.modalTitle}>
+                {sectionLockOn && !isLastSection && activeSectionDef
+                  ? `Review: ${activeSectionDef.name}`
+                  : 'Review Before Submission'}
+              </Text>
               <TouchableOpacity onPress={() => setShowReviewModal(false)}>
                 <X color="#4B5563" size={24} />
               </TouchableOpacity>
             </View>
-            
+
             <View style={styles.modalSummaryBox}>
               <View style={styles.summaryItem}>
-                <Text style={styles.summaryValue}>{quiz.questions.length}</Text>
+                <Text style={styles.summaryValue}>{reviewStats.total}</Text>
                 <Text style={styles.summaryLabel}>Total</Text>
               </View>
               <View style={styles.summaryItem}>
                 <Text style={[styles.summaryValue, { color: '#10B981' }]}>
-                  {questionStatuses.filter(s => s.answered).length}
+                  {reviewStats.answered}
                 </Text>
                 <Text style={styles.summaryLabel}>Answered</Text>
               </View>
               <View style={styles.summaryItem}>
                 <Text style={[styles.summaryValue, { color: '#A855F7' }]}>
-                  {questionStatuses.filter(s => s.markedForReview).length}
+                  {reviewStats.marked}
                 </Text>
                 <Text style={styles.summaryLabel}>Marked</Text>
               </View>
               <View style={styles.summaryItem}>
                 <Text style={[styles.summaryValue, { color: '#EF4444' }]}>
-                  {questionStatuses.filter(s => !s.answered).length}
+                  {reviewStats.unanswered}
                 </Text>
                 <Text style={styles.summaryLabel}>Unanswered</Text>
               </View>
             </View>
 
-            <Text style={styles.modalSubtitle}>Questions ({quiz.questions.length})</Text>
+            <Text style={styles.modalSubtitle}>Questions ({reviewStats.total})</Text>
             <ScrollView style={styles.modalQuestionsGrid} showsVerticalScrollIndicator={false}>
               <View style={styles.gridContainer}>
-                {questionStatuses.map((status, index) => {
+                {reviewIndexes.map((index) => {
+                  const status = questionStatuses[index];
                   // Priority: answered+marked = green with purple border, only-marked = purple, answered = green, not visited = white
                   let bgColor = '#FFFFFF';
                   let borderColor = '#D1D5DB';
@@ -929,7 +1149,9 @@ function QuizTakingContent() {
                 {quizLoading ? (
                   <ActivityIndicator color="#FFFFFF" />
                 ) : (
-                  <Text style={styles.modalFinalSubmitBtnText}>Final Submit</Text>
+                  <Text style={styles.modalFinalSubmitBtnText}>
+                    {sectionLockOn && !isLastSection ? 'Submit Section' : 'Final Submit'}
+                  </Text>
                 )}
               </TouchableOpacity>
             </View>

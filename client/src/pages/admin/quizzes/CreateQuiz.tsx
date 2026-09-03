@@ -46,6 +46,7 @@ export default function CreateQuiz() {
   const [duration, setDuration] = useState('30');
   const [availableQuestionsCount, setAvailableQuestionsCount] = useState(0);
   const [shareSolution, setShareSolution] = useState(true);
+  const [lockSectionsAfterSubmission, setLockSectionsAfterSubmission] = useState(true);
   const [instructions, setInstructions] = useState('Read each question carefully before answering.\nYou cannot go back to previous questions once answered.\nDo not switch tabs during the test.\nSubmit before the timer expires.');
   
   // Dates
@@ -160,6 +161,8 @@ export default function CreateQuiz() {
       setDuration(quiz.duration.toString());
       if (quiz.instructions) setInstructions(quiz.instructions.join('\n'));
       if (quiz.shareSolution !== undefined) setShareSolution(quiz.shareSolution);
+      // Section locking: missing on legacy quizzes = ON (never default OFF)
+      setLockSectionsAfterSubmission(quiz.lockSectionsAfterSubmission !== false);
       if (quiz.scheduledDate) setScheduledDate(toLocalDateTimeInput(new Date(quiz.scheduledDate)));
       if (quiz.expiryDate) setExpiryDate(toLocalDateTimeInput(new Date(quiz.expiryDate)));
       if (quiz.subject) setSelectedSubjects([quiz.subject._id]);
@@ -236,6 +239,7 @@ export default function CreateQuiz() {
         instructions: instructions.split('\n').filter(i => i.trim()),
         assignedStudents: selectedStudents,
         shareSolution,
+        lockSectionsAfterSubmission,
         scheduledDate: scheduledDate ? new Date(scheduledDate).toISOString() : null,
         expiryDate: expiryDate ? new Date(expiryDate).toISOString() : null
       };
@@ -360,6 +364,17 @@ export default function CreateQuiz() {
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input type="checkbox" className="sr-only peer" checked={shareSolution} onChange={e => setShareSolution(e.target.checked)} />
+                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#01b4ae]"></div>
+                </label>
+              </div>
+
+              <div className="flex items-center justify-between p-4 bg-blue-50/50 rounded-xl border border-blue-100">
+                <div>
+                  <h4 className="font-bold text-blue-900">Lock Sections After Submission</h4>
+                  <p className="text-sm text-blue-700">Students complete sections in order, each with its own timer. Once a section is submitted (or its time ends), they cannot return to it. Applies when sections are configured on the test.</p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input type="checkbox" className="sr-only peer" checked={lockSectionsAfterSubmission} onChange={e => setLockSectionsAfterSubmission(e.target.checked)} />
                   <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#01b4ae]"></div>
                 </label>
               </div>

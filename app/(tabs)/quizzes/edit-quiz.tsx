@@ -11,6 +11,7 @@ import {
   Modal,
   Image,
   FlatList,
+  Switch,
 } from 'react-native';
 import { ScreenContainer, FullScreenContainer } from '@/components/layout';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -66,6 +67,9 @@ interface Quiz {
   totalMarks: number;
   scheduledDate?: string;
   expiryDate?: string;
+  shareSolution?: boolean;
+  // Missing on legacy quizzes = ON — read with `!== false` everywhere.
+  lockSectionsAfterSubmission?: boolean;
   sections?: Array<{
     name: string;
     duration: number;
@@ -129,6 +133,8 @@ export default function EditQuiz() {
   const [duration, setDuration] = useState('');
   const [instructions, setInstructions] = useState('');
   const [selectedQuestions, setSelectedQuestions] = useState<Question[]>([]);
+  const [shareSolution, setShareSolution] = useState(true);
+  const [lockSectionsAfterSubmission, setLockSectionsAfterSubmission] = useState(true);
 
   // Time Window
   const [scheduledDate, setScheduledDate] = useState<Date | null>(null);
@@ -173,6 +179,9 @@ export default function EditQuiz() {
       setTitle(normalizeMixedQuizTitle(quizData.title, subjectNames));
       setDuration(quizData.duration.toString());
       setInstructions(quizData.instructions?.join('\n') || '');
+      // Both flags: missing on legacy quizzes = ON (never default OFF).
+      setShareSolution(quizData.shareSolution !== false);
+      setLockSectionsAfterSubmission(quizData.lockSectionsAfterSubmission !== false);
       setSelectedQuestions(fetchedQuestions);
       setQuizSections(
         (quizData.sections || []).map(section => ({
@@ -432,6 +441,8 @@ export default function EditQuiz() {
         instructions: instructions.split('\n').filter(line => line.trim()),
         questions: selectedQuestions.map(q => q._id),
         sections: sectionPayload,
+        shareSolution,
+        lockSectionsAfterSubmission,
         scheduledDate: scheduledDate?.toISOString(),
         expiryDate: expiryDate?.toISOString()
       });
@@ -676,6 +687,37 @@ export default function EditQuiz() {
                 ⚠️ End date must be after start date
               </Text>
             )}
+          </View>
+
+          {/* Quiz Settings Toggles */}
+          <View style={styles.toggleContainer}>
+            <View style={styles.toggleLabelContainer}>
+              <Text style={styles.toggleLabel}>Share Quiz Solution</Text>
+              <Text style={styles.toggleHelperText}>
+                Allow students to see correct answers and explanations after submission
+              </Text>
+            </View>
+            <Switch
+              value={shareSolution}
+              onValueChange={setShareSolution}
+              trackColor={{ false: '#D1D5DB', true: '#93C5FD' }}
+              thumbColor={shareSolution ? '#2563EB' : '#9CA3AF'}
+            />
+          </View>
+
+          <View style={styles.toggleContainer}>
+            <View style={styles.toggleLabelContainer}>
+              <Text style={styles.toggleLabel}>Lock Sections After Submission</Text>
+              <Text style={styles.toggleHelperText}>
+                Students complete sections in order, each with its own timer. Once a section is submitted (or its time ends), they cannot return to it. Applies only to quizzes with sections. In-flight attempts keep the setting they started with.
+              </Text>
+            </View>
+            <Switch
+              value={lockSectionsAfterSubmission}
+              onValueChange={setLockSectionsAfterSubmission}
+              trackColor={{ false: '#D1D5DB', true: '#93C5FD' }}
+              thumbColor={lockSectionsAfterSubmission ? '#2563EB' : '#9CA3AF'}
+            />
           </View>
         </View>
 
@@ -1206,6 +1248,33 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#F3F4F6',
+  },
+  // Toggle styles (same pattern as create-quiz.tsx)
+  toggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#F9FAFB',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    padding: 16,
+    marginTop: 12,
+  },
+  toggleLabelContainer: {
+    flex: 1,
+    marginRight: 12,
+  },
+  toggleLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1F2937',
+  },
+  toggleHelperText: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginTop: 4,
+    lineHeight: 16,
   },
   loadingContainer: {
     flex: 1,

@@ -145,7 +145,46 @@ const attemptSchema = new mongoose.Schema({
   shareSolutionAtSubmission: {
     type: Boolean,
     default: true
-  }
+  },
+
+  // ===== Section locking (snapshot copied from the quiz at /start) =====
+  // Deliberately defaults to false: attempts created before this feature (and
+  // attempts on quizzes without sections) must keep free-navigation behavior.
+  // /start writes true explicitly when the quiz resolves to locking ON with
+  // sections present. Enforcement predicate everywhere:
+  //   attempt.sectionLockEnabled === true && sectionDefinitions?.length > 0
+  sectionLockEnabled: {
+    type: Boolean,
+    default: false
+  },
+  // Immutable per-attempt section definitions — the enforcement truth, immune
+  // to later admin edits of quiz.sections. questionIds reference the quiz's
+  // global question list by identity (not index), so reordering is tolerated.
+  sectionDefinitions: [{
+    _id: false,
+    index: { type: Number, required: true },
+    name: { type: String },
+    duration: { type: Number }, // minutes
+    questionIds: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'QuestionBank'
+    }]
+  }],
+  // Mutable per-section progress. A section's startedAt is write-once (set
+  // when the previous section closes) which makes it a safe optimistic-lock
+  // token for transitions. endsAt = startedAt + duration (server-authoritative).
+  sectionStates: [{
+    _id: false,
+    index: { type: Number, required: true },
+    status: {
+      type: String,
+      enum: ['in_progress', 'submitted', 'auto_submitted'],
+      default: 'in_progress'
+    },
+    startedAt: { type: Date },
+    endsAt: { type: Date },
+    submittedAt: { type: Date }
+  }]
 }, {
   timestamps: true
 });

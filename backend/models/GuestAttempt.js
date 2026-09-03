@@ -86,7 +86,37 @@ const guestAttemptSchema = new mongoose.Schema({
     // Device info for analytics
     deviceInfo: {
         type: String
-    }
+    },
+
+    // ===== Section locking (snapshot copied from the quiz at /start) =====
+    // Same semantics as QuizAttempt: defaults false so pre-feature attempts
+    // and section-less quizzes never enforce.
+    sectionLockEnabled: {
+        type: Boolean,
+        default: false
+    },
+    sectionDefinitions: [{
+        _id: false,
+        index: { type: Number, required: true },
+        name: { type: String },
+        duration: { type: Number }, // minutes
+        questionIds: [{
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'QuestionBank'
+        }]
+    }],
+    sectionStates: [{
+        _id: false,
+        index: { type: Number, required: true },
+        status: {
+            type: String,
+            enum: ['in_progress', 'submitted', 'auto_submitted'],
+            default: 'in_progress'
+        },
+        startedAt: { type: Date },
+        endsAt: { type: Date },
+        submittedAt: { type: Date }
+    }]
 }, {
     timestamps: true
 });

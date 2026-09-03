@@ -12,6 +12,22 @@ interface QuizAnswer {
   timeSpent: number;
 }
 
+// Section-locking snapshot shapes (mirror backend models/QuizAttempt.js).
+export interface SectionDefinition {
+  index: number;
+  name: string;
+  duration: number; // minutes
+  questionIds: string[];
+}
+
+export interface SectionState {
+  index: number;
+  status: 'in_progress' | 'submitted' | 'auto_submitted';
+  startedAt?: string;
+  endsAt?: string;
+  submittedAt?: string;
+}
+
 interface QuizAttempt {
   attemptId: string;
   quizId: string;
@@ -19,19 +35,28 @@ interface QuizAttempt {
   duration: number;
   answers: QuizAnswer[];
   status: 'in_progress' | 'completed' | 'auto_submitted';
+  sectionLockEnabled?: boolean;
+  sectionDefinitions?: SectionDefinition[];
+  sectionStates?: SectionState[];
 }
 
 interface QuizContextType {
   currentAttempt: QuizAttempt | null;
-  startQuiz: (quizId: string) => Promise<void>;
+  startQuiz: (quizId: string) => Promise<any>;
   saveAnswer: (questionIndex: number, selectedAnswer: StudentResponse, markedForReview: boolean, timeSpent: number, questionId?: string) => Promise<void>;
   submitQuiz: (isAutoSubmit?: boolean) => Promise<any>;
-  loadAttempt: (attemptId: string) => Promise<void>;
+  submitSection: (sectionIndex: number, isAutoSubmit?: boolean) => Promise<any>;
+  loadAttempt: (attemptId: string) => Promise<any>;
   clearAttempt: () => void;
   isLoading: boolean;
 }
 
 const QuizContext = createContext<QuizContextType | undefined>(undefined);
+
+// True when the server rejected an answer because its section is locked —
+// these entries must be dropped (never retried); the section is final.
+const isSectionLockedError = (error: any) =>
+  error?.response?.status === 403 && error?.response?.data?.errorCode === 'SECTION_LOCKED';
 
 export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentAttempt, setCurrentAttempt] = useState<QuizAttempt | null>(null);
@@ -76,21 +101,34 @@ export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const processSaveQueue = async () => {
     if (!currentAttempt || saveQueue.size === 0) return;
 
-    try {
-      const updates = Array.from(saveQueue.values());
+    // Settle each answer independently: SECTION_LOCKED entries are dropped
+    // (the section is final server-side), network failures stay queued.
+    const entries = Array.from(saveQueue.entries());
+    const failed: [number, QuizAnswer][] = [];
 
-      // Send all updates to server
-      await Promise.all(
-        updates.map(answer =>
-          api.put(`/quizzes/${currentAttempt.quizId}/attempt/${currentAttempt.attemptId}/answer`, answer)
-        )
-      );
+    await Promise.allSettled(
+      entries.map(async ([questionIndex, answer]) => {
+        try {
+          await api.put(`/quizzes/${currentAttempt.quizId}/attempt/${currentAttempt.attemptId}/answer`, answer);
+        } catch (error: any) {
+          if (isSectionLockedError(error)) {
+            setSaveQueue(prevQueue => {
+              const newQueue = new Map(prevQueue);
+              newQueue.delete(questionIndex);
+              return newQueue;
+            });
+          } else {
+            failed.push([questionIndex, answer]);
+          }
+        }
+      })
+    );
 
-      // Clear queue after successful save
+    if (failed.length === 0) {
       setSaveQueue(new Map());
-    } catch (error) {
-      console.error('Error saving answers:', error);
-      // Keep in queue for retry
+    } else {
+      const retryQueue = new Map(failed);
+      setSaveQueue(retryQueue);
     }
   };
 
@@ -105,10 +143,14 @@ export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children
         startTime: new Date(response.data.startTime),
         duration: response.data.duration,
         answers: response.data.answers || [],
-        status: 'in_progress'
+        status: 'in_progress',
+        sectionLockEnabled: response.data.sectionLockEnabled === true,
+        sectionDefinitions: response.data.sectionDefinitions,
+        sectionStates: response.data.sectionStates,
       };
 
       setCurrentAttempt(attempt);
+      return response.data;
     } catch (error: any) {
       console.error('Start quiz error:', error);
       if (error.response) {
@@ -181,7 +223,17 @@ export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children
         newQueue.delete(questionIndex);
         return newQueue;
       });
-    } catch (error) {
+    } catch (error: any) {
+      if (isSectionLockedError(error)) {
+        // The section was locked server-side (timer expired on another
+        // device / while away). Drop the write — it is final.
+        setSaveQueue(prevQueue => {
+          const newQueue = new Map(prevQueue);
+          newQueue.delete(questionIndex);
+          return newQueue;
+        });
+        return;
+      }
       console.warn('Immediate save failed, will retry in background:', error);
       // Keep in queue - will be picked up by processSaveQueue
     }
@@ -220,13 +272,70 @@ export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  // Submits a single section (section locking). Flushes pending saves first
+  // so the section's final answers ride along. Returns the server response:
+  // either { nextSection, sectionStates } or — for the final section — the
+  // standard submit payload (client routes to results exactly like
+  // submitQuiz).
+  const submitSection = async (sectionIndex: number, isAutoSubmit: boolean = false) => {
+    if (!currentAttempt) {
+      throw new Error('No active attempt');
+    }
+
+    await processSaveQueue();
+
+    setIsLoading(true);
+    try {
+      const response = await api.post(
+        `/quizzes/${currentAttempt.quizId}/attempt/${currentAttempt.attemptId}/sections/${sectionIndex}/submit`,
+        { isAutoSubmit }
+      );
+
+      const data = response.data;
+      const finalized =
+        data.attemptFinalized === true ||
+        (data.status && data.status !== 'in_progress');
+
+      if (finalized) {
+        await AsyncStorage.removeItem('currentQuizAttempt');
+        setCurrentAttempt(null);
+      } else if (Array.isArray(data.sectionStates)) {
+        setCurrentAttempt(prev => (prev ? { ...prev, sectionStates: data.sectionStates } : prev));
+      }
+
+      return data;
+    } catch (error: any) {
+      if (!isAutoSubmit) {
+        const errorMessage = error.response?.data?.message || 'Failed to submit section';
+        Alert.alert('Error', errorMessage);
+      }
+      throw error;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Fetches the authoritative attempt state from the server. The taking
+  // screen calls this on mount so refresh / app restart / second device /
+  // tampered local state all adopt the server's section progress.
   const loadAttempt = async (attemptId: string) => {
     setIsLoading(true);
     try {
-      // This would be used to resume an in-progress attempt
-      // Implementation depends on having an endpoint to fetch attempt details
       const response = await api.get(`/quizzes/attempt/${attemptId}`);
-      setCurrentAttempt(response.data);
+      const data = response.data;
+      const attempt: QuizAttempt = {
+        attemptId: data._id,
+        quizId: typeof data.quiz === 'object' ? data.quiz?._id : data.quiz,
+        startTime: new Date(data.startTime),
+        duration: data.duration ?? 0, // taking screen uses quiz.duration when unset
+        answers: data.answers || [],
+        status: data.status || 'in_progress',
+        sectionLockEnabled: data.sectionLockEnabled === true,
+        sectionDefinitions: data.sectionDefinitions,
+        sectionStates: data.sectionStates,
+      };
+      setCurrentAttempt(attempt);
+      return data;
     } catch (error) {
       console.error('Error loading attempt:', error);
       throw error;
@@ -248,6 +357,7 @@ export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children
         startQuiz,
         saveAnswer,
         submitQuiz,
+        submitSection,
         loadAttempt,
         clearAttempt,
         isLoading

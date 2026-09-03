@@ -46,17 +46,20 @@ const {
 } = require('../utils/questionHistory');
 const { assertStudentPerformanceAccess } = require('../utils/studentPerformanceAuth');
 const { buildStudentPerformanceResponse } = require('../utils/studentPerformance');
+const {
+  toIdString,
+  deriveSectionsForQuestions,
+  isSectionLockEnforced,
+  buildSectionSnapshot,
+  sectionIndexForQuestionId,
+  computeSectionSubmit,
+  closeSectionStates,
+  syncExpiredSections,
+} = require('../utils/sectionLocking');
 
 const upload = multer({ storage: multer.memoryStorage() });
 
 const router = express.Router();
-
-const toIdString = (value) => {
-  if (!value) return null;
-  if (typeof value === 'string') return value;
-  if (typeof value === 'object' && value._id) return String(value._id);
-  return String(value);
-};
 
 const roundTo2 = (value) => {
   const num = Number(value);
@@ -148,6 +151,251 @@ const buildSubmitResponsePayload = (attempt, quiz, stats) => ({
   status: attempt.status,
 });
 
+// Grades and atomically finalizes an in_progress attempt. Shared by the
+// whole-quiz submit route, the last-section submit path, and the lazy
+// timer-expiry cascade (via syncExpiredSections). The CAS on
+// status:'in_progress' is the single finalize gate — only its winner emits
+// socket events / notifications, so side effects fire exactly once.
+//
+// `sectionStates` (optional): when provided, written atomically together
+// with the grades — used by the defensive whole-submit path to close every
+// remaining section in the same update.
+// Returns { ok: true, kind: 'finalized', attempt, quiz, payload }
+//       | { ok: true, kind: 'already_submitted', attempt, payload }
+//       | { ok: false, kind: 'conflict' | 'quiz_not_found' | 'no_questions' }
+async function finalizeQuizAttempt(attempt, { isAutoSubmit = false, req = null, sectionStates = null } = {}) {
+  const quiz = await Quiz.findById(attempt.quiz?._id || attempt.quiz).populate('questions');
+  // Populate subject on each question so section performance uses subject names
+  if (quiz && quiz.questions) {
+    await QuestionBank.populate(quiz.questions, { path: 'subject', select: 'name' });
+  }
+
+  if (!quiz) {
+    console.error(`[Submit Quiz] Quiz not found: ${attempt.quiz?._id || attempt.quiz}`);
+    return { ok: false, kind: 'quiz_not_found' };
+  }
+  if (!quiz.questions || quiz.questions.length === 0) {
+    console.error(`[Submit Quiz] Quiz has no questions: ${quiz._id}`);
+    return { ok: false, kind: 'no_questions' };
+  }
+
+  // Calculate score
+  let correctCount = 0;
+  let incorrectCount = 0;
+  let skippedCount = 0;
+  let marksObtained = 0;
+
+  const sectionPerformance = {};
+
+  quiz.questions.forEach((question, index) => {
+    const answer = attempt.answers.find(a => a.questionIndex === index);
+    const section = question.subject?.name || question.topicName || 'General';
+
+    if (!sectionPerformance[section]) {
+      sectionPerformance[section] = {
+        sectionName: section,
+        correct: 0,
+        incorrect: 0,
+        skipped: 0,
+        timeSpent: 0
+      };
+    }
+
+    // Server-side grading is the ONLY source of truth for correctness.
+    // Never trust a client-submitted isCorrect value.
+    const { answered, isCorrect } = gradeQuestion(question, answer ? answer.selectedAnswer : undefined);
+
+    if (answer) {
+      // Ensure the answer is always tied to its canonical question, even if
+      // it was created before questionId existed on the answer schema.
+      answer.questionId = question._id;
+      answer.metadataSnapshot = buildMetadataSnapshot(question);
+    }
+
+    if (!answered) {
+      // Question was skipped (either never visited OR visited but not answered)
+      skippedCount++;
+      sectionPerformance[section].skipped++;
+      if (answer) answer.isCorrect = false;
+    } else if (isCorrect) {
+      correctCount++;
+      const points = quiz.positiveMarks !== undefined ? quiz.positiveMarks : 4;
+      marksObtained += points;
+      sectionPerformance[section].correct++;
+      answer.isCorrect = true;
+    } else {
+      incorrectCount++;
+      sectionPerformance[section].incorrect++;
+      answer.isCorrect = false;
+
+      // Deduct negative marks (if any)
+      const deduction = quiz.negativeMarks !== undefined ? Math.abs(quiz.negativeMarks) : 1;
+      marksObtained -= deduction;
+    }
+
+    if (answer) {
+      sectionPerformance[section].timeSpent += answer.timeSpent || 0;
+    }
+  });
+
+  // Calculate accuracy for each section before storing (correct / attempted)
+  const sectionPerformanceArray = Object.values(sectionPerformance).map(section => {
+    const attemptedInSection = section.correct + section.incorrect;
+    const accuracy = attemptedInSection > 0
+      ? Math.round((section.correct / attemptedInSection) * 100)
+      : 0;
+
+    return {
+      ...section,
+      accuracy
+    };
+  });
+
+  marksObtained = roundTo2(marksObtained);
+
+  const finalStatus = isAutoSubmit ? 'auto_submitted' : 'completed';
+  const endTime = new Date();
+  const shareSolutionAtSubmission = quiz.shareSolution !== undefined ? quiz.shareSolution : true;
+
+  // Atomic finalize — only one concurrent submit can succeed.
+  const finalizedFields = {
+    status: finalStatus,
+    endTime,
+    score: correctCount,
+    totalQuestions: quiz.questions.length,
+    marksObtained,
+    totalMarks: quiz.totalMarks,
+    sectionPerformance: sectionPerformanceArray,
+    shareSolutionAtSubmission,
+    answers: attempt.answers,
+  };
+  if (sectionStates !== null) {
+    finalizedFields.sectionStates = sectionStates;
+  }
+
+  const finalizedAttempt = await QuizAttempt.findOneAndUpdate(
+    {
+      _id: attempt._id,
+      student: attempt.student,
+      status: 'in_progress',
+    },
+    {
+      $set: finalizedFields,
+    },
+    { new: true }
+  );
+
+  if (!finalizedAttempt) {
+    const existingAttempt = await QuizAttempt.findOne({
+      _id: attempt._id,
+      student: attempt.student,
+    }).populate({
+      path: 'quiz',
+      populate: { path: 'questions', model: 'QuestionBank' },
+    });
+
+    if (
+      existingAttempt
+      && (existingAttempt.status === 'completed' || existingAttempt.status === 'auto_submitted')
+    ) {
+      console.log(`[Submit Quiz] Duplicate submit detected, returning existing result: ${attempt._id}`);
+      const stats = computeAttemptStats(existingAttempt, existingAttempt.quiz?.questions || []);
+      return {
+        ok: true,
+        kind: 'already_submitted',
+        attempt: existingAttempt,
+        payload: buildSubmitResponsePayload(existingAttempt, existingAttempt.quiz, stats),
+      };
+    }
+
+    return { ok: false, kind: 'conflict' };
+  }
+
+  console.log(`[Submit Quiz] Successfully submitted: ${finalizedAttempt._id}, Score: ${correctCount}/${quiz.questions.length}`);
+
+  // Emit quiz_submitted event back to the student
+  const io = req ? req.app.get('io') : null;
+  if (io && req && req.user) {
+    // Find the socket helper to emit.
+    const socketHelpers = require('../utils/socket-helpers');
+    if (socketHelpers && socketHelpers.emitToUser) {
+      socketHelpers.emitToUser(req.user._id.toString(), 'quiz_submitted', {
+        quizId: quiz._id,
+        attemptId: finalizedAttempt._id,
+        score: correctCount,
+        status: finalizedAttempt.status
+      });
+    }
+
+    // --- NEW FOR MENTOR/ADMIN REMINDERS ---
+    try {
+      const studentObj = await User.findById(req.user._id).select('name');
+      const studentName = studentObj ? studentObj.name : 'A student';
+      const attemptDetails = {
+        quizId: quiz._id,
+        quizTitle: quiz.title,
+        studentId: req.user._id,
+        studentName: studentName,
+        score: correctCount,
+        totalQuestions: quiz.questions.length
+      };
+
+      // 1. Notify Admins
+      const admins = await User.find({ role: 'admin' }).select('_id pushToken fcmToken');
+      if (socketHelpers && socketHelpers.emitToAdmins) {
+        socketHelpers.emitToAdmins('quiz_completed_alert', attemptDetails);
+      }
+      for (const admin of admins) {
+        if (admin.pushToken || admin.fcmToken) {
+          sendPushToUser({
+            expoPushToken: admin.pushToken,
+            fcmToken: admin.fcmToken,
+            title: 'Quiz Completed',
+            body: `${studentName} completed ${quiz.title}`,
+            data: { type: 'quiz_completed', ...attemptDetails },
+          });
+        }
+      }
+
+      // 2. Notify specific Mentor
+      const assignment = await MentorStudentAssignment.findOne({ student: req.user._id, isActive: true }).populate('mentor', '_id pushToken fcmToken');
+      if (assignment && assignment.mentor) {
+        if (socketHelpers && socketHelpers.emitToUser) {
+          socketHelpers.emitToUser(assignment.mentor._id.toString(), 'quiz_completed_alert', attemptDetails);
+        }
+        if (assignment.mentor.pushToken || assignment.mentor.fcmToken) {
+          sendPushToUser({
+            expoPushToken: assignment.mentor.pushToken,
+            fcmToken: assignment.mentor.fcmToken,
+            title: 'Student Quiz Completed',
+            body: `${studentName} completed ${quiz.title}`,
+            data: { type: 'quiz_completed', ...attemptDetails },
+          });
+        }
+      }
+    } catch (notifyErr) {
+      console.error('[Submit Quiz] Error sending mentor/admin notifications:', notifyErr);
+    }
+  }
+
+  const stats = computeAttemptStats(finalizedAttempt, quiz.questions);
+  return {
+    ok: true,
+    kind: 'finalized',
+    attempt: finalizedAttempt,
+    quiz,
+    payload: buildSubmitResponsePayload(finalizedAttempt, quiz, stats),
+  };
+}
+
+// Finalize callback handed to syncExpiredSections: wraps finalizeQuizAttempt
+// with the triggering request (socket/user context) and returns the attempt
+// doc back to the sync engine.
+const makeSyncFinalizer = (req) => async (attempt, { isAutoSubmit }) => {
+  const result = await finalizeQuizAttempt(attempt, { isAutoSubmit, req });
+  return result.attempt || attempt;
+};
+
 const notifyQuizAssignedToStudents = async ({ studentIds, quiz, assignedByName = 'Admin' }) => {
   if (!Array.isArray(studentIds) || studentIds.length === 0 || !quiz?._id) return;
 
@@ -179,103 +427,6 @@ const notifyQuizAssignedToStudents = async ({ studentIds, quiz, assignedByName =
   } catch (error) {
     console.error('Failed to send quiz assignment push notifications:', error);
   }
-};
-
-// Normalizes sections and ensures question assignment exists for mixed sections.
-const deriveSectionsForQuestions = (rawSections, rawQuestionIds, totalDuration, options = {}) => {
-  const { strictDuration = true } = options;
-
-  // An empty array means "no sections configured" (e.g. a legacy quiz being
-  // edited) — same as omitting the field. It must not trip the duration check.
-  if (rawSections === undefined || rawSections === null || rawSections === '' ||
-      (Array.isArray(rawSections) && rawSections.length === 0)) {
-    return { sections: [] };
-  }
-
-  let parsedSections = rawSections;
-  if (typeof parsedSections === 'string') {
-    try {
-      parsedSections = JSON.parse(parsedSections);
-    } catch {
-      return { error: 'Invalid sections payload' };
-    }
-  }
-
-  if (!Array.isArray(parsedSections)) {
-    return { error: 'Sections must be an array' };
-  }
-
-  const questionIds = (rawQuestionIds || []).map(toIdString).filter(Boolean);
-  const questionIdSet = new Set(questionIds);
-
-  const sections = parsedSections.map((section, index) => ({
-    name: String(section?.name || `Section ${index + 1}`).trim(),
-    duration: Number(section?.duration) || 0,
-    selectionType: section?.selectionType === 'manual' ? 'manual' : 'mixed',
-    questions: Array.isArray(section?.questions)
-      ? section.questions.map(toIdString).filter(id => id && questionIdSet.has(id))
-      : []
-  }));
-
-  // Prevent duplicate question assignment across sections.
-  const questionOwners = new Map();
-  for (const section of sections) {
-    const uniqueInSection = [...new Set(section.questions)];
-    section.questions = uniqueInSection;
-
-    for (const qid of uniqueInSection) {
-      const owner = questionOwners.get(qid);
-      if (owner) {
-        return {
-          error: `Question ${qid} is assigned to multiple sections (${owner} and ${section.name}).`
-        };
-      }
-      questionOwners.set(qid, section.name);
-    }
-  }
-
-  const invalidSection = sections.find(section => !section.name || section.duration <= 0);
-  if (invalidSection) {
-    return { error: 'Each section needs a valid name and duration' };
-  }
-
-  if (strictDuration && Number.isFinite(totalDuration) && totalDuration > 0) {
-    const allocated = sections.reduce((sum, section) => sum + section.duration, 0);
-    if (allocated !== totalDuration) {
-      return {
-        error: `Section duration total (${allocated}) must match quiz duration (${totalDuration})`
-      };
-    }
-  }
-
-  const mixedSections = sections.filter(section => section.selectionType === 'mixed');
-  const assignedIds = new Set(
-    sections.flatMap(section => section.questions).filter(id => questionIdSet.has(id))
-  );
-  const unassignedIds = questionIds.filter(id => !assignedIds.has(id));
-
-  if (mixedSections.length > 0) {
-    const qPerSection = Math.floor(unassignedIds.length / mixedSections.length);
-    const remainder = unassignedIds.length % mixedSections.length;
-
-    let startIndex = 0;
-    mixedSections.forEach((section, idx) => {
-      const count = qPerSection + (idx < remainder ? 1 : 0);
-      const sectionQuestions = unassignedIds.slice(startIndex, startIndex + count);
-      section.questions.push(...sectionQuestions);
-      startIndex += count;
-    });
-  } else if (sections.length > 0 && unassignedIds.length > 0) {
-    return {
-      error: `All quiz questions must be assigned to sections. ${unassignedIds.length} question(s) are unassigned.`
-    };
-  }
-
-  sections.forEach(section => {
-    section.questions = [...new Set(section.questions)];
-  });
-
-  return { sections };
 };
 
 // Validates the quiz duration. Malformed values (null, NaN, non-positive)
@@ -489,6 +640,7 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
       assignedStudents,
       selectedQuestionIds,  // NEW: optional array of specific question IDs for manual selection
       shareSolution,  // NEW: whether to share solutions with students (defaults to true)
+      lockSectionsAfterSubmission,  // Section locking (defaults to true; see utils/sectionLocking.js)
       positiveMarks,
       negativeMarks,
       scheduledDate,
@@ -615,6 +767,7 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
       assignedStudents: assignedStudents || [],
       createdBy: req.user._id,
       shareSolution: shareSolution !== undefined ? shareSolution : true,  // Default to true
+      lockSectionsAfterSubmission: lockSectionsAfterSubmission !== false,  // Missing = ON (never treat legacy as false)
       scheduledDate: timeWindowResult.value.scheduledDate,
       expiryDate: timeWindowResult.value.expiryDate,
       sections: sectionResult.sections,
@@ -682,7 +835,7 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
       return res.status(400).json({ message: 'No file uploaded' });
     }
 
-    const { quizTitle, testType, duration, subjectId, instructions, scheduledDate, expiryDate, positiveMarks, negativeMarks, sections } = req.body;
+    const { quizTitle, testType, duration, subjectId, instructions, scheduledDate, expiryDate, positiveMarks, negativeMarks, sections, lockSectionsAfterSubmission } = req.body;
 
     // Parse Excel
     const { questions: parsedQuestions, errors } = await parseExcel(req.file.buffer);
@@ -957,6 +1110,13 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
     // Create Quiz — use user-selected subject if provided, otherwise first question's subject
     const primarySubjectId = subjectId || firstSubjectId || createdQuestions[0]?.subject;
 
+    // Multer delivers text form fields as strings; an absent checkbox arrives
+    // as undefined. Missing/empty = ON (legacy default), never false.
+    const lockSections =
+      lockSectionsAfterSubmission === undefined || lockSectionsAfterSubmission === ''
+        ? true
+        : String(lockSectionsAfterSubmission) === 'true';
+
     const quiz = new Quiz({
       title: quizTitle,
       subject: primarySubjectId,
@@ -970,6 +1130,7 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
       createdBy: req.user._id,
       scheduledDate: timeWindowResult.value.scheduledDate,
       expiryDate: timeWindowResult.value.expiryDate,
+      lockSectionsAfterSubmission: lockSections,
       sections: sectionResult.sections
     });
 
@@ -1030,7 +1191,7 @@ router.post('/:id/duplicate', auth, authorize('admin'), async (req, res) => {
 // Update Quiz
 router.put('/:id', auth, authorize('admin'), async (req, res) => {
   try {
-    const { title, duration, instructions, questions, testType, subject, assignedStudents, assignedMentors, shareSolution, assignToAllFreeUsers, scheduledDate, expiryDate, positiveMarks, negativeMarks, sections } = req.body;
+    const { title, duration, instructions, questions, testType, subject, assignedStudents, assignedMentors, shareSolution, assignToAllFreeUsers, lockSectionsAfterSubmission, scheduledDate, expiryDate, positiveMarks, negativeMarks, sections } = req.body;
 
     // Check if quiz exists
     const quiz = await Quiz.findById(req.params.id);
@@ -1074,6 +1235,11 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
     if (finalAssignedStudents) quiz.assignedStudents = finalAssignedStudents;
     if (assignedMentors) quiz.assignedMentors = assignedMentors;
     if (shareSolution !== undefined) quiz.shareSolution = shareSolution;  // Allow toggling solution sharing
+    // Section locking: absent = preserve stored value (schema default true);
+    // accept both boolean and string forms since import-style clients send strings.
+    if (lockSectionsAfterSubmission !== undefined) {
+      quiz.lockSectionsAfterSubmission = lockSectionsAfterSubmission === true || lockSectionsAfterSubmission === 'true';
+    }
 
     const timeWindowResult = parseQuizTimeWindow({ scheduledDate, expiryDate });
     if (timeWindowResult.error) {
@@ -2076,6 +2242,10 @@ router.get('/:id', auth, async (req, res) => {
 
     const qObj = quiz.toObject();
 
+    // Normalize the section-locking flag so legacy quizzes (field absent in
+    // the DB) are unambiguously ON for every client.
+    qObj.lockSectionsAfterSubmission = quiz.lockSectionsAfterSubmission !== false;
+
     // SECURITY: students must never receive the answer key. Strip it from
     // every question reference (top-level questions[] and sections[].questions[]).
     if (req.user.role === 'student') {
@@ -2160,7 +2330,36 @@ router.post('/:id/start', auth, authorize('student'), async (req, res) => {
     });
 
     if (attempt) {
-      // Resume existing attempt
+      // Resume existing attempt. For section-locked attempts, first lazily
+      // apply any sections whose server-side deadlines expired while the
+      // student was away (refresh, app close, second device, offline).
+      if (isSectionLockEnforced(attempt)) {
+        const synced = await syncExpiredSections(QuizAttempt, {
+          _id: attempt._id,
+          student: req.user._id,
+        }, { finalize: makeSyncFinalizer(req) });
+
+        if (!synced.attempt || synced.attempt.status !== 'in_progress') {
+          return res.json({
+            message: 'This quiz attempt has ended and has been submitted',
+            attemptFinalized: true,
+            attemptId: attempt._id,
+            status: synced.attempt?.status || 'auto_submitted',
+          });
+        }
+
+        return res.json({
+          message: 'Resuming existing attempt',
+          attemptId: synced.attempt._id,
+          startTime: synced.attempt.startTime,
+          answers: synced.attempt.answers,
+          sectionLockEnabled: true,
+          sectionDefinitions: synced.attempt.sectionDefinitions,
+          sectionStates: synced.attempt.sectionStates,
+          duration: quiz.duration,
+        });
+      }
+
       return res.json({
         message: 'Resuming existing attempt',
         attemptId: attempt._id,
@@ -2183,14 +2382,18 @@ router.post('/:id/start', auth, authorize('student'), async (req, res) => {
       });
     }
 
-    // Create new attempt
+    // Create new attempt. The section-locking snapshot is frozen here: the
+    // definitions (and the flag) live on the attempt for its lifetime, so a
+    // later admin edit of the quiz cannot corrupt an in-flight attempt.
+    const sectionSnapshot = buildSectionSnapshot(quiz, new Date());
     attempt = new QuizAttempt({
       quiz: quiz._id,
       student: req.user._id,
       startTime: new Date(),
       status: 'in_progress',
       answers: [],
-      tabSwitchCount: 0
+      tabSwitchCount: 0,
+      ...(sectionSnapshot.sectionLockEnabled ? sectionSnapshot : {}),
     });
 
     await attempt.save();
@@ -2198,7 +2401,13 @@ router.post('/:id/start', auth, authorize('student'), async (req, res) => {
     res.status(201).json({
       message: 'Quiz started',
       attemptId: attempt._id,
-      startTime: attempt.startTime
+      startTime: attempt.startTime,
+      ...(attempt.sectionLockEnabled ? {
+        sectionLockEnabled: true,
+        sectionDefinitions: attempt.sectionDefinitions,
+        sectionStates: attempt.sectionStates,
+        duration: quiz.duration,
+      } : {}),
     });
   } catch (error) {
     console.error(error);
@@ -2242,7 +2451,7 @@ router.put('/:id/attempt/:attemptId/answer', auth, authorize('student'), async (
       return res.status(400).json({ message: 'A valid questionIndex is required' });
     }
 
-    const attempt = await QuizAttempt.findOne({
+    let attempt = await QuizAttempt.findOne({
       _id: req.params.attemptId,
       student: req.user._id,
       status: 'in_progress'
@@ -2262,6 +2471,37 @@ router.put('/:id/attempt/:attemptId/answer', auth, authorize('student'), async (
     }
     if (questionId && String(questionId) !== String(resolvedQuestionId)) {
       return res.status(400).json({ message: 'questionId does not match the quiz question at this index' });
+    }
+
+    // Section-locking enforcement (server-authoritative). First lazily apply
+    // any sections whose deadlines expired, then reject writes into sections
+    // that are no longer open. A tampered/offline client cannot bypass this:
+    // the lock state lives on the attempt, keyed by question identity.
+    if (isSectionLockEnforced(attempt)) {
+      const synced = await syncExpiredSections(QuizAttempt, {
+        _id: attempt._id,
+        student: req.user._id,
+      }, { finalize: makeSyncFinalizer(req) });
+
+      if (!synced.attempt || synced.attempt.status !== 'in_progress') {
+        return res.status(403).json({
+          message: "This quiz's time has ended and it has been submitted.",
+          errorCode: 'SECTION_LOCKED'
+        });
+      }
+
+      const sectionIndex = sectionIndexForQuestionId(synced.attempt.sectionDefinitions, resolvedQuestionId);
+      const sectionState = sectionIndex >= 0
+        ? synced.attempt.sectionStates.find(s => Number(s.index) === sectionIndex)
+        : null;
+      if (sectionState && sectionState.status !== 'in_progress') {
+        return res.status(403).json({
+          message: 'This section has been submitted and is locked.',
+          errorCode: 'SECTION_LOCKED'
+        });
+      }
+
+      attempt = synced.attempt;
     }
 
     // Find or create answer for this question
@@ -2289,6 +2529,209 @@ router.put('/:id/attempt/:attemptId/answer', auth, authorize('student'), async (
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Submit a single section (section locking). Server-authoritative: the
+// section must be the currently active one; expired sections are lazily
+// cascaded first; the close is an atomic CAS on the element's status, so
+// double clicks, replayed requests and manual-vs-timer races all converge
+// to idempotent results. Submitting the LAST section finalizes the whole
+// attempt through the same path as whole-quiz submit (identical payload,
+// single notification set).
+router.post('/:id/attempt/:attemptId/sections/:sectionIndex/submit', auth, authorize('student'), async (req, res) => {
+  try {
+    const { isAutoSubmit } = req.body;
+    const sectionIndex = Number(req.params.sectionIndex);
+
+    const attempt = await QuizAttempt.findOne({
+      _id: req.params.attemptId,
+      student: req.user._id
+    }).populate('quiz');
+
+    if (!attempt) {
+      return res.status(404).json({
+        message: 'Quiz attempt not found. Please restart the quiz.',
+        errorCode: 'ATTEMPT_NOT_FOUND'
+      });
+    }
+
+    // Already finalized → idempotent success with the standard payload.
+    if (attempt.status === 'completed' || attempt.status === 'auto_submitted') {
+      const stats = computeAttemptStats(attempt, attempt.quiz?.questions || []);
+      return res.json({
+        ...buildSubmitResponsePayload(attempt, attempt.quiz, stats),
+        message: 'Quiz already submitted',
+        isAlreadySubmitted: true,
+        attemptFinalized: true,
+      });
+    }
+
+    if (attempt.status !== 'in_progress') {
+      return res.status(400).json({
+        message: 'This quiz attempt cannot be submitted.',
+        errorCode: 'INVALID_ATTEMPT_STATUS',
+      });
+    }
+
+    if (!isSectionLockEnforced(attempt)) {
+      return res.status(400).json({
+        message: 'Section submission is not enabled for this quiz attempt.',
+        errorCode: 'SECTION_LOCKING_DISABLED',
+      });
+    }
+
+    // Lazily apply sections that expired while the student was away — this
+    // may itself finalize the attempt (e.g. the final timer ran out).
+    const synced = await syncExpiredSections(QuizAttempt, {
+      _id: attempt._id,
+      student: req.user._id,
+    }, { finalize: makeSyncFinalizer(req) });
+
+    if (!synced.attempt || synced.attempt.status !== 'in_progress') {
+      const finalized = synced.attempt || attempt;
+      const stats = computeAttemptStats(finalized, attempt.quiz?.questions || []);
+      return res.json({
+        ...buildSubmitResponsePayload(finalized, attempt.quiz, stats),
+        message: 'Quiz already submitted',
+        isAlreadySubmitted: true,
+        attemptFinalized: true,
+      });
+    }
+
+    const definitions = synced.attempt.sectionDefinitions;
+    const states = synced.attempt.sectionStates;
+
+    if (!Number.isInteger(sectionIndex) || sectionIndex < 0 || sectionIndex >= definitions.length) {
+      return res.status(400).json({
+        message: 'Invalid section index for this quiz attempt.',
+        errorCode: 'INVALID_SECTION_INDEX',
+      });
+    }
+
+    const activeState = states.find(s => s.status === 'in_progress');
+    const targetState = states.find(s => Number(s.index) === sectionIndex);
+
+    if (targetState && targetState.status !== 'in_progress') {
+      // Idempotent: this section is already closed (double click, replayed
+      // request, or the timer beat the manual submit — server truth wins).
+      return res.json({
+        message: 'Section already submitted',
+        isAlreadySubmitted: true,
+        sectionIndex,
+        nextActiveIndex: activeState ? Number(activeState.index) : null,
+        sectionStates: states,
+      });
+    }
+
+    if (!activeState || Number(activeState.index) !== sectionIndex) {
+      if (activeState && sectionIndex < Number(activeState.index)) {
+        return res.status(403).json({
+          message: 'This section has been submitted and is locked.',
+          errorCode: 'SECTION_LOCKED',
+        });
+      }
+      return res.status(400).json({
+        message: 'This section is not active yet. Complete the current section first.',
+        errorCode: 'SECTION_NOT_ACTIVE',
+      });
+    }
+
+    const transition = computeSectionSubmit(definitions, states, sectionIndex, isAutoSubmit === true, new Date());
+    if (transition.error) {
+      // Defensive: state changed between the read above and the pure
+      // transition — answer idempotently from current state.
+      return res.json({
+        message: 'Section already submitted',
+        isAlreadySubmitted: true,
+        sectionIndex,
+        sectionStates: states,
+      });
+    }
+
+    // Atomic close: guard on the attempt still being in progress and on the
+    // target element still being open with the startedAt we read (startedAt
+    // is write-once, so any concurrent writer invalidates the guard).
+    const updated = await QuizAttempt.findOneAndUpdate(
+      {
+        _id: attempt._id,
+        student: req.user._id,
+        status: 'in_progress',
+        [`sectionStates.${sectionIndex}.status`]: 'in_progress',
+        ...(targetState?.startedAt ? { [`sectionStates.${sectionIndex}.startedAt`]: targetState.startedAt } : {}),
+      },
+      { $set: { sectionStates: transition.states } },
+      { new: true }
+    );
+
+    if (!updated) {
+      const reread = await QuizAttempt.findOne({ _id: attempt._id, student: req.user._id });
+      if (!reread) {
+        return res.status(404).json({
+          message: 'Quiz attempt not found. Please restart the quiz.',
+          errorCode: 'ATTEMPT_NOT_FOUND'
+        });
+      }
+      if (reread.status !== 'in_progress') {
+        const stats = computeAttemptStats(reread, attempt.quiz?.questions || []);
+        return res.json({
+          ...buildSubmitResponsePayload(reread, attempt.quiz, stats),
+          message: 'Quiz already submitted',
+          isAlreadySubmitted: true,
+          attemptFinalized: true,
+        });
+      }
+      const reActive = reread.sectionStates.find(s => s.status === 'in_progress');
+      return res.json({
+        message: 'Section already submitted',
+        isAlreadySubmitted: true,
+        sectionIndex,
+        nextActiveIndex: reActive ? Number(reActive.index) : null,
+        sectionStates: reread.sectionStates,
+      });
+    }
+
+    if (transition.finalized) {
+      // Last section closed — finalize the whole attempt. The response is
+      // byte-compatible with whole-quiz submit so clients route to results.
+      const result = await finalizeQuizAttempt(updated, { isAutoSubmit: isAutoSubmit === true, req });
+      if (result.kind === 'already_submitted') {
+        return res.json({ ...result.payload, message: 'Quiz already submitted', isAlreadySubmitted: true });
+      }
+      if (result.kind === 'conflict') {
+        return res.status(409).json({
+          message: 'Quiz submission is already in progress. Please wait.',
+          errorCode: 'SUBMIT_IN_PROGRESS',
+        });
+      }
+      if (result.kind === 'quiz_not_found') {
+        return res.status(404).json({
+          message: 'Quiz not found. It may have been deleted.',
+          errorCode: 'QUIZ_NOT_FOUND'
+        });
+      }
+      if (result.kind === 'no_questions') {
+        return res.status(400).json({
+          message: 'This quiz has no questions. Please contact support.',
+          errorCode: 'NO_QUESTIONS'
+        });
+      }
+      return res.json(result.payload);
+    }
+
+    return res.json({
+      message: 'Section submitted',
+      submittedSectionIndex: sectionIndex,
+      sectionStatus: isAutoSubmit === true ? 'auto_submitted' : 'submitted',
+      nextSection: transition.nextSection,
+      sectionStates: updated.sectionStates,
+    });
+  } catch (error) {
+    console.error('[Section Submit] ERROR:', error);
+    res.status(500).json({
+      message: 'Failed to submit section. Please try again.',
+      errorCode: error.name || 'UNKNOWN_ERROR'
+    });
   }
 });
 
@@ -2341,226 +2784,50 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
       });
     }
 
-    const quiz = await Quiz.findById(attempt.quiz._id).populate('questions');
-    // Populate subject on each question so section performance uses subject names
-    if (quiz && quiz.questions) {
-      await QuestionBank.populate(quiz.questions, { path: 'subject', select: 'name' });
+    // Defensive section close: when the attempt enforces section locking,
+    // ending the whole quiz closes every remaining section atomically with
+    // the finalize (covers old app binaries; it only forfeits remaining
+    // questions — nothing is ever unlocked).
+    let closedSectionStates = null;
+    if (isSectionLockEnforced(attempt)) {
+      closedSectionStates = closeSectionStates(attempt.sectionStates, {
+        status: isAutoSubmit ? 'auto_submitted' : 'submitted',
+      });
     }
 
-    if (!quiz) {
-      console.error(`[Submit Quiz] Quiz not found: ${attempt.quiz._id}`);
+    const result = await finalizeQuizAttempt(attempt, {
+      isAutoSubmit,
+      req,
+      sectionStates: closedSectionStates,
+    });
+
+    if (result.kind === 'quiz_not_found') {
       return res.status(404).json({
         message: 'Quiz not found. It may have been deleted.',
         errorCode: 'QUIZ_NOT_FOUND'
       });
     }
-
-    if (!quiz.questions || quiz.questions.length === 0) {
-      console.error(`[Submit Quiz] Quiz has no questions: ${quiz._id}`);
+    if (result.kind === 'no_questions') {
       return res.status(400).json({
-        message: 'Quiz has no questions. Please contact support.',
+        message: 'This quiz has no questions. Please contact support.',
         errorCode: 'NO_QUESTIONS'
       });
     }
-
-    // Calculate score
-    let correctCount = 0;
-    let incorrectCount = 0;
-    let skippedCount = 0;
-    let marksObtained = 0;
-
-    const sectionPerformance = {};
-
-    quiz.questions.forEach((question, index) => {
-      const answer = attempt.answers.find(a => a.questionIndex === index);
-      const section = question.subject?.name || question.topicName || 'General';
-
-      if (!sectionPerformance[section]) {
-        sectionPerformance[section] = {
-          sectionName: section,
-          correct: 0,
-          incorrect: 0,
-          skipped: 0,
-          timeSpent: 0
-        };
-      }
-
-      // Server-side grading is the ONLY source of truth for correctness.
-      // Never trust a client-submitted isCorrect value.
-      const { answered, isCorrect } = gradeQuestion(question, answer ? answer.selectedAnswer : undefined);
-
-      if (answer) {
-        // Ensure the answer is always tied to its canonical question, even if
-        // it was created before questionId existed on the answer schema.
-        answer.questionId = question._id;
-        answer.metadataSnapshot = buildMetadataSnapshot(question);
-      }
-
-      if (!answered) {
-        // Question was skipped (either never visited OR visited but not answered)
-        skippedCount++;
-        sectionPerformance[section].skipped++;
-        if (answer) answer.isCorrect = false;
-      } else if (isCorrect) {
-        correctCount++;
-        const points = quiz.positiveMarks !== undefined ? quiz.positiveMarks : 4;
-        marksObtained += points;
-        sectionPerformance[section].correct++;
-        answer.isCorrect = true;
-      } else {
-        incorrectCount++;
-        sectionPerformance[section].incorrect++;
-        answer.isCorrect = false;
-
-        // Deduct negative marks (if any)
-        const deduction = quiz.negativeMarks !== undefined ? Math.abs(quiz.negativeMarks) : 1;
-        marksObtained -= deduction;
-      }
-
-      if (answer) {
-        sectionPerformance[section].timeSpent += answer.timeSpent || 0;
-      }
-    });
-
-    // Calculate accuracy for each section before storing (correct / attempted)
-    const sectionPerformanceArray = Object.values(sectionPerformance).map(section => {
-      const attemptedInSection = section.correct + section.incorrect;
-      const accuracy = attemptedInSection > 0
-        ? Math.round((section.correct / attemptedInSection) * 100)
-        : 0;
-
-      return {
-        ...section,
-        accuracy
-      };
-    });
-
-    marksObtained = roundTo2(marksObtained);
-
-    const finalStatus = isAutoSubmit ? 'auto_submitted' : 'completed';
-    const endTime = new Date();
-    const shareSolutionAtSubmission = quiz.shareSolution !== undefined ? quiz.shareSolution : true;
-
-    // Atomic finalize — only one concurrent submit can succeed.
-    const finalizedAttempt = await QuizAttempt.findOneAndUpdate(
-      {
-        _id: attempt._id,
-        student: req.user._id,
-        status: 'in_progress',
-      },
-      {
-        $set: {
-          status: finalStatus,
-          endTime,
-          score: correctCount,
-          totalQuestions: quiz.questions.length,
-          marksObtained,
-          totalMarks: quiz.totalMarks,
-          sectionPerformance: sectionPerformanceArray,
-          shareSolutionAtSubmission,
-          answers: attempt.answers,
-        },
-      },
-      { new: true }
-    );
-
-    if (!finalizedAttempt) {
-      const existingAttempt = await QuizAttempt.findOne({
-        _id: attempt._id,
-        student: req.user._id,
-      }).populate({
-        path: 'quiz',
-        populate: { path: 'questions', model: 'QuestionBank' },
+    if (result.kind === 'already_submitted') {
+      return res.json({
+        ...result.payload,
+        message: 'Quiz already submitted',
+        isAlreadySubmitted: true,
       });
-
-      if (
-        existingAttempt
-        && (existingAttempt.status === 'completed' || existingAttempt.status === 'auto_submitted')
-      ) {
-        console.log(`[Submit Quiz] Duplicate submit detected, returning existing result: ${attempt._id}`);
-        const stats = computeAttemptStats(existingAttempt, existingAttempt.quiz?.questions || []);
-        return res.json({
-          ...buildSubmitResponsePayload(existingAttempt, existingAttempt.quiz, stats),
-          message: 'Quiz already submitted',
-          isAlreadySubmitted: true,
-        });
-      }
-
+    }
+    if (result.kind === 'conflict') {
       return res.status(409).json({
         message: 'Quiz submission is already in progress. Please wait.',
         errorCode: 'SUBMIT_IN_PROGRESS',
       });
     }
 
-    console.log(`[Submit Quiz] Successfully submitted: ${finalizedAttempt._id}, Score: ${correctCount}/${quiz.questions.length}`);
-
-    // Emit quiz_submitted event back to the student
-    const io = req.app.get('io');
-    if (io) {
-      // Find the socket helper to emit.
-      const socketHelpers = require('../utils/socket-helpers');
-      if (socketHelpers && socketHelpers.emitToUser) {
-        socketHelpers.emitToUser(req.user._id.toString(), 'quiz_submitted', {
-          quizId: quiz._id,
-          attemptId: finalizedAttempt._id,
-          score: correctCount,
-          status: finalizedAttempt.status
-        });
-      }
-
-      // --- NEW FOR MENTOR/ADMIN REMINDERS ---
-      try {
-        const studentObj = await User.findById(req.user._id).select('name');
-        const studentName = studentObj ? studentObj.name : 'A student';
-        const attemptDetails = {
-          quizId: quiz._id,
-          quizTitle: quiz.title,
-          studentId: req.user._id,
-          studentName: studentName,
-          score: correctCount,
-          totalQuestions: quiz.questions.length
-        };
-
-        // 1. Notify Admins
-        const admins = await User.find({ role: 'admin' }).select('_id pushToken fcmToken');
-        if (socketHelpers && socketHelpers.emitToAdmins) {
-          socketHelpers.emitToAdmins('quiz_completed_alert', attemptDetails);
-        }
-        for (const admin of admins) {
-          if (admin.pushToken || admin.fcmToken) {
-            sendPushToUser({
-              expoPushToken: admin.pushToken,
-              fcmToken: admin.fcmToken,
-              title: 'Quiz Completed',
-              body: `${studentName} completed ${quiz.title}`,
-              data: { type: 'quiz_completed', ...attemptDetails },
-            });
-          }
-        }
-
-        // 2. Notify specific Mentor
-        const assignment = await MentorStudentAssignment.findOne({ student: req.user._id, isActive: true }).populate('mentor', '_id pushToken fcmToken');
-        if (assignment && assignment.mentor) {
-          if (socketHelpers && socketHelpers.emitToUser) {
-            socketHelpers.emitToUser(assignment.mentor._id.toString(), 'quiz_completed_alert', attemptDetails);
-          }
-          if (assignment.mentor.pushToken || assignment.mentor.fcmToken) {
-            sendPushToUser({
-              expoPushToken: assignment.mentor.pushToken,
-              fcmToken: assignment.mentor.fcmToken,
-              title: 'Student Quiz Completed',
-              body: `${studentName} completed ${quiz.title}`,
-              data: { type: 'quiz_completed', ...attemptDetails },
-            });
-          }
-        }
-      } catch (notifyErr) {
-        console.error('[Submit Quiz] Error sending mentor/admin notifications:', notifyErr);
-      }
-    }
-
-    const stats = computeAttemptStats(finalizedAttempt, quiz.questions);
-    res.json(buildSubmitResponsePayload(finalizedAttempt, quiz, stats));
+    res.json(result.payload);
   } catch (error) {
     console.error('[Submit Quiz] ERROR:', error);
     console.error('[Submit Quiz] Error stack:', error.stack);
@@ -3522,7 +3789,22 @@ router.get('/attempt/:id', auth, async (req, res) => {
       return res.status(403).json({ message: 'You are not authorized to view this attempt' });
     }
 
-    res.json(attempt);
+    // Section-locking re-sync channel: the taking screen calls this on mount
+    // so refresh / restart / second-device / tampered local state all adopt
+    // the server's section progress. Also lazily applies expired sections.
+    if (isOwner && isSectionLockEnforced(attempt)) {
+      const synced = await syncExpiredSections(QuizAttempt, {
+        _id: attempt._id,
+        student: req.user._id,
+      }, { finalize: makeSyncFinalizer(req) });
+      if (synced.attempt) {
+        const syncedObj = synced.attempt.toObject();
+        syncedObj.quiz = attempt.quiz;
+        return res.json({ ...syncedObj, serverNow: new Date().toISOString() });
+      }
+    }
+
+    res.json({ ...attempt.toObject(), serverNow: new Date().toISOString() });
   } catch (error) {
     console.error('Get attempt error:', error);
     res.status(500).json({ message: 'Server error' });

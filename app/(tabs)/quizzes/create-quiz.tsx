@@ -123,6 +123,7 @@ export default function CreateQuiz() {
   const [negativeMarks, setNegativeMarks] = useState('1');
   const [availableQuestions, setAvailableQuestions] = useState(0);
   const [shareSolution, setShareSolution] = useState(true);  // NEW: Share solutions with students
+  const [lockSectionsAfterSubmission, setLockSectionsAfterSubmission] = useState(true);  // Section locking (default ON)
   const [assignToAllFreeUsers, setAssignToAllFreeUsers] = useState(false);
 
   // Time Window
@@ -290,6 +291,8 @@ export default function CreateQuiz() {
       if (quiz.shareSolution !== undefined) {
         setShareSolution(quiz.shareSolution);
       }
+      // Section locking: missing on legacy quizzes = ON (never default OFF)
+      setLockSectionsAfterSubmission(quiz.lockSectionsAfterSubmission !== false);
       if (quiz.assignToAllFreeUsers !== undefined) {
         setAssignToAllFreeUsers(quiz.assignToAllFreeUsers);
       }
@@ -691,6 +694,7 @@ export default function CreateQuiz() {
           assignedStudents: selectedStudents,
           assignedMentors: selectedMentors,
           shareSolution,
+          lockSectionsAfterSubmission,
           assignToAllFreeUsers,
           scheduledDate: scheduledDate?.toISOString(),
           expiryDate: expiryDate?.toISOString(),
@@ -712,6 +716,7 @@ export default function CreateQuiz() {
           assignedStudents: selectedStudents,
           assignedMentors: selectedMentors,
           shareSolution,
+          lockSectionsAfterSubmission,
           assignToAllFreeUsers,
           scheduledDate: scheduledDate?.toISOString(),
           expiryDate: expiryDate?.toISOString(),
@@ -949,6 +954,22 @@ export default function CreateQuiz() {
           onValueChange={setShareSolution}
           trackColor={{ false: '#D1D5DB', true: '#93C5FD' }}
           thumbColor={shareSolution ? '#2563EB' : '#9CA3AF'}
+        />
+      </View>
+
+      {/* Lock Sections After Submission Toggle */}
+      <View style={styles.toggleContainer}>
+        <View style={styles.toggleLabelContainer}>
+          <Text style={styles.toggleLabel}>Lock Sections After Submission</Text>
+          <Text style={styles.toggleHelperText}>
+            Students complete sections in order, each with its own timer. Once a section is submitted (or its time ends), they cannot return to it. Applies only to quizzes with sections.
+          </Text>
+        </View>
+        <Switch
+          value={lockSectionsAfterSubmission}
+          onValueChange={setLockSectionsAfterSubmission}
+          trackColor={{ false: '#D1D5DB', true: '#93C5FD' }}
+          thumbColor={lockSectionsAfterSubmission ? '#2563EB' : '#9CA3AF'}
         />
       </View>
 

@@ -80,6 +80,14 @@ const quizSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   },
+  // Section locking: students proceed section-by-section; a section locks
+  // permanently for an attempt once submitted (explicitly or by timer expiry).
+  // Missing field on legacy quizzes is treated as ON — always read via
+  // `quiz.lockSectionsAfterSubmission !== false`, never truthiness.
+  lockSectionsAfterSubmission: {
+    type: Boolean,
+    default: true
+  },
   assignToAllFreeUsers: {
     type: Boolean,
     default: false

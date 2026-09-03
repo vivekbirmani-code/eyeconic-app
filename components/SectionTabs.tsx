@@ -1,18 +1,25 @@
 import React, { useRef, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView } from 'react-native';
+import { Check } from 'lucide-react-native';
+
+export type SectionTabStatus = 'locked' | 'active' | 'upcoming';
 
 interface SectionTabsProps {
   sections: string[];
   currentSection: string;
   onSectionChange: (section: string) => void;
   questionCounts?: { [section: string]: number };
+  // Optional per-section status (section locking). Absent = every tab is
+  // tappable, exactly as before the feature existed.
+  sectionStatuses?: { [section: string]: SectionTabStatus };
 }
 
 export const SectionTabs: React.FC<SectionTabsProps> = ({
   sections,
   currentSection,
   onSectionChange,
-  questionCounts
+  questionCounts,
+  sectionStatuses
 }) => {
   const scrollViewRef = useRef<ScrollView>(null);
 
@@ -38,31 +45,51 @@ export const SectionTabs: React.FC<SectionTabsProps> = ({
 
 
         {/* Section tabs */}
-        {sections.map((section) => (
-          <TouchableOpacity
-            key={section}
-            style={[
-              styles.tab,
-              currentSection === section && styles.activeTab
-            ]}
-            onPress={() => onSectionChange(section)}
-          >
-            <Text style={[
-              styles.tabText,
-              currentSection === section && styles.activeTabText
-            ]}>
-              {section}
-            </Text>
-            {questionCounts && (questionCounts[section] || 0) > 0 && (
+        {sections.map((section) => {
+          const status = sectionStatuses?.[section];
+          const isLocked = status === 'locked';
+          const isUpcoming = status === 'upcoming';
+
+          return (
+            <TouchableOpacity
+              key={section}
+              style={[
+                styles.tab,
+                currentSection === section && styles.activeTab,
+                isLocked && styles.lockedTab,
+                isUpcoming && styles.upcomingTab
+              ]}
+              onPress={() => onSectionChange(section)}
+              disabled={isLocked || isUpcoming}
+              accessibilityLabel={
+                isLocked ? `${section} — submitted` :
+                isUpcoming ? `${section} — opens after the current section is submitted` :
+                section
+              }
+            >
+              {isLocked && <Check size={14} color="#9CA3AF" strokeWidth={2.5} />}
               <Text style={[
-                styles.countText,
-                currentSection === section && styles.activeCountText
+                styles.tabText,
+                currentSection === section && styles.activeTabText,
+                (isLocked || isUpcoming) && styles.mutedTabText
               ]}>
-                {questionCounts[section]}
+                {section}
               </Text>
-            )}
-          </TouchableOpacity>
-        ))}
+              {isLocked && (
+                <Text style={styles.submittedLabel}>Submitted</Text>
+              )}
+              {questionCounts && (questionCounts[section] || 0) > 0 && (
+                <Text style={[
+                  styles.countText,
+                  currentSection === section && styles.activeCountText,
+                  (isLocked || isUpcoming) && styles.mutedTabText
+                ]}>
+                  {questionCounts[section]}
+                </Text>
+              )}
+            </TouchableOpacity>
+          );
+        })}
       </ScrollView>
     </View>
   );
@@ -94,6 +121,14 @@ const styles = StyleSheet.create({
     backgroundColor: '#2563EB',
     borderColor: '#2563EB',
   },
+  lockedTab: {
+    backgroundColor: '#F3F4F6',
+    borderColor: '#E5E7EB',
+    opacity: 0.85,
+  },
+  upcomingTab: {
+    opacity: 0.55,
+  },
   tabText: {
     fontSize: 14,
     fontWeight: '600',
@@ -101,6 +136,14 @@ const styles = StyleSheet.create({
   },
   activeTabText: {
     color: '#FFFFFF',
+  },
+  mutedTabText: {
+    color: '#9CA3AF',
+  },
+  submittedLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#9CA3AF',
   },
   countText: {
     fontSize: 12,

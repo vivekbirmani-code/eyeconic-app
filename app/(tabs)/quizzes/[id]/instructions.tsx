@@ -33,6 +33,9 @@ interface Quiz {
     selectionType: 'mixed' | 'manual';
     questions: any[];
   }[];
+  // Missing on quizzes created before the feature — backend normalizes to
+  // true; read with `!== false` everywhere.
+  lockSectionsAfterSubmission?: boolean;
 }
 
 const getQuestionId = (question: any): string => {
@@ -97,7 +100,13 @@ export default function QuizInstructions() {
           text: 'Start',
           onPress: async () => {
             try {
-              await startQuiz(quiz._id);
+              const result = await startQuiz(quiz._id);
+              if (result?.attemptFinalized) {
+                // The attempt ended server-side while the student was away
+                // (section timers kept running) — go straight to results.
+                router.replace(`/quizzes/${id}/result/${result.attemptId}`);
+                return;
+              }
               router.replace(`/quizzes/${id}/taking`);
             } catch (error) {
               // Error handled in context
@@ -252,6 +261,11 @@ export default function QuizInstructions() {
                 </Text>
               );
             })}
+            {quiz.lockSectionsAfterSubmission !== false && sections.length > 0 && (
+              <Text style={[styles.structureText, { color: '#B45309', marginTop: 8 }]}>
+                🔒 Sections are sequential — once you submit a section (or its timer ends), you cannot return to it. Each section has its own timer.
+              </Text>
+            )}
           </View>
         </View>
 
