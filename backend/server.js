@@ -74,7 +74,7 @@ const validateEnvironment = () => {
     const smsStatus = getSmsStatus();
     if (smsStatus.status !== 'configured') {
       warnings.push(
-        'MSG91_AUTH_KEY / MSG91_TEMPLATE_ID / MSG91_SENDER_ID are not set — public quiz phone OTP will fail in production (503 SMS_NOT_CONFIGURED). See docs/MSG91_SETUP.md'
+        'TWO_FACTOR_API_KEY is not set — public quiz phone OTP will fail in production (503 SMS_NOT_CONFIGURED). See docs/2FACTOR_SETUP.md'
       );
     }
   }

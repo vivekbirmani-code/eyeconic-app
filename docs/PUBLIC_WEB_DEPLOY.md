@@ -76,7 +76,8 @@ value: `Public quiz web app URL`.
 |---|---|---|
 | ▸ `WEB_APP_URL` | `https://<static-site-URL>` | Where public links point; scheme-less host accepted |
 | `ALLOWED_ORIGINS` | `https://eyeconicmentors.vercel.app` | Admin origin (unchanged); the `WEB_APP_URL` origin is allowed automatically |
-| `MSG91_AUTH_KEY` / `MSG91_TEMPLATE_ID` / `MSG91_SENDER_ID` | (secrets) | Real SMS OTP — see `docs/MSG91_SETUP.md` |
+| `TWO_FACTOR_API_KEY` | (secret) | Real SMS OTP via 2Factor — see `docs/2FACTOR_SETUP.md` |
+| `TWO_FACTOR_OTP_TEMPLATE` | (optional) | DLT-approved OTP template name, if your 2Factor account requires one |
 | `OTP_HASH_SECRET` | (secret) | HMAC key for guest OTP hashes |
 | `GUEST_JWT_EXPIRES_IN` | `4h` | Guest session lifetime |
 
@@ -95,9 +96,9 @@ public web host = changing `WEB_APP_URL` only.
    `/public-quiz/<token>/take`, `/public-quiz/<token>/result/<attemptId>`
    (the rewrite rule covers these).
 3. **OTP flow** — name + phone + consent → OTP request/verify; wrong and
-   expired codes rejected; rate limits (429) enforced. Real SMS requires the
-   MSG91 env vars (§2); until then production returns 503 `SMS_NOT_CONFIGURED`
-   by design.
+   expired codes rejected; rate limits (429) enforced. Real SMS requires
+   `TWO_FACTOR_API_KEY` (§2); until then production returns 503
+   `SMS_NOT_CONFIGURED` by design.
 4. **Quiz + grading** — take the quiz, submit; backend grading (positive /
    negative marks) is the source of truth; result summary renders.
 5. **Expiry** — an expired link (`publicExpiryDate`) returns 410 at the API
