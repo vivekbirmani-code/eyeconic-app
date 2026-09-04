@@ -40,8 +40,9 @@ services:
       - key: CLOUDINARY_API_SECRET
         sync: false
       # ---- Public quiz guest flow (see docs/MSG91_SETUP.md) ----
-      # Web origin share links redirect to. UNSET = legacy app-redirect
-      # interstitial (rollback switch) — MUST be set to activate the web flow.
+      # Web origin for public quiz links (generated links point directly at
+      # it; legacy backend share URLs 302 here). Falls back to the production
+      # web origin if unset — links ALWAYS open the web quiz, never the app.
       - key: WEB_APP_URL
         value: https://eyeconicmentors.vercel.app
       # MSG91 SMS OTP (all three required for real SMS; without them phone

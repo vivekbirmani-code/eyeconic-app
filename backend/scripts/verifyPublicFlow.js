@@ -165,39 +165,40 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     `score% ${resultBody.summary?.scorePercentage}`
   );
 
-  console.log('\n=== 6. Link generation behind a TLS proxy (Render shape) ===');
+  console.log('\n=== 6. Generated links are DIRECT web URLs (no backend hop) ===');
   // Runs LAST: generate-share-link rotates the token, which would
   // invalidate every request above that used the original one.
-  const loginRes = await fetch(`${BASE}/api/auth/login`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: admin.email, password: 'password123' }),
-  });
-  const loginBody = await loginRes.json();
+  const jwt = require('jsonwebtoken');
+  const adminToken = jwt.sign({ userId: admin._id.toString(), role: 'admin' }, process.env.JWT_SECRET);
   const quizDoc = await Quiz.findOne({ shareToken });
   const genRes = await fetch(`${BASE}/api/quizzes/${quizDoc._id}/generate-share-link`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${loginBody.token}`,
-      // Simulate Render's TLS-terminating proxy — without trust proxy the
-      // generated link would wrongly be http://
+      Authorization: `Bearer ${adminToken}`,
+      // Proxy shape (Render) — irrelevant for the URL now, but asserted for
+      // completeness: the link is a direct web URL regardless of headers.
       'X-Forwarded-Proto': 'https',
       'X-Forwarded-For': '203.0.113.10',
     },
   });
   const genBody = await genRes.json();
   check(
-    genRes.status === 200 && genBody.shareUrl?.startsWith('https://') && genBody.shareUrl.includes('/api/public/share/'),
-    'generate-share-link returns an https:// share URL behind the proxy',
+    genRes.status === 200 && genBody.shareUrl === `${WEB}/public-quiz/${genBody.shareToken}`,
+    'generate-share-link returns a direct web URL (localhost:5173 in dev)',
     genBody.shareUrl || `status ${genRes.status}`
   );
+  check(
+    genRes.status === 200 && !genBody.shareUrl?.includes('mentorship://') && !genBody.shareUrl?.includes('/api/public/share'),
+    'no app scheme, no backend hop in the generated link'
+  );
   const statusRes = await fetch(`${BASE}/api/quizzes/${quizDoc._id}/share-status`, {
-    headers: { Authorization: `Bearer ${loginBody.token}`, 'X-Forwarded-Proto': 'https' },
+    headers: { Authorization: `Bearer ${adminToken}`, 'X-Forwarded-Proto': 'https' },
   });
   const statusBody = await statusRes.json();
   check(
-    statusRes.status === 200 && statusBody.shareUrl?.startsWith('https://'),
-    'share-status (existing-link copy) is also https:// behind the proxy'
+    statusRes.status === 200 && statusBody.shareUrl === `${WEB}/public-quiz/${genBody.shareToken}`,
+    'share-status (existing-link copy) returns the same direct web URL'
   );
 
   console.log(`\n=== ${allOk ? 'ALL CHECKS PASSED' : 'SOME CHECKS FAILED'} ===`);

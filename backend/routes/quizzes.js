@@ -49,6 +49,7 @@ const { assertStudentPerformanceAccess } = require('../utils/studentPerformanceA
 const { buildAttemptResults } = require('../utils/attemptResults');
 const { buildStudentPerformanceResponse } = require('../utils/studentPerformance');
 const { fetchGuestParticipants, countGuestAttempts } = require('../utils/guestAnalytics');
+const { buildPublicQuizUrl } = require('../utils/publicWebUrl');
 const {
   toIdString,
   deriveSectionsForQuestions,
@@ -3497,10 +3498,11 @@ router.post('/:id/generate-share-link', auth, authorize('admin'), async (req, re
 
     await quiz.save();
 
-    // Generate the deep link URL (HTTPS redirect for better sharing)
-    // Use the request host to construct the URL
-    const baseUrl = `${req.protocol}://${req.get('host')}`;
-    const shareUrl = `${baseUrl}/api/public/share/${shareToken}`;
+    // The share link points DIRECTLY at the web quiz page (client app) —
+    // no backend hop, no app-redirect, no dependency on this server being
+    // the one to translate the link. /api/public/share/:token remains as a
+    // 302 for links generated before this change.
+    const shareUrl = buildPublicQuizUrl(shareToken);
 
     res.json({
       success: true,
@@ -3552,13 +3554,10 @@ router.get('/:id/share-status', auth, authorize('admin'), async (req, res) => {
     res.json({
       isPublic: quiz.isPublic,
       shareToken: quiz.shareToken,
-      // Same share URL generate-share-link produces — the backend /share
-      // endpoint (which 302s to the web quiz, or the legacy interstitial
-      // when WEB_APP_URL is unset). The old raw mentorship:// scheme URL
-      // stranded browser users and is never handed out anymore.
-      shareUrl: quiz.shareToken
-        ? `${req.protocol}://${req.get('host')}/api/public/share/${quiz.shareToken}`
-        : null,
+      // Same direct web URL generate-share-link produces — opens the quiz
+      // in the browser. The old raw mentorship:// scheme URL stranded
+      // browser users and is never handed out anymore.
+      shareUrl: quiz.shareToken ? buildPublicQuizUrl(quiz.shareToken) : null,
       publicExpiryDate: quiz.publicExpiryDate,
       isExpired: quiz.publicExpiryDate ? new Date() > quiz.publicExpiryDate : false
     });

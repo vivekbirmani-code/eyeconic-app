@@ -8,6 +8,7 @@ const { gradeQuestion } = require('../utils/grading');
 const { buildMetadataSnapshot } = require('../utils/questionSnapshot');
 const { guestAuth, optionalGuestAuth } = require('../middleware/guestAuth');
 const { maskPhone } = require('../utils/phone');
+const { getPublicWebAppUrl } = require('../utils/publicWebUrl');
 const { findActivePublicQuiz, sendPublicQuizError } = require('../utils/publicQuizAccess');
 const { buildAttemptResults } = require('../utils/attemptResults');
 const {
@@ -195,77 +196,28 @@ const findOwnedGuestAttempt = (attemptId, quizId, guestId, guest) => {
 
 /**
  * GET /api/public/share/:shareToken
- * Entry point for shared public links (clickable in WhatsApp etc.).
- *
- * With a web app URL configured, 302-redirects straight to the browser quiz
- * (client/ public pages) — no app install required. Links whose quiz is
- * missing or revoked redirect with ?invalid=1 so the web page can render a
- * clear error state; the page re-validates via the API, which stays the
- * authority for not-started/expired windows.
- *
- * Resolution order:
- *   1. WEB_APP_URL env var (explicit; production MUST set this)
- *   2. development fallback: http://localhost:5173 (the client dev server —
- *      zero-config local testing)
- *   3. production with WEB_APP_URL unset: legacy app-redirect interstitial
- *      unchanged — the rollout/rollback switch for this feature.
+ * Backward-compatible entry point for links already in the wild (older
+ * share links and any bookmarked backend URLs). Always 302-redirects to the
+ * web quiz page — there is NO app-redirect interstitial anymore, in any
+ * environment: public quiz links must open in a browser, period. Links whose
+ * quiz is missing or revoked redirect with ?invalid=1 so the web page can
+ * render a clear error state; the page re-validates via the API, which stays
+ * the authority for not-started/expired windows.
  */
-const DEV_WEB_APP_URL = 'http://localhost:5173';
-
 router.get('/share/:shareToken', async (req, res) => {
     try {
         const { shareToken } = req.params;
-        const deepLink = `mentorship://quiz/${shareToken}`;
 
-        const webAppUrl = process.env.WEB_APP_URL?.trim().replace(/\/+$/, '')
-            || (process.env.NODE_ENV === 'production' ? '' : DEV_WEB_APP_URL);
-        if (webAppUrl) {
-            const quiz = await Quiz.findOne({ shareToken, isPublic: true, isActive: true }).select('_id');
-            const target = quiz
-                ? `${webAppUrl}/public-quiz/${shareToken}`
-                : `${webAppUrl}/public-quiz/${shareToken}?invalid=1`;
-            return res.redirect(302, target);
-        }
-
-        // Simple HTML to handle redirect
-        const html = `
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Opening Quiz...</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; margin: 0; background-color: #f7f7f7; text-align: center; padding: 20px; }
-        .card { background: white; padding: 30px; border-radius: 16px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); max-width: 400px; width: 100%; }
-        h1 { font-size: 20px; margin-bottom: 10px; color: #1f2937; }
-        p { color: #6b7280; margin-bottom: 24px; line-height: 1.5; }
-        .btn { display: inline-block; background-color: #2563eb; color: white; padding: 12px 24px; border-radius: 8px; text-decoration: none; font-weight: 600; transition: background-color 0.2s; }
-        .btn:hover { background-color: #1d4ed8; }
-    </style>
-    <script>
-        window.onload = function() {
-            window.location.href = "${deepLink}";
-            setTimeout(function() {
-                document.getElementById('manual-link').style.display = 'block';
-            }, 1000);
-        }
-    </script>
-</head>
-<body>
-    <div class="card">
-        <h1>Opening Eyeconic Quiz</h1>
-        <p>Attempting to open the quiz in the Eyeconic app...</p>
-        <a href="${deepLink}" class="btn">Open App</a>
-        <p id="manual-link" style="display:none; margin-top: 16px; font-size: 14px;">If the app doesn't open, please ensure it is installed.</p>
-    </div>
-</body>
-</html>
-        `;
-
-        res.send(html);
+        const webAppUrl = getPublicWebAppUrl();
+        const quiz = await Quiz.findOne({ shareToken, isPublic: true, isActive: true }).select('_id');
+        const target = quiz
+            ? `${webAppUrl}/public-quiz/${shareToken}`
+            : `${webAppUrl}/public-quiz/${shareToken}?invalid=1`;
+        return res.redirect(302, target);
     } catch (error) {
-        console.error('Error serving redirect:', error);
-        res.status(500).send('Server error');
+        console.error('Error serving share redirect:', error);
+        // Even on an unexpected error, never fall back to an app redirect.
+        return res.redirect(302, `${getPublicWebAppUrl()}/public-quiz/${req.params.shareToken}?invalid=1`);
     }
 });
 

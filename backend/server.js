@@ -77,16 +77,16 @@ const validateEnvironment = () => {
         'MSG91_AUTH_KEY / MSG91_TEMPLATE_ID / MSG91_SENDER_ID are not set — public quiz phone OTP will fail in production (503 SMS_NOT_CONFIGURED). See docs/MSG91_SETUP.md'
       );
     }
-    if (!process.env.WEB_APP_URL?.trim()) {
-      warnings.push(
-        'WEB_APP_URL is not set — public quiz share links serve the legacy app-redirect interstitial instead of the web quiz'
-      );
-    }
   }
   warnings.forEach((warning) => logger.warn(warning));
 };
 
 validateEnvironment();
+
+// Public quiz links always open the web app now (never an app redirect) —
+// log where they resolve so misconfiguration is visible at a glance.
+const { getPublicWebAppUrl } = require('./utils/publicWebUrl');
+logger.info('Public quiz web app URL', { url: getPublicWebAppUrl() });
 
 // Middleware — CORS must run before auth/body parsing so preflight succeeds.
 app.use(cors(createCorsOptions()));

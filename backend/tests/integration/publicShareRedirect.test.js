@@ -2,6 +2,7 @@ const request = require('supertest');
 const db = require('../helpers/db');
 const { buildApp, createUser, createSubject } = require('../helpers/testApp');
 const Quiz = require('../../models/Quiz');
+const User = require('../../models/User');
 
 let app;
 
@@ -14,7 +15,7 @@ afterAll(async () => {
   await db.closeDatabase();
 });
 
-describe('GET /api/public/share/:shareToken redirect', () => {
+describe('Public share links — always open the web app, never the app', () => {
   let admin;
   let subject;
   let quiz;
@@ -45,45 +46,62 @@ describe('GET /api/public/share/:shareToken redirect', () => {
     }
   });
 
-  it('falls back to the client dev server when WEB_APP_URL is unset in development (zero-config local)', async () => {
+  it('302-redirects legacy backend links to the dev web app in development (zero-config)', async () => {
     const res = await request(app).get('/api/public/share/redirect-test-token');
     expect(res.status).toBe(302);
     expect(res.headers.location).toBe('http://localhost:5173/public-quiz/redirect-test-token');
   });
 
-  it('serves the legacy app-redirect interstitial when WEB_APP_URL is unset in PRODUCTION (rollback switch)', async () => {
+  it('302-redirects legacy backend links to the production web origin when WEB_APP_URL is unset in PRODUCTION — no interstitial, ever', async () => {
     process.env.NODE_ENV = 'production';
     try {
       const res = await request(app).get('/api/public/share/redirect-test-token');
-      expect(res.status).toBe(200);
-      expect(res.text).toContain('Opening Eyeconic Quiz');
-      expect(res.text).toContain('mentorship://quiz/redirect-test-token');
+      expect(res.status).toBe(302);
+      expect(res.headers.location).toBe('https://eyeconicmentors.vercel.app/public-quiz/redirect-test-token');
+      expect(res.text).not.toContain('Open App');
     } finally {
       process.env.NODE_ENV = 'development';
     }
   });
 
-  it('302-redirects to the web quiz when WEB_APP_URL is set', async () => {
-    process.env.WEB_APP_URL = 'https://eyeconicmentors.vercel.app/';
-    const res = await request(app).get('/api/public/share/redirect-test-token');
-    expect(res.status).toBe(302);
-    expect(res.headers.location).toBe('https://eyeconicmentors.vercel.app/public-quiz/redirect-test-token');
+  it('honours an explicit WEB_APP_URL in production', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.WEB_APP_URL = 'https://custom-eyeconic-web.example.com/';
+    try {
+      const res = await request(app).get('/api/public/share/redirect-test-token');
+      expect(res.status).toBe(302);
+      expect(res.headers.location).toBe('https://custom-eyeconic-web.example.com/public-quiz/redirect-test-token');
+    } finally {
+      process.env.NODE_ENV = 'development';
+      delete process.env.WEB_APP_URL;
+    }
   });
 
   it('redirects revoked/unknown tokens to the web error state (?invalid=1)', async () => {
-    process.env.WEB_APP_URL = 'https://eyeconicmentors.vercel.app';
-
+    await Quiz.updateOne({ _id: quiz._id }, { $set: { isPublic: false } });
     const revoked = await request(app).get('/api/public/share/redirect-test-token');
     expect(revoked.status).toBe(302);
-    expect(revoked.headers.location).toBe('https://eyeconicmentors.vercel.app/public-quiz/redirect-test-token');
-
-    await Quiz.updateOne({ _id: quiz._id }, { $set: { isPublic: false } });
-    const afterRevoke = await request(app).get('/api/public/share/redirect-test-token');
-    expect(afterRevoke.status).toBe(302);
-    expect(afterRevoke.headers.location).toBe('https://eyeconicmentors.vercel.app/public-quiz/redirect-test-token?invalid=1');
+    expect(revoked.headers.location).toBe('http://localhost:5173/public-quiz/redirect-test-token?invalid=1');
 
     const unknown = await request(app).get('/api/public/share/no-such-token');
     expect(unknown.status).toBe(302);
-    expect(unknown.headers.location).toBe('https://eyeconicmentors.vercel.app/public-quiz/no-such-token?invalid=1');
+    expect(unknown.headers.location).toBe('http://localhost:5173/public-quiz/no-such-token?invalid=1');
+  });
+
+  it('generate-share-link hands out a DIRECT web URL (no backend hop, no app scheme)', async () => {
+    const res = await request(app)
+      .post(`/api/quizzes/${quiz._id}/generate-share-link`)
+      .set('Authorization', `Bearer ${admin.token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.shareUrl).toBe(`http://localhost:5173/public-quiz/${res.body.shareToken}`);
+    expect(res.body.shareUrl).not.toContain('/api/public/share');
+    expect(res.body.shareUrl).not.toContain('mentorship://');
+
+    // share-status (existing-link copy path) returns the same direct URL.
+    const status = await request(app)
+      .get(`/api/quizzes/${quiz._id}/share-status`)
+      .set('Authorization', `Bearer ${admin.token}`);
+    expect(status.status).toBe(200);
+    expect(status.body.shareUrl).toBe(`http://localhost:5173/public-quiz/${res.body.shareToken}`);
   });
 });
