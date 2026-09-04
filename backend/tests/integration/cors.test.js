@@ -6,6 +6,7 @@ const cors = require('cors');
 const {
   PRODUCTION_WEB_ORIGIN,
   createCorsOptions,
+  getAllowedOrigins,
 } = require('../../config/cors');
 
 const buildCorsApp = () => {
@@ -19,6 +20,7 @@ const buildCorsApp = () => {
 
 describe('CORS configuration', () => {
   const originalAllowedOrigins = process.env.ALLOWED_ORIGINS;
+  const originalWebAppUrl = process.env.WEB_APP_URL;
   const originalNodeEnv = process.env.NODE_ENV;
 
   afterEach(() => {
@@ -26,6 +28,11 @@ describe('CORS configuration', () => {
       delete process.env.ALLOWED_ORIGINS;
     } else {
       process.env.ALLOWED_ORIGINS = originalAllowedOrigins;
+    }
+    if (originalWebAppUrl === undefined) {
+      delete process.env.WEB_APP_URL;
+    } else {
+      process.env.WEB_APP_URL = originalWebAppUrl;
     }
     process.env.NODE_ENV = originalNodeEnv;
   });
@@ -97,5 +104,48 @@ describe('CORS configuration', () => {
     expect(response.headers['access-control-allow-origin']).toBe(
       'http://localhost:5173'
     );
+  });
+
+  it('derives an extra allowed origin from WEB_APP_URL alongside ALLOWED_ORIGINS', () => {
+    // Production shape: ALLOWED_ORIGINS pinned to the admin origin, the
+    // public quiz web app living on a Render static site.
+    process.env.ALLOWED_ORIGINS = PRODUCTION_WEB_ORIGIN;
+    process.env.WEB_APP_URL = 'https://eyeconic-public-web.onrender.com';
+
+    expect(getAllowedOrigins()).toEqual([
+      PRODUCTION_WEB_ORIGIN,
+      'https://eyeconic-public-web.onrender.com',
+    ]);
+  });
+
+  it('accepts a scheme-less WEB_APP_URL host (as pasted from the Render dashboard)', () => {
+    process.env.ALLOWED_ORIGINS = PRODUCTION_WEB_ORIGIN;
+    process.env.WEB_APP_URL = 'eyeconic-public-web.onrender.com';
+
+    expect(getAllowedOrigins()).toContain('https://eyeconic-public-web.onrender.com');
+  });
+
+  it('serves preflights from the WEB_APP_URL origin (Render-hosted public quiz)', async () => {
+    process.env.ALLOWED_ORIGINS = PRODUCTION_WEB_ORIGIN;
+    process.env.WEB_APP_URL = 'https://eyeconic-public-web.onrender.com';
+    const app = buildCorsApp();
+
+    const response = await request(app)
+      .options('/api/public/quiz/some-token/lead/send-otp')
+      .set('Origin', 'https://eyeconic-public-web.onrender.com')
+      .set('Access-Control-Request-Method', 'POST')
+      .set('Access-Control-Request-Headers', 'content-type');
+
+    expect(response.status).toBe(204);
+    expect(response.headers['access-control-allow-origin']).toBe(
+      'https://eyeconic-public-web.onrender.com'
+    );
+  });
+
+  it('ignores an unparseable WEB_APP_URL instead of breaking the origin list', () => {
+    process.env.ALLOWED_ORIGINS = PRODUCTION_WEB_ORIGIN;
+    process.env.WEB_APP_URL = 'not a valid url %%';
+
+    expect(getAllowedOrigins()).toEqual([PRODUCTION_WEB_ORIGIN]);
   });
 });

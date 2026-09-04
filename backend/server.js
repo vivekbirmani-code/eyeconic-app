@@ -87,6 +87,11 @@ validateEnvironment();
 // log where they resolve so misconfiguration is visible at a glance.
 const { getPublicWebAppUrl } = require('./utils/publicWebUrl');
 logger.info('Public quiz web app URL', { url: getPublicWebAppUrl() });
+if (process.env.NODE_ENV === 'production' && !process.env.WEB_APP_URL?.trim()) {
+  logger.warn(
+    'WEB_APP_URL is not set — public quiz links fall back to the legacy web origin. Set it to the eyeconic-public-web static site URL (Render dashboard → eyeconic-app-prod → Environment).'
+  );
+}
 
 // Middleware — CORS must run before auth/body parsing so preflight succeeds.
 app.use(cors(createCorsOptions()));

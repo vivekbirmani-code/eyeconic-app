@@ -41,10 +41,15 @@ services:
         sync: false
       # ---- Public quiz guest flow (see docs/MSG91_SETUP.md) ----
       # Web origin for public quiz links (generated links point directly at
-      # it; legacy backend share URLs 302 here). Falls back to the production
-      # web origin if unset — links ALWAYS open the web quiz, never the app.
+      # it; legacy backend share URLs 302 here). MUST be set in the Render
+      # dashboard to the eyeconic-public-web static site's URL (copy it from
+      # the service page once created — Render may append a uniqueness suffix
+      # to the hostname). Falls back to the production web origin if unset —
+      # links ALWAYS open the web quiz, never the app.
+      # sync: false because fromService cannot read static-site hosts and the
+      # exact hostname is only knowable after creation.
       - key: WEB_APP_URL
-        value: https://eyeconicmentors.vercel.app
+        sync: false
       # MSG91 SMS OTP (all three required for real SMS; without them phone
       # OTP returns 503 SMS_NOT_CONFIGURED). DLT registration is mandatory.
       - key: MSG91_AUTH_KEY
@@ -59,3 +64,33 @@ services:
       # Guest session token lifetime (default 4h).
       - key: GUEST_JWT_EXPIRES_IN
         value: 4h
+
+  # ---- Public Quiz web frontend + admin dashboard (Render Static Site) ----
+  # Hosts the Vite build of client/. This is where public quiz share links
+  # point (set WEB_APP_URL on the backend service to this site's URL).
+  # Also serves the admin dashboard at its own URL — the Vercel deployment
+  # is independent and unaffected.
+  - type: web
+    name: eyeconic-public-web
+    runtime: static
+    # No rootDir on purpose: with the build entered from the repo root,
+    # staticPublishPath is unambiguous.
+    buildCommand: cd client && npm ci && npm run build
+    staticPublishPath: ./client/dist
+    routes:
+      # SPA fallback: /public-quiz/:token, /take, /result/:attemptId and
+      # every client route resolve through index.html. Render serves real
+      # files first (assets are untouched by rewrite rules).
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      # Vite 7 requires Node >= 22.12 — pin the build toolchain.
+      - key: NODE_VERSION
+        value: '22'
+      # Build-time (public, non-secret) values baked into the bundle — same
+      # values as client/.env.production.
+      - key: VITE_API_URL
+        value: https://eyeconic-app-prod-1r8o.onrender.com/api
+      - key: VITE_SOCKET_URL
+        value: https://eyeconic-app-prod-1r8o.onrender.com

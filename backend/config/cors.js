@@ -14,17 +14,42 @@ const DEFAULT_PROD_ORIGINS = [PRODUCTION_WEB_ORIGIN];
 const parseAllowedOrigins = () => {
   const envOrigins = process.env.ALLOWED_ORIGINS?.trim();
   if (envOrigins) {
-    return envOrigins
-      .split(',')
-      .map((origin) => origin.trim())
-      .filter(Boolean);
+    return appendPublicWebOrigin(
+      envOrigins
+        .split(',')
+        .map((origin) => origin.trim())
+        .filter(Boolean)
+    );
   }
 
   if (process.env.NODE_ENV === 'production') {
-    return DEFAULT_PROD_ORIGINS;
+    return appendPublicWebOrigin(DEFAULT_PROD_ORIGINS);
   }
 
-  return [...DEFAULT_PROD_ORIGINS, ...DEFAULT_DEV_ORIGINS];
+  return appendPublicWebOrigin([...DEFAULT_PROD_ORIGINS, ...DEFAULT_DEV_ORIGINS]);
+};
+
+/**
+ * The backend itself sends guests to WEB_APP_URL (public quiz share links),
+ * so that origin must always be CORS-allowed — a mismatch there would break
+ * the entire public flow. Derived from the env var so the Render static site
+ * (or any future custom domain) is trusted without listing hosts twice.
+ * Accepts a bare host as pasted from the Render dashboard (scheme-less).
+ */
+const appendPublicWebOrigin = (origins) => {
+  const raw = process.env.WEB_APP_URL?.trim();
+  if (!raw) {
+    return origins;
+  }
+  try {
+    const withScheme = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    const webAppOrigin = new URL(withScheme).origin;
+    return origins.includes(webAppOrigin) ? origins : [...origins, webAppOrigin];
+  } catch {
+    // Unparseable WEB_APP_URL — leave the explicit list untouched; the boot
+    // log surfaces the resolved URL for diagnosis.
+    return origins;
+  }
 };
 
 const getAllowedOrigins = () => parseAllowedOrigins();

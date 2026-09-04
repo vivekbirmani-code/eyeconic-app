@@ -77,6 +77,17 @@ describe('Public share links — always open the web app, never the app', () => 
     }
   });
 
+  it('serves a scheme-less WEB_APP_URL host over https (Render dashboard paste)', async () => {
+    process.env.WEB_APP_URL = 'eyeconic-public-web.onrender.com';
+    try {
+      const res = await request(app).get('/api/public/share/redirect-test-token');
+      expect(res.status).toBe(302);
+      expect(res.headers.location).toBe('https://eyeconic-public-web.onrender.com/public-quiz/redirect-test-token');
+    } finally {
+      delete process.env.WEB_APP_URL;
+    }
+  });
+
   it('redirects revoked/unknown tokens to the web error state (?invalid=1)', async () => {
     await Quiz.updateOne({ _id: quiz._id }, { $set: { isPublic: false } });
     const revoked = await request(app).get('/api/public/share/redirect-test-token');
