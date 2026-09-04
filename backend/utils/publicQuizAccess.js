@@ -1,9 +1,15 @@
 const Quiz = require('../models/Quiz');
 
 // Shared eligibility check for every public-quiz route (guest quiz API,
-// lead/OTP endpoints, share redirect). Extracted from the previously
-// triplicated blocks in routes/public-quiz.js — messages stay identical so
-// existing clients (mobile guest flow) render the same errors.
+// lead/OTP endpoints, share redirect).
+//
+// PUBLIC ACCESS SEMANTICS: a public link is governed by the link's OWN
+// expiry (publicExpiryDate — the expiry-days the admin picks when
+// generating the link), NOT by the quiz's internal student attempt window
+// (scheduledDate/expiryDate). Admins share public links precisely so
+// outsiders can attempt the quiz NOW — including past tests whose student
+// window has closed. The internal window still applies to registered
+// students through the authenticated routes.
 //
 // Returns { quiz } on success or { error: { statusCode, code, message, extra } }.
 
@@ -32,28 +38,7 @@ const findActivePublicQuiz = async (shareToken, options = null) => {
     };
   }
 
-  const now = new Date();
-  if (quiz.scheduledDate && now < quiz.scheduledDate) {
-    return {
-      error: {
-        statusCode: 403,
-        code: 'QUIZ_NOT_STARTED',
-        message: 'This quiz has not started yet. It opens on ' + quiz.scheduledDate.toLocaleString(),
-        extra: { scheduledDate: quiz.scheduledDate },
-      },
-    };
-  }
-  if (quiz.expiryDate && now > quiz.expiryDate) {
-    return {
-      error: {
-        statusCode: 403,
-        code: 'QUIZ_EXPIRED',
-        message: 'This quiz has expired. It closed on ' + quiz.expiryDate.toLocaleString(),
-        extra: { expiryDate: quiz.expiryDate },
-      },
-    };
-  }
-  if (quiz.publicExpiryDate && now > quiz.publicExpiryDate) {
+  if (quiz.publicExpiryDate && new Date() > quiz.publicExpiryDate) {
     return {
       error: {
         statusCode: 410,

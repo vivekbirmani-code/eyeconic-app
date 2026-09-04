@@ -146,6 +146,43 @@ describe('Guest lead OTP flow', () => {
     expect(sms.sendGuestOtpSms).not.toHaveBeenCalled();
   });
 
+  it('serves public links even when the quiz\'s internal student window has closed (past tests)', async () => {
+    // Admins share public links precisely so outsiders can attempt the quiz
+    // NOW — including past tests. Only the link's own expiry applies.
+    await Quiz.updateOne(
+      { _id: quiz._id },
+      {
+        $set: {
+          scheduledDate: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
+          expiryDate: new Date(Date.now() - 24 * 60 * 60 * 1000),
+        },
+      }
+    );
+
+    const fetch = await request(app).get(`/api/public/quiz/${quiz.shareToken}`);
+    expect(fetch.status).toBe(200);
+    expect(fetch.body.success).toBe(true);
+
+    const send = await sendOtp(quiz.shareToken, leadPayload());
+    expect(send.status).toBe(200);
+    expect(sms.sendGuestOtpSms).toHaveBeenCalled();
+  });
+
+  it('still enforces the link\'s own expiry (publicExpiryDate -> 410, no SMS)', async () => {
+    await Quiz.updateOne(
+      { _id: quiz._id },
+      { $set: { publicExpiryDate: new Date(Date.now() - 60 * 1000) } }
+    );
+
+    const fetch = await request(app).get(`/api/public/quiz/${quiz.shareToken}`);
+    expect(fetch.status).toBe(410);
+    expect(fetch.body.code).toBe('SHARE_LINK_EXPIRED');
+
+    const send = await sendOtp(quiz.shareToken, leadPayload());
+    expect(send.status).toBe(410);
+    expect(sms.sendGuestOtpSms).not.toHaveBeenCalled();
+  });
+
   it('verifies the OTP, creates the lead, and issues a guest token', async () => {
     await sendOtp(quiz.shareToken, leadPayload());
     const otp = sentOtps[sentOtps.length - 1].otp;

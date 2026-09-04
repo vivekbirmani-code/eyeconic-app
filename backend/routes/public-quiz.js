@@ -229,37 +229,20 @@ router.get('/quiz/:shareToken', async (req, res) => {
     try {
         const { shareToken } = req.params;
 
-        const quiz = await Quiz.findOne({
-            shareToken,
-            isPublic: true,
-            isActive: true
+        // Shared public-access check: link-level expiry only (the quiz's
+        // internal student window does not apply to public guests).
+        const access = await findActivePublicQuiz(shareToken, {
+            select: 'title subject duration instructions totalMarks questions publicExpiryDate lockSectionsAfterSubmission sections',
         })
-            .populate('subject', 'name')
-            .select('title subject duration instructions totalMarks questions publicExpiryDate scheduledDate expiryDate lockSectionsAfterSubmission sections');
-
-        if (!quiz) {
-            return res.status(404).json({
-                success: false,
-                message: 'Quiz not found or link has expired'
+            .then(async (result) => {
+                if (result.error || !result.quiz) return result;
+                await Quiz.populate(result.quiz, { path: 'subject', select: 'name' });
+                return result;
             });
+        if (access.error) {
+            return sendPublicQuizError(res, access.error);
         }
-
-        // Enforce time window
-        const now = new Date();
-        if (quiz.scheduledDate && now < quiz.scheduledDate) {
-            return res.status(403).json({ success: false, message: 'This quiz has not started yet. It opens on ' + quiz.scheduledDate.toLocaleString(), scheduledDate: quiz.scheduledDate });
-        }
-        if (quiz.expiryDate && now > quiz.expiryDate) {
-            return res.status(403).json({ success: false, message: 'This quiz has expired. It closed on ' + quiz.expiryDate.toLocaleString(), expiryDate: quiz.expiryDate });
-        }
-
-        // Check if public link has expired
-        if (quiz.publicExpiryDate && new Date() > quiz.publicExpiryDate) {
-            return res.status(410).json({
-                success: false,
-                message: 'This quiz link has expired'
-            });
-        }
+        const quiz = access.quiz;
 
         res.json({
             success: true,

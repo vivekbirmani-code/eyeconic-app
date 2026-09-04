@@ -57,7 +57,7 @@ router.post('/quiz/:shareToken/lead/send-otp', guestOtpSendRateLimit, async (req
     const { name, phone } = payload;
     void name; // validated now, recorded at verify time
 
-    const access = await findActivePublicQuiz(shareToken, '_id title');
+    const access = await findActivePublicQuiz(shareToken, '_id title publicExpiryDate');
     if (access.error) {
       return sendPublicQuizError(res, access.error);
     }
@@ -115,7 +115,7 @@ router.post('/quiz/:shareToken/lead/verify-otp', guestOtpVerifyRateLimit, async 
       });
     }
 
-    const access = await findActivePublicQuiz(shareToken, '_id title');
+    const access = await findActivePublicQuiz(shareToken, '_id title publicExpiryDate');
     if (access.error) {
       return sendPublicQuizError(res, access.error);
     }
