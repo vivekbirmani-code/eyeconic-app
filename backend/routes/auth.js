@@ -26,6 +26,7 @@ const { auth } = require('../middleware/auth');
 const requireDatabase = require('../middleware/requireDatabase');
 const logger = require('../utils/logger');
 const { toClientUser } = require('../utils/profilePicture');
+const { isSignUpEnabled } = require('../utils/appSettings');
 
 const router = express.Router();
 
@@ -34,6 +35,19 @@ const invalidRequestResponse = (res, req, message = 'Invalid request data.') =>
     success: false,
     message,
     code: 'VALIDATION_ERROR',
+    requestId: req.requestId,
+  });
+
+// Returned by every account-creating endpoint when the admin has public
+// sign-up turned off (the default). Login and password reset are unaffected.
+const SIGNUP_DISABLED_MESSAGE =
+  'New account sign-up is currently disabled. Please contact your administrator for access.';
+
+const signupDisabledResponse = (req, res) =>
+  res.status(403).json({
+    success: false,
+    message: SIGNUP_DISABLED_MESSAGE,
+    code: 'SIGNUP_DISABLED',
     requestId: req.requestId,
   });
 
@@ -214,6 +228,12 @@ router.post('/send-otp', requireDatabase, otpSendRateLimit, async (req, res) => 
 
     const normalizedEmail = normalizeEmail(email);
 
+    // Public sign-up is admin-controlled and off by default — fail closed
+    // before revealing anything about registered emails or sending OTPs.
+    if (!(await isSignUpEnabled())) {
+      return signupDisabledResponse(req, res);
+    }
+
     // Check if user already exists
     const existingUser = await User.findOne({ email: normalizedEmail });
     if (existingUser) {
@@ -283,6 +303,12 @@ router.post('/signup', requireDatabase, otpVerifyRateLimit, async (req, res) => 
     }
 
     const normalizedEmail = normalizeEmail(email);
+
+    // Re-check the admin toggle here even though /send-otp is gated too —
+    // an OTP could have been issued before the toggle was switched off.
+    if (!(await isSignUpEnabled())) {
+      return signupDisabledResponse(req, res);
+    }
 
     // Check if user already exists
     const existingUser = await User.findOne({ email: normalizedEmail });

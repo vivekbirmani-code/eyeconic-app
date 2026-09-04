@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   View,
   Text,
@@ -21,12 +21,17 @@ import { Eye, EyeOff, ShieldCheck, Mail, Phone, User, Lock, ChevronLeft, Check }
 import * as Haptics from '@/utils/haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { api, getUserMessage } from '@/services/api';
+import { fetchSignUpEnabled } from '@/services/settings';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export default function Signup() {
   const router = useRouter();
   const { refreshUser } = useAuth();
-  
+
+  // Admin-controlled access: null = still checking, true = allowed, false = blocked.
+  // The backend rejects signups regardless; this keeps the form itself hidden.
+  const [accessAllowed, setAccessAllowed] = useState<boolean | null>(null);
+
   // Form states
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -71,6 +76,47 @@ export default function Signup() {
       useNativeDriver: true,
     }).start();
   };
+
+  // Public sign-up can be disabled by an admin at any time; check on entry so
+  // deep links or stale navigation to this screen never show the signup form.
+  useEffect(() => {
+    let isMounted = true;
+
+    fetchSignUpEnabled().then((enabled) => {
+      if (!isMounted) return;
+      if (!enabled) {
+        setAccessAllowed(false);
+        Alert.alert(
+          'Sign Up Unavailable',
+          'New account sign-up is currently disabled. Please contact your administrator for access.'
+        );
+        router.replace('/login');
+        return;
+      }
+      setAccessAllowed(true);
+    });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [router]);
+
+  // While checking access (or after being denied), never render the form.
+  if (accessAllowed !== true) {
+    return (
+      <FullScreenContainer>
+        <LinearGradient
+          colors={['#01b4ae', '#008f8a', '#01b4ae']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={StyleSheet.absoluteFillObject}
+        />
+        <View style={styles.accessCheckContainer}>
+          <ActivityIndicator color="#FFFFFF" size="large" />
+        </View>
+      </FullScreenContainer>
+    );
+  }
 
   // Submit signup details to request OTP
   const handleRequestOtp = async () => {
@@ -492,6 +538,11 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#01b4ae',
+  },
+  accessCheckContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   scrollContentContainer: {
     flexGrow: 1,

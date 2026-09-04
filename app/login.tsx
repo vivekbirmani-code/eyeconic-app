@@ -22,6 +22,7 @@ import { Eye, EyeOff, Mail, Lock, ShieldCheck } from 'lucide-react-native';
 import * as Haptics from '@/utils/haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { api, getUserMessage } from '@/services/api';
+import { fetchSignUpEnabled } from '@/services/settings';
 
 export default function Login() {
   const [email, setEmail] = useState('');
@@ -30,6 +31,8 @@ export default function Login() {
   const [isLoading, setIsLoading] = useState(false);
   const [emailFocused, setEmailFocused] = useState(false);
   const [passwordFocused, setPasswordFocused] = useState(false);
+  // Admin-controlled: when false, the Sign Up entry point is hidden entirely.
+  const [signUpEnabled, setSignUpEnabled] = useState(false);
   const { login } = useAuth();
   const router = useRouter();
 
@@ -59,6 +62,10 @@ export default function Login() {
 
   // Entry animations on mount
   useEffect(() => {
+    // Whether the Sign Up option is shown is fetched fresh on every visit so
+    // an admin toggle is reflected without requiring an app restart.
+    fetchSignUpEnabled().then(setSignUpEnabled);
+
     // Logo animation
     Animated.parallel([
       Animated.timing(logoOpacity, {
@@ -409,19 +416,21 @@ export default function Login() {
 
             {/* Footer */}
             <View style={styles.loginFooter}>
-              <TouchableOpacity
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  router.push('/signup');
-                }}
-                style={styles.signUpLinkContainer}
-              >
-                <Text style={styles.footerText}>
-                  Don't have an account? <Text style={styles.signUpLinkText}>Sign Up</Text>
-                </Text>
-              </TouchableOpacity>
+              {signUpEnabled && (
+                <TouchableOpacity
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    router.push('/signup');
+                  }}
+                  style={styles.signUpLinkContainer}
+                >
+                  <Text style={styles.footerText}>
+                    Don't have an account? <Text style={styles.signUpLinkText}>Sign Up</Text>
+                  </Text>
+                </TouchableOpacity>
+              )}
 
-              <Text style={[styles.footerText, { marginTop: 12 }]}>
+              <Text style={[styles.footerText, { marginTop: signUpEnabled ? 12 : 0 }]}>
                 Contact your administrator if you need login credentials
               </Text>
               

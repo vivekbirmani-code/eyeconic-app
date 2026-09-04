@@ -17,9 +17,10 @@ import {
   Pressable,
   ActivityIndicator,
   LayoutChangeEvent,
+  Switch,
 } from 'react-native';
 import { ScreenContainer, FullScreenContainer } from '@/components/layout';
-import { Plus, User as UserIcon, Search, X, Mail, Shield, Calendar, Phone, Lock, Key, Users as UsersIcon, Check, Square, CheckSquare, ChevronRight, Pencil } from 'lucide-react-native';
+import { Plus, User as UserIcon, Search, X, Mail, Shield, Calendar, Phone, Lock, Key, Users as UsersIcon, Check, Square, CheckSquare, ChevronRight, Pencil, UserPlus } from 'lucide-react-native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from '@/utils/haptics';
@@ -31,7 +32,8 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
 }
 import { useAuth } from '@/context/AuthContext';
 import { useNotifications } from '@/context/NotificationContext';
-import { api } from '@/services/api';
+import { api, getUserMessage } from '@/services/api';
+import { fetchSignUpEnabled } from '@/services/settings';
 import SubjectSelectionModal from '@/components/SubjectSelectionModal';
 import MentorSelectionModal, { type Mentor } from '@/components/MentorSelectionModal';
 import { useAppRefresh } from '@/hooks/useAppRefresh';
@@ -111,6 +113,12 @@ export default function Users() {
   });
   const [newPassword, setNewPassword] = useState('');
   const [isResettingPassword, setIsResettingPassword] = useState(false);
+
+  // Admin-controlled public sign-up toggle (backend setting, off by default).
+  // When off, the app hides the Sign Up option and the backend rejects new
+  // registrations; existing users (including imported students) sign in normally.
+  const [signUpEnabled, setSignUpEnabled] = useState(false);
+  const [isTogglingSignUp, setIsTogglingSignUp] = useState(false);
 
   // Email correction state
   const [isEditEmailModalVisible, setIsEditEmailModalVisible] = useState(false);
@@ -217,11 +225,22 @@ export default function Users() {
     }
   }, [animateCardList]);
 
+  // Refresh the admin sign-up toggle on tab focus so changes made
+  // elsewhere (e.g. another admin session) are reflected here.
+  const fetchSignUpSetting = useCallback(async () => {
+    try {
+      setSignUpEnabled(await fetchSignUpEnabled());
+    } catch {
+      setSignUpEnabled(false);
+    }
+  }, []);
+
   // Refresh on tab focus
   useFocusEffect(
     useCallback(() => {
       fetchUsers();
-    }, [fetchUsers])
+      fetchSignUpSetting();
+    }, [fetchUsers, fetchSignUpSetting])
   );
 
   // Refresh when app comes to foreground
@@ -238,6 +257,33 @@ export default function Users() {
     };
   }, [socket, fetchUsers]);
 
+
+  // Toggle public sign-up on/off (admin-only backend endpoint)
+  const handleToggleSignUp = async (nextValue: boolean) => {
+    if (isTogglingSignUp) return;
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const previousValue = signUpEnabled;
+    setSignUpEnabled(nextValue); // optimistic — reverted on failure
+    setIsTogglingSignUp(true);
+
+    try {
+      const response = await api.put('/settings/signup-enabled', {
+        signUpEnabled: nextValue,
+      });
+      setSignUpEnabled(response.data?.signUpEnabled === true);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (error) {
+      setSignUpEnabled(previousValue);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      Alert.alert(
+        'Update Failed',
+        getUserMessage(error) || 'Could not update the sign-up setting. Please try again.'
+      );
+    } finally {
+      setIsTogglingSignUp(false);
+    }
+  };
 
   // Filter users based on search query and role filter
   const filteredUsers = useMemo(() => {
@@ -873,6 +919,35 @@ export default function Users() {
           <Plus color="#01b4ae" size={22} />
         </TouchableOpacity>
       </Animated.View>
+
+      {/* Public Sign-Up toggle — controls whether the app allows new
+          self-registered (free) accounts. Off by default. */}
+      <View style={styles.signUpCard}>
+        <View style={styles.signUpIconContainer}>
+          <UserPlus color="#01b4ae" size={20} />
+        </View>
+        <View style={styles.signUpTextContainer}>
+          <Text style={styles.signUpTitle}>Public Sign-Up</Text>
+          <Text
+            style={[
+              styles.signUpSubtitle,
+              signUpEnabled ? styles.signUpSubtitleOn : styles.signUpSubtitleOff,
+            ]}
+          >
+            {signUpEnabled
+              ? 'On — anyone can create a free account from the app.'
+              : 'Off — no new sign-ups. Only existing users can sign in.'}
+          </Text>
+        </View>
+        <Switch
+          value={signUpEnabled}
+          onValueChange={handleToggleSignUp}
+          disabled={isTogglingSignUp}
+          trackColor={{ false: '#D1D5DB', true: '#01b4ae' }}
+          thumbColor="#FFFFFF"
+          ios_backgroundColor="#D1D5DB"
+        />
+      </View>
 
       {/* Search Bar */}
       <Animated.View style={[
@@ -1671,6 +1746,49 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 6,
     elevation: 5,
+  },
+  signUpCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 20,
+    marginTop: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 14,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 8,
+    elevation: 2,
+  },
+  signUpIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(1, 180, 174, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  signUpTextContainer: {
+    flex: 1,
+    marginRight: 12,
+  },
+  signUpTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  signUpSubtitle: {
+    fontSize: 12,
+    marginTop: 2,
+    lineHeight: 17,
+  },
+  signUpSubtitleOn: {
+    color: '#059669',
+  },
+  signUpSubtitleOff: {
+    color: '#6B7280',
   },
   searchContainer: {
     flexDirection: 'row',

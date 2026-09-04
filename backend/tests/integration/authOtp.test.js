@@ -25,6 +25,7 @@ jest.mock('../../utils/mailer', () => ({
 }));
 
 const { sendOtpMail, sendPasswordResetMail, EmailDeliveryError } = require('../../utils/mailer');
+const { setSignUpEnabled } = require('../../utils/appSettings');
 
 function buildAuthApp() {
   const app = express();
@@ -59,6 +60,9 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await db.clearDatabase();
+  // These tests exercise the signup OTP flow itself; the admin sign-up
+  // toggle (off by default) is covered separately in signupToggle.test.js.
+  await setSignUpEnabled(true);
   sendOtpMail.mockClear();
   sendPasswordResetMail.mockClear();
   sendOtpMail.mockResolvedValue(undefined);
