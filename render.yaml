@@ -1,78 +1,17 @@
+# Render Blueprint — defines ONLY the Public Quiz web frontend (static site).
+#
+# The production backend `eyeconic-app-prod` is intentionally NOT declared in
+# this file: it predates this blueprint and stays exactly as configured in
+# the Render dashboard (plan, health check, and environment variables are
+# all dashboard-managed). Render creates and manages only what this file
+# declares, so applying this blueprint cannot touch the backend in any way.
+# WEB_APP_URL is set manually on the backend once this site's URL is known —
+# see docs/PUBLIC_WEB_DEPLOY.md.
 services:
-  - type: web
-    name: eyeconic-app-prod
-    runtime: node
-    region: singapore
-    plan: starter
-    rootDir: backend
-    buildCommand: npm install
-    startCommand: npm start
-    healthCheckPath: /health
-    envVars:
-      - key: NODE_ENV
-        value: production
-      - key: ALLOWED_ORIGINS
-        value: https://eyeconicmentors.vercel.app
-      - key: JWT_SECRET
-        sync: false
-      - key: MONGODB_URI
-        sync: false
-      - key: RESEND_API_KEY
-        sync: false
-      - key: RESEND_FROM_EMAIL
-        sync: false
-      - key: SMTP_HOST
-        sync: false
-      - key: SMTP_PORT
-        sync: false
-      - key: SMTP_USER
-        sync: false
-      - key: SMTP_PASS
-        sync: false
-      - key: SMTP_FROM_NAME
-        sync: false
-      - key: SMTP_FROM_EMAIL
-        sync: false
-      - key: CLOUDINARY_CLOUD_NAME
-        sync: false
-      - key: CLOUDINARY_API_KEY
-        sync: false
-      - key: CLOUDINARY_API_SECRET
-        sync: false
-      # ---- Public quiz guest flow (see docs/MSG91_SETUP.md) ----
-      # Web origin for public quiz links (generated links point directly at
-      # it; legacy backend share URLs 302 here). MUST be set in the Render
-      # dashboard to the eyeconic-public-web static site's URL (copy it from
-      # the service page once created — Render may append a uniqueness suffix
-      # to the hostname). Falls back to the production web origin if unset —
-      # links ALWAYS open the web quiz, never the app.
-      # sync: false because fromService cannot read static-site hosts and the
-      # exact hostname is only knowable after creation.
-      - key: WEB_APP_URL
-        sync: false
-      # MSG91 SMS OTP (all three required for real SMS; without them phone
-      # OTP returns 503 SMS_NOT_CONFIGURED). DLT registration is mandatory.
-      - key: MSG91_AUTH_KEY
-        sync: false
-      - key: MSG91_TEMPLATE_ID
-        sync: false
-      - key: MSG91_SENDER_ID
-        sync: false
-      # HMAC secret for hashing guest OTPs at rest (falls back to JWT_SECRET).
-      - key: OTP_HASH_SECRET
-        sync: false
-      # Guest session token lifetime (default 4h).
-      - key: GUEST_JWT_EXPIRES_IN
-        value: 4h
-
-  # ---- Public Quiz web frontend + admin dashboard (Render Static Site) ----
-  # Hosts the Vite build of client/. This is where public quiz share links
-  # point (set WEB_APP_URL on the backend service to this site's URL).
-  # Also serves the admin dashboard at its own URL — the Vercel deployment
-  # is independent and unaffected.
   - type: web
     name: eyeconic-public-web
     runtime: static
+    region: singapore
     # No rootDir on purpose: with the build entered from the repo root,
     # staticPublishPath is unambiguous.
     buildCommand: cd client && npm ci && npm run build
@@ -89,7 +28,8 @@ services:
       - key: NODE_VERSION
         value: '22'
       # Build-time (public, non-secret) values baked into the bundle — same
-      # values as client/.env.production.
+      # values as client/.env.production. The backend URL appears here only
+      # as the API the frontend CALLS, not as a managed service.
       - key: VITE_API_URL
         value: https://eyeconic-app-prod-1r8o.onrender.com/api
       - key: VITE_SOCKET_URL

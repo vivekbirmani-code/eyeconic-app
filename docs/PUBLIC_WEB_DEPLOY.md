@@ -19,14 +19,21 @@ workflow (OTP flow, grading, expiry, results, analytics) is unchanged.
 
 ## 1. One-time setup (Render dashboard)
 
-The static site is declared in the repo-root `render.yaml` blueprint (service
-name `eyeconic-public-web`) next to the existing `eyeconic-app-prod` backend.
+The repo-root `render.yaml` blueprint declares **only** the
+`eyeconic-public-web` static site. The production backend `eyeconic-app-prod`
+is deliberately **not** part of the blueprint — Render manages only what the
+file declares, so applying it cannot change the backend's plan, health check,
+or environment variables. (The backend URL appears in the file solely as the
+`VITE_API_URL` value the frontend calls.)
 
 1. **Push the blueprint change to GitHub** (repo `main`).
-2. Render dashboard → your project → **Blueprint** → review the pending
-   changes (new static site `eyeconic-public-web`) → **Apply**.
-   - If your project does not sync the blueprint automatically, create the
-     site manually with the exact values from `render.yaml`:
+2. Render dashboard → **New Blueprint** (repo `main`, root `render.yaml`) →
+   review the pending changes. It must list ONLY:
+   - *Create static site `eyeconic-public-web`*
+   If the screen mentions associating or updating `eyeconic-app-prod` in any
+   way, STOP — that would mean a stale blueprint version; re-pull `main`.
+   - If you prefer not to use the blueprint at all, create the site manually
+     with the exact values from `render.yaml`:
      - **Type:** Static Site, **Branch:** main
      - **Build Command:** `cd client && npm ci && npm run build`
      - **Publish Directory:** `client/dist`
@@ -43,8 +50,8 @@ name `eyeconic-public-web`) next to the existing `eyeconic-app-prod` backend.
 4. **Backend service (`eyeconic-app-prod`) → Environment → `WEB_APP_URL`** —
    set it to that URL (a bare host is also accepted and served over https).
    Saving triggers a backend redeploy, which also picks up the latest code.
-   `WEB_APP_URL` is `sync: false` in the blueprint: Render hostnames are only
-   knowable after creation, so the value is intentionally dashboard-managed.
+   The backend is not blueprint-managed, so this (like every backend env
+   var) is set directly in the dashboard.
 
 Share links generated after this point (and the legacy `/api/public/share/:token`
 302) point at the Render static site. The backend boot log prints the resolved
