@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const mongoose = require('mongoose');
 const Quiz = require('../models/Quiz');
 const QuizAttempt = require('../models/QuizAttempt');
+const GuestAttempt = require('../models/GuestAttempt');
 const QuestionBank = require('../models/QuestionBank');
 const { auth, authorize } = require('../middleware/auth');
 const multer = require('multer');
@@ -45,7 +46,9 @@ const {
   MIN_INCORRECT_ATTEMPTS_FOR_RECURRING,
 } = require('../utils/questionHistory');
 const { assertStudentPerformanceAccess } = require('../utils/studentPerformanceAuth');
+const { buildAttemptResults } = require('../utils/attemptResults');
 const { buildStudentPerformanceResponse } = require('../utils/studentPerformance');
+const { fetchGuestParticipants, countGuestAttempts } = require('../utils/guestAnalytics');
 const {
   toIdString,
   deriveSectionsForQuestions,
@@ -1358,12 +1361,18 @@ router.get('/analytics/list', auth, authorize('admin', 'mentor'), async (req, re
         }
       }
 
+      // Admin-only separate guest count; attemptCount stays registered-only.
+      const guestAttemptCount = req.user.role === 'admin'
+        ? await countGuestAttempts(quiz._id)
+        : null;
+
       return {
         _id: quiz._id,
         title: quiz.title,
         testType: quiz.testType,
         assignedCount,
-        attemptCount
+        attemptCount,
+        ...(guestAttemptCount !== null ? { guestAttemptCount } : {})
       };
     }));
 
@@ -1589,7 +1598,9 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
       'Status',
       'Started At',
       'Completed At',
-      'Section Breakdown'
+      'Section Breakdown',
+      // Admin-only lead columns — mentors get the historical header/rows.
+      ...(req.user.role === 'admin' ? ['Participant Type', 'Phone', 'Phone Verified', 'Marketing Consent'] : [])
     ]));
 
     sorted.forEach((attempt, idx) => {
@@ -1634,9 +1645,57 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
         attempt.status || '',
         attempt.startTime ? new Date(attempt.startTime).toISOString() : '',
         attempt.endTime ? new Date(attempt.endTime).toISOString() : '',
-        sectionBreakdown
+        sectionBreakdown,
+        ...(req.user.role === 'admin' ? ['Registered', '', '', ''] : [])
       ]));
     });
+
+    // Public-quiz guests: appended AFTER the ranked registered rows with a
+    // blank rank — they never join the leaderboard. ADMIN ONLY (mentor CSVs
+    // stay byte-identical to the historical export). This is where the raw
+    // lead phone + consent land for follow-up.
+    if (req.user.role === 'admin') {
+      const guestRows = await fetchGuestParticipants(req.params.testId, { fullPhone: true });
+      guestRows.forEach((guest) => {
+        const timeSpentMinutes = roundTo2((guest.timeTakenSeconds || 0) / 60);
+        const sectionBreakdown = Array.isArray(guest.sectionPerformance) && guest.sectionPerformance.length > 0
+          ? guest.sectionPerformance.map((section) => {
+            const sectionName = section.sectionName || 'Section';
+            return `${sectionName} (C:${section.correct || 0}, W:${section.incorrect || 0}, S:${section.skipped || 0}, Acc:${roundTo2(section.accuracy || 0)}%)`;
+          }).join(' | ')
+          : '';
+
+        csvLines.push(toCsvRow([
+          '', // unranked
+          String(guest.attemptId),
+          guest.guestId ? String(guest.guestId) : '',
+          guest.name,
+          '', // guests have no student email
+          guest.correct,
+          guest.incorrect,
+          guest.skipped,
+          guest.attempted,
+          guest.accuracy,
+          guest.scorePercentage,
+          guest.score,
+          guest.totalQuestions,
+          guest.marksObtained,
+          roundTo2(guest.totalMarks || 0),
+          guest.scorePercentage,
+          '', // percentile — guests are unranked
+          timeSpentMinutes,
+          guest.tabSwitchCount,
+          guest.status || '',
+          guest.startedAt ? new Date(guest.startedAt).toISOString() : '',
+          guest.submittedAt ? new Date(guest.submittedAt).toISOString() : '',
+          sectionBreakdown,
+          'Guest',
+          guest.phone || '',
+          guest.phoneVerified ? 'Yes' : 'No',
+          guest.marketingConsent ? 'Yes' : 'No'
+        ]));
+      });
+    }
 
     csvLines.push('');
     csvLines.push(toCsvRow(['Question-wise Analytics']));
@@ -2096,13 +2155,21 @@ router.get('/analytics/:id', auth, authorize('admin', 'mentor'), async (req, res
 
     const attempts = await QuizAttempt.find(attemptQuery).populate('student', 'name email profilePicture');
 
+    // Public-quiz participants: separate unranked list, admins only. The
+    // legacy aggregates below stay registered-only for every caller.
+    const guestParticipants = req.user.role === 'admin'
+      ? await fetchGuestParticipants(quizId)
+      : null;
+    const guestParticipantsField = guestParticipants !== null ? { guestParticipants } : {};
+
     if (attempts.length === 0) {
       return res.json({
         totalAttempts: 0,
         averageScore: 0,
         avgCorrect: 0,
         avgTime: 0,
-        studentPerformance: []
+        studentPerformance: [],
+        ...guestParticipantsField
       });
     }
 
@@ -2137,7 +2204,8 @@ router.get('/analytics/:id', auth, authorize('admin', 'mentor'), async (req, res
       averageScore: totalScore / attempts.length,
       avgCorrect: totalCorrect / attempts.length,
       avgTime: totalTime / attempts.length,
-      studentPerformance
+      studentPerformance,
+      ...guestParticipantsField
     });
   } catch (error) {
     console.error('Quiz analytics detail error:', error);
@@ -2855,6 +2923,9 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
 });
 
 // Get results (after submission) - SECURITY HARDENED
+// The grouped-performance computation lives in utils/attemptResults.js so
+// the guest flow and the admin guest-attempt fallback reuse the exact same
+// contract registered users get.
 router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
   try {
     // groupBy controls how the performance rows are aggregated:
@@ -2863,12 +2934,10 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
     //   subject           -> question subject, merged across all sections
     //   topic             -> question topicName, merged across all sections
     //   tag               -> first question tag, merged across all sections
-    const ALLOWED_GROUP_BY = ['section', 'subject', 'topic', 'tag'];
     const requestedGroupBy = String(req.query.groupBy || '').toLowerCase().trim();
-    const groupBy = ALLOWED_GROUP_BY.includes(requestedGroupBy) ? requestedGroupBy : 'section';
 
     // Step 1: Populate quiz with questions (QuestionBank docs)
-    const attempt = await QuizAttempt.findById(req.params.attemptId)
+    let attempt = await QuizAttempt.findById(req.params.attemptId)
       .populate({
         path: 'quiz',
         populate: {
@@ -2877,6 +2946,49 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
         }
       })
       .populate('student', 'name email profilePicture');
+
+    // Guest-attempt fallback (public-quiz participants): ADMIN ONLY — the
+    // same grouped results registered attempts get, minus student history,
+    // with the lead info embedded for the admin detail view.
+    if (!attempt && req.user.role === 'admin') {
+      const guestAttempt = await GuestAttempt.findById(req.params.attemptId)
+        .populate({
+          path: 'quiz',
+          populate: { path: 'questions', model: 'QuestionBank' }
+        })
+        .populate('guest', 'name phone marketingConsent');
+
+      if (guestAttempt && guestAttempt.quiz && Array.isArray(guestAttempt.quiz.questions)) {
+        if (guestAttempt.status !== 'completed' && guestAttempt.status !== 'auto_submitted') {
+          return res.status(400).json({
+            message: 'Results are only available after the quiz has been submitted.',
+            errorCode: 'ATTEMPT_NOT_COMPLETED',
+          });
+        }
+
+        await QuestionBank.populate(guestAttempt.quiz.questions, { path: 'subject', select: 'name' });
+        const freshQuiz = await Quiz.findById(guestAttempt.quiz._id);
+        if (freshQuiz) {
+          const lead = guestAttempt.guest;
+          const guestResult = await buildAttemptResults({
+            attempt: guestAttempt,
+            quiz: freshQuiz,
+            groupBy: requestedGroupBy,
+            includeStudentHistory: false,
+            student: {
+              _id: lead?._id || guestAttempt.guest,
+              name: guestAttempt.guestName || lead?.name || 'Guest',
+              email: null,
+              phone: guestAttempt.guestPhone || lead?.phone || null,
+              phoneVerified: Boolean(lead),
+              marketingConsent: lead?.marketingConsent?.granted === true,
+            }
+          });
+
+          return res.json({ ...guestResult, participantType: 'guest' });
+        }
+      }
+    }
 
     if (!attempt) {
       return res.status(404).json({ message: 'Attempt not found' });
@@ -2900,325 +3012,18 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
       });
     }
 
-    // SECURITY CRITICAL: Fetch current shareSolution setting dynamically
-    // This ensures no cached responses can bypass solution hiding
+    // SECURITY CRITICAL: the fresh quiz document is the source of truth for
+    // shareSolution inside buildAttemptResults — no cached response can
+    // bypass solution hiding.
     const quiz = await Quiz.findById(attempt.quiz._id);
-    const shareSolution = quiz.shareSolution !== undefined ? quiz.shareSolution : true;
 
-    // Calculate grouped performance data.
-    // The groupBy dimension is honoured for every quiz shape: on sectioned
-    // quizzes "subject" merges questions of the same subject across sections;
-    // "section" on a quiz without sections falls back to subject grouping so
-    // flat quizzes keep a meaningful breakdown (historical behaviour).
-    const hasQuizSections = quiz.sections && quiz.sections.length > 0;
-    const effectiveGroupBy = groupBy === 'section' && !hasQuizSections ? 'subject' : groupBy;
-
-    // Group name for a question under the requested dimension. Null-subject
-    // questions follow the app's existing 'General' convention.
-    const groupNameForQuestion = (q) => {
-      if (effectiveGroupBy === 'subject') {
-        return q?.subject?.name || 'General';
-      }
-      if (effectiveGroupBy === 'tag') {
-        return (q?.tags && q.tags.length > 0) ? q.tags[0] : 'Untagged';
-      }
-      if (effectiveGroupBy === 'topic') {
-        return q?.topicName || 'General';
-      }
-      return 'General';
-    };
-
-    // Insertion-ordered so groups appear in first-seen question order while
-    // same-group questions (e.g. one subject spread over sections) accumulate
-    // into a single row — never double-counted, never duplicated.
-    const groupPerformance = new Map();
-
-    // Ordered traversal: section quizzes follow section order (matching how
-    // students saw them), flat quizzes follow the global question order.
-    const questionEntries = [];
-    if (hasQuizSections) {
-      // Pre-seed a row per section so empty sections still surface (historical
-      // behaviour); duplicate section names merge into a single row.
-      if (effectiveGroupBy === 'section') {
-        quiz.sections.forEach(section => {
-          if (!groupPerformance.has(section.name)) {
-            groupPerformance.set(section.name, {
-              sectionName: section.name,
-              correct: 0,
-              incorrect: 0,
-              skipped: 0,
-              timeSpent: 0
-            });
-          }
-        });
-      }
-      quiz.sections.forEach(section => {
-        section.questions.forEach((qId, sIdx) => {
-          const globalIndex = attempt.quiz.questions.findIndex(qd => qd._id.toString() === qId.toString());
-          if (globalIndex !== -1) {
-            questionEntries.push({
-              question: attempt.quiz.questions[globalIndex],
-              globalIndex,
-              sectionQuestionIndex: sIdx,
-              groupName: effectiveGroupBy === 'section' ? section.name : null
-            });
-          }
-        });
-      });
-    } else {
-      attempt.quiz.questions.forEach((q, index) => {
-        questionEntries.push({
-          question: q,
-          globalIndex: index,
-          sectionQuestionIndex: index,
-          groupName: null
-        });
-      });
-    }
-
-    const questionsWithAnswers = [];
-
-    questionEntries.forEach(({ question: q, globalIndex, sectionQuestionIndex, groupName }) => {
-      const name = groupName !== null && groupName !== undefined
-        ? groupName
-        : groupNameForQuestion(q);
-      const answer = attempt.answers.find(a => a.questionIndex === globalIndex);
-
-      // Classify with the same type-aware rules as the overall summary so the
-      // group rows always add up to summary.correct/incorrect/skipped.
-      const questionType = resolveQuestionType(answer, q);
-      const result = classifyAnswer(answer, questionType);
-
-      let group = groupPerformance.get(name);
-      if (!group) {
-        group = { sectionName: name, correct: 0, incorrect: 0, skipped: 0, timeSpent: 0 };
-        groupPerformance.set(name, group);
-      }
-
-      if (result.skipped) group.skipped += 1;
-      else if (result.correct) group.correct += 1;
-      else group.incorrect += 1;
-      if (answer) {
-        group.timeSpent += answer.timeSpent || 0;
-      }
-
-      // Build question data
-      const baseData = {
-        _id: q._id,
-        question: q.question,
-        questionImage: q.questionImage,
-        options: q.options,
-        optionImages: q.optionImages,
-        questionType: q.questionType,
-        assertion: q.assertion,
-        reason: q.reason,
-        columnA: q.columnA,
-        columnB: q.columnB,
-        marks: q.marks,
-        subject: q.subject,
-        topicName: q.topicName,
-        subtopicName: q.subtopicName,
-        system: q.system,
-        difficulty: q.difficulty,
-        tags: q.tags,
-        userAnswer: answer?.selectedAnswer,
-        isCorrect: answer?.isCorrect,
-        timeSpent: answer?.timeSpent,
-        markedForReview: answer?.markedForReview,
-        section: name,
-        sectionQuestionIndex,
-        globalIndex
-      };
-
-      if (shareSolution) {
-        baseData.correctAnswer = q.correctAnswer;
-        baseData.explanation = q.explanation;
-        baseData.explanationImage = q.explanationImage;
-      }
-
-      questionsWithAnswers.push(baseData);
+    const result = await buildAttemptResults({
+      attempt,
+      quiz,
+      groupBy: requestedGroupBy,
     });
 
-    // Calculate accuracy for each group (correct / attempted, skips excluded)
-    const sectionPerformanceArray = [...groupPerformance.values()].map(section => {
-      const attemptedInSection = section.correct + section.incorrect;
-      const accuracy = attemptedInSection > 0
-        ? Math.round((section.correct / attemptedInSection) * 100)
-        : 0;
-
-      return {
-        ...section,
-        accuracy,
-        total: section.correct + section.incorrect + section.skipped
-      };
-    });
-
-    const stats = computeAttemptStats(attempt, attempt.quiz.questions || []);
-    const markedForReviewCount = Array.isArray(attempt.answers)
-      ? attempt.answers.filter((answer) => answer.markedForReview).length
-      : 0;
-    const timeTakenSeconds = computeTimeTakenSeconds(attempt, attempt.quiz.questions || []);
-
-    const questionIds = questionsWithAnswers
-      .map((question) => question._id)
-      .filter(Boolean);
-
-    const historyMap = await aggregateQuestionHistoryForStudent(
-      attempt.student._id,
-      questionIds,
-      { excludeAttemptId: attempt._id }
-    );
-
-    const questionPerformance = questionsWithAnswers.map((question) => {
-      const history = historyMap.get(String(question._id)) || {
-        questionId: String(question._id),
-        totalAttempts: 0,
-        correctAttempts: 0,
-        incorrectAttempts: 0,
-        skippedAttempts: 0,
-        previousIncorrectAttempts: 0,
-      };
-
-      const answered = isAnswerRecorded(question.userAnswer);
-      let status = 'unattempted';
-      if (answered) {
-        status = question.isCorrect ? 'correct' : 'incorrect';
-      }
-
-      return {
-        questionId: String(question._id),
-        questionIndex: question.globalIndex,
-        section: question.section,
-        status,
-        isCorrect: question.isCorrect === true,
-        markedForReview: question.markedForReview === true,
-        timeSpent: question.timeSpent || 0,
-        history,
-      };
-    });
-
-    const wrongQuestions = questionsWithAnswers
-      .filter((question) => {
-        const answered = isAnswerRecorded(question.userAnswer);
-        return answered && question.isCorrect === false;
-      })
-      .map((question) => {
-        const history = historyMap.get(String(question._id)) || {
-          totalAttempts: 0,
-          correctAttempts: 0,
-          incorrectAttempts: 0,
-          skippedAttempts: 0,
-          previousIncorrectAttempts: 0,
-        };
-
-        const selected = formatAnswerForDisplay(
-          question.questionType,
-          question.userAnswer,
-          question.options,
-          question.columnA,
-          question.columnB
-        );
-
-        const correct = shareSolution
-          ? formatAnswerForDisplay(
-            question.questionType,
-            question.correctAnswer,
-            question.options,
-            question.columnA,
-            question.columnB
-          )
-          : null;
-
-        return {
-          questionId: String(question._id),
-          questionIndex: question.globalIndex,
-          displayNumber: (question.globalIndex ?? 0) + 1,
-          question: question.question,
-          questionImage: question.questionImage,
-          questionType: question.questionType,
-          section: question.section,
-          topicName: question.topicName,
-          subjectName: question.subject?.name || question.metadataSnapshot?.subjectName || null,
-          selectedAnswer: question.userAnswer,
-          selectedAnswerLabel: selected.label,
-          selectedAnswerText: selected.text,
-          correctAnswer: shareSolution ? question.correctAnswer : undefined,
-          correctAnswerLabel: correct?.label,
-          correctAnswerText: correct?.text,
-          explanation: shareSolution ? question.explanation : undefined,
-          explanationImage: shareSolution ? question.explanationImage : undefined,
-          timeSpent: question.timeSpent || 0,
-          history: {
-            ...history,
-            previousIncorrectAttempts: history.previousIncorrectAttempts || history.incorrectAttempts || 0,
-          },
-        };
-      });
-
-    const frequentlyMissedQuestions = await getFrequentlyMissedQuestions(
-      attempt.student._id,
-      {
-        minIncorrectAttempts: 2,
-        limit: 15,
-        excludeAttemptId: attempt._id,
-      }
-    );
-
-    const hasSectionData = sectionPerformanceArray.length > 0
-      && !(sectionPerformanceArray.length === 1 && sectionPerformanceArray[0].sectionName === 'General');
-
-    res.json({
-      summary: {
-        correct: stats.correct,
-        incorrect: stats.incorrect,
-        skipped: stats.skipped,
-        attempted: stats.attempted,
-        totalQuestions: stats.totalQuestions,
-        marksObtained: roundTo2(stats.marksObtained),
-        totalMarks: stats.totalMarks,
-        scorePercentage: stats.scorePercentage,
-        accuracy: stats.accuracy,
-        markedForReviewCount,
-        timeTakenSeconds,
-      },
-      attempt: {
-        _id: attempt._id,
-        status: attempt.status,
-        startTime: attempt.startTime,
-        endTime: attempt.endTime,
-        score: attempt.score,
-        totalQuestions: attempt.totalQuestions,
-        marksObtained: roundTo2(attempt.marksObtained),
-        totalMarks: attempt.totalMarks,
-        sectionPerformance: sectionPerformanceArray,
-        tabSwitchCount: attempt.tabSwitchCount,
-        retestRequested: attempt.retestRequested || false,
-        retestApproved: attempt.retestApproved || false,
-        canRequestRetest: !attempt.retestRequested && !attempt.retestApproved,
-      },
-      quiz: {
-        _id: attempt.quiz._id,
-        title: attempt.quiz.title,
-        subject: attempt.quiz.subject,
-        subjectNames: (() => {
-          const names = [...new Set(
-            (attempt.quiz.questions || [])
-              .map(qu => qu.subject?.name)
-              .filter(Boolean)
-          )];
-          return names.length > 0 ? names : (attempt.quiz.subject?.name ? [attempt.quiz.subject.name] : []);
-        })(),
-        testType: attempt.quiz.testType,
-        shareSolution
-      },
-      student: attempt.student,
-      questions: questionsWithAnswers,
-      questionPerformance,
-      wrongQuestions,
-      frequentlyMissedQuestions,
-      hasSectionData,
-      groupBy
-    });
+    res.json(result);
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error' });
@@ -3385,12 +3190,20 @@ router.get('/analytics/tests/list', auth, authorize('admin', 'mentor'), async (r
 
         const attemptCount = await QuizAttempt.countDocuments(attemptQuery);
 
+        // Public-quiz guest attempts are surfaced to ADMINS ONLY, as a
+        // separate count — attemptCount keeps its registered-only meaning
+        // and mentor responses are unchanged.
+        const guestAttemptCount = req.user.role === 'admin'
+          ? await countGuestAttempts(test._id)
+          : null;
+
         return {
           _id: test._id,
           title: test.title,
           testType: test.testType,
           assignedCount: assignedCount,
           attemptCount,
+          ...(guestAttemptCount !== null ? { guestAttemptCount } : {}),
           totalMarks: test.totalMarks,
           createdAt: test.createdAt
         };
@@ -3451,6 +3264,13 @@ router.get('/analytics/test/:testId', auth, authorize('admin', 'mentor'), async 
     const scoreDistribution = computeScoreDistribution(attempts);
     const studentPerformance = rankStudentAttempts(attempts, quiz.questions);
 
+    // Public-quiz participants: a SEPARATE, unranked list for admins only.
+    // Guests never join studentPerformance/rankings/aggregates; mentors get
+    // an unchanged response.
+    const guestParticipants = req.user.role === 'admin'
+      ? await fetchGuestParticipants(req.params.testId)
+      : null;
+
     res.json({
       test: {
         _id: quiz._id,
@@ -3466,7 +3286,8 @@ router.get('/analytics/test/:testId', auth, authorize('admin', 'mentor'), async 
       easiestQuestion: easiest,
       hardestQuestion: hardest,
       scoreDistribution,
-      studentPerformance
+      studentPerformance,
+      ...(guestParticipants !== null ? { guestParticipants } : {})
     });
   } catch (error) {
     console.error('Get test analytics error:', error);
@@ -3731,7 +3552,13 @@ router.get('/:id/share-status', auth, authorize('admin'), async (req, res) => {
     res.json({
       isPublic: quiz.isPublic,
       shareToken: quiz.shareToken,
-      shareUrl: quiz.shareToken ? `mentorship://quiz/${quiz.shareToken}` : null,
+      // Same share URL generate-share-link produces — the backend /share
+      // endpoint (which 302s to the web quiz, or the legacy interstitial
+      // when WEB_APP_URL is unset). The old raw mentorship:// scheme URL
+      // stranded browser users and is never handed out anymore.
+      shareUrl: quiz.shareToken
+        ? `${req.protocol}://${req.get('host')}/api/public/share/${quiz.shareToken}`
+        : null,
       publicExpiryDate: quiz.publicExpiryDate,
       isExpired: quiz.publicExpiryDate ? new Date() > quiz.publicExpiryDate : false
     });
@@ -3744,7 +3571,32 @@ router.get('/:id/share-status', auth, authorize('admin'), async (req, res) => {
 // Get attempt details by ID (used for retrieving quizId)
 router.get('/attempt/:id', auth, async (req, res) => {
   try {
-    const attempt = await QuizAttempt.findById(req.params.id).populate('quiz', 'createdBy assignedMentors');
+    let attempt = await QuizAttempt.findById(req.params.id).populate('quiz', 'createdBy assignedMentors');
+
+    // Guest-attempt fallback (public-quiz participants): ADMIN ONLY.
+    // Mentors/students get a bare 404 — guest leads are admin-privileged.
+    if (!attempt && req.user.role === 'admin') {
+      const guestAttempt = await GuestAttempt.findById(req.params.id)
+        .populate('quiz', '_id title')
+        .populate('guest', 'name phone marketingConsent');
+
+      if (guestAttempt) {
+        const lead = guestAttempt.guest;
+        const payload = guestAttempt.toObject();
+        payload.quiz = guestAttempt.quiz?._id || guestAttempt.quiz;
+        payload.student = {
+          _id: lead?._id || guestAttempt.guest,
+          name: guestAttempt.guestName || lead?.name || 'Guest',
+          email: null,
+          phone: guestAttempt.guestPhone || lead?.phone || null,
+          phoneVerified: Boolean(lead),
+          marketingConsent: lead?.marketingConsent?.granted === true,
+        };
+        payload.participantType = 'guest';
+        return res.json({ ...payload, serverNow: new Date().toISOString() });
+      }
+    }
+
     if (!attempt) {
       return res.status(404).json({ message: 'Attempt not found' });
     }

@@ -122,4 +122,5 @@ module.exports = {
   otpVerifyRateLimit,
   recordVerifyFailure,
   clearVerifyAttempts,
+  getClientIp,
 };

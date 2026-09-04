@@ -3,8 +3,13 @@ const crypto = require('crypto');
 const Quiz = require('../models/Quiz');
 const QuestionBank = require('../models/QuestionBank');
 const GuestAttempt = require('../models/GuestAttempt');
+const Guest = require('../models/Guest');
 const { gradeQuestion } = require('../utils/grading');
 const { buildMetadataSnapshot } = require('../utils/questionSnapshot');
+const { guestAuth, optionalGuestAuth } = require('../middleware/guestAuth');
+const { maskPhone } = require('../utils/phone');
+const { findActivePublicQuiz, sendPublicQuizError } = require('../utils/publicQuizAccess');
+const { buildAttemptResults } = require('../utils/attemptResults');
 const {
     isSectionLockEnforced,
     resolveQuizSections,
@@ -77,6 +82,14 @@ const mergeClosingSectionGuestAnswers = (attempt, clientAnswers, closingIndex) =
 // Grades the attempt's STORED answers and atomically finalizes it (CAS on
 // status:'in_progress' — hardening over the previous plain save). Guest
 // semantics preserved: no notifications and no results are returned.
+//
+// Grading is aligned with finalizeQuizAttempt in routes/quizzes.js: the
+// quiz-level positiveMarks/negativeMarks scheme applies (previously guests
+// earned question.marks||1 per correct answer with no negative marking,
+// which made guest percentages incomparable with their totalMarks — an
+// all-correct guest capped at 25% on a default 4/−1 quiz), and
+// sectionPerformance (subject-name grouped) is computed and stored like
+// registered attempts.
 const gradeAndFinalizeGuestAttempt = async (attempt, { isAutoSubmit = false, sectionStates = null } = {}) => {
     const quiz = await Quiz.findById(attempt.quiz).populate({
         path: 'questions',
@@ -85,28 +98,57 @@ const gradeAndFinalizeGuestAttempt = async (attempt, { isAutoSubmit = false, sec
     });
     if (!quiz) return attempt;
 
+    const positiveMarks = quiz.positiveMarks !== undefined ? quiz.positiveMarks : 4;
+    const negativeMarks = quiz.negativeMarks !== undefined ? Math.abs(quiz.negativeMarks) : 1;
+
     let score = 0;
     let marksObtained = 0;
+    const sectionPerformance = {};
 
     const gradedAnswers = quiz.questions.map((question, index) => {
         const stored = (attempt.answers || []).find(a => a && a.questionIndex === index);
         const selectedAnswer = stored ? stored.selectedAnswer : -1;
         const { answered, isCorrect } = gradeQuestion(question, selectedAnswer);
-        const marks = question?.marks || 1;
 
-        if (isCorrect) {
+        const section = question?.subject?.name || question?.topicName || 'General';
+        if (!sectionPerformance[section]) {
+            sectionPerformance[section] = { sectionName: section, correct: 0, incorrect: 0, skipped: 0, timeSpent: 0 };
+        }
+
+        let finalIsCorrect = false;
+        if (!answered) {
+            sectionPerformance[section].skipped++;
+        } else if (isCorrect) {
             score++;
-            marksObtained += marks;
+            marksObtained += positiveMarks;
+            sectionPerformance[section].correct++;
+            finalIsCorrect = true;
+        } else {
+            marksObtained -= negativeMarks;
+            sectionPerformance[section].incorrect++;
+        }
+        if (stored && stored.timeSpent) {
+            sectionPerformance[section].timeSpent += stored.timeSpent;
         }
 
         return {
             questionIndex: index,
             questionId: question._id,
             selectedAnswer,
-            isCorrect: answered ? isCorrect : false,
+            isCorrect: finalIsCorrect,
             markedForReview: !!(stored && stored.markedForReview),
             timeSpent: (stored && stored.timeSpent) || 0,
             metadataSnapshot: buildMetadataSnapshot(question)
+        };
+    });
+
+    marksObtained = Math.round((marksObtained + Number.EPSILON) * 100) / 100;
+
+    const sectionPerformanceArray = Object.values(sectionPerformance).map(section => {
+        const attemptedInSection = section.correct + section.incorrect;
+        return {
+            ...section,
+            accuracy: attemptedInSection > 0 ? Math.round((section.correct / attemptedInSection) * 100) : 0,
         };
     });
 
@@ -114,6 +156,7 @@ const gradeAndFinalizeGuestAttempt = async (attempt, { isAutoSubmit = false, sec
         answers: gradedAnswers,
         score,
         marksObtained,
+        sectionPerformance: sectionPerformanceArray,
         status: isAutoSubmit ? 'auto_submitted' : 'completed',
         endTime: new Date()
     };
@@ -131,16 +174,58 @@ const gradeAndFinalizeGuestAttempt = async (attempt, { isAutoSubmit = false, sec
     return existing || attempt;
 };
 
+// Ownership-aware attempt lookup. With a verified guest token the attempt
+// must belong to the token's lead — either created under it, or a legacy
+// device-keyed attempt that has no lead yet (token expiry mid-quiz must not
+// strand an attempt created on the same device). Without a token (legacy
+// mobile flow) the device guestId alone owns the attempt, exactly as before.
+const findOwnedGuestAttempt = (attemptId, quizId, guestId, guest) => {
+    const quizClause = quizId ? { quiz: quizId } : {};
+    if (guest) {
+        return GuestAttempt.findOne({
+            _id: attemptId,
+            ...quizClause,
+            $or: [{ guest: guest._id }, { guestId, guest: null }],
+        });
+    }
+    return GuestAttempt.findOne({ _id: attemptId, ...quizClause, guestId });
+};
+
 // ============ PUBLIC ROUTES (No Authentication Required) ============
 
 /**
  * GET /api/public/share/:shareToken
- * HTML Redirect page for deep linking (clickable in WhatsApp etc.)
+ * Entry point for shared public links (clickable in WhatsApp etc.).
+ *
+ * With a web app URL configured, 302-redirects straight to the browser quiz
+ * (client/ public pages) — no app install required. Links whose quiz is
+ * missing or revoked redirect with ?invalid=1 so the web page can render a
+ * clear error state; the page re-validates via the API, which stays the
+ * authority for not-started/expired windows.
+ *
+ * Resolution order:
+ *   1. WEB_APP_URL env var (explicit; production MUST set this)
+ *   2. development fallback: http://localhost:5173 (the client dev server —
+ *      zero-config local testing)
+ *   3. production with WEB_APP_URL unset: legacy app-redirect interstitial
+ *      unchanged — the rollout/rollback switch for this feature.
  */
+const DEV_WEB_APP_URL = 'http://localhost:5173';
+
 router.get('/share/:shareToken', async (req, res) => {
     try {
         const { shareToken } = req.params;
         const deepLink = `mentorship://quiz/${shareToken}`;
+
+        const webAppUrl = process.env.WEB_APP_URL?.trim().replace(/\/+$/, '')
+            || (process.env.NODE_ENV === 'production' ? '' : DEV_WEB_APP_URL);
+        if (webAppUrl) {
+            const quiz = await Quiz.findOne({ shareToken, isPublic: true, isActive: true }).select('_id');
+            const target = quiz
+                ? `${webAppUrl}/public-quiz/${shareToken}`
+                : `${webAppUrl}/public-quiz/${shareToken}?invalid=1`;
+            return res.redirect(302, target);
+        }
 
         // Simple HTML to handle redirect
         const html = `
@@ -252,9 +337,12 @@ router.get('/quiz/:shareToken', async (req, res) => {
 
 /**
  * POST /api/public/quiz/:shareToken/start
- * Start a guest quiz attempt
+ * Start a guest quiz attempt. With a verified guest token (web OTP flow)
+ * the attempt is stamped with the lead ref + name/phone snapshot and can be
+ * resumed from any device tied to that lead; without one (legacy mobile
+ * flow) the device guestId behaves exactly as before.
  */
-router.post('/quiz/:shareToken/start', async (req, res) => {
+router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
     try {
         const { shareToken } = req.params;
         const { guestId, deviceInfo } = req.body;
@@ -266,49 +354,36 @@ router.post('/quiz/:shareToken/start', async (req, res) => {
             });
         }
 
-        const quiz = await Quiz.findOne({
-            shareToken,
-            isPublic: true,
-            isActive: true
-        }).populate({
-            path: 'questions',
-            select: 'question options optionImages questionImage marks subject questionType assertion reason columnA columnB',
+        const access = await findActivePublicQuiz(shareToken, {
             populate: {
-                path: 'subject',
-                select: 'name'
+                path: 'questions',
+                select: 'question options optionImages questionImage marks subject questionType assertion reason columnA columnB',
+                populate: {
+                    path: 'subject',
+                    select: 'name'
+                }
             }
         });
-
-        if (!quiz) {
-            return res.status(404).json({
-                success: false,
-                message: 'Quiz not found or link has expired'
-            });
+        if (access.error) {
+            return sendPublicQuizError(res, access.error);
         }
+        const quiz = access.quiz;
 
-        // Enforce time window
-        const now = new Date();
-        if (quiz.scheduledDate && now < quiz.scheduledDate) {
-            return res.status(403).json({ success: false, message: 'This quiz has not started yet. It opens on ' + quiz.scheduledDate.toLocaleString(), scheduledDate: quiz.scheduledDate });
-        }
-        if (quiz.expiryDate && now > quiz.expiryDate) {
-            return res.status(403).json({ success: false, message: 'This quiz has expired. It closed on ' + quiz.expiryDate.toLocaleString(), expiryDate: quiz.expiryDate });
-        }
-
-        // Check if public link has expired
-        if (quiz.publicExpiryDate && new Date() > quiz.publicExpiryDate) {
-            return res.status(410).json({
-                success: false,
-                message: 'This quiz link has expired'
-            });
-        }
-
-        // Check for existing in-progress attempt
+        // Check for existing in-progress attempt — same device first, then
+        // (OTP flow) any device under the verified lead.
         let attempt = await GuestAttempt.findOne({
             quiz: quiz._id,
             guestId,
             status: 'in_progress'
         });
+
+        if (!attempt && req.guest) {
+            attempt = await GuestAttempt.findOne({
+                quiz: quiz._id,
+                guest: req.guest._id,
+                status: 'in_progress'
+            });
+        }
 
         if (attempt) {
             // Resume existing attempt. For section-locked attempts, lazily
@@ -365,14 +440,17 @@ router.post('/quiz/:shareToken/start', async (req, res) => {
                 });
             }
 
-            // Resume existing attempt
+            // Resume existing attempt (flat / non-locked)
             return res.json({
                 success: true,
                 message: 'Resuming existing attempt',
                 attempt: {
                     _id: attempt._id,
                     startTime: attempt.startTime,
-                    answers: attempt.answers
+                    answers: attempt.answers,
+                    // Client-side timers are computed against the server
+                    // clock so device clock skew cannot extend/shrink them.
+                    serverNow: new Date().toISOString()
                 },
                 quiz: {
                     _id: quiz._id,
@@ -398,12 +476,16 @@ router.post('/quiz/:shareToken/start', async (req, res) => {
         }
 
         // Create new attempt. Section-locking snapshot is frozen here (same
-        // helper + shapes as authenticated attempts).
+        // helper + shapes as authenticated attempts). OTP-flow attempts are
+        // stamped with the lead ref + immutable name/phone snapshot.
         const sectionSnapshot = buildSectionSnapshot(quiz, new Date());
         attempt = new GuestAttempt({
             quiz: quiz._id,
             guestId,
             deviceInfo,
+            guest: req.guest ? req.guest._id : null,
+            guestName: req.guest ? req.guest.name : null,
+            guestPhone: req.guest ? req.guest.phone : null,
             totalQuestions: quiz.questions.length,
             totalMarks: quiz.totalMarks,
             ...(sectionSnapshot.sectionLockEnabled ? sectionSnapshot : {}),
@@ -419,18 +501,34 @@ router.post('/quiz/:shareToken/start', async (req, res) => {
 
         await attempt.save();
 
+        if (req.guest) {
+            await Guest.updateOne(
+                { _id: req.guest._id },
+                { $set: { lastActiveAt: new Date() }, $addToSet: { quizzesTaken: quiz._id } }
+            );
+        }
+
         res.status(201).json({
             success: true,
             message: 'Quiz started',
+            ...(req.guest ? {
+                lead: {
+                    _id: req.guest._id,
+                    name: req.guest.name,
+                    phoneMasked: maskPhone(req.guest.phone)
+                }
+            } : {}),
             attempt: {
                 _id: attempt._id,
                 startTime: attempt.startTime,
                 answers: attempt.answers,
+                // Server clock reference for ALL quiz shapes (flat timers
+                // need it too — see the resume path above).
+                serverNow: new Date().toISOString(),
                 ...(attempt.sectionLockEnabled ? {
                     sectionLockEnabled: true,
                     sectionDefinitions: attempt.sectionDefinitions,
-                    sectionStates: attempt.sectionStates,
-                    serverNow: new Date().toISOString()
+                    sectionStates: attempt.sectionStates
                 } : {})
             },
             quiz: {
@@ -464,7 +562,7 @@ router.post('/quiz/:shareToken/start', async (req, res) => {
  * POST /api/public/quiz/:shareToken/submit
  * Submit a guest quiz attempt
  */
-router.post('/quiz/:shareToken/submit', async (req, res) => {
+router.post('/quiz/:shareToken/submit', optionalGuestAuth, async (req, res) => {
     try {
         const { shareToken } = req.params;
         const { guestId, attemptId, answers, tabSwitchCount, tabSwitchLog } = req.body;
@@ -476,27 +574,19 @@ router.post('/quiz/:shareToken/submit', async (req, res) => {
             });
         }
 
-        const quiz = await Quiz.findOne({
-            shareToken,
-            isPublic: true
-        }).populate({
-            path: 'questions',
-            select: 'correctAnswer marks questionType topicName subtopicName system tags difficulty subject',
-            populate: { path: 'subject', select: 'name' }
+        const access = await findActivePublicQuiz(shareToken, {
+            populate: {
+                path: 'questions',
+                select: 'correctAnswer marks questionType topicName subtopicName system tags difficulty subject',
+                populate: { path: 'subject', select: 'name' }
+            }
         });
-
-        if (!quiz) {
-            return res.status(404).json({
-                success: false,
-                message: 'Quiz not found'
-            });
+        if (access.error) {
+            return sendPublicQuizError(res, access.error);
         }
+        const quiz = access.quiz;
 
-        const attempt = await GuestAttempt.findOne({
-            _id: attemptId,
-            quiz: quiz._id,
-            guestId
-        });
+        const attempt = await findOwnedGuestAttempt(attemptId, quiz._id, guestId, req.guest);
 
         if (!attempt) {
             return res.status(404).json({
@@ -527,11 +617,13 @@ router.post('/quiz/:shareToken/submit', async (req, res) => {
         // Section-locking defensive path: never offered by the UI, but old
         // clients / crafted requests may hit it. Lazily apply expiries, then
         // only answers for still-open sections are accepted — submitted
-        // sections keep their persisted values.
+        // sections keep their persisted values. Post-ownership queries key
+        // on the ATTEMPT's own guestId (cross-device resume via the lead may
+        // send a different device UUID than the one that created it).
         if (isSectionLockEnforced(attempt)) {
             const synced = await syncExpiredSections(GuestAttempt, {
                 _id: attempt._id,
-                guestId,
+                guestId: attempt.guestId,
                 quiz: quiz._id,
             }, { finalize: gradeAndFinalizeGuestAttempt });
 
@@ -562,9 +654,16 @@ router.post('/quiz/:shareToken/submit', async (req, res) => {
         }
 
         // Calculate score. Server-side grading is the only source of truth —
-        // client-submitted isCorrect/metadataSnapshot values are never trusted.
+        // client-submitted isCorrect/metadataSnapshot values are never
+        // trusted. Marking scheme matches finalizeQuizAttempt (registered
+        // users): +positiveMarks correct, −|negativeMarks| incorrect, and
+        // sectionPerformance (subject grouped) is computed and stored.
+        const positiveMarks = quiz.positiveMarks !== undefined ? quiz.positiveMarks : 4;
+        const negativeMarks = quiz.negativeMarks !== undefined ? Math.abs(quiz.negativeMarks) : 1;
+
         let score = 0;
         let marksObtained = 0;
+        const sectionPerformance = {};
 
         const clientAnswers = Array.isArray(answers) ? answers : [];
 
@@ -572,21 +671,46 @@ router.post('/quiz/:shareToken/submit', async (req, res) => {
             const clientAnswer = clientAnswers.find(a => a && a.questionIndex === index) || clientAnswers[index];
             const selectedAnswer = clientAnswer ? clientAnswer.selectedAnswer : -1;
             const { answered, isCorrect } = gradeQuestion(question, selectedAnswer);
-            const marks = question?.marks || 1;
 
-            if (isCorrect) {
+            const section = question?.subject?.name || question?.topicName || 'General';
+            if (!sectionPerformance[section]) {
+                sectionPerformance[section] = { sectionName: section, correct: 0, incorrect: 0, skipped: 0, timeSpent: 0 };
+            }
+
+            let finalIsCorrect = false;
+            if (!answered) {
+                sectionPerformance[section].skipped++;
+            } else if (isCorrect) {
                 score++;
-                marksObtained += marks;
+                marksObtained += positiveMarks;
+                sectionPerformance[section].correct++;
+                finalIsCorrect = true;
+            } else {
+                marksObtained -= negativeMarks;
+                sectionPerformance[section].incorrect++;
+            }
+            if (clientAnswer && clientAnswer.timeSpent) {
+                sectionPerformance[section].timeSpent += clientAnswer.timeSpent;
             }
 
             return {
                 questionIndex: index,
                 questionId: question._id,
                 selectedAnswer,
-                isCorrect: answered ? isCorrect : false,
+                isCorrect: finalIsCorrect,
                 markedForReview: !!(clientAnswer && clientAnswer.markedForReview),
                 timeSpent: (clientAnswer && clientAnswer.timeSpent) || 0,
                 metadataSnapshot: buildMetadataSnapshot(question)
+            };
+        });
+
+        marksObtained = Math.round((marksObtained + Number.EPSILON) * 100) / 100;
+
+        const sectionPerformanceArray = Object.values(sectionPerformance).map(section => {
+            const attemptedInSection = section.correct + section.incorrect;
+            return {
+                ...section,
+                accuracy: attemptedInSection > 0 ? Math.round((section.correct / attemptedInSection) * 100) : 0,
             };
         });
 
@@ -594,12 +718,20 @@ router.post('/quiz/:shareToken/submit', async (req, res) => {
         attempt.answers = gradedAnswers;
         attempt.score = score;
         attempt.marksObtained = marksObtained;
+        attempt.sectionPerformance = sectionPerformanceArray;
         attempt.status = 'completed';
         attempt.endTime = new Date();
         attempt.tabSwitchCount = tabSwitchCount || 0;
         attempt.tabSwitchLog = tabSwitchLog || [];
 
         await attempt.save();
+
+        if (req.guest) {
+            await Guest.updateOne(
+                { _id: req.guest._id },
+                { $set: { lastActiveAt: new Date() } }
+            );
+        }
 
         // Return success but NOT the actual results (guest must sign in to see results)
         res.json({
@@ -623,7 +755,7 @@ router.post('/quiz/:shareToken/submit', async (req, res) => {
  * an atomic CAS, merges the section's final answers, opens the next section
  * or finalizes the attempt. Idempotent for double clicks / replays / races.
  */
-router.post('/quiz/:shareToken/sections/:sectionIndex/submit', async (req, res) => {
+router.post('/quiz/:shareToken/sections/:sectionIndex/submit', optionalGuestAuth, async (req, res) => {
     try {
         const { shareToken } = req.params;
         const sectionIndex = Number(req.params.sectionIndex);
@@ -641,11 +773,7 @@ router.post('/quiz/:shareToken/sections/:sectionIndex/submit', async (req, res) 
             return res.status(404).json({ success: false, message: 'Quiz not found' });
         }
 
-        const attempt = await GuestAttempt.findOne({
-            _id: attemptId,
-            quiz: quiz._id,
-            guestId
-        });
+        const attempt = await findOwnedGuestAttempt(attemptId, quiz._id, guestId, req.guest);
 
         if (!attempt) {
             return res.status(404).json({ success: false, message: 'Attempt not found' });
@@ -670,10 +798,11 @@ router.post('/quiz/:shareToken/sections/:sectionIndex/submit', async (req, res) 
         }
 
         // Lazily apply sections that expired while the guest was away —
-        // this may itself finalize the attempt.
+        // this may itself finalize the attempt. Keyed on the attempt's own
+        // guestId (cross-device resume may carry a different device UUID).
         const synced = await syncExpiredSections(GuestAttempt, {
             _id: attempt._id,
-            guestId,
+            guestId: attempt.guestId,
             quiz: quiz._id,
         }, { finalize: gradeAndFinalizeGuestAttempt });
 
@@ -747,7 +876,7 @@ router.post('/quiz/:shareToken/sections/:sectionIndex/submit', async (req, res) 
         const updated = await GuestAttempt.findOneAndUpdate(
             {
                 _id: current._id,
-                guestId,
+                guestId: current.guestId,
                 status: 'in_progress',
                 [`sectionStates.${sectionIndex}.status`]: 'in_progress',
                 ...(targetState?.startedAt ? { [`sectionStates.${sectionIndex}.startedAt`]: targetState.startedAt } : {}),
@@ -762,7 +891,7 @@ router.post('/quiz/:shareToken/sections/:sectionIndex/submit', async (req, res) 
         );
 
         if (!updated) {
-            const reread = await GuestAttempt.findOne({ _id: current._id, guestId });
+            const reread = await GuestAttempt.findOne({ _id: current._id, guestId: current.guestId });
             if (!reread) {
                 return res.status(404).json({ success: false, message: 'Attempt not found' });
             }
@@ -818,7 +947,7 @@ router.post('/quiz/:shareToken/sections/:sectionIndex/submit', async (req, res) 
  * POST /api/public/quiz/:shareToken/save-progress
  * Save quiz progress for guest (auto-save)
  */
-router.post('/quiz/:shareToken/save-progress', async (req, res) => {
+router.post('/quiz/:shareToken/save-progress', optionalGuestAuth, async (req, res) => {
     try {
         const { shareToken } = req.params;
         const { guestId, attemptId, answers, tabSwitchCount, tabSwitchLog } = req.body;
@@ -830,11 +959,9 @@ router.post('/quiz/:shareToken/save-progress', async (req, res) => {
             });
         }
 
-        const attempt = await GuestAttempt.findOne({
-            _id: attemptId,
-            guestId,
-            status: 'in_progress'
-        });
+        // Historical behavior: save-progress never filtered by quiz — kept.
+        const attempt = await findOwnedGuestAttempt(attemptId, null, guestId, req.guest)
+            .then(doc => (doc && doc.status === 'in_progress') ? doc : null);
 
         if (!attempt) {
             return res.status(404).json({
@@ -855,7 +982,7 @@ router.post('/quiz/:shareToken/save-progress', async (req, res) => {
 
             const synced = await syncExpiredSections(GuestAttempt, {
                 _id: attempt._id,
-                guestId,
+                guestId: attempt.guestId,
                 quiz: quiz._id,
             }, { finalize: gradeAndFinalizeGuestAttempt });
 
@@ -909,6 +1036,77 @@ router.post('/quiz/:shareToken/save-progress', async (req, res) => {
         });
     } catch (error) {
         console.error('Error saving guest progress:', error);
+        res.status(500).json({ success: false, message: 'Server error' });
+    }
+});
+
+/**
+ * GET /api/public/quiz/:shareToken/attempt/:attemptId/result
+ * The guest's own result — score summary (correct/incorrect/skipped, marks,
+ * percentage, accuracy, time, grouped performance). Detailed solutions are
+ * included only when the quiz's live shareSolution setting allows it — the
+ * same gate registered users get. Scoped to the token's lead; any mismatch
+ * returns a bare 404 so attempts of other guests cannot be probed.
+ */
+router.get('/quiz/:shareToken/attempt/:attemptId/result', guestAuth, async (req, res) => {
+    try {
+        const { shareToken, attemptId } = req.params;
+        const requestedGroupBy = String(req.query.groupBy || '').toLowerCase().trim();
+
+        const attempt = await GuestAttempt.findOne({
+            _id: attemptId,
+            guest: req.guest._id,
+            status: { $in: ['completed', 'auto_submitted'] }
+        }).populate({
+            path: 'quiz',
+            populate: { path: 'questions', model: 'QuestionBank' }
+        });
+
+        if (!attempt || !attempt.quiz) {
+            return res.status(404).json({
+                success: false,
+                message: 'Result not found',
+                code: 'ATTEMPT_NOT_FOUND'
+            });
+        }
+
+        // The attempt must belong to THIS link's quiz — no cross-link probing.
+        if (attempt.quiz.shareToken && attempt.quiz.shareToken !== shareToken) {
+            return res.status(404).json({
+                success: false,
+                message: 'Result not found',
+                code: 'ATTEMPT_NOT_FOUND'
+            });
+        }
+
+        const quiz = await Quiz.findById(attempt.quiz._id);
+        if (!quiz) {
+            return res.status(404).json({
+                success: false,
+                message: 'Result not found',
+                code: 'ATTEMPT_NOT_FOUND'
+            });
+        }
+
+        const result = await buildAttemptResults({
+            attempt,
+            quiz,
+            groupBy: requestedGroupBy,
+            includeStudentHistory: false,
+            student: { _id: req.guest._id, name: req.guest.name }
+        });
+
+        res.json({
+            success: true,
+            ...result,
+            guest: {
+                _id: req.guest._id,
+                name: req.guest.name,
+                phoneMasked: maskPhone(req.guest.phone)
+            }
+        });
+    } catch (error) {
+        console.error('Error fetching guest result:', error);
         res.status(500).json({ success: false, message: 'Server error' });
     }
 });

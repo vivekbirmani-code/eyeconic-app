@@ -69,6 +69,18 @@ const guestAttemptSchema = new mongoose.Schema({
         type: Number,
         default: 0
     },
+    // Grouped performance computed at finalize time — same shape and
+    // semantics as QuizAttempt.sectionPerformance (subject-name grouped),
+    // stored since guests now see their result and admins see guest rows.
+    sectionPerformance: [{
+        _id: false,
+        sectionName: { type: String },
+        correct: { type: Number, default: 0 },
+        incorrect: { type: Number, default: 0 },
+        skipped: { type: Number, default: 0 },
+        timeSpent: { type: Number, default: 0 },
+        accuracy: { type: Number, default: 0 }
+    }],
     // Tab switch tracking
     tabSwitchCount: {
         type: Number,
@@ -81,6 +93,24 @@ const guestAttemptSchema = new mongoose.Schema({
     linkedUser: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
+        default: null
+    },
+    // Verified lead this attempt belongs to (OTP flow). Null for legacy
+    // anonymous device-keyed attempts, which keep working unchanged.
+    guest: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Guest',
+        default: null
+    },
+    // Name/phone snapshots copied from the lead at /start — attempts stay
+    // self-contained for admin display even if the lead record is later
+    // updated by another quiz.
+    guestName: {
+        type: String,
+        default: null
+    },
+    guestPhone: {
+        type: String,
         default: null
     },
     // Device info for analytics
@@ -125,5 +155,7 @@ const guestAttemptSchema = new mongoose.Schema({
 guestAttemptSchema.index({ quiz: 1, guestId: 1 });
 guestAttemptSchema.index({ guestId: 1, status: 1 });
 guestAttemptSchema.index({ linkedUser: 1 });
+guestAttemptSchema.index({ guest: 1 });
+guestAttemptSchema.index({ quiz: 1, status: 1, guest: 1 });
 
 module.exports = mongoose.model('GuestAttempt', guestAttemptSchema);

@@ -10,6 +10,14 @@ const auth = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
+
+    // Guest session tokens (public-quiz OTP flow) are scoped to guest
+    // routes only — reject them here explicitly so they can never reach
+    // user-authenticated routes (including the ?token= CSV download path).
+    if (decoded.kind === 'guest') {
+      return res.status(401).json({ message: 'Access denied. Guest session cannot access this resource.' });
+    }
+
     const user = await User.findById(decoded.userId).select('-password -profilePicturePublicId');
 
     if (!user) {

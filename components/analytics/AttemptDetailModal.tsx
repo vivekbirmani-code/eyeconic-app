@@ -74,8 +74,14 @@ interface AttemptDetail {
     student: {
         _id: string;
         name: string;
-        email: string;
+        email: string | null;
+        // Guest-attempt lead fields (admin-only guest fallback)
+        phone?: string | null;
+        phoneVerified?: boolean;
+        marketingConsent?: boolean;
     };
+    // 'guest' when this attempt is a public-quiz participant (admin view)
+    participantType?: 'registered' | 'guest';
     questions: any[];
 }
 
@@ -249,7 +255,21 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
                             {/* Student & Quiz Info Header */}
                             <View style={styles.infoSection}>
                                 <Text style={styles.quizTitle}>{attemptData.quiz.title}</Text>
-                                <Text style={styles.studentEmail}>{attemptData.student.email}</Text>
+                                {attemptData.participantType === 'guest' ? (
+                                    <>
+                                        <Text style={styles.studentEmail}>
+                                            {attemptData.student.phone ?? 'Verified guest'}
+                                        </Text>
+                                        <Text style={styles.guestLeadLine}>
+                                            Public quiz participant{' '}
+                                            {attemptData.student.phoneVerified === true ? '• Phone verified' : ''}
+                                            {' • Marketing consent: '}
+                                            {attemptData.student.marketingConsent === true ? 'Yes' : 'No'}
+                                        </Text>
+                                    </>
+                                ) : (
+                                    <Text style={styles.studentEmail}>{attemptData.student.email}</Text>
+                                )}
                                 <Text style={styles.dateText}>
                                      {new Date(attemptData.attempt.endTime).toLocaleString()}
                                 </Text>
@@ -460,6 +480,11 @@ const styles = StyleSheet.create({
         fontSize: 14,
         color: '#6B7280',
         marginTop: 2,
+    },
+    guestLeadLine: {
+        fontSize: 12,
+        color: '#B45309',
+        marginTop: 3,
     },
     quizTitle: {
         fontSize: 20,

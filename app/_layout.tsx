@@ -218,6 +218,34 @@ function AppContent() {
             animation: 'slide_from_bottom',
           }}
         />
+        {/* Input-bearing dialogs moved out of RN Modals so they render in the
+            main window: under Android edge-to-edge (SDK 54, enforced on
+            Android 15+), RN Modal windows get no keyboard resize and no
+            keyboard events, so the keyboard overlapped their inputs.
+            transparentModal + custom content keeps the original look. */}
+        <Stack.Screen
+          name="user-details"
+          options={{
+            presentation: 'transparentModal',
+            animation: 'none',
+            contentStyle: { backgroundColor: 'transparent' },
+          }}
+        />
+        <Stack.Screen
+          name="create-user"
+          options={{
+            presentation: 'modal',
+            animation: 'slide_from_bottom',
+          }}
+        />
+        <Stack.Screen
+          name="edit-group"
+          options={{
+            presentation: 'transparentModal',
+            animation: 'slide_from_bottom',
+            contentStyle: { backgroundColor: 'transparent' },
+          }}
+        />
         <Stack.Screen name="guest-quiz/[shareToken]" />
         <Stack.Screen name="chat/[id]/index" />
         <Stack.Screen name="chat/[id]/info" />

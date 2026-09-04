@@ -6,7 +6,6 @@ import {
   StyleSheet,
   FlatList,
   TextInput,
-  Modal,
   Alert,
   ScrollView,
   Animated,
@@ -57,11 +56,6 @@ export default function Groups() {
   const [isLoading, setIsLoading] = useState(true);
   const [collapsedFolders, setCollapsedFolders] = useState<Record<string, boolean>>({});
   const [activeFolderKey, setActiveFolderKey] = useState<string>('all');
-
-  // Edit group state
-  const [editGroup, setEditGroup] = useState<Group | null>(null);
-  const [editName, setEditName] = useState('');
-  const [editDescription, setEditDescription] = useState('');
 
   // Animation values for premium UI
   const headerOpacity = useRef(new Animated.Value(0)).current;
@@ -278,27 +272,17 @@ export default function Groups() {
   };
 
   const openEditModal = (group: Group) => {
-    setEditGroup(group);
-    setEditName(group.name);
-    setEditDescription(group.description || '');
-  };
-
-  const handleEditGroup = async () => {
-    if (!editGroup || !editName.trim()) {
-      Alert.alert('Error', 'Group name is required');
-      return;
-    }
-    try {
-      await api.put(`/groups/${editGroup._id}`, {
-        name: editName.trim(),
-        description: editDescription.trim()
-      });
-      setEditGroup(null);
-      fetchGroups();
-      Alert.alert('Success', 'Group updated successfully');
-    } catch (error: any) {
-      Alert.alert('Error', error?.response?.data?.message || 'Failed to update group');
-    }
+    // Edit Group lives in an expo-router transparent-modal screen (see
+    // app/edit-group.tsx) so its text inputs get real keyboard avoidance on
+    // every Android version; the groups list refreshes on focus when it closes.
+    router.push({
+      pathname: '/edit-group',
+      params: {
+        groupId: group._id,
+        name: group.name,
+        description: group.description || '',
+      },
+    });
   };
 
   // Skeleton loading card component
@@ -662,44 +646,6 @@ export default function Groups() {
         </Animated.View>
       )}
 
-      {/* Edit Group Modal */}
-      <Modal visible={!!editGroup} animationType="slide" transparent>
-        <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', padding: 20 }}>
-          <View style={{ backgroundColor: '#FFFFFF', borderRadius: 16, padding: 20 }}>
-            <Text style={{ fontSize: 18, fontWeight: '700', color: '#1F2937', marginBottom: 16 }}>Edit Group</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="Group Name"
-              placeholderTextColor="#9CA3AF"
-              value={editName}
-              onChangeText={setEditName}
-            />
-            <TextInput
-              style={styles.textArea}
-              placeholder="Description (optional)"
-              placeholderTextColor="#9CA3AF"
-              value={editDescription}
-              onChangeText={setEditDescription}
-              multiline
-              numberOfLines={3}
-            />
-            <View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
-              <TouchableOpacity
-                style={{ flex: 1, backgroundColor: '#F3F4F6', padding: 14, borderRadius: 10, alignItems: 'center' }}
-                onPress={() => setEditGroup(null)}
-              >
-                <Text style={{ color: '#6B7280', fontWeight: '600' }}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={{ flex: 1, backgroundColor: '#01b4ae', padding: 14, borderRadius: 10, alignItems: 'center' }}
-                onPress={handleEditGroup}
-              >
-                <Text style={{ color: '#FFFFFF', fontWeight: '600' }}>Save</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
     </ScreenContainer>
   );
 }
@@ -1028,26 +974,4 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   // Edit Group modal styles
-  input: {
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 16,
-    backgroundColor: '#F9FAFB',
-    color: '#1F2937',
-    marginBottom: 16,
-  },
-  textArea: {
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 12,
-    padding: 16,
-    fontSize: 16,
-    backgroundColor: '#F9FAFB',
-    color: '#1F2937',
-    textAlignVertical: 'top',
-    height: 100,
-    marginBottom: 20,
-  },
 });

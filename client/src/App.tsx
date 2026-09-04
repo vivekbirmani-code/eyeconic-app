@@ -20,6 +20,12 @@ import ImportQuiz from './pages/admin/quizzes/ImportQuiz';
 import RetestRequests from './pages/admin/quizzes/RetestRequests';
 import Chat from './pages/Chat';
 
+// Public quiz guest flow (unauthenticated — OTP-verified leads)
+import { PublicQuizProvider } from './contexts/PublicQuizContext';
+import PublicQuizEntryPage from './pages/public/PublicQuizEntryPage';
+import PublicQuizTakingPage from './pages/public/PublicQuizTakingPage';
+import PublicQuizResultPage from './pages/public/PublicQuizResultPage';
+
 // Protected Route Wrapper
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, isLoading } = useAuth();
@@ -47,6 +53,11 @@ function App() {
         <Routes>
           {/* Public Routes */}
           <Route path="/login" element={<LoginScreen />} />
+
+          {/* Public quiz guest flow — no auth guard; OTP verification happens in-flow */}
+          <Route path="/public-quiz/:token" element={<PublicQuizProvider><PublicQuizEntryPage /></PublicQuizProvider>} />
+          <Route path="/public-quiz/:token/take" element={<PublicQuizProvider><PublicQuizTakingPage /></PublicQuizProvider>} />
+          <Route path="/public-quiz/:token/result/:attemptId" element={<PublicQuizProvider><PublicQuizResultPage /></PublicQuizProvider>} />
 
           {/* Protected Routes inside Main Layout */}
           <Route

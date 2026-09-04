@@ -13,6 +13,7 @@ const studentSubjectRoutes = require('../../routes/student-subjects');
 const groupRoutes = require('../../routes/groups');
 const userRoutes = require('../../routes/users');
 const publicQuizRoutes = require('../../routes/public-quiz');
+const publicLeadRoutes = require('../../routes/public-lead');
 
 /**
  * Minimal Express app mounting only the routers under test, so integration
@@ -31,6 +32,7 @@ function buildApp() {
   app.use('/api/groups', groupRoutes);
   app.use('/api/users', userRoutes);
   app.use('/api/public', publicQuizRoutes);
+  app.use('/api/public', publicLeadRoutes);
   return app;
 }
 

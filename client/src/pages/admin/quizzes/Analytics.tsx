@@ -186,6 +186,46 @@ export default function Analytics() {
                 </table>
               </div>
             </div>
+
+            {/* Public-quiz guests — separate unranked list, admins only (this page is admin-gated) */}
+            {(testData.guestParticipants?.length ?? 0) > 0 && (
+              <div className="bg-white border border-amber-100 rounded-2xl shadow-sm p-6 overflow-hidden">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-lg font-bold text-gray-900">Public Participants ({testData.guestParticipants.length})</h3>
+                  <span className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg">Unranked · OTP-verified leads</span>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
+                        <th className="p-3 font-bold rounded-tl-lg">Guest</th>
+                        <th className="p-3 font-bold">Phone</th>
+                        <th className="p-3 font-bold">Consent</th>
+                        <th className="p-3 font-bold">Score</th>
+                        <th className="p-3 font-bold">C / W / S</th>
+                        <th className="p-3 font-bold rounded-tr-lg">Submitted</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {testData.guestParticipants.map((gp: any) => (
+                        <tr key={gp.attemptId} className="border-b border-gray-50 last:border-0 hover:bg-gray-50">
+                          <td className="p-3 font-bold text-gray-800">{gp.name}</td>
+                          <td className="p-3 text-sm text-gray-600 font-mono">{gp.phoneMasked}</td>
+                          <td className="p-3">
+                            {gp.marketingConsent
+                              ? <span className="px-2 py-1 bg-emerald-50 text-emerald-700 rounded-lg text-xs font-bold border border-emerald-200">Yes</span>
+                              : <span className="px-2 py-1 bg-gray-100 text-gray-500 rounded-lg text-xs font-bold border border-gray-200">No</span>}
+                          </td>
+                          <td className="p-3 font-bold text-amber-600">{gp.scorePercentage}%</td>
+                          <td className="p-3 text-sm text-gray-600">{gp.correct} <span className="text-gray-300">/</span> {gp.incorrect} <span className="text-gray-300">/</span> {gp.skipped}</td>
+                          <td className="p-3 text-sm text-gray-600">{gp.submittedAt ? new Date(gp.submittedAt).toLocaleDateString() : '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

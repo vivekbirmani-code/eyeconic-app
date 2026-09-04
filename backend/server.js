@@ -28,6 +28,7 @@ const adminOverviewRoutes = require('./routes/admin-overview');
 const settingsRoutes = require('./routes/settings');
 const uploadRoutes = require('./routes/upload');
 const publicQuizRoutes = require('./routes/public-quiz');
+const publicLeadRoutes = require('./routes/public-lead');
 const studentAnalyticsRoutes = require('./routes/student-analytics');
 const { cleanupExpiredMedia } = require('./utils/media-cleanup');
 const Call = require('./models/Call');
@@ -41,6 +42,11 @@ const io = socketIo(server, createSocketCorsOptions());
 
 // Expose io to routes
 app.set('io', io);
+
+// Single reverse proxy (Render/Vercel terminates TLS) — makes req.protocol
+// honor X-Forwarded-Proto (share links must be https:// in production) and
+// req.ip resolve to the real client for IP rate limiting.
+app.set('trust proxy', 1);
 
 // Initialize socket helpers with the io instance
 socketHelpers.setIo(io);
@@ -62,6 +68,20 @@ const validateEnvironment = () => {
     warnings.push(
       'RESEND_API_KEY or SMTP credentials are not set — OTP emails will fail in production'
     );
+  }
+  if (process.env.NODE_ENV === 'production') {
+    const { getSmsStatus } = require('./utils/sms');
+    const smsStatus = getSmsStatus();
+    if (smsStatus.status !== 'configured') {
+      warnings.push(
+        'MSG91_AUTH_KEY / MSG91_TEMPLATE_ID / MSG91_SENDER_ID are not set — public quiz phone OTP will fail in production (503 SMS_NOT_CONFIGURED). See docs/MSG91_SETUP.md'
+      );
+    }
+    if (!process.env.WEB_APP_URL?.trim()) {
+      warnings.push(
+        'WEB_APP_URL is not set — public quiz share links serve the legacy app-redirect interstitial instead of the web quiz'
+      );
+    }
   }
   warnings.forEach((warning) => logger.warn(warning));
 };
@@ -173,6 +193,7 @@ app.use('/api/admin-overview', adminOverviewRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/public', publicQuizRoutes);
+app.use('/api/public', publicLeadRoutes);
 app.use('/api/student-analytics', studentAnalyticsRoutes);
 
 // Track socket to user mapping (socket.id -> userId)

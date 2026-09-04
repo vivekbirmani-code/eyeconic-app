@@ -7,15 +7,14 @@ import {
   StyleSheet,
   Alert,
   KeyboardAvoidingView,
-  Platform,
   Image,
   ActivityIndicator,
   Animated,
   Pressable,
   ScrollView,
-  Modal,
 } from 'react-native';
 import { FullScreenContainer } from '@/components/layout';
+import { KeyboardAvoidingDialog } from '@/components/KeyboardAvoidingDialog';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
 import { Eye, EyeOff, Mail, Lock, ShieldCheck } from 'lucide-react-native';
@@ -447,179 +446,175 @@ export default function Login() {
         </View>
       </ScrollView>
 
-      {/* Forgot Password Modal */}
-      <Modal
+      {/* Forgot Password dialog — an in-tree overlay (not a RN Modal) so it
+          renders in the main window: under Android edge-to-edge (Expo SDK 54,
+          enforced on Android 15+) RN Modal windows get neither keyboard resize
+          nor keyboard events, so the keyboard covered these inputs and no
+          KeyboardAvoidingView could help. The dialog slides up from the bottom
+          like the old Modal did. */}
+      <KeyboardAvoidingDialog
         visible={forgotModalVisible}
+        onClose={() => setForgotModalVisible(false)}
         animationType="slide"
-        transparent={true}
-        onRequestClose={() => setForgotModalVisible(false)}
+        cardStyle={[styles.modalCard, styles.modalCardSize]}
       >
-        <View style={styles.modalOverlay}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            style={styles.modalContainer}
-          >
-            <View style={styles.modalCard}>
-              {forgotStep === 1 ? (
-                <>
-                  <View style={styles.modalBadge}>
-                    <Mail color="#01b4ae" size={32} />
-                  </View>
-                  <Text style={styles.modalTitle}>Forgot Password?</Text>
-                  <Text style={styles.modalSubtitle}>
-                    Enter your registered email address to receive a verification code.
-                  </Text>
-
-                  <View style={styles.forgotInputWrapper}>
-                    <Mail color="#9CA3AF" size={20} style={styles.forgotInputIcon} />
-                    <TextInput
-                      style={[
-                        styles.forgotInput,
-                        forgotEmailFocused && styles.forgotInputFocused
-                      ]}
-                      placeholder="Enter your email"
-                      placeholderTextColor="#9CA3AF"
-                      value={forgotEmail}
-                      onChangeText={setForgotEmail}
-                      onFocus={() => setForgotEmailFocused(true)}
-                      onBlur={() => setForgotEmailFocused(false)}
-                      keyboardType="email-address"
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      editable={!forgotLoading}
-                    />
-                  </View>
-
-                  <TouchableOpacity
-                    style={[styles.forgotBtn, forgotLoading && styles.buttonDisabled]}
-                    onPress={handleForgotPasswordSendOtp}
-                    disabled={forgotLoading}
-                  >
-                    {forgotLoading ? (
-                      <ActivityIndicator color="#FFFFFF" size="small" />
-                    ) : (
-                      <Text style={styles.forgotBtnText}>Send Reset Code</Text>
-                    )}
-                  </TouchableOpacity>
-                </>
-              ) : (
-                <>
-                  <View style={styles.modalBadge}>
-                    <ShieldCheck color="#01b4ae" size={32} />
-                  </View>
-                  <Text style={styles.modalTitle}>Verification Required</Text>
-                  <Text style={styles.modalSubtitle}>
-                    We've sent a 6-digit confirmation code to:
-                  </Text>
-                  <Text style={{ color: '#01b4ae', fontWeight: 'bold', marginBottom: 16 }}>{forgotEmail}</Text>
-
-                  {/* OTP Code */}
-                  <View style={styles.forgotInputWrapper}>
-                    <ShieldCheck color="#9CA3AF" size={20} style={styles.forgotInputIcon} />
-                    <TextInput
-                      style={[
-                        styles.forgotInput,
-                        forgotOtpFocused && styles.forgotInputFocused
-                      ]}
-                      placeholder="Enter 6-digit code"
-                      placeholderTextColor="#9CA3AF"
-                      value={forgotOtp}
-                      onChangeText={(text) => setForgotOtp(text.replace(/[^0-9]/g, ''))}
-                      onFocus={() => setForgotOtpFocused(true)}
-                      onBlur={() => setForgotOtpFocused(false)}
-                      keyboardType="numeric"
-                      maxLength={6}
-                      editable={!forgotLoading}
-                    />
-                  </View>
-
-                  {/* New Password */}
-                  <View style={styles.forgotInputWrapper}>
-                    <Lock color="#9CA3AF" size={20} style={styles.forgotInputIcon} />
-                    <TextInput
-                      style={[
-                        styles.forgotInput,
-                        styles.forgotPasswordInput,
-                        forgotPasswordFocused && styles.inputFocused
-                      ]}
-                      placeholder="Enter new password"
-                      placeholderTextColor="#9CA3AF"
-                      value={forgotPassword}
-                      onChangeText={setForgotPassword}
-                      onFocus={() => setForgotPasswordFocused(true)}
-                      onBlur={() => setForgotPasswordFocused(false)}
-                      secureTextEntry={!forgotPasswordVisible}
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      editable={!forgotLoading}
-                    />
-                    <TouchableOpacity
-                      onPress={() => setForgotPasswordVisible(!forgotPasswordVisible)}
-                      style={[
-                        styles.forgotEyeIcon,
-                        // Same elevation rule as the login password field: the
-                        // focused input (inputFocused) would otherwise cover
-                        // this toggle on Android.
-                        forgotPasswordFocused && styles.eyeIconAboveFocusedInput,
-                      ]}
-                      activeOpacity={0.7}
-                      disabled={forgotLoading}
-                    >
-                      {forgotPasswordVisible ? (
-                        <EyeOff color="#9CA3AF" size={20} />
-                      ) : (
-                        <Eye color="#9CA3AF" size={20} />
-                      )}
-                    </TouchableOpacity>
-                  </View>
-
-                  {/* Confirm Password */}
-                  <View style={styles.forgotInputWrapper}>
-                    <Lock color="#9CA3AF" size={20} style={styles.forgotInputIcon} />
-                    <TextInput
-                      style={[
-                        styles.forgotInput,
-                        forgotConfirmPasswordFocused && styles.inputFocused
-                      ]}
-                      placeholder="Confirm new password"
-                      placeholderTextColor="#9CA3AF"
-                      value={forgotConfirmPassword}
-                      onChangeText={setForgotConfirmPassword}
-                      onFocus={() => setForgotConfirmPasswordFocused(true)}
-                      onBlur={() => setForgotConfirmPasswordFocused(false)}
-                      secureTextEntry={!forgotPasswordVisible}
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      editable={!forgotLoading}
-                    />
-                  </View>
-
-                  <TouchableOpacity
-                    style={[styles.forgotBtn, forgotLoading && styles.buttonDisabled]}
-                    onPress={handleForgotPasswordReset}
-                    disabled={forgotLoading}
-                  >
-                    {forgotLoading ? (
-                      <ActivityIndicator color="#FFFFFF" size="small" />
-                    ) : (
-                      <Text style={styles.forgotBtnText}>Reset Password</Text>
-                    )}
-                  </TouchableOpacity>
-                </>
-              )}
-
-              <View style={styles.modalFooter}>
-                <TouchableOpacity
-                  onPress={() => setForgotModalVisible(false)}
-                  disabled={forgotLoading}
-                >
-                  <Text style={styles.cancelText}>Cancel</Text>
-                </TouchableOpacity>
-              </View>
+        {forgotStep === 1 ? (
+          <>
+            <View style={styles.modalBadge}>
+              <Mail color="#01b4ae" size={32} />
             </View>
-          </KeyboardAvoidingView>
+            <Text style={styles.modalTitle}>Forgot Password?</Text>
+            <Text style={styles.modalSubtitle}>
+              Enter your registered email address to receive a verification code.
+            </Text>
+
+            <View style={styles.forgotInputWrapper}>
+              <Mail color="#9CA3AF" size={20} style={styles.forgotInputIcon} />
+              <TextInput
+                style={[
+                  styles.forgotInput,
+                  forgotEmailFocused && styles.forgotInputFocused
+                ]}
+                placeholder="Enter your email"
+                placeholderTextColor="#9CA3AF"
+                value={forgotEmail}
+                onChangeText={setForgotEmail}
+                onFocus={() => setForgotEmailFocused(true)}
+                onBlur={() => setForgotEmailFocused(false)}
+                keyboardType="email-address"
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={!forgotLoading}
+              />
+            </View>
+
+            <TouchableOpacity
+              style={[styles.forgotBtn, forgotLoading && styles.buttonDisabled]}
+              onPress={handleForgotPasswordSendOtp}
+              disabled={forgotLoading}
+            >
+              {forgotLoading ? (
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              ) : (
+                <Text style={styles.forgotBtnText}>Send Reset Code</Text>
+              )}
+            </TouchableOpacity>
+          </>
+        ) : (
+          <>
+            <View style={styles.modalBadge}>
+              <ShieldCheck color="#01b4ae" size={32} />
+            </View>
+            <Text style={styles.modalTitle}>Verification Required</Text>
+            <Text style={styles.modalSubtitle}>
+              We've sent a 6-digit confirmation code to:
+            </Text>
+            <Text style={{ color: '#01b4ae', fontWeight: 'bold', marginBottom: 16 }}>{forgotEmail}</Text>
+
+            {/* OTP Code */}
+            <View style={styles.forgotInputWrapper}>
+              <ShieldCheck color="#9CA3AF" size={20} style={styles.forgotInputIcon} />
+              <TextInput
+                style={[
+                  styles.forgotInput,
+                  forgotOtpFocused && styles.forgotInputFocused
+                ]}
+                placeholder="Enter 6-digit code"
+                placeholderTextColor="#9CA3AF"
+                value={forgotOtp}
+                onChangeText={(text) => setForgotOtp(text.replace(/[^0-9]/g, ''))}
+                onFocus={() => setForgotOtpFocused(true)}
+                onBlur={() => setForgotOtpFocused(false)}
+                keyboardType="numeric"
+                maxLength={6}
+                editable={!forgotLoading}
+              />
+            </View>
+
+            {/* New Password */}
+            <View style={styles.forgotInputWrapper}>
+              <Lock color="#9CA3AF" size={20} style={styles.forgotInputIcon} />
+              <TextInput
+                style={[
+                  styles.forgotInput,
+                  styles.forgotPasswordInput,
+                  forgotPasswordFocused && styles.inputFocused
+                ]}
+                placeholder="Enter new password"
+                placeholderTextColor="#9CA3AF"
+                value={forgotPassword}
+                onChangeText={setForgotPassword}
+                onFocus={() => setForgotPasswordFocused(true)}
+                onBlur={() => setForgotPasswordFocused(false)}
+                secureTextEntry={!forgotPasswordVisible}
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={!forgotLoading}
+              />
+              <TouchableOpacity
+                onPress={() => setForgotPasswordVisible(!forgotPasswordVisible)}
+                style={[
+                  styles.forgotEyeIcon,
+                  // Same elevation rule as the login password field: the
+                  // focused input (inputFocused) would otherwise cover
+                  // this toggle on Android.
+                  forgotPasswordFocused && styles.eyeIconAboveFocusedInput,
+                ]}
+                activeOpacity={0.7}
+                disabled={forgotLoading}
+              >
+                {forgotPasswordVisible ? (
+                  <EyeOff color="#9CA3AF" size={20} />
+                ) : (
+                  <Eye color="#9CA3AF" size={20} />
+                )}
+              </TouchableOpacity>
+            </View>
+
+            {/* Confirm Password */}
+            <View style={styles.forgotInputWrapper}>
+              <Lock color="#9CA3AF" size={20} style={styles.forgotInputIcon} />
+              <TextInput
+                style={[
+                  styles.forgotInput,
+                  forgotConfirmPasswordFocused && styles.inputFocused
+                ]}
+                placeholder="Confirm new password"
+                placeholderTextColor="#9CA3AF"
+                value={forgotConfirmPassword}
+                onChangeText={setForgotConfirmPassword}
+                onFocus={() => setForgotConfirmPasswordFocused(true)}
+                onBlur={() => setForgotConfirmPasswordFocused(false)}
+                secureTextEntry={!forgotPasswordVisible}
+                autoCapitalize="none"
+                autoCorrect={false}
+                editable={!forgotLoading}
+              />
+            </View>
+
+            <TouchableOpacity
+              style={[styles.forgotBtn, forgotLoading && styles.buttonDisabled]}
+              onPress={handleForgotPasswordReset}
+              disabled={forgotLoading}
+            >
+              {forgotLoading ? (
+                <ActivityIndicator color="#FFFFFF" size="small" />
+              ) : (
+                <Text style={styles.forgotBtnText}>Reset Password</Text>
+              )}
+            </TouchableOpacity>
+          </>
+        )}
+
+        <View style={styles.modalFooter}>
+          <TouchableOpacity
+            onPress={() => setForgotModalVisible(false)}
+            disabled={forgotLoading}
+          >
+            <Text style={styles.cancelText}>Cancel</Text>
+          </TouchableOpacity>
         </View>
-      </Modal>
+      </KeyboardAvoidingDialog>
     </KeyboardAvoidingView>
     </FullScreenContainer>
   );
@@ -822,17 +817,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     textDecorationLine: 'underline',
   },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  modalContainer: {
-    width: '100%',
-    maxWidth: 400,
-  },
   modalCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 24,
@@ -843,6 +827,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 15,
     elevation: 10,
+  },
+  // Width sizing for the forgot-password card (was the RN Modal's container).
+  modalCardSize: {
+    width: '100%',
+    maxWidth: 400,
   },
   modalBadge: {
     width: 64,

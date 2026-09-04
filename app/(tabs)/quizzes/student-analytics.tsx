@@ -33,6 +33,7 @@ import TestOverview from '@/components/analytics/test-analytics/TestOverview';
 import PerformanceMetrics from '@/components/analytics/test-analytics/PerformanceMetrics';
 import QuestionAnalytics from '@/components/analytics/test-analytics/QuestionAnalytics';
 import StudentPerformanceList from '@/components/analytics/test-analytics/StudentPerformanceList';
+import GuestParticipantList, { type GuestParticipant } from '@/components/analytics/GuestParticipantList';
 import AttemptDetailModal from '@/components/analytics/AttemptDetailModal';
 import QuestionBankPerformance from '@/components/analytics/QuestionBankPerformance';
 import AnalyticsKpiGrid from '@/components/analytics/AnalyticsKpiGrid';
@@ -112,6 +113,8 @@ interface TestAnalyticsData {
   easiestQuestion?: any;
   hardestQuestion?: any;
   studentPerformance: any[];
+  // Admin-only: unranked public-quiz guests (never inside studentPerformance)
+  guestParticipants?: GuestParticipant[];
 }
 
 export default function Analytics() {
@@ -457,6 +460,12 @@ export default function Analytics() {
                     students={testAnalytics.studentPerformance}
                     onStudentClick={handleStudentAttemptClick}
                   />
+                  {user?.role === 'admin' && (
+                    <GuestParticipantList
+                      participants={testAnalytics.guestParticipants ?? []}
+                      onParticipantClick={handleStudentAttemptClick}
+                    />
+                  )}
                 </>
               ) : (
                 <View style={styles.emptyContainer}>

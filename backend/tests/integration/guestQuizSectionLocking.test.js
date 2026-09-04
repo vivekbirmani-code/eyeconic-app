@@ -240,9 +240,18 @@ describe('Section locking — guest/public attempts', () => {
     const stored = await GuestAttempt.findById(attempt._id);
     expect(stored.status).toBe('completed');
     expect(stored.score).toBe(2);
-    // Guest grading uses per-question marks (default 1) with no negative
-    // marking — existing guest semantics, unchanged by this feature.
-    expect(stored.marksObtained).toBe(2);
+    // Guest grading is aligned with registered-user grading
+    // (finalizeQuizAttempt): +positiveMarks per correct, −|negativeMarks|
+    // per wrong, skipped = 0. Here (2 correct × 4) − (2 wrong × 1) = 6.
+    expect(stored.marksObtained).toBe(6);
+    // Subject-grouped sectionPerformance is computed and stored like
+    // registered attempts (all four questions share one subject here).
+    expect(stored.sectionPerformance).toHaveLength(1);
+    expect(stored.sectionPerformance[0]).toMatchObject({
+      correct: 2,
+      incorrect: 2,
+      skipped: 0,
+    });
     expect(stored.sectionStates.every((s) => s.status !== 'in_progress')).toBe(true);
 
     // Re-submitting the whole quiz (idempotent for locked attempts, not the old 400).

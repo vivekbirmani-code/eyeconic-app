@@ -39,3 +39,22 @@ services:
         sync: false
       - key: CLOUDINARY_API_SECRET
         sync: false
+      # ---- Public quiz guest flow (see docs/MSG91_SETUP.md) ----
+      # Web origin share links redirect to. UNSET = legacy app-redirect
+      # interstitial (rollback switch) — MUST be set to activate the web flow.
+      - key: WEB_APP_URL
+        value: https://eyeconicmentors.vercel.app
+      # MSG91 SMS OTP (all three required for real SMS; without them phone
+      # OTP returns 503 SMS_NOT_CONFIGURED). DLT registration is mandatory.
+      - key: MSG91_AUTH_KEY
+        sync: false
+      - key: MSG91_TEMPLATE_ID
+        sync: false
+      - key: MSG91_SENDER_ID
+        sync: false
+      # HMAC secret for hashing guest OTPs at rest (falls back to JWT_SECRET).
+      - key: OTP_HASH_SECRET
+        sync: false
+      # Guest session token lifetime (default 4h).
+      - key: GUEST_JWT_EXPIRES_IN
+        value: 4h
