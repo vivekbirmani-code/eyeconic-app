@@ -15,7 +15,7 @@ import {
 import { ScreenContainer, FullScreenContainer } from '@/components/layout';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
-import { LogOut, AlertTriangle, Check, MessageCircle, BookOpen, Users, LayoutDashboard, Menu, Sparkles } from 'lucide-react-native';
+import { LogOut, AlertTriangle, Check, MessageCircle, BookOpen, Users, LayoutDashboard, Menu, Sparkles, ChevronLeft } from 'lucide-react-native';
 import * as Haptics from '@/utils/haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -159,6 +159,30 @@ export default function Dashboard() {
   const handleLogout = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     logout();
+  };
+
+  // The profile-completion modal is mandatory — there is no in-app screen to
+  // go "back" to until the profile is filled. Its only escape hatch is the
+  // login screen, which requires ending the session (otherwise auth routing
+  // would land the student right back here).
+  const handleBackToLogin = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Alert.alert(
+      'Log out?',
+      'You need to complete your profile to continue using the app. Do you want to return to the login screen?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Log Out',
+          style: 'destructive',
+          onPress: () => {
+            setShowProfileModal(false);
+            logout();
+            router.replace('/login');
+          },
+        },
+      ]
+    );
   };
 
   const getRoleDisplayName = (role: string) => {
@@ -495,8 +519,29 @@ export default function Dashboard() {
       </ScrollView>
 
       {/* Student Profile Completion Modal */}
-      <Modal visible={showProfileModal} animationType="slide" transparent={false}>
+      <Modal
+        visible={showProfileModal}
+        animationType="slide"
+        transparent={false}
+        onRequestClose={handleBackToLogin}
+      >
         <FullScreenContainer style={styles.modalContainer}>
+          {/* Escape hatch, shared by both profile variants: the modal is
+              mandatory, so keep a visible way back to the login screen. Fixed
+              outside the ScrollView so it stays visible at any scroll offset. */}
+          <View style={styles.backToLoginBar}>
+            <TouchableOpacity
+              style={styles.backToLoginButton}
+              onPress={handleBackToLogin}
+              accessibilityRole="button"
+              accessibilityLabel="Back to login"
+              accessibilityHint="Log out and return to the login screen"
+              hitSlop={{ top: 8, bottom: 8, right: 12 }}
+            >
+              <ChevronLeft color="#6B7280" size={20} />
+              <Text style={styles.backToLoginText}>Back to Login</Text>
+            </TouchableOpacity>
+          </View>
           {user?.isFreeUser ? (
             // FREE USER PERSONA QUESTIONNAIRE
             <View style={{ flex: 1 }}>
@@ -1071,6 +1116,28 @@ const styles = StyleSheet.create({
   modalContainer: {
     flex: 1,
     backgroundColor: '#FFFFFF',
+  },
+  // Escape hatch above the mandatory profile header. Secondary styling on
+  // purpose: completing the profile stays the primary action.
+  backToLoginBar: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E5E7EB',
+    backgroundColor: '#FFFFFF',
+  },
+  backToLoginButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    alignSelf: 'flex-start',
+    paddingVertical: 8,
+    paddingRight: 12,
+  },
+  backToLoginText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#6B7280',
   },
   modalHeader: {
     padding: 20,

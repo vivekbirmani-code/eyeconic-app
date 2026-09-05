@@ -14,18 +14,20 @@ import {
 } from 'react-native';
 import { ScreenContainer, FullScreenContainer } from '@/components/layout';
 import { useRouter } from 'expo-router';
-import { 
-  ChevronLeft, 
-  Upload, 
+import {
+  ChevronLeft,
+  Upload,
   FileText,
   Check,
   AlertCircle,
   Image as ImageIcon,
+  Share2,
   X
 } from 'lucide-react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { api, normalizeApiError } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
+import ShareQuizModal, { ShareQuizTarget } from '@/components/ShareQuizModal';
 import { DateTimeField } from '@/components/DateTimeField';
 
 interface Subject {
@@ -82,6 +84,10 @@ export default function ImportQuiz() {
   const [showPreview, setShowPreview] = useState(false);
   const [previewQuestions, setPreviewQuestions] = useState<PreviewQuestion[]>([]);
   const [importStats, setImportStats] = useState<ImportStats | null>(null);
+
+  // Post-import Share Quiz popup (same sheet as Past Tests)
+  const [createdQuiz, setCreatedQuiz] = useState<ShareQuizTarget | null>(null);
+  const [shareModalVisible, setShareModalVisible] = useState(false);
 
   useEffect(() => {
     fetchSubjects();
@@ -146,6 +152,14 @@ export default function ImportQuiz() {
       console.error('Error picking file:', error);
       Alert.alert('Error', 'Failed to pick file');
     }
+  };
+
+  // Leaves the Import Complete screen entirely (and clears the share target).
+  const finishImport = () => {
+    setShareModalVisible(false);
+    setCreatedQuiz(null);
+    setShowPreview(false);
+    router.back();
   };
 
   const handleImport = async () => {
@@ -235,6 +249,24 @@ export default function ImportQuiz() {
       // Show preview modal with stats
       setImportStats(response.data.stats);
       setPreviewQuestions(response.data.previewQuestions || []);
+      setShareModalVisible(false);
+
+      // Keep the freshly imported quiz around so the Import Complete screen
+      // can offer the Share Quiz sheet (internal students / public link).
+      const importedQuiz = response.data?.quiz;
+      setCreatedQuiz(
+        importedQuiz?._id && importedQuiz.title
+          ? {
+              _id: importedQuiz._id,
+              title: importedQuiz.title,
+              assignedStudents: Array.isArray(importedQuiz.assignedStudents)
+                ? importedQuiz.assignedStudents
+                    .map((s: any) => (typeof s === 'string' ? s : s?._id))
+                    .filter(Boolean)
+                : [],
+            }
+          : null
+      );
       setShowPreview(true);
     } catch (error: unknown) {
       const normalized = normalizeApiError(error);
@@ -498,7 +530,7 @@ export default function ImportQuiz() {
         <FullScreenContainer style={styles.modalContainer}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Import Complete</Text>
-            <TouchableOpacity onPress={() => { setShowPreview(false); router.back(); }}>
+            <TouchableOpacity onPress={finishImport}>
               <X color="#6B7280" size={24} />
             </TouchableOpacity>
           </View>
@@ -557,12 +589,31 @@ export default function ImportQuiz() {
             )}
           />
 
-          <TouchableOpacity 
-            style={styles.doneButton}
-            onPress={() => { setShowPreview(false); router.back(); }}
-          >
-            <Text style={styles.doneButtonText}>Done</Text>
-          </TouchableOpacity>
+          <View style={styles.previewActions}>
+            <TouchableOpacity
+              style={styles.doneButton}
+              onPress={finishImport}
+              disabled={shareModalVisible}
+            >
+              <Text style={styles.doneButtonText}>Done</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.shareButton, !createdQuiz && styles.shareButtonDisabled]}
+              onPress={() => setShareModalVisible(true)}
+              disabled={!createdQuiz || shareModalVisible}
+            >
+              <Share2 size={18} color="#FFF" />
+              <Text style={styles.shareButtonText}>Share Quiz</Text>
+            </TouchableOpacity>
+          </View>
+
+          {/* Share sheet is nested INSIDE this Modal's tree so it stacks on
+              top of the Import Complete modal on iOS. */}
+          <ShareQuizModal
+            visible={shareModalVisible}
+            quiz={createdQuiz}
+            onClose={() => setShareModalVisible(false)}
+          />
         </FullScreenContainer>
       </Modal>
     </ScreenContainer>
@@ -940,14 +991,42 @@ const styles = StyleSheet.create({
     backgroundColor: '#F3E8FF',
     color: '#9333EA',
   },
+  // Import Complete footer: Done (secondary) + Share Quiz (primary)
+  previewActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 16,
+  },
   doneButton: {
-    backgroundColor: '#2563EB',
-    margin: 16,
+    flex: 1,
     padding: 16,
     borderRadius: 12,
     alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: '#2563EB',
+    backgroundColor: '#FFF',
   },
   doneButtonText: {
+    color: '#2563EB',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  shareButton: {
+    flex: 1.5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    padding: 16,
+    borderRadius: 12,
+    backgroundColor: '#2563EB',
+  },
+  shareButtonDisabled: {
+    backgroundColor: '#93C5FD',
+  },
+  shareButtonText: {
     color: '#FFF',
     fontSize: 16,
     fontWeight: 'bold',

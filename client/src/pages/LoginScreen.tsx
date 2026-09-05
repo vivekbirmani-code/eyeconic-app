@@ -38,8 +38,10 @@ export default function LoginScreen() {
         {/* Header Section */}
         <div className="flex flex-col items-center mb-8">
           <div className="w-28 h-28 rounded-full bg-white flex items-center justify-center border-4 border-white/30 shadow-xl mb-6 overflow-hidden transform hover:scale-105 transition-transform duration-300">
-             {/* Note: We will need to copy the logo to the web public folder */}
-             <div className="text-[#01b4ae] font-bold text-2xl">EyE</div> 
+            {/* Logo.png is a square (1:1) circular mark on an opaque white
+                background that touches the canvas edges, so object-cover fills
+                the circular container without distortion. */}
+            <img src="/Logo.png" alt="Eyeconic logo" className="w-full h-full object-cover" decoding="async" />
           </div>
           <h1 className="text-4xl font-bold text-white tracking-widest mb-2 drop-shadow-md">EYECONIC</h1>
           <p className="text-white/90 text-sm tracking-wide font-medium">Your path to medical excellence</p>

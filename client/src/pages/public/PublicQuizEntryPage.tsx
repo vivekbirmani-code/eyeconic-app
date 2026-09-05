@@ -212,8 +212,11 @@ export default function PublicQuizEntryPage() {
       <div className="w-full max-w-md">
         {/* Brand header */}
         <div className="flex flex-col items-center mb-6">
-          <div className="w-16 h-16 rounded-full bg-white flex items-center justify-center border-4 border-white/30 shadow-xl mb-3">
-            <span className="text-[#01b4ae] font-bold text-lg">EyE</span>
+          <div className="w-16 h-16 rounded-full bg-white flex items-center justify-center border-4 border-white/30 shadow-xl mb-3 overflow-hidden">
+            {/* Logo.png is a square (1:1) circular mark on an opaque white
+                background that touches the canvas edges, so object-cover fills
+                the circular container without distortion. */}
+            <img src="/Logo.png" alt="Eyeconic logo" className="w-full h-full object-cover" decoding="async" />
           </div>
           <h1 className="text-2xl font-bold text-white tracking-widest drop-shadow-md">EYECONIC</h1>
           <p className="text-white/90 text-xs tracking-wide font-medium">Your path to medical excellence</p>

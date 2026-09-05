@@ -30,6 +30,7 @@ import {
 } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
+import ShareQuizModal, { ShareQuizTarget } from '@/components/ShareQuizModal';
 import { DateTimeField } from '@/components/DateTimeField';
 import { formatToIST } from '@/utils/date';
 import { isValidQuizWindow } from '@/utils/quizDateTime';
@@ -173,6 +174,10 @@ export default function CreateQuiz() {
     'Submit before the timer expires.'
   ];
   const [instructions, setInstructions] = useState(defaultInstructions.join('\n'));
+
+  // Post-creation Share Quiz popup (same sheet as Past Tests)
+  const [createdQuiz, setCreatedQuiz] = useState<ShareQuizTarget | null>(null);
+  const [shareModalVisible, setShareModalVisible] = useState(false);
 
   // Debounced search values for flicker-free filtering
   const debouncedStudentSearch = useDebounce(studentSearch, 250);
@@ -722,11 +727,29 @@ export default function CreateQuiz() {
           expiryDate: expiryDate?.toISOString(),
           sections: quizSections
         });
-        Alert.alert(
-          'Success',
-          `Quiz ${cloneId ? 'cloned' : 'created'} and assigned successfully!`,
-          [{ text: 'OK', onPress: () => router.back() }]
-        );
+
+        // Offer external sharing straight after creation with the same Share
+        // Quiz sheet used in Past Tests (externalOnly — internal students
+        // were just assigned in step 5).
+        const quiz = response.data?.quiz;
+        if (quiz?._id && quiz.title) {
+          setCreatedQuiz({
+            _id: quiz._id,
+            title: quiz.title,
+            assignedStudents: Array.isArray(quiz.assignedStudents)
+              ? quiz.assignedStudents.map((s: any) => (typeof s === 'string' ? s : s?._id)).filter(Boolean)
+              : [],
+          });
+          setShareModalVisible(true);
+        } else {
+          // Shouldn't happen (backend always returns the quiz), but never
+          // strand the user without a success confirmation.
+          Alert.alert(
+            'Success',
+            `Quiz ${cloneId ? 'cloned' : 'created'} and assigned successfully!`,
+            [{ text: 'OK', onPress: () => router.back() }]
+          );
+        }
       }
 
 
@@ -1062,14 +1085,16 @@ export default function CreateQuiz() {
 
       <View style={styles.filterRow}>
         <TextInput
-          style={[styles.searchTextInput, { flex: 1, marginRight: 8 }]}
+          style={styles.filterTextInput}
           placeholder="Filter by Topic..."
+          placeholderTextColor="#9CA3AF"
           value={topicFilter}
           onChangeText={setTopicFilter}
         />
         <TextInput
-          style={[styles.searchTextInput, { flex: 1 }]}
+          style={styles.filterTextInput}
           placeholder="Filter by Tag..."
+          placeholderTextColor="#9CA3AF"
           value={tagFilter}
           onChangeText={setTagFilter}
         />
@@ -1830,6 +1855,16 @@ export default function CreateQuiz() {
           )}
         </FullScreenContainer>
       </Modal>
+
+      {/* Post-creation Share Quiz sheet — closing it finishes the flow.
+          External only: internal students were just assigned in step 5, so a
+          second internal picker here would be a duplicate assignment path. */}
+      <ShareQuizModal
+        visible={shareModalVisible}
+        quiz={createdQuiz}
+        onClose={() => router.back()}
+        externalOnly
+      />
     </ScreenContainer>
   );
 }
@@ -2241,8 +2276,26 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     marginBottom: 12,
   },
+  // Topic/Tag text filters sit side by side (flexDirection: 'row'). Without it
+  // the two inputs stacked vertically on the default column axis and produced
+  // a ~90dp near-invisible band between the search bar and the filter chips.
   filterRow: {
+    flexDirection: 'row',
+    gap: 8,
     marginBottom: 10,
+  },
+  // Compact, visibly-boxed inputs so the Topic/Tag row reads as part of the
+  // filter block instead of borderless text floating on the gray canvas.
+  filterTextInput: {
+    flex: 1,
+    backgroundColor: '#FFF',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+    fontSize: 14,
+    color: '#1F2937',
   },
   // Compact single-line filter group: fixed label + horizontally scrollable chips
   filterChipRow: {
