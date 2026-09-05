@@ -64,6 +64,19 @@ logged), and the client never sees provider text.
 4. Verify the boot log no longer shows the `TWO_FACTOR_API_KEY is not set`
    warning, then request an OTP from a real public quiz link.
 
+## Verifying configuration without dashboard access
+
+`GET /api/health` reports the live SMS provider state (it degrades the
+overall `status` to `degraded` when production runs without a provider):
+
+```bash
+curl -s https://eyeconic-app-prod-1r8o.onrender.com/api/health | jq .dependencies.sms
+# misconfigured (every OTP send returns 503 SMS_NOT_CONFIGURED):
+# {"status":"unconfigured","provider":null,"configured":false}
+# correct:
+# {"status":"healthy","provider":"2factor","configured":true}
+```
+
 ## Failure modes (what users see)
 
 | Provider condition | Client response |
