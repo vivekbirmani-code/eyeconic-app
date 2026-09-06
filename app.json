@@ -2,7 +2,7 @@
   "expo": {
     "name": "Eyeconic Mentorship",
     "slug": "eyeconic-mentorship",
-    "version": "1.0.2",
+    "version": "1.0.3",
     "sdkVersion": "54.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -28,7 +28,7 @@
         "ITSAppUsesNonExemptEncryption": false
       },
       "bitcode": false,
-      "buildNumber": "15"
+      "buildNumber": "19"
     },
     "android": {
       "adaptiveIcon": {
