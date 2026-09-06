@@ -245,3 +245,71 @@ describe('excelTemplate', () => {
     expect(questions.length).toBeGreaterThanOrEqual(6);
   });
 });
+
+// Legacy tech-team sheets (e.g. Q_BankTechTeamFinal.xlsx) predate the
+// canonical template: QUESTION NO / SUBJECT / TOPIC / TAG / QUESTION /
+// Q_IMAGE / OPTION1-4 / CORRECT / SOLUTION. Missing canonical columns get
+// deterministic defaults; a canonical sheet with blank cells stays strict.
+describe('parseExcel — legacy sheet format (missing canonical columns)', () => {
+  const legacyRow = (overrides = {}) => ({
+    'QUESTION NO': 38,
+    SUBJECT: 'Orthopaedics',
+    TOPIC: 'Upper Limb',
+    TAG: 'Injuries of Clavicle, Shoulder and Arm',
+    QUESTION: 'The radiograph shows a displaced spiral fracture. What is it known as?',
+    Q_IMAGE: 'https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789/view',
+    OPTION1: 'Holdsworth fracture',
+    OPTION2: 'Holstein-Lewis fracture',
+    OPTION3: 'Jefferson fracture',
+    OPTION4: 'Lisfranc fracture',
+    CORRECT: '2',
+    ...overrides,
+  });
+
+  it('defaults type/subtopic/system/difficulty when the columns are absent', async () => {
+    const { questions, errors } = await parseExcel(toBuffer([legacyRow()]));
+    expect(errors).toEqual([]);
+    expect(questions).toHaveLength(1);
+    const q = questions[0];
+    expect(q.qid).toBe('38'); // QUESTION NO maps to qid
+    expect(q.questionType).toBe(QUESTION_TYPES.IMAGE_BASED); // Q_IMAGE present
+    expect(q.subtopicName).toBe('Upper Limb'); // <- topic
+    expect(q.system).toBe('Upper Limb'); // <- topic
+    expect(q.difficulty).toBe('medium');
+    expect(q.correctAnswer).toBe(1);
+  });
+
+  it('types a row without Q_IMAGE as mcq_single', async () => {
+    const { questions, errors } = await parseExcel(toBuffer([legacyRow({
+      'QUESTION NO': 39,
+      Q_IMAGE: undefined,
+    })]));
+    expect(errors).toEqual([]);
+    expect(questions[0].questionType).toBe(QUESTION_TYPES.MCQ_SINGLE);
+  });
+
+  it('still reports genuinely broken rows (no question text)', async () => {
+    const { questions, errors } = await parseExcel(toBuffer([legacyRow({ QUESTION: undefined })]));
+    expect(questions).toHaveLength(0);
+    expect(errors.some((e) => /Question text is required/.test(e))).toBe(true);
+  });
+
+  it('keeps strict errors when the canonical columns exist but a cell is blank', async () => {
+    // Canonical layout (has SUBTOPIC etc.) with a blank SUBTOPIC cell must
+    // NOT silently inherit the topic — only fully-absent columns default.
+    const { questions, errors } = await parseExcel(toBuffer([{
+      SUBJECT: 'Pathology',
+      TOPIC: 'Genetics',
+      SUBTOPIC: '',
+      SYSTEM: 'Genetic Disorders',
+      QUESTION_TYPE: 'mcq_single',
+      DIFFICULTY: 'medium',
+      QUESTION: 'Valid question?',
+      OPTION1: 'a',
+      OPTION2: 'b',
+      CORRECT: '1',
+    }]));
+    expect(questions).toHaveLength(0);
+    expect(errors.some((e) => /Subtopic is required/.test(e))).toBe(true);
+  });
+});

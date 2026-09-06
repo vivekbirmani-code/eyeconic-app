@@ -286,3 +286,66 @@ describe('POST /api/question-bank/bulk-import — image URL validation', () => {
     expect(res.body.errors).toBeUndefined();
   });
 });
+
+describe('POST /api/question-bank/bulk-import — legacy tech-team sheet', () => {
+  const xlsx = require('xlsx');
+
+  // The exact column set of Q_BankTechTeamFinal.xlsx: no SUBTOPIC, SYSTEM,
+  // QUESTION_TYPE or DIFFICULTY columns at all.
+  const buildLegacyWorkbook = (rows) => {
+    const sheet = xlsx.utils.json_to_sheet(rows);
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(workbook, sheet, 'Sheet1');
+    return xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+  };
+
+  const legacyRow = (overrides = {}) => ({
+    'QUESTION NO': 38,
+    SUBJECT: 'OBSTETRICS & GYNAECOLOGY',
+    TOPIC: 'Upper Limb',
+    TAG: 'Injuries of Clavicle',
+    QUESTION: 'The radiograph shows a displaced spiral fracture. What is it known as?',
+    Q_IMAGE: 'https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789/view',
+    OPTION1: 'Holdsworth fracture',
+    OPTION2: 'Holstein-Lewis fracture',
+    OPTION3: 'Jefferson fracture',
+    OPTION4: 'Lisfranc fracture',
+    CORRECT: '2',
+    ...overrides,
+  });
+
+  it('imports legacy rows with defaulted metadata and a normalized image URL', async () => {
+    // Reuse the same subjects the route resolves against.
+    const OBGYN = await createSubject('OBGYN');
+    // The import attempts a Drive -> Cloudinary transfer for the Q_IMAGE;
+    // stub the download so the test is deterministic and offline. The
+    // transfer then fails per-image and falls back to keeping the direct
+    // (normalized) URL, surfacing a warning — the exact contract below.
+    const axios = require('axios');
+    const getSpy = jest.spyOn(axios, 'get').mockRejectedValue(new Error('offline test'));
+    try {
+      const res = await request(app)
+        .post('/api/question-bank/bulk-import')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .attach('file', buildLegacyWorkbook([legacyRow()]), 'legacy.xlsx');
+
+      expect(res.status).toBe(200);
+      expect(res.body.count).toBe(1);
+      expect(res.body.errors).toBeUndefined();
+      expect(res.body.warnings?.some((w) => w.includes('Image transfer failed'))).toBe(true);
+
+      const QuestionBank = require('../../models/QuestionBank');
+      const saved = await QuestionBank.findOne({ qid: '38' });
+      expect(saved).toBeTruthy();
+      expect(saved.questionType).toBe('image_based');
+      expect(saved.difficulty).toBe('medium');
+      expect(saved.subtopicName).toBe('Upper Limb');
+      expect(saved.subject.toString()).toBe(OBGYN._id.toString()); // alias resolved
+      // Drive share link normalized to the direct delivery host (lh3), which
+      // the import transfer then swaps for a Cloudinary URL in production.
+      expect(saved.questionImage).toBe('https://lh3.googleusercontent.com/d/1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789');
+    } finally {
+      getSpy.mockRestore();
+    }
+  });
+});

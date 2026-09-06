@@ -12,9 +12,31 @@ const {
     normalizeQuestionImageFields,
     validateQuestionPayload,
 } = require('../utils/questionValidation');
+const {
+    needsCloudinaryTransfer,
+    transferQuestionImages,
+} = require('../utils/imageUploader');
 const logger = require('../utils/logger');
 
 const router = express.Router();
+
+// Friendly subject-name aliases for import sheets: the canonical DB subject
+// name is what groupings/filters key on, so sheets that spell a subject
+// differently (e.g. "OBSTETRICS & GYNAECOLOGY" in the tech team's files)
+// resolve to the existing subject instead of failing the whole row.
+const SUBJECT_ALIASES = Object.freeze({
+    'obstetrics & gynaecology': 'obgyn',
+    'obstetrics and gynaecology': 'obgyn',
+    'obstetrics & gynecology': 'obgyn',
+    'obstetrics and gynecology': 'obgyn',
+    'ob-gyn': 'obgyn',
+    'obg': 'obgyn',
+});
+
+const subjectLookupKey = (name) => {
+    const lower = String(name || '').trim().toLowerCase();
+    return SUBJECT_ALIASES[lower] || lower;
+};
 
 const STUDENT_HIDDEN_FIELDS = '-correctAnswer -explanation -assertion -reason -columnA -columnB';
 
@@ -120,11 +142,13 @@ async function handleBulkImport(req, res, buffer) {
     });
 
     const errors = [...parseErrors];
+    const warnings = [];
     const questions = [];
+    const transferJobs = [];
 
     parsedRows.forEach((row, idx) => {
         const rowLabel = `Row ${idx + 2}`;
-        const subjectId = subjectsMap[row.subjectName.toLowerCase()];
+        const subjectId = subjectsMap[subjectLookupKey(row.subjectName)];
         if (!subjectId) {
             errors.push(`${rowLabel}: Unknown subject '${row.subjectName}'. Please use standard subject names.`);
             return;
@@ -161,6 +185,19 @@ async function handleBulkImport(req, res, buffer) {
             normalizeQuestionImageFields(candidate);
             validateQuestionPayload(candidate, { rowLabel });
             questions.push(candidate);
+
+            // Remote images (Google Drive links etc.) are transferred to the
+            // app's Cloudinary CDN before insert — the same authoritative
+            // image store the admin editor uploads to — instead of being
+            // hotlinked from a third party that can revoke sharing or
+            // throttle participant traffic.
+            if (
+                needsCloudinaryTransfer(candidate.questionImage)
+                || (Array.isArray(candidate.optionImages) && candidate.optionImages.some(needsCloudinaryTransfer))
+                || needsCloudinaryTransfer(candidate.explanationImage)
+            ) {
+                transferJobs.push({ candidate, rowLabel });
+            }
         } catch (err) {
             if (err instanceof QuestionValidationError) {
                 errors.push(...err.errors);
@@ -169,6 +206,29 @@ async function handleBulkImport(req, res, buffer) {
             }
         }
     });
+
+    // Image transfer, bounded concurrency (4 rows at a time, each row's images
+    // sequentially — ~35 real rows finish in well under a minute; the per-image
+    // axios timeout in imageUploader bounds the worst case).
+    if (transferJobs.length > 0) {
+        logger.info('Import image transfer starting', { rowsWithRemoteImages: transferJobs.length });
+        let next = 0;
+        const worker = async () => {
+            while (next < transferJobs.length) {
+                const job = transferJobs[next++];
+                try {
+                    const { warnings: rowWarnings } = await transferQuestionImages(job.candidate, job.rowLabel);
+                    warnings.push(...rowWarnings);
+                } catch (err) {
+                    // transferQuestionImages already falls back to the direct
+                    // URL per image; a throw here is a programming error, but
+                    // the import must still not fail because of it.
+                    warnings.push(`${job.rowLabel}: image transfer skipped (${err.message}) — direct source URLs kept.`);
+                }
+            }
+        };
+        await Promise.all([worker(), worker(), worker(), worker()]);
+    }
 
     if (questions.length === 0) {
         const { buildImportValidationPayload } = require('../utils/importErrors');
@@ -192,13 +252,21 @@ async function handleBulkImport(req, res, buffer) {
         }
     }
 
-    logger.info('Question bank import complete', { inserted: inserted.length, errorCount: errors.length, userId: req.user._id.toString() });
+    logger.info('Question bank import complete', {
+        inserted: inserted.length,
+        errorCount: errors.length,
+        warningCount: warnings.length,
+        userId: req.user._id.toString(),
+    });
 
     res.json({
         message: 'Questions imported successfully',
         count: inserted.length,
         totalRows: parsedRows.length + parseErrors.length,
-        errors: errors.length > 0 ? errors.slice(0, 50) : undefined
+        errors: errors.length > 0 ? errors.slice(0, 50) : undefined,
+        // Non-fatal image-transfer outcomes (direct URL kept); surfaced so
+        // the admin knows which images to re-check in the Question Bank.
+        warnings: warnings.length > 0 ? warnings.slice(0, 50) : undefined
     });
 }
 

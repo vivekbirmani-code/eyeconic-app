@@ -1,5 +1,10 @@
 const xlsx = require('xlsx');
-const { QUESTION_TYPES, normalizeQuestionType, normalizeDifficulty } = require('../constants/question');
+const {
+    QUESTION_TYPES,
+    DIFFICULTY_LEVELS,
+    normalizeQuestionType,
+    normalizeDifficulty,
+} = require('../constants/question');
 
 const IMPORT_SHEET_NAMES = ['question bank', 'questions', 'questionbank', 'sheet1'];
 
@@ -175,6 +180,9 @@ const HEADERS = {
     TAG: 'tags',
     TAGS: 'tags',
     QID: 'qid',
+    // "QUESTION NO" in legacy/tech-team sheets is the question's number —
+    // same meaning as QID in the canonical template.
+    QUESTIONNO: 'qid',
     QUESTION: 'question',
     QIMAGE: 'questionImage',
     ASSERTION: 'assertion',
@@ -231,6 +239,26 @@ const parseExcel = async (buffer) => {
             throw new Error(`Excel sheet "${sheetName}" is empty`);
         }
 
+        // Legacy-format detection. The canonical template requires the full
+        // seven-parameter metadata matrix, but sheets produced by the tech
+        // team (e.g. "Q_BankTechTeamFinal.xlsx": QUESTION NO / SUBJECT /
+        // TOPIC / TAG / QUESTION / Q_IMAGE / OPTION1-4 / CORRECT / SOLUTION)
+        // predate it and carry only a subset. When such a column is absent
+        // from the ENTIRE sheet, safe deterministic defaults fill the gap;
+        // when the column exists but a cell is blank, the original strict
+        // row-level error still applies. (A real import of the legacy file
+        // failing on all 133 rows is what previously left the question bank
+        // empty while the admin believed the questions were imported.)
+        const presentHeaders = new Set();
+        rawData.forEach((row) => Object.keys(row).forEach((key) => presentHeaders.add(normalizeHeader(key))));
+        const legacySheet = {
+            subtopic: !presentHeaders.has('SUBTOPIC'),
+            system: !presentHeaders.has('SYSTEM'),
+            questionType: !presentHeaders.has('QUESTIONTYPE') && !presentHeaders.has('TYPE'),
+            difficulty: !presentHeaders.has('DIFFICULTY'),
+        };
+        const usesLegacyDefaults = Object.values(legacySheet).some(Boolean);
+
         const questions = [];
         const errors = [];
 
@@ -251,21 +279,32 @@ const parseExcel = async (buffer) => {
             const topicName = str(rowData.topicName);
             if (!topicName) rowErrors.push(`${rowLabel}: Topic is required.`);
 
-            const subtopicName = str(rowData.subtopicName);
+            let subtopicName = str(rowData.subtopicName);
+            if (!subtopicName && legacySheet.subtopic) subtopicName = topicName;
             if (!subtopicName) rowErrors.push(`${rowLabel}: Subtopic is required.`);
 
-            const system = str(rowData.system);
+            let system = str(rowData.system);
+            if (!system && legacySheet.system) system = topicName;
             if (!system) rowErrors.push(`${rowLabel}: System is required.`);
 
-            const questionType = normalizeQuestionType(rowData.questionType);
-            if (!rowData.questionType) {
+            // Legacy sheets have no QUESTION_TYPE column: a row with Q_IMAGE
+            // is an image_based question, everything else is mcq_single (the
+            // OPTION1-4/CORRECT layout they all use).
+            let questionType = normalizeQuestionType(rowData.questionType);
+            if (!rowData.questionType && legacySheet.questionType) {
+                questionType = str(rowData.questionImage)
+                    ? QUESTION_TYPES.IMAGE_BASED
+                    : QUESTION_TYPES.MCQ_SINGLE;
+            } else if (!rowData.questionType) {
                 rowErrors.push(`${rowLabel}: Question Type is required.`);
             } else if (!questionType) {
                 rowErrors.push(`${rowLabel}: Invalid Question Type "${rowData.questionType}".`);
             }
 
-            const difficulty = normalizeDifficulty(rowData.difficulty);
-            if (!rowData.difficulty) {
+            let difficulty = normalizeDifficulty(rowData.difficulty);
+            if (!rowData.difficulty && legacySheet.difficulty) {
+                difficulty = DIFFICULTY_LEVELS.MEDIUM;
+            } else if (!rowData.difficulty) {
                 rowErrors.push(`${rowLabel}: Difficulty is required.`);
             } else if (!difficulty) {
                 rowErrors.push(`${rowLabel}: Difficulty must be one of easy, medium, hard.`);

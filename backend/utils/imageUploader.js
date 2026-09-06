@@ -106,8 +106,68 @@ const processQuestionImages = async (questionData) => {
     return processed;
 };
 
+/**
+ * True for values that live on a remote host and are NOT already on our own
+ * Cloudinary CDN — i.e. the ones an import should transfer. Inline data:
+ * URIs and empty cells need no transfer.
+ */
+const needsCloudinaryTransfer = (value) => {
+    if (typeof value !== 'string') return false;
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.startsWith('data:')) return false;
+    if (!/^https?:\/\//i.test(trimmed)) return false;
+    return !trimmed.includes('res.cloudinary.com');
+};
+
+/**
+ * Transfers every remote image URL on a validated import candidate to our
+ * Cloudinary question folder, so what lands in the database is a permanent,
+ * publicly deliverable asset on the app's own CDN — the same authoritative
+ * image source the admin editor uploads to. Hotlinked third-party URLs
+ * (Google Drive etc.) die when sharing is revoked and throttle under load;
+ * they must not be the stored source for participant-facing content.
+ *
+ * A failed transfer NEVER fails the row: the already-normalized direct URL
+ * (see imageUrls.convertGoogleDriveUrl) is kept — it is still publicly
+ * loadable — and a warning is returned so the import report surfaces it.
+ *
+ * Mutates and returns { candidate, warnings }.
+ */
+const transferQuestionImages = async (candidate, rowLabel = '') => {
+    const warnings = [];
+    const prefix = rowLabel ? `${rowLabel}: ` : '';
+
+    const transferOne = async (value, label) => {
+        if (!needsCloudinaryTransfer(value)) return value;
+        const uploaded = await uploadImageFromUrl(value);
+        if (uploaded) return uploaded;
+        warnings.push(`${prefix}Image transfer failed for ${label} — stored the direct source URL (${value}).`);
+        return value;
+    };
+
+    if (candidate.questionImage) {
+        candidate.questionImage = await transferOne(candidate.questionImage, 'question image');
+    }
+
+    if (Array.isArray(candidate.optionImages)) {
+        const transferred = [];
+        for (let i = 0; i < candidate.optionImages.length; i++) {
+            transferred.push(await transferOne(candidate.optionImages[i], `option ${i + 1} image`));
+        }
+        candidate.optionImages = transferred;
+    }
+
+    if (candidate.explanationImage) {
+        candidate.explanationImage = await transferOne(candidate.explanationImage, 'explanation image');
+    }
+
+    return { candidate, warnings };
+};
+
 module.exports = {
     convertGoogleDriveUrl,
     uploadImageFromUrl,
-    processQuestionImages
+    processQuestionImages,
+    needsCloudinaryTransfer,
+    transferQuestionImages
 };

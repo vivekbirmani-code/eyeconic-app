@@ -158,9 +158,9 @@ describe('normalizeQuestionInput — image URL normalization', () => {
       explanationImage: ' https://drive.google.com/open?id=1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789 ',
     });
     expect(result.questionImage).toBe('https://res.cloudinary.com/demo/image/upload/a.png');
-    expect(result.optionImages[0]).toBe('https://drive.google.com/uc?export=view&id=1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789');
+    expect(result.optionImages[0]).toBe('https://lh3.googleusercontent.com/d/1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789');
     expect(result.optionImages[1]).toBe('');
-    expect(result.explanationImage).toBe('https://drive.google.com/uc?export=view&id=1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789');
+    expect(result.explanationImage).toBe('https://lh3.googleusercontent.com/d/1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789');
   });
 
   it('normalizes empty/whitespace image input to an empty string', () => {

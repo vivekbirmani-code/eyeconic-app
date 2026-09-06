@@ -345,8 +345,14 @@ export default function QuestionBank() {
         try {
           const res = await api.post('/question-bank/bulk-import-base64', { filename: file.name, data: base64Data });
           const errCount = Array.isArray(res.data.errors) ? res.data.errors.length : 0;
-          alert(`Imported ${res.data.count} questions!${errCount ? ` ${errCount} rows had errors — see console.` : ''}`);
+          const warnCount = Array.isArray(res.data.warnings) ? res.data.warnings.length : 0;
+          alert(
+            `Imported ${res.data.count} questions!` +
+            (errCount ? ` ${errCount} rows had errors — see console.` : '') +
+            (warnCount ? ` ${warnCount} images kept their direct source URL — see console.` : '')
+          );
           if (errCount) console.warn('Import errors:', res.data.errors);
+          if (warnCount) console.warn('Import warnings:', res.data.warnings);
           fetchQuestions();
           fetchStats();
         } catch (err: any) {

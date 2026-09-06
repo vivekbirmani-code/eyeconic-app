@@ -23,16 +23,23 @@ const isPlaceholderImageHost = (value) => {
 };
 
 /**
- * Converts a Google Drive share link to its direct-download form so it can
- * actually be fetched by an <img> tag. Non-Drive URLs are returned unchanged.
+ * Converts a Google Drive share link to its direct-delivery form so it can
+ * actually be fetched by an <img> tag (and by the import-time Cloudinary
+ * transfer). lh3.googleusercontent.com is Google's dedicated image delivery
+ * host: it serves the original bytes with real image content-types, needs no
+ * cookies, and never serves the virus-scan interstitial — unlike
+ * drive.google.com/uc?export=view, which throttles consumer traffic and
+ * intermittently answers with an HTML shell instead of the image.
+ * Non-Drive URLs are returned unchanged, and the conversion is idempotent
+ * (an already-converted /d/<id> URL maps to itself).
  */
 const convertGoogleDriveUrl = (url) => {
     const idMatch = url.match(/[-\w]{25,}/);
     if (!idMatch) return url;
-    return `https://drive.google.com/uc?export=view&id=${idMatch[0]}`;
+    return `https://lh3.googleusercontent.com/d/${idMatch[0]}`;
 };
 
-const isGoogleDriveUrl = (url) => url.includes('drive.google.com');
+const isGoogleDriveUrl = (url) => url.includes('drive.google.com') || url.includes('lh3.googleusercontent.com');
 
 module.exports = {
     PLACEHOLDER_IMAGE_HOSTS,
