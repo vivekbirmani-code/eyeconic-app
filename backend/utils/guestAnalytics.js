@@ -34,8 +34,9 @@ const roundTo2 = (value) => {
  * render that gracefully.
  *
  * { fullPhone: true } additionally includes the raw E.164 `phone` field —
- * reserved for the admin CSV export, which is the raw-lead follow-up
- * channel. All list/analytics surfaces use the masked form only.
+ * used by admin-only surfaces (the CSV export and the admin analytics
+ * responses) that follow up on raw leads. `phoneMasked` is still included
+ * on every row for consumers that prefer the masked form.
  */
 const fetchGuestParticipants = async (quizId, { fullPhone = false } = {}) => {
   const attempts = await GuestAttempt.find({
@@ -82,8 +83,9 @@ const fetchGuestParticipants = async (quizId, { fullPhone = false } = {}) => {
       // The verified email from the OTP flow (snapshot first, live lead as
       // fallback). Null for legacy pre-email leads — render as "—".
       email: attempt.guestEmail || lead?.email || null,
-      // Admin-only analytics surfaces always get the MASKED phone; the full
-      // number is reserved for the admin attempt-detail view and CSV export.
+      // Masked phone stays on every row; the raw E.164 number rides along
+      // only for admin-only callers that pass fullPhone (CSV export +
+      // admin analytics responses).
       phoneMasked: maskPhone(attempt.guestPhone || lead?.phone || ''),
       ...(fullPhone ? { phone: attempt.guestPhone || lead?.phone || '' } : {}),
       score: correct,

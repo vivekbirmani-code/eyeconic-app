@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "react-native",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "allowJs": true,
+    "resolveJsonModule": true,
+    "paths": { "@/*": ["./*"] },
+    "baseUrl": "."
+  },
+  "include": ["components/analytics/GuestParticipantList.tsx", "app/(tabs)/quizzes/student-analytics.tsx", "types/analytics.ts"]
+}

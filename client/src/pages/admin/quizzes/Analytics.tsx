@@ -221,7 +221,7 @@ export default function Analytics() {
                               <span className="text-gray-400">—</span>
                             )}
                           </td>
-                          <td className="p-3 text-sm text-gray-600 font-mono">{gp.phoneMasked}</td>
+                          <td className="p-3 text-sm text-gray-600 font-mono">{gp.phone ?? gp.phoneMasked}</td>
                           <td className="p-3">
                             {gp.marketingConsent
                               ? <span className="px-2 py-1 bg-emerald-50 text-emerald-700 rounded-lg text-xs font-bold border border-emerald-200">Yes</span>

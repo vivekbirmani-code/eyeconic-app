@@ -119,7 +119,7 @@ describe('Public participants in admin analytics', () => {
     resetGuestOtpRateLimits();
   });
 
-  it('returns guestParticipants to admins with verified emails, masked phones + consent', async () => {
+  it('returns guestParticipants to admins with verified emails, full phones + consent', async () => {
     await addGuestAttempt(quiz, questions, { name: 'Rahul Sharma', email: 'rahul.sharma@example.com', phone: '+919876543210', correct: 2, consent: true });
     await addGuestAttempt(quiz, questions, { name: 'Amit Kumar', email: 'amit.kumar@example.com', phone: '+919876543211', correct: 1, consent: false });
 
@@ -135,16 +135,26 @@ describe('Public participants in admin analytics', () => {
       email: 'rahul.sharma@example.com',
       emailVerified: true,
       phoneMasked: '+91 98xxxxx210',
+      phone: '+919876543210', // admins follow up on the raw lead number
       phoneVerified: false, // phone is contact info only in the email-OTP flow
       marketingConsent: true,
       correct: 2,
       scorePercentage: 100,
     });
     expect(rahul.phoneMasked).not.toContain('98765');
-    expect(rahul).not.toHaveProperty('phone');
     const amit = res.body.guestParticipants.find((g) => g.name === 'Amit Kumar');
     expect(amit.email).toBe('amit.kumar@example.com');
+    expect(amit.phone).toBe('+919876543211');
     expect(amit.marketingConsent).toBe(false);
+
+    // The legacy /analytics/:id route serves the same admin rows with the
+    // full phone.
+    const legacyRes = await request(app)
+      .get(`/api/quizzes/analytics/${quiz._id}`)
+      .set('Authorization', `Bearer ${admin.token}`);
+    expect(legacyRes.status).toBe(200);
+    const legacyRahul = legacyRes.body.guestParticipants.find((g) => g.name === 'Rahul Sharma');
+    expect(legacyRahul.phone).toBe('+919876543210');
   });
 
   it('renders legacy pre-email leads without an email (null-safe rows)', async () => {

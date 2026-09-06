@@ -2158,9 +2158,10 @@ router.get('/analytics/:id', auth, authorize('admin', 'mentor'), async (req, res
     const attempts = await QuizAttempt.find(attemptQuery).populate('student', 'name email profilePicture');
 
     // Public-quiz participants: separate unranked list, admins only. The
-    // legacy aggregates below stay registered-only for every caller.
+    // legacy aggregates below stay registered-only for every caller. Admins
+    // get the full lead phone (same follow-up policy as the CSV export).
     const guestParticipants = req.user.role === 'admin'
-      ? await fetchGuestParticipants(quizId)
+      ? await fetchGuestParticipants(quizId, { fullPhone: true })
       : null;
     const guestParticipantsField = guestParticipants !== null ? { guestParticipants } : {};
 
@@ -3269,9 +3270,10 @@ router.get('/analytics/test/:testId', auth, authorize('admin', 'mentor'), async 
 
     // Public-quiz participants: a SEPARATE, unranked list for admins only.
     // Guests never join studentPerformance/rankings/aggregates; mentors get
-    // an unchanged response.
+    // an unchanged response. Admins get the full lead phone (same follow-up
+    // policy as the CSV export).
     const guestParticipants = req.user.role === 'admin'
-      ? await fetchGuestParticipants(req.params.testId)
+      ? await fetchGuestParticipants(req.params.testId, { fullPhone: true })
       : null;
 
     res.json({
