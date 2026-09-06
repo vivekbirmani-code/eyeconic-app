@@ -199,6 +199,7 @@ export const publicQuizApi = {
       answers: GuestAnswer[];
       tabSwitchCount: number;
       tabSwitchLog: string[];
+      isAutoSubmit?: boolean;
     }
   ) =>
     publicApi.post<{ success: boolean; attemptId: string; submitted: boolean; isAlreadySubmitted?: boolean }>(

@@ -1,5 +1,6 @@
 const cloudinary = require('cloudinary').v2;
 const axios = require('axios');
+const { convertGoogleDriveUrl } = require('./imageUrls');
 
 // Configure Cloudinary
 cloudinary.config({
@@ -7,28 +8,6 @@ cloudinary.config({
     api_key: process.env.CLOUDINARY_API_KEY,
     api_secret: process.env.CLOUDINARY_API_SECRET
 });
-
-/**
- * Convert Google Drive share link to direct download URL
- */
-const convertGoogleDriveUrl = (url) => {
-    if (!url || typeof url !== 'string') return null;
-
-    const trimmedUrl = url.trim();
-    if (!trimmedUrl) return null;
-
-    // Check if it's a Google Drive link
-    if (trimmedUrl.includes('drive.google.com')) {
-        // Extract file ID using regex
-        const idMatch = trimmedUrl.match(/[-\w]{25,}/);
-        if (idMatch) {
-            // Return direct download URL
-            return `https://drive.google.com/uc?export=download&id=${idMatch[0]}`;
-        }
-    }
-
-    return trimmedUrl;
-};
 
 /**
  * Upload image from URL to Cloudinary

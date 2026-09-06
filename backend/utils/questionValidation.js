@@ -4,6 +4,11 @@ const {
     normalizeDifficulty,
     DEFAULT_ASSERTION_REASON_OPTIONS,
 } = require('../constants/question');
+const {
+    convertGoogleDriveUrl,
+    isGoogleDriveUrl,
+    isPlaceholderImageHost,
+} = require('./imageUrls');
 
 /**
  * A validation failure that carries an HTTP status and a list of field-level
@@ -22,39 +27,16 @@ const isNonEmptyString = (value) => typeof value === 'string' && value.trim().le
 
 // ---- Image URL handling ----
 //
-// Question images are stored as absolute http(s) URLs (Cloudinary in
+// Question images are stored as absolute https URLs (Cloudinary in
 // production, uploaded through /api/upload or transferred at import). The
 // only failure mode that has reached production is placeholder URLs
 // (example.com/...) copy-pasted from the import template's sample row — they
 // pass through silently and render as broken images for every participant.
 // These helpers normalize what can be normalized (whitespace, Google Drive
-// share links) and reject what can never resolve, at write time, on every
-// path (create, update, Excel import).
-
-// Hosts that only ever appear in template/sample rows — nothing real is
-// ever hosted here.
-const PLACEHOLDER_IMAGE_HOSTS = new Set([
-    'example.com',
-    'www.example.com',
-    'example.org',
-    'www.example.org',
-    'example.net',
-    'www.example.net',
-]);
-
-/**
- * Converts a Google Drive share link to its direct-download form so it can
- * actually be fetched by an <img> tag. Non-Drive URLs are returned unchanged.
- * Mirrors utils/imageUploader.convertGoogleDriveUrl (kept in sync — that copy
- * serves the legacy quiz-import route).
- */
-const convertImageShareLink = (url) => {
-    const idMatch = url.match(/[-\w]{25,}/);
-    if (!idMatch) return url;
-    return `https://drive.google.com/uc?export=view&id=${idMatch[0]}`;
-};
-
-const isGoogleDriveUrl = (url) => url.includes('drive.google.com');
+// share links) and reject what can never work, at write time, on every path
+// (create, update, Excel import). http: is rejected too: the public quiz is
+// served over https, and browsers block plain-http images there as mixed
+// content — the same broken-image failure, one hostname away.
 
 /**
  * Normalizes a single image URL for storage: trims, converts Drive share
@@ -67,13 +49,13 @@ const normalizeImageField = (value) => {
     if (typeof value !== 'string') return value;
     const trimmed = value.trim();
     if (!trimmed) return '';
-    if (isGoogleDriveUrl(trimmed)) return convertImageShareLink(trimmed);
+    if (isGoogleDriveUrl(trimmed)) return convertGoogleDriveUrl(trimmed);
     return trimmed;
 };
 
 /**
  * Validates a stored image URL value. Returns null when acceptable (empty
- * string = no image, data:image/ URIs, and absolute http(s) URLs on real
+ * string = no image, data:image/ URIs, and absolute https URLs on real
  * hosts are all fine) or a human-readable error message.
  */
 const imageFieldError = (value, fieldLabel) => {
@@ -90,10 +72,10 @@ const imageFieldError = (value, fieldLabel) => {
     } catch {
         return `${fieldLabel} "${trimmed}" is not a valid URL — use a direct https image URL.`;
     }
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-        return `${fieldLabel} must be an http(s) URL or a data:image/ URI.`;
+    if (parsed.protocol !== 'https:') {
+        return `${fieldLabel} must be an https URL (or a data:image/ URI) — http images are blocked as mixed content on the https public quiz.`;
     }
-    if (PLACEHOLDER_IMAGE_HOSTS.has(parsed.hostname.toLowerCase())) {
+    if (isPlaceholderImageHost(trimmed)) {
         return `${fieldLabel} "${trimmed}" is a placeholder URL — replace it with the real, publicly accessible image URL.`;
     }
     return null;

@@ -29,27 +29,10 @@
 const path = require('path');
 const mongoose = require('mongoose');
 const cloudinary = require('cloudinary').v2;
+const { isPlaceholderImageHost: isPlaceholderUrl } = require('../utils/imageUrls');
 
 // Load backend/.env (MONGODB_URI, CLOUDINARY_*) regardless of cwd
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
-
-const PLACEHOLDER_HOSTS = new Set([
-    'example.com',
-    'www.example.com',
-    'example.org',
-    'www.example.org',
-    'example.net',
-    'www.example.net',
-]);
-
-const isPlaceholderUrl = (value) => {
-    if (typeof value !== 'string' || !value.trim()) return false;
-    try {
-        return PLACEHOLDER_HOSTS.has(new URL(value.trim()).hostname.toLowerCase());
-    } catch {
-        return false;
-    }
-};
 
 // Neutral stand-in so image_based questions (which must have an image) never
 // render a browser broken-image icon. Rendered as SVG — browsers draw the

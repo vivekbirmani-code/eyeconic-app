@@ -127,6 +127,10 @@ describe('image URL validation (all question types)', () => {
     expect(() => validateQuestionPayload({ ...imageBase(), questionImage: 42 })).toThrow(QuestionValidationError);
   });
 
+  it('rejects plain-http image URLs (mixed content on the https public quiz)', () => {
+    expect(() => validateQuestionPayload({ ...imageBase(), questionImage: 'http://real-host.test/img.png' })).toThrow(/https/);
+  });
+
   it('accepts data:image URIs and treats empty strings as no image', () => {
     expect(() => validateQuestionPayload({ ...imageBase(), questionImage: 'data:image/png;base64,iVBORw0KGgo=' })).not.toThrow();
     expect(() => validateQuestionPayload({ ...imageBase(), questionImage: '' })).not.toThrow();

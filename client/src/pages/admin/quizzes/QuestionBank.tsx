@@ -202,9 +202,12 @@ export default function QuestionBank() {
       difficulty: form.difficulty,
       tags: form.tags.split(',').map(t => t.trim()).filter(Boolean),
       question: form.question.trim(),
-      questionImage: form.questionImage || undefined,
+      // '' (not undefined) when empty so an edit can actually CLEAR a
+      // stored image — undefined would merge back to the old value on the
+      // server and keep it.
+      questionImage: form.questionImage || '',
       explanation: form.explanation,
-      explanationImage: form.explanationImage || undefined,
+      explanationImage: form.explanationImage || '',
       positiveMarks: parseFloat(form.positiveMarks.toString() || '0'),
       negativeMarks: parseFloat(form.negativeMarks.toString() || '0'),
       marks: parseFloat(form.positiveMarks.toString() || '0'),

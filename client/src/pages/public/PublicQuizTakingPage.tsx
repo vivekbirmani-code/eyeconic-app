@@ -215,8 +215,14 @@ export default function PublicQuizTakingPage() {
     const defs = attempt?.sectionDefinitions ?? [];
     const idx = activeSectionState?.index;
     if (typeof idx !== 'number' || !defs[idx]) return [];
-    const ids = new Set(defs[idx].questionIds.map(String));
-    return questions.map((q, i) => (ids.has(String(q._id)) ? i : -1)).filter((i) => i !== -1);
+    // DEFINITION order (the admin's section question order), not quiz-array
+    // order — manual sections can reorder questions, and the landing jump,
+    // this list, the guard, and the palette must all agree on what "first
+    // question of the section" means.
+    const idToGlobalIndex = new Map(questions.map((q, i) => [String(q._id), i]));
+    return defs[idx].questionIds
+      .map((qid) => idToGlobalIndex.get(String(qid)))
+      .filter((i): i is number => i !== undefined);
   }, [sectionLockEnabled, quiz, questions, attempt?.sectionDefinitions, activeSectionState]);
 
   // Position of the current question INSIDE the active section. Section
@@ -394,6 +400,9 @@ export default function PublicQuizTakingPage() {
           answers: buildAnswerPayload(),
           tabSwitchCount: tabSwitchRef.current.count,
           tabSwitchLog: tabSwitchRef.current.log,
+          // Surfaces as status:'auto_submitted' on the result page — same as
+          // the section-locked flow and the registered app attempt.
+          isAutoSubmit: isAuto,
         });
         const attemptId = response.data.attemptId || attempt._id;
         goToResult(attemptId);
@@ -498,17 +507,26 @@ export default function PublicQuizTakingPage() {
     setCurrent(index);
     questionStartRef.current = Date.now();
   };
+  // Functional update: two rapid activations before a re-render both apply
+  // (reading `current` from the closure would compute the same target twice
+  // and lose a step).
+  const stepQuestion = (delta: 1 | -1) => {
+    setCurrent((prev) => {
+      if (sectionLockEnabled) {
+        const nextPos = activeSectionQuestionIndexes.indexOf(prev) + delta;
+        if (nextPos < 0 || nextPos >= activeSectionQuestionIndexes.length) return prev;
+        return activeSectionQuestionIndexes[nextPos];
+      }
+      const next = prev + delta;
+      return next < 0 || next > questions.length - 1 ? prev : next;
+    });
+    questionStartRef.current = Date.now();
+  };
   const handlePrev = () => {
-    if (!canGoPrev) return;
-    goToQuestion(
-      sectionLockEnabled ? activeSectionQuestionIndexes[positionInSection - 1] : current - 1
-    );
+    if (canGoPrev) stepQuestion(-1);
   };
   const handleNext = () => {
-    if (!canGoNext) return;
-    goToQuestion(
-      sectionLockEnabled ? activeSectionQuestionIndexes[positionInSection + 1] : current + 1
-    );
+    if (canGoNext) stepQuestion(1);
   };
 
   const currentQuestion: PublicQuestion | undefined = questions[current];
@@ -835,6 +853,12 @@ export default function PublicQuizTakingPage() {
               const answered = isAnswered(answers[index]?.selectedAnswer);
               const marked = markedForReview[index];
               const isCurrent = index === current;
+              // Match the header's numbering system: section-relative when
+              // locked (the palette only holds the active section), global
+              // for flat quizzes.
+              const label = sectionLockEnabled
+                ? activeSectionQuestionIndexes.indexOf(index) + 1
+                : index + 1;
               return (
                 <button
                   key={index}
@@ -850,7 +874,7 @@ export default function PublicQuizTakingPage() {
                           : 'border-gray-200 bg-white text-gray-500'
                   }`}
                 >
-                  {index + 1}
+                  {label}
                 </button>
               );
             })}

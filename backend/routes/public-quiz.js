@@ -91,7 +91,16 @@ const mergeClosingSectionGuestAnswers = (attempt, clientAnswers, closingIndex) =
 // all-correct guest capped at 25% on a default 4/−1 quiz), and
 // sectionPerformance (subject-name grouped) is computed and stored like
 // registered attempts.
-const gradeAndFinalizeGuestAttempt = async (attempt, { isAutoSubmit = false, sectionStates = null } = {}) => {
+//
+// The whole-quiz /submit route funnels through here too (store-then-grade,
+// like the registered flow) so every guest finalization path — whole-quiz
+// submit, section-submit cascade, lazy expiry — runs ONE grading loop.
+const gradeAndFinalizeGuestAttempt = async (attempt, {
+    isAutoSubmit = false,
+    sectionStates = null,
+    tabSwitchCount = undefined,
+    tabSwitchLog = undefined,
+} = {}) => {
     const quiz = await Quiz.findById(attempt.quiz).populate({
         path: 'questions',
         select: 'correctAnswer marks questionType topicName subtopicName system tags difficulty subject',
@@ -163,6 +172,14 @@ const gradeAndFinalizeGuestAttempt = async (attempt, { isAutoSubmit = false, sec
     };
     if (sectionStates !== null) {
         finalFields.sectionStates = sectionStates;
+    }
+    // Whole-quiz submit passes the proctoring counters through; the section
+    // cascade paths leave them untouched (they persist from save-progress).
+    if (tabSwitchCount !== undefined) {
+        finalFields.tabSwitchCount = tabSwitchCount;
+    }
+    if (tabSwitchLog !== undefined) {
+        finalFields.tabSwitchLog = tabSwitchLog;
     }
 
     const updated = await GuestAttempt.findOneAndUpdate(
@@ -305,19 +322,37 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
         const quiz = access.quiz;
 
         // Check for existing in-progress attempt — same device first, then
-        // (OTP flow) any device under the verified lead.
+        // (OTP flow) any device under the verified lead. Both lookups sort
+        // OLDEST-first: if duplicate live attempts exist (the pre-fix
+        // concurrent-start race could leave them), every observer resolves
+        // the same survivor instead of an arbitrary one, and the prune below
+        // removes the doomed duplicates so the race is self-healing.
+        const ownerSort = { createdAt: 1, _id: 1 };
         let attempt = await GuestAttempt.findOne({
             quiz: quiz._id,
             guestId,
             status: 'in_progress'
-        });
+        }).sort(ownerSort);
 
         if (!attempt && req.guest) {
             attempt = await GuestAttempt.findOne({
                 quiz: quiz._id,
                 guest: req.guest._id,
                 status: 'in_progress'
-            });
+            }).sort(ownerSort);
+
+            // Self-heal duplicates under the lead: keep the oldest live
+            // attempt, delete the rest. Safe against concurrent observers —
+            // everyone sorts the same way, so no observer can be holding a
+            // duplicate this loop deletes (they'd have the oldest too).
+            if (attempt) {
+                await GuestAttempt.deleteMany({
+                    quiz: quiz._id,
+                    status: 'in_progress',
+                    _id: { $ne: attempt._id },
+                    $or: [{ guestId: attempt.guestId }, { guest: req.guest._id }],
+                });
+            }
         }
 
         if (attempt) {
@@ -449,15 +484,23 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
         // them, resetting visible progress. Earliest-wins: whichever request
         // did NOT create the oldest in-progress attempt deletes its own and
         // answers with the oldest instead. Both racers converge on the same
-        // survivor deterministically.
-        const liveAttempts = await GuestAttempt.find({
+        // survivor deterministically. (Residual micro-window: a racer whose
+        // resume-findOne lands between another racer's save and its
+        // self-delete can observe the doomed duplicate — every observer now
+        // sorts oldest-first, so it resolves the survivor on its next
+        // request.)
+        const liveIds = await GuestAttempt.find({
             quiz: quiz._id,
             status: 'in_progress',
             $or: [{ guestId }, ...(req.guest ? [{ guest: req.guest._id }] : [])],
-        }).sort({ createdAt: 1, _id: 1 });
-        if (liveAttempts.length > 1 && String(liveAttempts[0]._id) !== String(attempt._id)) {
+        })
+            .select('_id')
+            .sort({ createdAt: 1, _id: 1 })
+            .limit(2)
+            .lean();
+        if (liveIds.length > 1 && String(liveIds[0]._id) !== String(attempt._id)) {
             await GuestAttempt.deleteOne({ _id: attempt._id });
-            attempt = liveAttempts[0];
+            attempt = await GuestAttempt.findById(liveIds[0]._id);
         }
 
         if (req.guest) {
@@ -525,7 +568,7 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
 router.post('/quiz/:shareToken/submit', optionalGuestAuth, async (req, res) => {
     try {
         const { shareToken } = req.params;
-        const { guestId, attemptId, answers, tabSwitchCount, tabSwitchLog } = req.body;
+        const { guestId, attemptId, answers, tabSwitchCount, tabSwitchLog, isAutoSubmit } = req.body;
 
         if (!guestId || !attemptId) {
             return res.status(400).json({
@@ -613,78 +656,25 @@ router.post('/quiz/:shareToken/submit', optionalGuestAuth, async (req, res) => {
             });
         }
 
-        // Calculate score. Server-side grading is the only source of truth —
-        // client-submitted isCorrect/metadataSnapshot values are never
-        // trusted. Marking scheme matches finalizeQuizAttempt (registered
-        // users): +positiveMarks correct, −|negativeMarks| incorrect, and
-        // sectionPerformance (subject grouped) is computed and stored.
-        const positiveMarks = quiz.positiveMarks !== undefined ? quiz.positiveMarks : 4;
-        const negativeMarks = quiz.negativeMarks !== undefined ? Math.abs(quiz.negativeMarks) : 1;
+        // Store-then-grade, mirroring the registered flow: client answers are
+        // first sanitized into attempt.answers (only positional/response
+        // fields are ever trusted), then the SAME shared grader used by the
+        // section cascade computes every derived field server-side — one
+        // grading loop for all guest finalization paths. Marking scheme
+        // matches finalizeQuizAttempt (registered users): +positiveMarks
+        // correct, −|negativeMarks| incorrect, skipped never penalized.
+        attempt.answers = (Array.isArray(answers) ? answers : [])
+            .filter(a => a && typeof a.questionIndex === 'number')
+            .map(sanitizeGuestAnswer)
+            .sort((a, b) => a.questionIndex - b.questionIndex);
 
-        let score = 0;
-        let marksObtained = 0;
-        const sectionPerformance = {};
-
-        const clientAnswers = Array.isArray(answers) ? answers : [];
-
-        const gradedAnswers = quiz.questions.map((question, index) => {
-            const clientAnswer = clientAnswers.find(a => a && a.questionIndex === index) || clientAnswers[index];
-            const selectedAnswer = clientAnswer ? clientAnswer.selectedAnswer : -1;
-            const { answered, isCorrect } = gradeQuestion(question, selectedAnswer);
-
-            const section = question?.subject?.name || question?.topicName || 'General';
-            if (!sectionPerformance[section]) {
-                sectionPerformance[section] = { sectionName: section, correct: 0, incorrect: 0, skipped: 0, timeSpent: 0 };
-            }
-
-            let finalIsCorrect = false;
-            if (!answered) {
-                sectionPerformance[section].skipped++;
-            } else if (isCorrect) {
-                score++;
-                marksObtained += positiveMarks;
-                sectionPerformance[section].correct++;
-                finalIsCorrect = true;
-            } else {
-                marksObtained -= negativeMarks;
-                sectionPerformance[section].incorrect++;
-            }
-            if (clientAnswer && clientAnswer.timeSpent) {
-                sectionPerformance[section].timeSpent += clientAnswer.timeSpent;
-            }
-
-            return {
-                questionIndex: index,
-                questionId: question._id,
-                selectedAnswer,
-                isCorrect: finalIsCorrect,
-                markedForReview: !!(clientAnswer && clientAnswer.markedForReview),
-                timeSpent: (clientAnswer && clientAnswer.timeSpent) || 0,
-                metadataSnapshot: buildMetadataSnapshot(question)
-            };
+        await gradeAndFinalizeGuestAttempt(attempt, {
+            // Timer-expiry submits surface as auto_submitted on the result
+            // page — same contract as the section cascade and registered app.
+            isAutoSubmit: isAutoSubmit === true,
+            tabSwitchCount: tabSwitchCount || 0,
+            tabSwitchLog: tabSwitchLog || [],
         });
-
-        marksObtained = Math.round((marksObtained + Number.EPSILON) * 100) / 100;
-
-        const sectionPerformanceArray = Object.values(sectionPerformance).map(section => {
-            const attemptedInSection = section.correct + section.incorrect;
-            return {
-                ...section,
-                accuracy: attemptedInSection > 0 ? Math.round((section.correct / attemptedInSection) * 100) : 0,
-            };
-        });
-
-        // Update attempt
-        attempt.answers = gradedAnswers;
-        attempt.score = score;
-        attempt.marksObtained = marksObtained;
-        attempt.sectionPerformance = sectionPerformanceArray;
-        attempt.status = 'completed';
-        attempt.endTime = new Date();
-        attempt.tabSwitchCount = tabSwitchCount || 0;
-        attempt.tabSwitchLog = tabSwitchLog || [];
-
-        await attempt.save();
 
         if (req.guest) {
             await Guest.updateOne(
@@ -1021,6 +1011,13 @@ router.get('/quiz/:shareToken/attempt/:attemptId/result', guestAuth, async (req,
             path: 'quiz',
             populate: { path: 'questions', model: 'QuestionBank' }
         });
+
+        // The result payload's quiz.subject must carry the subject NAME (same
+        // contract as the registered results route), not a raw ObjectId —
+        // otherwise the result header renders a 24-char hex string.
+        if (attempt && attempt.quiz) {
+            await GuestAttempt.populate(attempt, { path: 'quiz.subject', select: 'name' });
+        }
 
         if (!attempt || !attempt.quiz) {
             return res.status(404).json({
