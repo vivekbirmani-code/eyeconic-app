@@ -412,7 +412,7 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
 
         // Create new attempt. Section-locking snapshot is frozen here (same
         // helper + shapes as authenticated attempts). OTP-flow attempts are
-        // stamped with the lead ref + immutable name/phone snapshot.
+        // stamped with the lead ref + immutable name/email/phone snapshot.
         const sectionSnapshot = buildSectionSnapshot(quiz, new Date());
         attempt = new GuestAttempt({
             quiz: quiz._id,
@@ -420,6 +420,7 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
             deviceInfo,
             guest: req.guest ? req.guest._id : null,
             guestName: req.guest ? req.guest.name : null,
+            guestEmail: req.guest ? req.guest.email : null,
             guestPhone: req.guest ? req.guest.phone : null,
             totalQuestions: quiz.questions.length,
             totalMarks: quiz.totalMarks,
@@ -450,6 +451,7 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
                 lead: {
                     _id: req.guest._id,
                     name: req.guest.name,
+                    email: req.guest.email,
                     phoneMasked: maskPhone(req.guest.phone)
                 }
             } : {}),
@@ -1037,6 +1039,7 @@ router.get('/quiz/:shareToken/attempt/:attemptId/result', guestAuth, async (req,
             guest: {
                 _id: req.guest._id,
                 name: req.guest.name,
+                email: req.guest.email,
                 phoneMasked: maskPhone(req.guest.phone)
             }
         });

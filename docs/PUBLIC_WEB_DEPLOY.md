@@ -76,8 +76,7 @@ value: `Public quiz web app URL`.
 |---|---|---|
 | ▸ `WEB_APP_URL` | `https://<static-site-URL>` | Where public links point; scheme-less host accepted |
 | `ALLOWED_ORIGINS` | `https://eyeconicmentors.vercel.app` | Admin origin (unchanged); the `WEB_APP_URL` origin is allowed automatically |
-| `TWO_FACTOR_API_KEY` | (secret) | Real SMS OTP via 2Factor — see `docs/2FACTOR_SETUP.md` |
-| `TWO_FACTOR_OTP_TEMPLATE` | (optional) | DLT-approved OTP template name, if your 2Factor account requires one |
+| `SMTP_HOST` / `SMTP_USER` / `SMTP_PASS` | (secret) | Email OTP delivery for the guest flow (same provider chain as signup/password-reset); Resend (`RESEND_API_KEY`) works as fallback |
 | `OTP_HASH_SECRET` | (secret) | HMAC key for guest OTP hashes |
 | `GUEST_JWT_EXPIRES_IN` | `4h` | Guest session lifetime |
 
@@ -95,10 +94,10 @@ public web host = changing `WEB_APP_URL` only.
 2. **SPA refresh** — direct-load and refresh on `/public-quiz/<token>`,
    `/public-quiz/<token>/take`, `/public-quiz/<token>/result/<attemptId>`
    (the rewrite rule covers these).
-3. **OTP flow** — name + phone + consent → OTP request/verify; wrong and
-   expired codes rejected; rate limits (429) enforced. Real SMS requires
-   `TWO_FACTOR_API_KEY` (§2); until then production returns 503
-   `SMS_NOT_CONFIGURED` by design.
+3. **OTP flow** — name + email + phone + consent → email OTP request/verify;
+   wrong and expired codes rejected; rate limits (429) enforced. Codes are
+   emailed via the SMTP/Resend configuration (§2); without email credentials
+   production returns 503 `EMAIL_NOT_CONFIGURED` by design.
 4. **Quiz + grading** — take the quiz, submit; backend grading (positive /
    negative marks) is the source of truth; result summary renders.
 5. **Expiry** — an expired link (`publicExpiryDate`) returns 410 at the API

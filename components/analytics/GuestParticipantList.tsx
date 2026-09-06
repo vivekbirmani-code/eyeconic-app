@@ -1,12 +1,15 @@
 import React from 'react';
 import { View, Text, FlatList, StyleSheet, TouchableOpacity } from 'react-native';
-import { User, Clock, Phone, ShieldCheck, BadgeCheck } from 'lucide-react-native';
+import { User, Clock, Phone, Mail, ShieldCheck, BadgeCheck } from 'lucide-react-native';
 import { formatPercent } from '@/types/analytics';
 
 // Row shape produced by backend/utils/guestAnalytics.js — admins only.
+// email/emailVerified are null/false for legacy leads captured before the
+// email-OTP switch; phoneVerified is true only for those legacy leads.
 export interface GuestParticipant {
     attemptId: string;
     name: string;
+    email: string | null;
     phoneMasked: string;
     score: number;
     totalQuestions: number;
@@ -22,6 +25,7 @@ export interface GuestParticipant {
     tabSwitchCount: number;
     status: string;
     submittedAt: string;
+    emailVerified: boolean;
     phoneVerified: boolean;
     marketingConsent: boolean;
 }
@@ -57,6 +61,15 @@ export default function GuestParticipantList({ participants, onParticipantClick 
                                         <Text style={styles.guestBadgeText}>GUEST</Text>
                                     </View>
                                 </View>
+                                {item.email ? (
+                                    <View style={styles.phoneRow}>
+                                        <Mail color="#9CA3AF" size={11} />
+                                        <Text style={styles.phone} numberOfLines={1} ellipsizeMode="tail">{item.email}</Text>
+                                        {item.emailVerified ? (
+                                            <BadgeCheck color="#10B981" size={12} />
+                                        ) : null}
+                                    </View>
+                                ) : null}
                                 <View style={styles.phoneRow}>
                                     <Phone color="#9CA3AF" size={11} />
                                     <Text style={styles.phone}>{item.phoneMasked}</Text>

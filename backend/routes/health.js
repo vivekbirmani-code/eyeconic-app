@@ -2,7 +2,6 @@ const mongoose = require('mongoose');
 const jwt = require('jsonwebtoken');
 const logger = require('../utils/logger');
 const { getEmailStatus } = require('../utils/mailer');
-const { getSmsStatus } = require('../utils/sms');
 const { getCloudinaryHealthStatus } = require('../utils/cloudinary');
 
 const router = require('express').Router();
@@ -57,44 +56,16 @@ const getEmailHealthStatus = () => {
   };
 };
 
-const getSmsHealthStatus = () => {
-  const sms = getSmsStatus();
-
-  if (sms.configured) {
-    return {
-      status: 'healthy',
-      provider: sms.provider,
-      configured: true,
-    };
-  }
-
-  if (sms.status === 'mock') {
-    return {
-      status: 'healthy',
-      provider: sms.provider,
-      configured: false,
-    };
-  }
-
-  return {
-    status: 'unconfigured',
-    provider: null,
-    configured: false,
-  };
-};
-
 router.get('/', (req, res) => {
   const database = getDatabaseStatus();
   const auth = getAuthStatus();
   const email = getEmailHealthStatus();
-  const sms = getSmsHealthStatus();
   const cloudinary = getCloudinaryHealthStatus();
 
   const isReady =
     database.status === 'healthy' &&
     auth.status === 'healthy' &&
-    email.status === 'healthy' &&
-    sms.status === 'healthy';
+    email.status === 'healthy';
 
   const payload = {
     status: isReady ? 'healthy' : 'degraded',
@@ -108,7 +79,6 @@ router.get('/', (req, res) => {
       database,
       auth,
       email,
-      sms,
       cloudinary,
     },
   };
@@ -120,8 +90,6 @@ router.get('/', (req, res) => {
       jwtConfigured: auth.jwtConfigured,
       emailStatus: email.status,
       emailProvider: email.provider,
-      smsStatus: sms.status,
-      smsProvider: sms.provider,
       cloudinaryConfigured: cloudinary.configured,
     });
   }

@@ -22,7 +22,6 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   process.env.MONGODB_URI = mongod.getUri('eyeconic-verify');
   process.env.PORT = '3999';
   process.env.JWT_SECRET = process.env.JWT_SECRET || 'verify-public-flow-secret';
-  process.env.SMS_MOCK_ECHO = 'true';
 
   const BASE = `http://localhost:${process.env.PORT}`;
   const WEB = 'http://localhost:5173';
@@ -105,31 +104,27 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     'CORS allows the dev web origin'
   );
 
-  console.log('\n=== 3. Lead OTP send + verify (mock SMS prints the code) ===');
+  console.log('\n=== 3. Lead OTP send + verify (dev mock emails the code) ===');
   const sendRes = await fetch(`${BASE}/api/public/quiz/${shareToken}/lead/send-otp`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Origin: WEB },
-    body: JSON.stringify({ name: 'Local Tester', phone: '+919876543210', marketingConsent: true }),
+    body: JSON.stringify({ name: 'Local Tester', email: 'local.tester@example.com', phone: '+919876543210', marketingConsent: true }),
   });
   const sendBody = await sendRes.json();
   check(sendRes.status === 200 && sendBody.success, 'lead/send-otp', sendBody.message || '');
 
-  // The OTP was echoed to the server console by the dev mock (SMS_MOCK_ECHO).
+  // The OTP row is stored hashed; reading the generated code is not possible,
+  // so seed a known code the same way the mailer path would.
   const GuestOtp = require('../models/GuestOtp');
-  console.log('  ......... OTP row stored (hashed). Code was printed above by the DEV mock.');
-
-  // Grab a fresh code the same way the mock would deliver it: reuse the
-  // generation path is not possible (hash-only), so re-issue and read the
-  // console value is manual. For automated verification, seed a known code.
   await GuestOtp.findOneAndUpdate(
-    { phone: '+919876543210', shareToken },
+    { email: 'local.tester@example.com', shareToken },
     { otpHash: require('crypto').createHmac('sha256', process.env.OTP_HASH_SECRET || process.env.JWT_SECRET).update('guest-otp:v1:424242').digest('hex'), createdAt: new Date() },
     { upsert: true }
   );
   const verifyRes = await fetch(`${BASE}/api/public/quiz/${shareToken}/lead/verify-otp`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Origin: WEB },
-    body: JSON.stringify({ name: 'Local Tester', phone: '+919876543210', marketingConsent: true, otp: '424242' }),
+    body: JSON.stringify({ name: 'Local Tester', email: 'local.tester@example.com', phone: '+919876543210', marketingConsent: true, otp: '424242' }),
   });
   const verifyBody = await verifyRes.json();
   check(verifyRes.status === 200 && verifyBody.guestToken, 'lead/verify-otp issues guestToken');

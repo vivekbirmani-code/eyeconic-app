@@ -73,11 +73,25 @@ const getEmailStatus = () => {
   return { status: 'unconfigured', provider: null, configured: false };
 };
 
-const buildOtpHtml = (otp, purpose) => {
-  const heading =
-    purpose === 'reset'
-      ? 'You requested a password reset. Please use the verification code below to set your new password:'
-      : 'Thank you for choosing Eyeconic Mentors. Please use the verification code below to complete your registration:';
+const escapeHtml = (value) =>
+  String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+const buildOtpHtml = (otp, purpose, quizTitle) => {
+  let heading;
+  if (purpose === 'reset') {
+    heading = 'You requested a password reset. Please use the verification code below to set your new password:';
+  } else if (purpose === 'guest-quiz') {
+    heading = 'Please use the verification code below to verify your email and start your quiz:';
+  } else {
+    heading = 'Thank you for choosing Eyeconic Mentors. Please use the verification code below to complete your registration:';
+  }
+  const quizLine = purpose === 'guest-quiz' && quizTitle
+    ? `<p style="margin: 0 0 15px 0; font-size: 15px; font-weight: bold; color: #111827;">Quiz: ${escapeHtml(quizTitle)}</p>`
+    : '';
 
   return `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e1e1e1; border-radius: 12px; background-color: #ffffff;">
@@ -88,6 +102,7 @@ const buildOtpHtml = (otp, purpose) => {
       <hr style="border: 0; border-top: 1px solid #eaeaea; margin-bottom: 25px;" />
       <div style="color: #374151; font-size: 16px; line-height: 24px;">
         <p style="margin-top: 0;">Hello,</p>
+        ${quizLine}
         <p>${heading}</p>
         <div style="text-align: center; margin: 30px 0;">
           <span style="display: inline-block; font-size: 32px; font-weight: bold; color: #01b4ae; letter-spacing: 5px; padding: 12px 24px; border: 2px dashed #01b4ae; border-radius: 8px; background-color: #f0fdfa;">
@@ -274,11 +289,25 @@ const sendPasswordResetMail = async (email, otp) => {
   await deliverEmail(email, subject, html, text, 'PASSWORD RESET OTP');
 };
 
+// Public-quiz guest flow — the code verifies the lead's email before their
+// attempt/lead is finalized. quizTitle (optional) helps the recipient
+// recognize why they received the code.
+const sendGuestQuizOtpMail = async (email, otp, quizTitle = null) => {
+  const subject = quizTitle
+    ? `Eyeconic Mentors - Verification Code for "${quizTitle}"`
+    : 'Eyeconic Mentors - Quiz Verification Code';
+  const text = `Your verification code to start the quiz${quizTitle ? ` "${quizTitle}"` : ''} is ${otp}. It is valid for 10 minutes. If you did not request this code, please ignore this email.`;
+  const html = buildOtpHtml(otp, 'guest-quiz', quizTitle);
+
+  await deliverEmail(email, subject, html, text, 'GUEST QUIZ OTP');
+};
+
 module.exports = {
   EmailDeliveryError,
   EMAIL_DELIVERY_USER_MESSAGE,
   sendOtpMail,
   sendPasswordResetMail,
+  sendGuestQuizOtpMail,
   isEmailConfigured,
   getEmailStatus,
   isResendConfigured,

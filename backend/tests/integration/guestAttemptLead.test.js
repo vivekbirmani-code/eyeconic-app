@@ -7,10 +7,10 @@ const Guest = require('../../models/Guest');
 const { resetGuestOtpRateLimits } = require('../../middleware/guestOtpRateLimit');
 
 const sentOtps = [];
-jest.mock('../../utils/sms', () => ({
-  ...jest.requireActual('../../utils/sms'),
-  sendGuestOtpSms: jest.fn(async (phone, otp) => {
-    sentOtps.push({ phone, otp });
+jest.mock('../../utils/mailer', () => ({
+  ...jest.requireActual('../../utils/mailer'),
+  sendGuestQuizOtpMail: jest.fn(async (email, otp) => {
+    sentOtps.push({ email, otp });
   }),
 }));
 
@@ -75,8 +75,8 @@ async function setupPublicQuiz(admin, subject, { sections = null, shareSolution 
 }
 
 // Full lead verification through the API — returns { guestToken, lead, guestId }
-async function verifyLead(quiz, { name = 'Rahul Sharma', phone = '+919876543210', consent = true } = {}) {
-  const payload = { name, phone, marketingConsent: consent };
+async function verifyLead(quiz, { name = 'Rahul Sharma', email = 'rahul.sharma@example.com', phone = '+919876543210', consent = true } = {}) {
+  const payload = { name, email, phone, marketingConsent: consent };
   await request(app).post(`/api/public/quiz/${quiz.shareToken}/lead/send-otp`).send(payload);
   const otp = sentOtps[sentOtps.length - 1].otp;
   const res = await request(app)
@@ -121,6 +121,7 @@ describe('Guest attempts with verified leads', () => {
     const stored = await GuestAttempt.findById(res.body.attempt._id);
     expect(String(stored.guest)).toBe(String((await Guest.findOne({ phone: '+919876543210' }))._id));
     expect(stored.guestName).toBe('Rahul Sharma');
+    expect(stored.guestEmail).toBe('rahul.sharma@example.com');
     expect(stored.guestPhone).toBe('+919876543210');
     void questions;
   });
@@ -198,7 +199,7 @@ describe('Guest attempts with verified leads', () => {
     const { quiz } = await setupPublicQuiz(admin, subject);
     const { guestToken: tokenA } = await verifyLead(quiz, { phone: '+919876543210' });
     resetGuestOtpRateLimits();
-    const { guestToken: tokenB } = await verifyLead(quiz, { name: 'Amit Kumar', phone: '+919876543211' });
+    const { guestToken: tokenB } = await verifyLead(quiz, { name: 'Amit Kumar', email: 'amit.kumar@example.com', phone: '+919876543211' });
 
     const start = await request(app)
       .post(`/api/public/quiz/${quiz.shareToken}/start`)

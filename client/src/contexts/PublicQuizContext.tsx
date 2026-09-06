@@ -142,7 +142,7 @@ export const usePublicQuiz = (): PublicQuizContextValue => {
 // ---------- thin API wrappers used by the pages ----------
 
 export const publicQuizApi = {
-  sendOtp: (shareToken: string, payload: { name: string; phone: string; marketingConsent: boolean; source?: string }) =>
+  sendOtp: (shareToken: string, payload: { name: string; email: string; phone: string; marketingConsent: boolean; source?: string }) =>
     publicApi.post<{ success: boolean; expiresInSeconds: number; resendAfterSeconds: number }>(
       `/public/quiz/${shareToken}/lead/send-otp`,
       { ...payload, source: 'web' }
@@ -150,7 +150,7 @@ export const publicQuizApi = {
 
   verifyOtp: (
     shareToken: string,
-    payload: { name: string; phone: string; marketingConsent: boolean; otp: string }
+    payload: { name: string; email: string; phone: string; marketingConsent: boolean; otp: string }
   ) =>
     publicApi.post<{ success: boolean; guestToken: string; guest: GuestLead }>(
       `/public/quiz/${shareToken}/lead/verify-otp`,

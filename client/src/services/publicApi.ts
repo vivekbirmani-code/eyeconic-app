@@ -169,7 +169,7 @@ export interface StartAttemptResponse {
   message: string;
   attemptFinalized?: boolean;
   status?: string;
-  lead?: { _id: string; name: string; phoneMasked: string };
+  lead?: { _id: string; name: string; email: string | null; phoneMasked: string };
   attempt: {
     _id: string;
     startTime: string;
@@ -191,6 +191,7 @@ export interface StartAttemptResponse {
 export interface GuestLead {
   _id: string;
   name: string;
+  email: string;
   phone: string;
   marketingConsent: boolean;
 }

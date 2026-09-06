@@ -1601,7 +1601,7 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
       'Completed At',
       'Section Breakdown',
       // Admin-only lead columns — mentors get the historical header/rows.
-      ...(req.user.role === 'admin' ? ['Participant Type', 'Phone', 'Phone Verified', 'Marketing Consent'] : [])
+      ...(req.user.role === 'admin' ? ['Participant Type', 'Phone', 'Phone Verified', 'Email Verified', 'Marketing Consent'] : [])
     ]));
 
     sorted.forEach((attempt, idx) => {
@@ -1647,7 +1647,7 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
         attempt.startTime ? new Date(attempt.startTime).toISOString() : '',
         attempt.endTime ? new Date(attempt.endTime).toISOString() : '',
         sectionBreakdown,
-        ...(req.user.role === 'admin' ? ['Registered', '', '', ''] : [])
+        ...(req.user.role === 'admin' ? ['Registered', '', '', '', ''] : [])
       ]));
     });
 
@@ -1671,7 +1671,7 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
           String(guest.attemptId),
           guest.guestId ? String(guest.guestId) : '',
           guest.name,
-          '', // guests have no student email
+          guest.email || '', // verified lead email (blank for legacy pre-email leads)
           guest.correct,
           guest.incorrect,
           guest.skipped,
@@ -1693,6 +1693,7 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
           'Guest',
           guest.phone || '',
           guest.phoneVerified ? 'Yes' : 'No',
+          guest.emailVerified ? 'Yes' : 'No',
           guest.marketingConsent ? 'Yes' : 'No'
         ]));
       });
@@ -2957,7 +2958,7 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
           path: 'quiz',
           populate: { path: 'questions', model: 'QuestionBank' }
         })
-        .populate('guest', 'name phone marketingConsent');
+        .populate('guest', 'name email emailVerifiedAt phone phoneVerifiedAt marketingConsent');
 
       if (guestAttempt && guestAttempt.quiz && Array.isArray(guestAttempt.quiz.questions)) {
         if (guestAttempt.status !== 'completed' && guestAttempt.status !== 'auto_submitted') {
@@ -2979,9 +2980,10 @@ router.get('/:id/attempt/:attemptId/results', auth, async (req, res) => {
             student: {
               _id: lead?._id || guestAttempt.guest,
               name: guestAttempt.guestName || lead?.name || 'Guest',
-              email: null,
+              email: guestAttempt.guestEmail || lead?.email || null,
               phone: guestAttempt.guestPhone || lead?.phone || null,
-              phoneVerified: Boolean(lead),
+              emailVerified: Boolean(lead?.emailVerifiedAt),
+              phoneVerified: Boolean(lead?.phoneVerifiedAt),
               marketingConsent: lead?.marketingConsent?.granted === true,
             }
           });
@@ -3577,7 +3579,7 @@ router.get('/attempt/:id', auth, async (req, res) => {
     if (!attempt && req.user.role === 'admin') {
       const guestAttempt = await GuestAttempt.findById(req.params.id)
         .populate('quiz', '_id title')
-        .populate('guest', 'name phone marketingConsent');
+        .populate('guest', 'name email emailVerifiedAt phone phoneVerifiedAt marketingConsent');
 
       if (guestAttempt) {
         const lead = guestAttempt.guest;
@@ -3586,9 +3588,10 @@ router.get('/attempt/:id', auth, async (req, res) => {
         payload.student = {
           _id: lead?._id || guestAttempt.guest,
           name: guestAttempt.guestName || lead?.name || 'Guest',
-          email: null,
+          email: guestAttempt.guestEmail || lead?.email || null,
           phone: guestAttempt.guestPhone || lead?.phone || null,
-          phoneVerified: Boolean(lead),
+          emailVerified: Boolean(lead?.emailVerifiedAt),
+          phoneVerified: Boolean(lead?.phoneVerifiedAt),
           marketingConsent: lead?.marketingConsent?.granted === true,
         };
         payload.participantType = 'guest';

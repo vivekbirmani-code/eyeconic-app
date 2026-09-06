@@ -66,17 +66,8 @@ const validateEnvironment = () => {
   );
   if (!hasResend && !hasSmtp && process.env.NODE_ENV === 'production') {
     warnings.push(
-      'RESEND_API_KEY or SMTP credentials are not set — OTP emails will fail in production'
+      'RESEND_API_KEY or SMTP credentials are not set — OTP emails (signup, password reset, and the public quiz guest flow) will fail in production'
     );
-  }
-  if (process.env.NODE_ENV === 'production') {
-    const { getSmsStatus } = require('./utils/sms');
-    const smsStatus = getSmsStatus();
-    if (smsStatus.status !== 'configured') {
-      warnings.push(
-        'TWO_FACTOR_API_KEY is not set — public quiz phone OTP will fail in production (503 SMS_NOT_CONFIGURED). See docs/2FACTOR_SETUP.md'
-      );
-    }
   }
   warnings.forEach((warning) => logger.warn(warning));
 };
@@ -143,9 +134,29 @@ const {
 
 registerDatabaseEventHandlers();
 
+// One-time migration for the email-OTP switch: guest OTP challenges were
+// keyed by (phone, shareToken) in the SMS flow. Legacy rows are unusable
+// after the switch (verify looks up by email) and would block the new
+// unique (email, shareToken) index from building, so drop the whole
+// collection once — it is 10-minute-TTL ephemera and mongoose recreates it
+// with the new indexes. Guarded on the legacy index so later boots never
+// touch live email challenges.
+const migrateGuestOtpCollection = async () => {
+  try {
+    const collection = mongoose.connection.collection('guestotps');
+    if (await collection.indexExists('phone_1_shareToken_1')) {
+      await collection.drop();
+      logger.info('Dropped legacy phone-keyed guest OTP collection (email-OTP migration)');
+    }
+  } catch (error) {
+    logger.warn('Guest OTP legacy-index migration skipped', { errorMessage: error.message });
+  }
+};
+
 const startDatabase = async () => {
   try {
-    await connectDatabase(() => {
+    await connectDatabase(async () => {
+      await migrateGuestOtpCollection();
       cleanupExpiredMedia();
       setInterval(cleanupExpiredMedia, 24 * 60 * 60 * 1000);
     });

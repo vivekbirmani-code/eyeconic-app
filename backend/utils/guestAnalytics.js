@@ -27,8 +27,11 @@ const roundTo2 = (value) => {
  * Unranked participant rows for a quiz's public guests.
  * Each row is self-contained from the attempt's lead snapshots, with the
  * live lead looked up for consent/verified status (leads only exist after
- * OTP verification, so phoneVerified is true by construction — but it is
- * resolved from the lead so a missing/deleted lead degrades visibly).
+ * OTP verification, so the verified contact is true by construction — but
+ * it is resolved from the lead so a missing/deleted lead degrades visibly).
+ * Legacy leads (pre email-OTP switch) carry a verified phone and no email;
+ * `email` is null for them and `emailVerified` false — consumers must
+ * render that gracefully.
  *
  * { fullPhone: true } additionally includes the raw E.164 `phone` field —
  * reserved for the admin CSV export, which is the raw-lead follow-up
@@ -40,7 +43,7 @@ const fetchGuestParticipants = async (quizId, { fullPhone = false } = {}) => {
     status: { $in: DONE_STATUSES },
     guest: { $ne: null },
   })
-    .select('guest guestName guestPhone score marksObtained totalMarks answers sectionPerformance status endTime startTime tabSwitchCount')
+    .select('guest guestName guestEmail guestPhone score marksObtained totalMarks answers sectionPerformance status endTime startTime tabSwitchCount')
     .sort({ endTime: -1 })
     .lean();
 
@@ -50,7 +53,7 @@ const fetchGuestParticipants = async (quizId, { fullPhone = false } = {}) => {
 
   const leadIds = [...new Set(attempts.map((a) => String(a.guest)))];
   const leads = await Guest.find({ _id: { $in: leadIds } })
-    .select('name phone marketingConsent')
+    .select('name email emailVerifiedAt phone phoneVerifiedAt marketingConsent')
     .lean();
   const leadById = new Map(leads.map((l) => [String(l._id), l]));
 
@@ -76,6 +79,9 @@ const fetchGuestParticipants = async (quizId, { fullPhone = false } = {}) => {
       attemptId: attempt._id,
       guestId: attempt.guest,
       name: attempt.guestName || lead?.name || 'Guest',
+      // The verified email from the OTP flow (snapshot first, live lead as
+      // fallback). Null for legacy pre-email leads — render as "—".
+      email: attempt.guestEmail || lead?.email || null,
       // Admin-only analytics surfaces always get the MASKED phone; the full
       // number is reserved for the admin attempt-detail view and CSV export.
       phoneMasked: maskPhone(attempt.guestPhone || lead?.phone || ''),
@@ -96,7 +102,8 @@ const fetchGuestParticipants = async (quizId, { fullPhone = false } = {}) => {
       startedAt: attempt.startTime,
       submittedAt: attempt.endTime,
       sectionPerformance: attempt.sectionPerformance || [],
-      phoneVerified: Boolean(lead),
+      emailVerified: Boolean(lead?.emailVerifiedAt),
+      phoneVerified: Boolean(lead?.phoneVerifiedAt),
       marketingConsent: lead?.marketingConsent?.granted === true,
     };
   });

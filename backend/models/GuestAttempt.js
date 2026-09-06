@@ -102,12 +102,17 @@ const guestAttemptSchema = new mongoose.Schema({
         ref: 'Guest',
         default: null
     },
-    // Name/phone snapshots copied from the lead at /start — attempts stay
+    // Name/email/phone snapshots copied from the lead at /start — attempts stay
     // self-contained for admin display even if the lead record is later
     // updated by another quiz.
     guestName: {
         type: String,
         default: null
+    },
+    guestEmail: {
+        type: String,
+        default: null,
+        trim: true
     },
     guestPhone: {
         type: String,

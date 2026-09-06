@@ -43,7 +43,7 @@ interface ResultPayload {
     tabSwitchCount?: number;
   };
   quiz: { _id: string; title: string; shareSolution: boolean };
-  guest: { _id: string; name: string; phoneMasked: string };
+  guest: { _id: string; name: string; email: string | null; phoneMasked: string };
   questions?: {
     _id: string;
     question: string;
@@ -97,7 +97,7 @@ export default function PublicQuizResultPage() {
           navigate(`/public-quiz/${token}`, { replace: true });
           return;
         }
-        setError('Your result is not available. If you just submitted, try verifying your phone again.');
+        setError('Your result is not available. If you just submitted, try verifying your email again.');
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -127,7 +127,7 @@ export default function PublicQuizResultPage() {
             onClick={() => navigate(`/public-quiz/${token}`, { replace: true })}
             className="mt-4 bg-[#01b4ae] hover:bg-[#008f8a] text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors"
           >
-            Verify phone again
+            Verify email again
           </button>
         </div>
       </div>
@@ -147,7 +147,8 @@ export default function PublicQuizResultPage() {
           </div>
           <h1 className="text-white text-2xl font-bold drop-shadow-sm">{quiz.title}</h1>
           <p className="text-white/80 text-xs mt-1">
-            {guest.name} · {guest.phoneMasked}
+            {guest.name}
+            {guest.email ? ` · ${guest.email}` : ''} · {guest.phoneMasked}
           </p>
 
           <div className="mt-6 bg-white rounded-3xl shadow-2xl p-6">

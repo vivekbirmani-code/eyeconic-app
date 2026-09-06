@@ -199,6 +199,7 @@ export default function Analytics() {
                     <thead>
                       <tr className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
                         <th className="p-3 font-bold rounded-tl-lg">Guest</th>
+                        <th className="p-3 font-bold">Email</th>
                         <th className="p-3 font-bold">Phone</th>
                         <th className="p-3 font-bold">Consent</th>
                         <th className="p-3 font-bold">Score</th>
@@ -210,6 +211,16 @@ export default function Analytics() {
                       {testData.guestParticipants.map((gp: any) => (
                         <tr key={gp.attemptId} className="border-b border-gray-50 last:border-0 hover:bg-gray-50">
                           <td className="p-3 font-bold text-gray-800">{gp.name}</td>
+                          <td className="p-3 text-sm text-gray-600">
+                            {gp.email ? (
+                              <span className="inline-flex items-center gap-1.5">
+                                {gp.email}
+                                {gp.emailVerified && <span title="Email verified" className="text-emerald-500">✓</span>}
+                              </span>
+                            ) : (
+                              <span className="text-gray-400">—</span>
+                            )}
+                          </td>
                           <td className="p-3 text-sm text-gray-600 font-mono">{gp.phoneMasked}</td>
                           <td className="p-3">
                             {gp.marketingConsent

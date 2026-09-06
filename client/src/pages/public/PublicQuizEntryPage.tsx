@@ -8,6 +8,7 @@ import {
   Clock,
   FileText,
   Loader2,
+  Mail,
   RefreshCw,
   ShieldCheck,
   Users,
@@ -18,6 +19,14 @@ import { setGuestToken, getPublicApiError } from '../../services/publicApi';
 const RESEND_COOLDOWN_SECONDS = 60;
 
 const isValidIndianMobile = (digits: string) => /^[6-9]\d{9}$/.test(digits);
+
+// Mirrors the backend's email validation (utils/otpHelpers.js) — the server
+// re-validates everything; this only enables/disables the submit button.
+const EMAIL_MAX_LENGTH = 254;
+const isValidEmail = (value: string) => {
+  const email = value.trim().toLowerCase();
+  return email.length <= EMAIL_MAX_LENGTH && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+};
 
 const formatDuration = (minutes: number) => {
   if (minutes < 60) return `${minutes} min`;
@@ -35,6 +44,7 @@ export default function PublicQuizEntryPage() {
 
   const [step, setStep] = useState<'form' | 'otp'>('form');
   const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
   const [phoneDigits, setPhoneDigits] = useState('');
   const [marketingConsent, setMarketingConsent] = useState(false);
   const [otp, setOtp] = useState('');
@@ -67,6 +77,7 @@ export default function PublicQuizEntryPage() {
   }, [resendIn]);
 
   const phoneValid = useMemo(() => isValidIndianMobile(phoneDigits), [phoneDigits]);
+  const emailValid = useMemo(() => isValidEmail(email), [email]);
   const nameValid = name.trim().length >= 2;
   const otpValid = /^\d{6}$/.test(otp);
 
@@ -74,6 +85,10 @@ export default function PublicQuizEntryPage() {
     e.preventDefault();
     if (!nameValid) {
       setError({ message: 'Please enter your full name (at least 2 characters).' });
+      return;
+    }
+    if (!emailValid) {
+      setError({ message: 'Please enter a valid email address.' });
       return;
     }
     if (!phoneValid) {
@@ -87,6 +102,7 @@ export default function PublicQuizEntryPage() {
     try {
       await publicQuizApi.sendOtp(token, {
         name: name.trim(),
+        email: email.trim().toLowerCase(),
         phone: `+91${phoneDigits}`,
         marketingConsent,
       });
@@ -102,7 +118,7 @@ export default function PublicQuizEntryPage() {
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!otpValid) {
-      setError({ message: 'Please enter the 6-digit code sent to your phone.' });
+      setError({ message: 'Please enter the 6-digit code sent to your email.' });
       return;
     }
 
@@ -111,6 +127,7 @@ export default function PublicQuizEntryPage() {
     try {
       const response = await publicQuizApi.verifyOtp(token, {
         name: name.trim(),
+        email: email.trim().toLowerCase(),
         phone: `+91${phoneDigits}`,
         marketingConsent,
         otp,
@@ -134,10 +151,11 @@ export default function PublicQuizEntryPage() {
     try {
       await publicQuizApi.sendOtp(token, {
         name: name.trim(),
+        email: email.trim().toLowerCase(),
         phone: `+91${phoneDigits}`,
         marketingConsent,
       });
-      setInfo('A new code has been sent to your phone.');
+      setInfo('A new code has been sent to your email.');
       setResendIn(RESEND_COOLDOWN_SECONDS);
       setOtp('');
     } catch (err) {
@@ -274,7 +292,7 @@ export default function PublicQuizEntryPage() {
               <ShieldCheck className="w-8 h-8 text-[#01b4ae] shrink-0" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-gray-900 truncate">Welcome back, {lead.name}</p>
-                <p className="text-xs text-gray-500">{lead.phone} verified</p>
+                <p className="text-xs text-gray-500 truncate">{lead.email || lead.phone} verified</p>
               </div>
               <button
                 onClick={() => navigate(`/public-quiz/${token}/take`)}
@@ -289,7 +307,7 @@ export default function PublicQuizEntryPage() {
         {sessionExpired && (
           <div className="bg-amber-50 border border-amber-200 rounded-2xl p-3 mb-4">
             <p className="text-xs text-amber-800">
-              Your session expired. Verify your phone number again to continue — your progress is saved.
+              Your session expired. Verify your email again to continue — your progress is saved.
             </p>
           </div>
         )}
@@ -301,7 +319,7 @@ export default function PublicQuizEntryPage() {
               <div>
                 <h3 className="text-base font-bold text-gray-900">Start your attempt</h3>
                 <p className="text-xs text-gray-500 mt-0.5">
-                  Verify your phone number to begin. No account needed.
+                  Verify your email to begin. No account needed.
                 </p>
               </div>
 
@@ -320,6 +338,29 @@ export default function PublicQuizEntryPage() {
                   className="w-full border-2 border-gray-200 rounded-xl p-3.5 text-base bg-gray-50 focus:bg-white focus:border-[#01b4ae] focus:ring-4 focus:ring-[#01b4ae]/20 transition-all outline-none"
                   required
                 />
+              </div>
+
+              <div>
+                <label htmlFor="lead-email" className="block text-sm font-semibold text-gray-700 mb-1.5">
+                  Email Address
+                </label>
+                <div className="relative">
+                  <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" size={18} />
+                  <input
+                    id="lead-email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    maxLength={254}
+                    autoComplete="email"
+                    className="w-full border-2 border-gray-200 rounded-xl pl-11 p-3.5 text-base bg-gray-50 focus:bg-white focus:border-[#01b4ae] focus:ring-4 focus:ring-[#01b4ae]/20 transition-all outline-none"
+                    required
+                  />
+                </div>
+                <p className="text-[11px] text-gray-400 mt-1">
+                  We'll email a verification code to this address.
+                </p>
               </div>
 
               <div>
@@ -366,11 +407,11 @@ export default function PublicQuizEntryPage() {
 
               <button
                 type="submit"
-                disabled={busy || !nameValid || !phoneValid}
+                disabled={busy || !nameValid || !emailValid || !phoneValid}
                 className="w-full inline-flex items-center justify-center gap-2 bg-[#01b4ae] hover:bg-[#008f8a] disabled:bg-gray-300 text-white font-semibold py-3.5 rounded-xl transition-colors"
               >
-                {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <ShieldCheck className="w-5 h-5" />}
-                {busy ? 'Sending code…' : 'Send Verification Code'}
+                {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Mail className="w-5 h-5" />}
+                {busy ? 'Emailing code…' : 'Send Verification Code'}
               </button>
             </form>
           ) : (
@@ -384,9 +425,9 @@ export default function PublicQuizEntryPage() {
               </button>
 
               <div>
-                <h3 className="text-base font-bold text-gray-900">Verify your number</h3>
+                <h3 className="text-base font-bold text-gray-900">Verify your email</h3>
                 <p className="text-xs text-gray-500 mt-0.5">
-                  Enter the 6-digit code sent to <span className="font-semibold">+91 {phoneDigits}</span>
+                  Enter the 6-digit code sent to <span className="font-semibold break-all">{email.trim().toLowerCase()}</span>
                 </p>
               </div>
 

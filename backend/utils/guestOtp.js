@@ -3,9 +3,9 @@ const GuestOtp = require('../models/GuestOtp');
 const { isOtpExpired } = require('./otpHelpers');
 
 // OTP persistence for the public-quiz guest flow. Codes are stored as
-// HMAC-SHA256 digests (never plaintext) because a phone-verified lead is a
+// HMAC-SHA256 digests (never plaintext) because an email-verified lead is a
 // permanent PII identity key — a database leak of plaintext codes would be
-// a materially worse liability than the existing email OTPs.
+// a materially worse liability than the codes themselves.
 
 const OTP_HASH_DOMAIN = 'guest-otp:v1:';
 
@@ -27,11 +27,11 @@ const safeEqualHex = (a, b) => {
   return crypto.timingSafeEqual(bufferA, bufferB);
 };
 
-// Upserts the single live OTP for the (phone, shareToken) challenge.
+// Upserts the single live OTP for the (email, shareToken) challenge.
 // A resend replaces the previous code — only one live code per challenge.
-const issueGuestOtp = async (phone, shareToken, otp) => {
+const issueGuestOtp = async (email, shareToken, otp) => {
   await GuestOtp.findOneAndUpdate(
-    { phone, shareToken },
+    { email, shareToken },
     { otpHash: hashOtp(otp), createdAt: new Date() },
     { upsert: true, new: true }
   );
@@ -40,8 +40,8 @@ const issueGuestOtp = async (phone, shareToken, otp) => {
 // Verifies a code against the SAME challenge it was issued for.
 // Returns { ok, reason } — reason is 'OTP_INVALID' (no row / wrong code /
 // wrong link) or 'OTP_EXPIRED'. Deletes the row on success (single use).
-const verifyGuestOtp = async (phone, shareToken, otp) => {
-  const record = await GuestOtp.findOne({ phone, shareToken });
+const verifyGuestOtp = async (email, shareToken, otp) => {
+  const record = await GuestOtp.findOne({ email, shareToken });
 
   if (!record) {
     return { ok: false, reason: 'OTP_INVALID' };

@@ -77,6 +77,7 @@ interface AttemptDetail {
         email: string | null;
         // Guest-attempt lead fields (admin-only guest fallback)
         phone?: string | null;
+        emailVerified?: boolean;
         phoneVerified?: boolean;
         marketingConsent?: boolean;
     };
@@ -258,13 +259,15 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
                                 {attemptData.participantType === 'guest' ? (
                                     <>
                                         <Text style={styles.studentEmail}>
-                                            {attemptData.student.phone ?? 'Verified guest'}
+                                            {attemptData.student.email ?? attemptData.student.phone ?? 'Verified guest'}
                                         </Text>
                                         <Text style={styles.guestLeadLine}>
-                                            Public quiz participant{' '}
-                                            {attemptData.student.phoneVerified === true ? '• Phone verified' : ''}
-                                            {' • Marketing consent: '}
-                                            {attemptData.student.marketingConsent === true ? 'Yes' : 'No'}
+                                            {[
+                                                'Public quiz participant',
+                                                attemptData.student.emailVerified === true ? 'Email verified' : null,
+                                                attemptData.student.phoneVerified === true ? 'Phone verified' : null,
+                                                `Marketing consent: ${attemptData.student.marketingConsent === true ? 'Yes' : 'No'}`,
+                                            ].filter(Boolean).join(' • ')}
                                         </Text>
                                     </>
                                 ) : (

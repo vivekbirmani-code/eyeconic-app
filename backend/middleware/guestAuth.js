@@ -21,7 +21,7 @@ const respondUnauthorized = (res, code) =>
     success: false,
     message:
       code === 'GUEST_SESSION_EXPIRED'
-        ? 'Your session has expired. Please verify your phone again.'
+        ? 'Your session has expired. Please verify your email again.'
         : 'Guest session is not valid.',
     code,
   });

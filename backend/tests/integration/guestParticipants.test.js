@@ -8,10 +8,10 @@ const Guest = require('../../models/Guest');
 const { resetGuestOtpRateLimits } = require('../../middleware/guestOtpRateLimit');
 
 const sentOtps = [];
-jest.mock('../../utils/sms', () => ({
-  ...jest.requireActual('../../utils/sms'),
-  sendGuestOtpSms: jest.fn(async (phone, otp) => {
-    sentOtps.push({ phone, otp });
+jest.mock('../../utils/mailer', () => ({
+  ...jest.requireActual('../../utils/mailer'),
+  sendGuestQuizOtpMail: jest.fn(async (email, otp) => {
+    sentOtps.push({ email, otp });
   }),
 }));
 
@@ -68,8 +68,8 @@ async function setupQuiz(admin, subject) {
 }
 
 // Completes a guest attempt for a fresh verified lead on the quiz.
-async function addGuestAttempt(quiz, questions, { name, phone, correct = 2, consent = true }) {
-  const payload = { name, phone, marketingConsent: consent };
+async function addGuestAttempt(quiz, questions, { name, email, phone, correct = 2, consent = true }) {
+  const payload = { name, email, phone, marketingConsent: consent };
   await request(app).post(`/api/public/quiz/${quiz.shareToken}/lead/send-otp`).send(payload);
   const otp = sentOtps[sentOtps.length - 1].otp;
   const verify = await request(app)
@@ -119,9 +119,9 @@ describe('Public participants in admin analytics', () => {
     resetGuestOtpRateLimits();
   });
 
-  it('returns guestParticipants to admins with masked phones + consent', async () => {
-    await addGuestAttempt(quiz, questions, { name: 'Rahul Sharma', phone: '+919876543210', correct: 2, consent: true });
-    await addGuestAttempt(quiz, questions, { name: 'Amit Kumar', phone: '+919876543211', correct: 1, consent: false });
+  it('returns guestParticipants to admins with verified emails, masked phones + consent', async () => {
+    await addGuestAttempt(quiz, questions, { name: 'Rahul Sharma', email: 'rahul.sharma@example.com', phone: '+919876543210', correct: 2, consent: true });
+    await addGuestAttempt(quiz, questions, { name: 'Amit Kumar', email: 'amit.kumar@example.com', phone: '+919876543211', correct: 1, consent: false });
 
     const res = await request(app)
       .get(`/api/quizzes/analytics/test/${quiz._id}`)
@@ -132,8 +132,10 @@ describe('Public participants in admin analytics', () => {
     expect(res.body.guestParticipants).toHaveLength(2);
     const rahul = res.body.guestParticipants.find((g) => g.name === 'Rahul Sharma');
     expect(rahul).toMatchObject({
+      email: 'rahul.sharma@example.com',
+      emailVerified: true,
       phoneMasked: '+91 98xxxxx210',
-      phoneVerified: true,
+      phoneVerified: false, // phone is contact info only in the email-OTP flow
       marketingConsent: true,
       correct: 2,
       scorePercentage: 100,
@@ -141,11 +143,47 @@ describe('Public participants in admin analytics', () => {
     expect(rahul.phoneMasked).not.toContain('98765');
     expect(rahul).not.toHaveProperty('phone');
     const amit = res.body.guestParticipants.find((g) => g.name === 'Amit Kumar');
+    expect(amit.email).toBe('amit.kumar@example.com');
     expect(amit.marketingConsent).toBe(false);
   });
 
+  it('renders legacy pre-email leads without an email (null-safe rows)', async () => {
+    // A lead captured before the email-OTP switch: no email on the lead or
+    // the attempt snapshot. Inserted raw (bypassing mongoose validation) to
+    // mirror a real pre-existing document. The analytics row must degrade
+    // gracefully.
+    const now = new Date();
+    const { insertedId } = await Guest.collection.insertOne({
+      name: 'Legacy Lead',
+      phone: '+919876500000',
+      phoneVerifiedAt: now,
+      marketingConsent: { granted: true, updatedAt: now },
+      source: 'web',
+      firstQuiz: null,
+      quizzesTaken: [],
+      lastActiveAt: now,
+      createdAt: now,
+      updatedAt: now,
+    });
+    const lead = { _id: insertedId };
+    const start = await request(app)
+      .post(`/api/public/quiz/${quiz.shareToken}/start`)
+      .set('Authorization', `Bearer ${require('../../middleware/guestAuth').signGuestToken(lead._id)}`)
+      .send({ guestId: 'legacy-device' });
+    await request(app)
+      .post(`/api/public/quiz/${quiz.shareToken}/submit`)
+      .send({ guestId: 'legacy-device', attemptId: start.body.attempt._id, answers: [] });
+
+    const res = await request(app)
+      .get(`/api/quizzes/analytics/test/${quiz._id}`)
+      .set('Authorization', `Bearer ${admin.token}`);
+    expect(res.status).toBe(200);
+    const legacy = res.body.guestParticipants.find((g) => g.name === 'Legacy Lead');
+    expect(legacy).toMatchObject({ email: null, emailVerified: false, phoneVerified: true });
+  });
+
   it('never sends guest fields to mentors (byte-compatible responses)', async () => {
-    await addGuestAttempt(quiz, questions, { name: 'Rahul Sharma', phone: '+919876543210' });
+    await addGuestAttempt(quiz, questions, { name: 'Rahul Sharma', email: 'rahul.sharma@example.com', phone: '+919876543210' });
 
     const mentorRes = await request(app)
       .get(`/api/quizzes/analytics/test/${quiz._id}`)
@@ -187,8 +225,8 @@ describe('Public participants in admin analytics', () => {
     await seedAttempt(student.user, 2, 8);
     await seedAttempt(student2.user, 1, 3);
 
-    await addGuestAttempt(quiz, questions, { name: 'Rahul Sharma', phone: '+919876543210' });
-    await addGuestAttempt(quiz, questions, { name: 'Amit Kumar', phone: '+919876543211' });
+    await addGuestAttempt(quiz, questions, { name: 'Rahul Sharma', email: 'rahul.sharma@example.com', phone: '+919876543210' });
+    await addGuestAttempt(quiz, questions, { name: 'Amit Kumar', email: 'amit.kumar@example.com', phone: '+919876543211' });
 
     const withGuests = await request(app)
       .get(`/api/quizzes/analytics/test/${quiz._id}`)
@@ -206,7 +244,7 @@ describe('Public participants in admin analytics', () => {
   });
 
   it('exposes guestAttemptCount separately on the test lists (admins only)', async () => {
-    await addGuestAttempt(quiz, questions, { name: 'Rahul Sharma', phone: '+919876543210' });
+    await addGuestAttempt(quiz, questions, { name: 'Rahul Sharma', email: 'rahul.sharma@example.com', phone: '+919876543210' });
 
     const adminList = await request(app)
       .get('/api/quizzes/analytics/tests/list')
@@ -223,7 +261,7 @@ describe('Public participants in admin analytics', () => {
   });
 
   it('appends unranked guest rows with full phone + consent to the admin CSV only', async () => {
-    await addGuestAttempt(quiz, questions, { name: 'Rahul Sharma', phone: '+919876543210', consent: true });
+    await addGuestAttempt(quiz, questions, { name: 'Rahul Sharma', email: 'rahul.sharma@example.com', phone: '+919876543210', consent: true });
 
     const adminCsv = await request(app)
       .get(`/api/quizzes/analytics/test-report/${quiz._id}/csv`)
@@ -231,7 +269,9 @@ describe('Public participants in admin analytics', () => {
     expect(adminCsv.status).toBe(200);
     const csv = adminCsv.text;
     expect(csv).toContain('Participant Type');
+    expect(csv).toContain('Email Verified');
     expect(csv).toContain('+919876543210'); // full phone lands in the admin export
+    expect(csv).toContain('rahul.sharma@example.com'); // verified lead email lands in the admin export
     expect(csv).toContain('Rahul Sharma');
     expect(csv).toContain('Guest');
 
@@ -241,12 +281,13 @@ describe('Public participants in admin analytics', () => {
     expect(mentorCsv.status).toBe(200);
     expect(mentorCsv.text).not.toContain('Participant Type');
     expect(mentorCsv.text).not.toContain('+919876543210');
+    expect(mentorCsv.text).not.toContain('rahul.sharma@example.com');
     expect(mentorCsv.text).not.toContain('Rahul Sharma');
   });
 
   it('serves the admin attempt-detail + results fallback for guest attempts, rejects others', async () => {
     const guestAttemptId = await addGuestAttempt(quiz, questions, {
-      name: 'Rahul Sharma', phone: '+919876543210', consent: true,
+      name: 'Rahul Sharma', email: 'rahul.sharma@example.com', phone: '+919876543210', consent: true,
     });
 
     // Admin: attempt detail with lead info.
@@ -257,9 +298,10 @@ describe('Public participants in admin analytics', () => {
     expect(detail.body.participantType).toBe('guest');
     expect(detail.body.student).toMatchObject({
       name: 'Rahul Sharma',
-      email: null,
+      email: 'rahul.sharma@example.com',
       phone: '+919876543210',
-      phoneVerified: true,
+      emailVerified: true,
+      phoneVerified: false,
       marketingConsent: true,
     });
 
@@ -270,6 +312,7 @@ describe('Public participants in admin analytics', () => {
     expect(results.status).toBe(200);
     expect(results.body.participantType).toBe('guest');
     expect(results.body.student.name).toBe('Rahul Sharma');
+    expect(results.body.student.email).toBe('rahul.sharma@example.com');
     expect(results.body.summary.totalQuestions).toBe(2);
     expect(results.body.attempt.sectionPerformance.length).toBeGreaterThan(0);
     expect(results.body.frequentlyMissedQuestions).toEqual([]);
