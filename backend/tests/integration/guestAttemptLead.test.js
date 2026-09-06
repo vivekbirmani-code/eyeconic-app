@@ -147,6 +147,73 @@ describe('Guest attempts with verified leads', () => {
     expect(await GuestAttempt.countDocuments({ quiz: quiz._id })).toBe(1);
   });
 
+  it('resumes a SECTION-LOCKED attempt from a different device (expiry sync keys on the attempt)', async () => {
+    const { quiz, questions } = await setupPublicQuiz(admin, subject, { sections: true });
+    const { guestToken } = await verifyLead(quiz);
+
+    const start1 = await request(app)
+      .post(`/api/public/quiz/${quiz.shareToken}/start`)
+      .set('Authorization', `Bearer ${guestToken}`)
+      .send({ guestId: 'device-1' });
+    expect(start1.status).toBe(201);
+    const attemptId = start1.body.attempt._id;
+
+    // Regression: the resume-path expiry sync once filtered by the CALLER's
+    // guestId, so a cross-device resume found nothing and reported the
+    // in-progress attempt as ended.
+    const start2 = await request(app)
+      .post(`/api/public/quiz/${quiz.shareToken}/start`)
+      .set('Authorization', `Bearer ${guestToken}`)
+      .send({ guestId: 'device-2' });
+    expect(start2.status).toBe(200);
+    expect(start2.body.attemptFinalized).toBeUndefined();
+    expect(start2.body.attempt._id).toBe(attemptId);
+    expect(start2.body.attempt.sectionStates).toHaveLength(1);
+
+    // Cross-device continue: submit section A from device-2, then resume on
+    // device-3 — must land in section B, never "ended" and never restarted.
+    const sectionSubmit = await request(app)
+      .post(`/api/public/quiz/${quiz.shareToken}/sections/0/submit`)
+      .set('Authorization', `Bearer ${guestToken}`)
+      .send({ guestId: 'device-2', attemptId, answers: [guestAnswer(0, questions[0]._id, 1)] });
+    expect(sectionSubmit.status).toBe(200);
+
+    const start3 = await request(app)
+      .post(`/api/public/quiz/${quiz.shareToken}/start`)
+      .set('Authorization', `Bearer ${guestToken}`)
+      .send({ guestId: 'device-3' });
+    expect(start3.status).toBe(200);
+    expect(start3.body.attemptFinalized).toBeUndefined();
+    expect(start3.body.attempt._id).toBe(attemptId);
+    const active = start3.body.attempt.sectionStates.find((s) => s.status === 'in_progress');
+    expect(active.index).toBe(1);
+  });
+
+  it('converges concurrent starts (race/two tabs) onto a single surviving attempt', async () => {
+    const { quiz } = await setupPublicQuiz(admin, subject, { sections: true });
+    const { guestToken } = await verifyLead(quiz);
+
+    // Five parallel starts — two browser tabs, a double-tap, and StrictMode's
+    // dev double-mount all produce this shape. Every response must name the
+    // SAME attempt and exactly one may survive.
+    const responses = await Promise.all([1, 2, 3, 4, 5].map((n) =>
+      request(app)
+        .post(`/api/public/quiz/${quiz.shareToken}/start`)
+        .set('Authorization', `Bearer ${guestToken}`)
+        .send({ guestId: `race-device-${n}` })
+    ));
+    responses.forEach((res) => expect(res.status).toBeLessThan(400));
+
+    const attemptIds = new Set(responses.map((r) => r.body.attempt?._id).filter(Boolean));
+    expect(attemptIds.size).toBe(1);
+    expect(await GuestAttempt.countDocuments({ quiz: quiz._id, status: 'in_progress' })).toBe(1);
+
+    // The survivor is usable: its section state is intact.
+    const survivor = await GuestAttempt.findOne({ quiz: quiz._id, status: 'in_progress' });
+    expect(survivor.sectionStates).toHaveLength(1);
+    expect(survivor.sectionStates[0].status).toBe('in_progress');
+  });
+
   it('rejects guest tokens on user-authenticated routes', async () => {
     const { quiz } = await setupPublicQuiz(admin, subject);
     const { guestToken } = await verifyLead(quiz);

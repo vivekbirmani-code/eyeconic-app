@@ -142,6 +142,7 @@ const FORMAT_GUIDE_ROWS = [
         QUESTION_TYPE: QUESTION_TYPES.IMAGE_BASED,
         'Relevant columns': 'Q_IMAGE; OPTION1–OPTION6; CORRECT',
         CORRECT: 'C or 3',
+        'Image URLs': 'Must be direct, publicly accessible https URLs (Cloudinary, etc.) — placeholder links (example.com) are rejected at import.',
     },
     {
         QUESTION_TYPE: QUESTION_TYPES.NUMERICAL,

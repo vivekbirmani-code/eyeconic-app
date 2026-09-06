@@ -9,6 +9,7 @@ const { buildImportTemplateBuffer } = require('../utils/excelTemplate');
 const {
     QuestionValidationError,
     normalizeQuestionInput,
+    normalizeQuestionImageFields,
     validateQuestionPayload,
 } = require('../utils/questionValidation');
 const logger = require('../utils/logger');
@@ -34,21 +35,6 @@ router.get('/stats', auth, authorize('admin'), async (req, res) => {
 
 // Configure multer for file upload
 const upload = multer({ storage: multer.memoryStorage() });
-
-// Helper to convert Google Drive share links to direct download links
-const convertDriveToDirectLink = (url) => {
-    if (!url) return undefined;
-    const strUrl = url.toString().trim();
-    if (!strUrl) return undefined;
-
-    if (strUrl.includes('drive.google.com')) {
-        const idMatch = strUrl.match(/[-\w]{25,}/);
-        if (idMatch) {
-            return `https://drive.google.com/uc?export=view&id=${idMatch[0]}`;
-        }
-    }
-    return strUrl;
-};
 
 // Get all questions (with filters)
 router.get('/', auth, async (req, res) => {
@@ -170,6 +156,9 @@ async function handleBulkImport(req, res, buffer) {
         };
 
         try {
+            // Same normalization the JSON create/update path applies (trim,
+            // Drive share-link conversion) so imports store identical shapes.
+            normalizeQuestionImageFields(candidate);
             validateQuestionPayload(candidate, { rowLabel });
             questions.push(candidate);
         } catch (err) {

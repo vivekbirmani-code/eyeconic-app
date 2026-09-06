@@ -20,6 +20,119 @@ class QuestionValidationError extends Error {
 
 const isNonEmptyString = (value) => typeof value === 'string' && value.trim().length > 0;
 
+// ---- Image URL handling ----
+//
+// Question images are stored as absolute http(s) URLs (Cloudinary in
+// production, uploaded through /api/upload or transferred at import). The
+// only failure mode that has reached production is placeholder URLs
+// (example.com/...) copy-pasted from the import template's sample row — they
+// pass through silently and render as broken images for every participant.
+// These helpers normalize what can be normalized (whitespace, Google Drive
+// share links) and reject what can never resolve, at write time, on every
+// path (create, update, Excel import).
+
+// Hosts that only ever appear in template/sample rows — nothing real is
+// ever hosted here.
+const PLACEHOLDER_IMAGE_HOSTS = new Set([
+    'example.com',
+    'www.example.com',
+    'example.org',
+    'www.example.org',
+    'example.net',
+    'www.example.net',
+]);
+
+/**
+ * Converts a Google Drive share link to its direct-download form so it can
+ * actually be fetched by an <img> tag. Non-Drive URLs are returned unchanged.
+ * Mirrors utils/imageUploader.convertGoogleDriveUrl (kept in sync — that copy
+ * serves the legacy quiz-import route).
+ */
+const convertImageShareLink = (url) => {
+    const idMatch = url.match(/[-\w]{25,}/);
+    if (!idMatch) return url;
+    return `https://drive.google.com/uc?export=view&id=${idMatch[0]}`;
+};
+
+const isGoogleDriveUrl = (url) => url.includes('drive.google.com');
+
+/**
+ * Normalizes a single image URL for storage: trims, converts Drive share
+ * links to direct links. Empty/whitespace-only input normalizes to '' (a
+ * cleared image). Non-strings pass through untouched so validateImageField
+ * can report them. Invalid values are preserved (not coerced) so
+ * validation reports the exact input.
+ */
+const normalizeImageField = (value) => {
+    if (typeof value !== 'string') return value;
+    const trimmed = value.trim();
+    if (!trimmed) return '';
+    if (isGoogleDriveUrl(trimmed)) return convertImageShareLink(trimmed);
+    return trimmed;
+};
+
+/**
+ * Validates a stored image URL value. Returns null when acceptable (empty
+ * string = no image, data:image/ URIs, and absolute http(s) URLs on real
+ * hosts are all fine) or a human-readable error message.
+ */
+const imageFieldError = (value, fieldLabel) => {
+    if (value === undefined || value === null || value === '') return null;
+    if (typeof value !== 'string') {
+        return `${fieldLabel} must be a string URL.`;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (trimmed.startsWith('data:image/')) return null;
+    let parsed;
+    try {
+        parsed = new URL(trimmed);
+    } catch {
+        return `${fieldLabel} "${trimmed}" is not a valid URL — use a direct https image URL.`;
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        return `${fieldLabel} must be an http(s) URL or a data:image/ URI.`;
+    }
+    if (PLACEHOLDER_IMAGE_HOSTS.has(parsed.hostname.toLowerCase())) {
+        return `${fieldLabel} "${trimmed}" is a placeholder URL — replace it with the real, publicly accessible image URL.`;
+    }
+    return null;
+};
+
+/**
+ * In-place normalization of the three image fields on a question payload.
+ * Used by normalizeQuestionInput (JSON create/update) and the bulk-import
+ * candidate builder so every write path stores identical shapes.
+ */
+const normalizeQuestionImageFields = (data) => {
+    if (data.questionImage !== undefined) data.questionImage = normalizeImageField(data.questionImage);
+    if (data.explanationImage !== undefined) data.explanationImage = normalizeImageField(data.explanationImage);
+    if (Array.isArray(data.optionImages)) {
+        data.optionImages = data.optionImages.map((img) => normalizeImageField(img));
+    }
+    return data;
+};
+
+const validateQuestionImageFields = (data, { rowLabel } = {}) => {
+    const errors = [];
+    const prefix = rowLabel ? `${rowLabel}: ` : '';
+
+    const qImgError = imageFieldError(data.questionImage, `${prefix}Question image`);
+    if (qImgError) errors.push(qImgError);
+
+    if (Array.isArray(data.optionImages)) {
+        data.optionImages.forEach((img, i) => {
+            const err = imageFieldError(img, `${prefix}Option image ${i + 1}`);
+            if (err) errors.push(err);
+        });
+    }
+
+    const expImgError = imageFieldError(data.explanationImage, `${prefix}Explanation image`);
+    if (expImgError) errors.push(expImgError);
+
+    return errors;
+};
+
 const normalizeTags = (tags) => {
     if (tags === undefined || tags === null) return [];
     const arr = Array.isArray(tags) ? tags : String(tags).split(',');
@@ -89,6 +202,8 @@ function normalizeQuestionInput(body = {}) {
     if (body.marrowCode !== undefined) normalized.marrowCode = body.marrowCode;
     if (body.source !== undefined) normalized.source = body.source;
     if (body.qid !== undefined) normalized.qid = body.qid;
+
+    normalizeQuestionImageFields(normalized);
 
     return normalized;
 }
@@ -255,10 +370,16 @@ function validateQuestionStructure(data, { rowLabel } = {}) {
  * Throws QuestionValidationError on failure.
  */
 function validateQuestionPayload(data, { rowLabel } = {}) {
-    const errors = validateQuestionMetadata(data, { rowLabel });
+    let errors = validateQuestionMetadata(data, { rowLabel });
 
     if (errors.length === 0 && data.questionType) {
         errors.push(...validateQuestionStructure(data, { rowLabel }));
+    }
+
+    // Image URL quality is checked after the structural gates, following the
+    // same staged-error convention (metadata → structure → image fields).
+    if (errors.length === 0) {
+        errors = validateQuestionImageFields(data, { rowLabel });
     }
 
     if (errors.length > 0) {
@@ -271,8 +392,10 @@ function validateQuestionPayload(data, { rowLabel } = {}) {
 module.exports = {
     QuestionValidationError,
     normalizeQuestionInput,
+    normalizeQuestionImageFields,
     normalizeTags,
     validateQuestionMetadata,
     validateQuestionStructure,
     validateQuestionPayload,
+    imageFieldError,
 };

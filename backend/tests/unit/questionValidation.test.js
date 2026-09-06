@@ -99,11 +99,69 @@ describe('validateQuestionPayload — image_based', () => {
     const data = {
       ...validMetadata(),
       questionType: 'image_based',
-      questionImage: 'https://example.com/img.png',
+      questionImage: 'https://res.cloudinary.com/demo/image/upload/sample.png',
       options: ['A', 'B'],
       correctAnswer: 0,
     };
     expect(() => validateQuestionPayload(data)).not.toThrow();
+  });
+});
+
+describe('image URL validation (all question types)', () => {
+  const imageBase = () => ({
+    ...validMetadata(),
+    questionType: 'mcq_single',
+    options: ['A', 'B'],
+    correctAnswer: 0,
+  });
+
+  it('rejects placeholder-host URLs with an actionable message', () => {
+    const data = { ...imageBase(), questionImage: 'https://example.com/dummy-brachial-plexus.png' };
+    expect(() => validateQuestionPayload(data)).toThrow(QuestionValidationError);
+    expect(() => validateQuestionPayload({ ...data })).toThrow(/placeholder/);
+  });
+
+  it('rejects non-URL and non-http(s) image values', () => {
+    expect(() => validateQuestionPayload({ ...imageBase(), questionImage: 'not a url' })).toThrow(QuestionValidationError);
+    expect(() => validateQuestionPayload({ ...imageBase(), questionImage: 'ftp://files/img.png' })).toThrow(QuestionValidationError);
+    expect(() => validateQuestionPayload({ ...imageBase(), questionImage: 42 })).toThrow(QuestionValidationError);
+  });
+
+  it('accepts data:image URIs and treats empty strings as no image', () => {
+    expect(() => validateQuestionPayload({ ...imageBase(), questionImage: 'data:image/png;base64,iVBORw0KGgo=' })).not.toThrow();
+    expect(() => validateQuestionPayload({ ...imageBase(), questionImage: '' })).not.toThrow();
+    expect(() => validateQuestionPayload({ ...imageBase(), questionImage: null })).not.toThrow();
+  });
+
+  it('validates every option image and the explanation image too', () => {
+    const data = {
+      ...imageBase(),
+      optionImages: ['https://cdn.real.test/a.png', 'https://example.com/b.png'],
+      explanationImage: 'https://example.com/solution.png',
+    };
+    expect(() => validateQuestionPayload(data)).toThrow(/Option image 2/);
+
+    const data2 = { ...imageBase(), optionImages: ['', 'https://cdn.real.test/b.png'], explanationImage: 'https://example.com/solution.png' };
+    expect(() => validateQuestionPayload(data2)).toThrow(/Explanation image/);
+  });
+});
+
+describe('normalizeQuestionInput — image URL normalization', () => {
+  it('trims image URLs and converts Google Drive share links to direct links', () => {
+    const result = normalizeQuestionInput({
+      questionImage: '  https://res.cloudinary.com/demo/image/upload/a.png  ',
+      optionImages: ['https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789/view?usp=sharing', ''],
+      explanationImage: ' https://drive.google.com/open?id=1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789 ',
+    });
+    expect(result.questionImage).toBe('https://res.cloudinary.com/demo/image/upload/a.png');
+    expect(result.optionImages[0]).toBe('https://drive.google.com/uc?export=view&id=1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789');
+    expect(result.optionImages[1]).toBe('');
+    expect(result.explanationImage).toBe('https://drive.google.com/uc?export=view&id=1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789');
+  });
+
+  it('normalizes empty/whitespace image input to an empty string', () => {
+    const result = normalizeQuestionInput({ questionImage: '   ' });
+    expect(result.questionImage).toBe('');
   });
 });
 

@@ -323,11 +323,16 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
         if (attempt) {
             // Resume existing attempt. For section-locked attempts, lazily
             // apply any sections whose server-side deadlines expired while
-            // the guest was away before returning state.
+            // the guest was away before returning state. The sync keys on
+            // the ATTEMPT's own guestId — a cross-device resume under the
+            // verified lead may carry a different device UUID than the one
+            // that created the attempt (same contract as the submit routes;
+            // keying on the caller's guestId would make the sync find
+            // nothing and falsely report the attempt as ended).
             if (isSectionLockEnforced(attempt)) {
                 const synced = await syncExpiredSections(GuestAttempt, {
                     _id: attempt._id,
-                    guestId,
+                    guestId: attempt.guestId,
                     quiz: quiz._id,
                 }, { finalize: gradeAndFinalizeGuestAttempt });
 
@@ -436,6 +441,24 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
         });
 
         await attempt.save();
+
+        // Concurrent-start reconciliation. Two parallel /start calls (double
+        // tap, multiple tabs, React StrictMode's dev double-mount) can both
+        // pass the findOne above before either save commits, leaving the
+        // guest with two live attempts — resume would then bounce between
+        // them, resetting visible progress. Earliest-wins: whichever request
+        // did NOT create the oldest in-progress attempt deletes its own and
+        // answers with the oldest instead. Both racers converge on the same
+        // survivor deterministically.
+        const liveAttempts = await GuestAttempt.find({
+            quiz: quiz._id,
+            status: 'in_progress',
+            $or: [{ guestId }, ...(req.guest ? [{ guest: req.guest._id }] : [])],
+        }).sort({ createdAt: 1, _id: 1 });
+        if (liveAttempts.length > 1 && String(liveAttempts[0]._id) !== String(attempt._id)) {
+            await GuestAttempt.deleteOne({ _id: attempt._id });
+            attempt = liveAttempts[0];
+        }
 
         if (req.guest) {
             await Guest.updateOne(

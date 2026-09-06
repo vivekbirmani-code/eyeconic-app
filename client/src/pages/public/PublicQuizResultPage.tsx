@@ -10,6 +10,7 @@ import {
   Loader2,
   XCircle,
 } from 'lucide-react';
+import QuizImage from '../../components/public/QuizImage';
 import { publicQuizApi, usePublicQuiz } from '../../contexts/PublicQuizContext';
 import { forgetAttempt, getErrorData } from '../../services/publicApi';
 
@@ -267,15 +268,18 @@ export default function PublicQuizResultPage() {
                       </span>
                       <p className="text-sm text-gray-800 leading-relaxed">{q.question}</p>
                     </div>
-                    {q.questionImage && (
-                      <img src={q.questionImage} alt="Question" className="max-w-full rounded-lg mb-2 border border-gray-100" />
-                    )}
+                    {q.questionImage ? (
+                      <QuizImage src={q.questionImage} alt="Question image" className="mb-2" />
+                    ) : null}
                     {q.explanation && (
                       <p className="text-xs text-gray-600 bg-white/70 rounded-lg p-2.5 border border-gray-100 leading-relaxed">
                         <span className="font-semibold text-gray-700">Explanation: </span>
                         {q.explanation}
                       </p>
                     )}
+                    {q.explanationImage ? (
+                      <QuizImage src={q.explanationImage} alt="Explanation image" className="mt-2" />
+                    ) : null}
                   </div>
                 ))}
               </div>

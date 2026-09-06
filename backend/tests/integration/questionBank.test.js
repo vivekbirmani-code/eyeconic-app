@@ -111,6 +111,28 @@ describe('POST /api/question-bank — create', () => {
     expect(res.status).toBe(201);
     expect(res.body.correctAnswer).toEqual({ '0': '1', '1': '0' });
   });
+
+  it('rejects a placeholder image URL with a 400 naming the field', async () => {
+    const res = await request(app)
+      .post('/api/question-bank')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ ...validMcq(), questionImage: 'https://example.com/dummy-image.png' });
+    expect(res.status).toBe(400);
+    expect(res.body.errors.some((e) => /Question image/.test(e) && /placeholder/.test(e))).toBe(true);
+  });
+
+  it('stores a Cloudinary image URL verbatim on an image_based question', async () => {
+    const res = await request(app)
+      .post('/api/question-bank')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({
+        ...validMcq(),
+        questionType: 'image_based',
+        questionImage: 'https://res.cloudinary.com/vivek-bmpromo/image/upload/v1/eyeconic_questions/q.png',
+      });
+    expect(res.status).toBe(201);
+    expect(res.body.questionImage).toBe('https://res.cloudinary.com/vivek-bmpromo/image/upload/v1/eyeconic_questions/q.png');
+  });
 });
 
 describe('GET /api/question-bank — student answer-key stripping', () => {
@@ -198,5 +220,69 @@ describe('PUT /api/question-bank/:id — update validation', () => {
     expect(res.status).toBe(200);
     expect(res.body.difficulty).toBe('hard');
     expect(res.body.subtopicName).toBe('Mendelian Inheritance');
+  });
+
+  it('rejects an update that swaps in a placeholder image URL', async () => {
+    const created = await request(app)
+      .post('/api/question-bank')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(validMcq());
+
+    const res = await request(app)
+      .put(`/api/question-bank/${created.body._id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ questionImage: 'https://example.com/new-image.png' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.errors.some((e) => /Question image/.test(e))).toBe(true);
+  });
+});
+
+describe('POST /api/question-bank/bulk-import — image URL validation', () => {
+  const xlsx = require('xlsx');
+
+  // Minimal two-row sheet: one clean mcq row, one image_based row carrying
+  // the template's placeholder URL (the exact shape that reached production
+  // and rendered as a broken image for guests).
+  const buildWorkbook = (imageUrl) => {
+    const rows = [
+      {
+        SUBJECT: 'Pathology', TOPIC: 'Genetics', SUBTOPIC: 'Mendelian Inheritance',
+        SYSTEM: 'Genetic Disorders', QUESTION_TYPE: 'MCQ — Single Correct', DIFFICULTY: 'medium',
+        QUESTION: 'Clean question?', OPTION1: 'A', OPTION2: 'B', CORRECT: 'A',
+      },
+      {
+        SUBJECT: 'Pathology', TOPIC: 'Histology', SUBTOPIC: 'Epithelium',
+        SYSTEM: 'Histology', QUESTION_TYPE: 'Image-Based', DIFFICULTY: 'medium',
+        QUESTION: 'Identify the structure.', Q_IMAGE: imageUrl,
+        OPTION1: 'A', OPTION2: 'B', CORRECT: 'A',
+      },
+    ];
+    const sheet = xlsx.utils.json_to_sheet(rows);
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(workbook, sheet, 'Question Bank');
+    return xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+  };
+
+  it('reports the placeholder image row as an error and imports the clean row', async () => {
+    const res = await request(app)
+      .post('/api/question-bank/bulk-import')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .attach('file', buildWorkbook('https://example.com/dummy-brachial-plexus.png'), 'import.xlsx');
+
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(1);
+    expect(res.body.errors.some((e) => /Row 3/.test(e) && /placeholder/.test(e))).toBe(true);
+  });
+
+  it('imports an image_based row whose image URL is real', async () => {
+    const res = await request(app)
+      .post('/api/question-bank/bulk-import')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .attach('file', buildWorkbook('https://res.cloudinary.com/vivek-bmpromo/image/upload/v1/eyeconic_questions/q.png'), 'import.xlsx');
+
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(2);
+    expect(res.body.errors).toBeUndefined();
   });
 });

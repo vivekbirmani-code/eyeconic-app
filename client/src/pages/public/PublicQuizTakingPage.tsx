@@ -3,14 +3,17 @@ import { useNavigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
   Bookmark,
+  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Clock,
   Eye,
   Flag,
   Loader2,
+  Lock,
   Send,
 } from 'lucide-react';
+import QuizImage from '../../components/public/QuizImage';
 import {
   publicQuizApi,
   usePublicQuiz,
@@ -215,6 +218,33 @@ export default function PublicQuizTakingPage() {
     const ids = new Set(defs[idx].questionIds.map(String));
     return questions.map((q, i) => (ids.has(String(q._id)) ? i : -1)).filter((i) => i !== -1);
   }, [sectionLockEnabled, quiz, questions, attempt?.sectionDefinitions, activeSectionState]);
+
+  // Position of the current question INSIDE the active section. Section
+  // question order follows the admin's section definition, not global array
+  // position — a section's questions can be non-contiguous in the quiz
+  // array, so all navigation is mapped through this list (same approach as
+  // the app's quiz-taking screens).
+  const positionInSection = useMemo(
+    () =>
+      sectionLockEnabled
+        ? activeSectionQuestionIndexes.indexOf(current)
+        : current,
+    [sectionLockEnabled, activeSectionQuestionIndexes, current]
+  );
+
+  // Section locking hard guard: whenever the active section changes (manual
+  // submit, auto-submit cascade, resume, refresh) or the current index is
+  // somehow outside the active section (stale state, restored snapshot),
+  // snap to the first question of the active section. The server rejects
+  // writes into locked sections regardless — this keeps the UI consistent
+  // with that authority.
+  useEffect(() => {
+    if (!sectionLockEnabled || !questions.length || !activeSectionQuestionIndexes.length) return;
+    if (!activeSectionQuestionIndexes.includes(current)) {
+      setCurrent(activeSectionQuestionIndexes[0]);
+      questionStartRef.current = Date.now();
+    }
+  }, [sectionLockEnabled, activeSectionQuestionIndexes, current, questions.length]);
 
   const isQuestionLocked = useCallback(
     (index: number) => {
@@ -453,6 +483,34 @@ export default function PublicQuizTakingPage() {
 
   // ---------- render helpers ----------
 
+  // Navigation bounds. With section locking ON, movement is confined to the
+  // active section's question list — the section before is locked on the
+  // server (its answers are frozen), and the section after only opens after
+  // this one is submitted, so neither may be paged into.
+  const canGoPrev = sectionLockEnabled
+    ? positionInSection > 0
+    : current > 0;
+  const canGoNext = sectionLockEnabled
+    ? positionInSection >= 0 && positionInSection < activeSectionQuestionIndexes.length - 1
+    : current < questions.length - 1;
+
+  const goToQuestion = (index: number) => {
+    setCurrent(index);
+    questionStartRef.current = Date.now();
+  };
+  const handlePrev = () => {
+    if (!canGoPrev) return;
+    goToQuestion(
+      sectionLockEnabled ? activeSectionQuestionIndexes[positionInSection - 1] : current - 1
+    );
+  };
+  const handleNext = () => {
+    if (!canGoNext) return;
+    goToQuestion(
+      sectionLockEnabled ? activeSectionQuestionIndexes[positionInSection + 1] : current + 1
+    );
+  };
+
   const currentQuestion: PublicQuestion | undefined = questions[current];
   const currentAnswerValue = answers[current]?.selectedAnswer;
   const answeredCount = activeSectionQuestionIndexes.filter((i) => isAnswered(answers[i]?.selectedAnswer)).length;
@@ -524,7 +582,12 @@ export default function PublicQuizTakingPage() {
                 >
                   {String.fromCharCode(65 + i)}
                 </span>
-                <span className="text-sm text-gray-800 leading-relaxed">{option}</span>
+                <span className="flex-1 min-w-0">
+                  <span className="block text-sm text-gray-800 leading-relaxed">{option}</span>
+                  {q.optionImages?.[i] ? (
+                    <QuizImage src={q.optionImages[i]} alt={`Option ${String.fromCharCode(65 + i)} image`} className="mt-2 border-0" />
+                  ) : null}
+                </span>
               </button>
             ))}
           </div>
@@ -606,7 +669,12 @@ export default function PublicQuizTakingPage() {
                 >
                   {String.fromCharCode(65 + i)}
                 </span>
-                <span className="text-sm text-gray-800 leading-relaxed">{option}</span>
+                <span className="flex-1 min-w-0">
+                  <span className="block text-sm text-gray-800 leading-relaxed">{option}</span>
+                  {q.optionImages?.[i] ? (
+                    <QuizImage src={q.optionImages[i]} alt={`Option ${String.fromCharCode(65 + i)} image`} className="mt-2 border-0" />
+                  ) : null}
+                </span>
               </button>
             ))}
           </div>
@@ -643,6 +711,48 @@ export default function PublicQuizTakingPage() {
         </div>
       </header>
 
+      {/* Section progress indicator (locked quizzes only): completed
+          sections are locked, the active one is highlighted, upcoming ones
+          are outlined. Display-only — navigation itself is clamped and the
+          server enforces the locks. */}
+      {sectionLockEnabled && (attempt?.sectionDefinitions?.length ?? 0) > 0 && (
+        <div className="bg-white border-b border-gray-100">
+          <div className="max-w-3xl mx-auto px-4 py-2 flex items-center gap-1.5 overflow-x-auto">
+            {attempt!.sectionDefinitions!.map((def) => {
+              const state = sectionStates.find((s) => s.index === def.index);
+              const isActive = state?.status === 'in_progress';
+              const isDone = !!state && state.status !== 'in_progress';
+              return (
+                <div
+                  key={def.index}
+                  className={`flex items-center gap-1.5 shrink-0 px-2.5 py-1 rounded-lg text-[11px] font-semibold ${
+                    isActive
+                      ? 'bg-[#01b4ae] text-white'
+                      : isDone
+                        ? 'bg-gray-100 text-gray-400'
+                        : 'border border-gray-200 text-gray-400'
+                  }`}
+                  title={
+                    isDone
+                      ? `${def.name} — submitted and locked`
+                      : isActive
+                        ? `${def.name} — current section`
+                        : `${def.name} — opens after the current section`
+                  }
+                >
+                  {isDone ? (
+                    <Lock className="w-3 h-3" />
+                  ) : isActive ? (
+                    <CheckCircle2 className="w-3 h-3" />
+                  ) : null}
+                  {def.name}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {banner && (
         <div className="max-w-3xl mx-auto w-full px-4 pt-3">
           <div className="bg-[#01b4ae]/10 border border-[#01b4ae]/20 rounded-xl p-3 flex items-start gap-2">
@@ -660,7 +770,9 @@ export default function PublicQuizTakingPage() {
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
           <div className="flex items-center justify-between mb-3">
             <span className="text-xs font-semibold text-gray-400">
-              Question {current + 1} of {questions.length}
+              {sectionLockEnabled
+                ? `Question ${positionInSection + 1} of ${activeSectionQuestionIndexes.length} in this section`
+                : `Question ${current + 1} of ${questions.length}`}
             </span>
             <button
               type="button"
@@ -689,13 +801,9 @@ export default function PublicQuizTakingPage() {
             </button>
           </div>
 
-          {currentQuestion.questionImage && (
-            <img
-              src={currentQuestion.questionImage}
-              alt="Question"
-              className="max-w-full rounded-xl border border-gray-100 mb-3"
-            />
-          )}
+          {currentQuestion.questionImage ? (
+            <QuizImage src={currentQuestion.questionImage} alt="Question image" className="mb-3" />
+          ) : null}
 
           {currentQuestion.assertion && (
             <div className="bg-gray-50 rounded-xl p-3 mb-2 text-sm text-gray-700 leading-relaxed">
@@ -731,10 +839,7 @@ export default function PublicQuizTakingPage() {
                 <button
                   key={index}
                   type="button"
-                  onClick={() => {
-                    setCurrent(index);
-                    questionStartRef.current = Date.now();
-                  }}
+                  onClick={() => goToQuestion(index)}
                   className={`w-9 h-9 rounded-lg text-xs font-bold transition-all border-2 ${
                     isCurrent
                       ? 'border-[#01b4ae] bg-[#01b4ae] text-white'
@@ -763,11 +868,8 @@ export default function PublicQuizTakingPage() {
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-2.5">
           <button
             type="button"
-            onClick={() => {
-              setCurrent((c) => Math.max(0, c - 1));
-              questionStartRef.current = Date.now();
-            }}
-            disabled={current === 0}
+            onClick={handlePrev}
+            disabled={!canGoPrev}
             className="inline-flex items-center gap-1 text-sm font-semibold text-gray-600 disabled:text-gray-300 px-3 py-2.5"
           >
             <ChevronLeft className="w-4 h-4" /> Prev
@@ -799,11 +901,8 @@ export default function PublicQuizTakingPage() {
 
           <button
             type="button"
-            onClick={() => {
-              setCurrent((c) => Math.min(questions.length - 1, c + 1));
-              questionStartRef.current = Date.now();
-            }}
-            disabled={current === questions.length - 1}
+            onClick={handleNext}
+            disabled={!canGoNext}
             className="inline-flex items-center gap-1 text-sm font-semibold text-gray-600 disabled:text-gray-300 px-3 py-2.5"
           >
             Next <ChevronRight className="w-4 h-4" />
