@@ -4,6 +4,40 @@ import { useAuth } from '@/context/AuthContext';
 import { View, Text, ActivityIndicator, StyleSheet, Platform } from 'react-native';
 import { useNotifications } from '@/context/NotificationContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { DisabledTabButton } from '@/components/DisabledTabButton';
+import {
+  FeatureKey,
+  isFeatureEnabled,
+} from '@/utils/featureAvailability';
+
+/**
+ * TEMPORARY FEATURE FREEZE — tab visibility options
+ * (see utils/featureAvailability.ts).
+ *
+ * expo-router's TabsClient throws "Cannot use `href` and `tabBarButton`
+ * together" when a screen defines both, and an explicit `href: null` hides
+ * the tab entirely — so the frozen state must omit `href` altogether:
+ *   - feature enabled → `href` passes through unchanged (string = shown for
+ *     this role, null = hidden), i.e. the pre-freeze behaviour.
+ *   - feature frozen, tab hidden for this role (`href` null) → stays hidden.
+ *   - feature frozen, tab shown for this role → no `href` +
+ *     `tabBarButton: DisabledTabButton`: the tab stays visible but renders
+ *     non-tappable with a lock indicator. The destination screen is
+ *     independently gated by withFeatureGate, so deep links to it still land
+ *     on the Coming Soon state.
+ */
+function featureGatedTabOptions<T extends `/${string}` | null>(
+  feature: FeatureKey,
+  href: T
+) {
+  if (isFeatureEnabled(feature)) {
+    return { href };
+  }
+  if (href == null) {
+    return { href: null };
+  }
+  return { tabBarButton: DisabledTabButton };
+}
 
 function TabInner() {
   const { totalUnreadCount, unseenQuizCount } = useNotifications();
@@ -15,6 +49,12 @@ function TabInner() {
   const isMentor = user?.role === 'mentor' && !isFree;
   const isStudent = user?.role === 'student' && !isFree;
   const showUsers = isAdmin;
+
+  // Feature freeze: unread badge only makes sense while chat is live.
+  const groupsBadge =
+    isFeatureEnabled('chat') && totalUnreadCount > 0
+      ? totalUnreadCount
+      : undefined;
 
   return (
     <Tabs
@@ -65,7 +105,7 @@ function TabInner() {
           tabBarIcon: ({ color, size }) => (
             <Sparkles color={color} size={22} />
           ),
-          href: isFree ? '/transformations' : null,
+          ...featureGatedTabOptions('freeUserContent', isFree ? '/transformations' : null),
         }}
       />
       <Tabs.Screen
@@ -75,7 +115,7 @@ function TabInner() {
           tabBarIcon: ({ color, size }) => (
             <BarChart2 color={color} size={22} />
           ),
-          href: isFree ? '/graphs' : null,
+          ...featureGatedTabOptions('freeUserContent', isFree ? '/graphs' : null),
         }}
       />
       <Tabs.Screen
@@ -86,7 +126,7 @@ function TabInner() {
             <Users color={color} size={22} />
           ),
           // Hide this tab for non-admin users
-          href: showUsers ? '/users' : null,
+          ...featureGatedTabOptions('userManagement', showUsers ? '/users' : null),
         }}
       />
       <Tabs.Screen
@@ -97,7 +137,7 @@ function TabInner() {
             <TrendingUp color={color} size={22} />
           ),
           // Hide this tab for non-admin users
-          href: isAdmin ? '/admin-overview' : null,
+          ...featureGatedTabOptions('adminOverview', isAdmin ? '/admin-overview' : null),
         }}
       />
       <Tabs.Screen
@@ -107,8 +147,8 @@ function TabInner() {
           tabBarIcon: ({ color, size }) => (
             <MessageCircle color={color} size={22} />
           ),
-          tabBarBadge: totalUnreadCount > 0 ? totalUnreadCount : undefined,
-          href: isFree ? null : '/groups',
+          tabBarBadge: groupsBadge,
+          ...featureGatedTabOptions('chat', isFree ? null : '/groups'),
         }}
       />
       <Tabs.Screen
@@ -118,7 +158,10 @@ function TabInner() {
           tabBarIcon: ({ color, size }) => (
             <UserCheck color={color} size={22} />
           ),
-          // Hide this tab for non-mentor users
+          // Hide this tab for non-mentor users. The tab itself stays
+          // tappable during the feature freeze: its assignments content is
+          // gated inside the screen, but the Analytics entry (quiz feature)
+          // must remain reachable for mentors.
           href: isMentor ? '/mentor-dashboard' : null,
         }}
       />
@@ -130,7 +173,7 @@ function TabInner() {
             <ClipboardList color={color} size={22} />
           ),
           // Hide this tab for non-student users
-          href: isStudent ? '/student-assignments' : null,
+          ...featureGatedTabOptions('mentorship', isStudent ? '/student-assignments' : null),
         }}
       />
       <Tabs.Screen

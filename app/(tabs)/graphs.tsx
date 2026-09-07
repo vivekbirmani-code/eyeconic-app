@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { withFeatureGate } from '@/components/withFeatureGate';
 import {
   View,
   Text,
@@ -31,7 +32,7 @@ const subjectAccuracy = [
   { name: 'General Medicine', accuracy: 82, color: '#EC4899' }
 ];
 
-export default function Graphs() {
+function Graphs() {
   const { user } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [gtChartData, setGtChartData] = useState<GtChartEntry[]>([]);
@@ -428,3 +429,5 @@ const styles = StyleSheet.create({
     lineHeight: 18,
   },
 });
+// TEMPORARY FEATURE FREEZE — quiz-only availability (utils/featureAvailability.ts).
+export default withFeatureGate('freeUserContent')(Graphs);

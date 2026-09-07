@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { withFeatureGate } from '@/components/withFeatureGate';
 import {
   View,
   Text,
@@ -47,7 +48,7 @@ interface MentorFolder {
   groups: Group[];
 }
 
-export default function Groups() {
+function Groups() {
   const { user } = useAuth();
   const { unreadCounts, socket } = useNotifications();
   const router = useRouter();
@@ -975,3 +976,5 @@ const styles = StyleSheet.create({
   },
   // Edit Group modal styles
 });
+// TEMPORARY FEATURE FREEZE — quiz-only availability (utils/featureAvailability.ts).
+export default withFeatureGate('chat')(Groups);

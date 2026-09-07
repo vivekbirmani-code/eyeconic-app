@@ -35,6 +35,7 @@ import {
 } from 'lucide-react-native';
 import * as Haptics from '@/utils/haptics';
 import { LinearGradient } from 'expo-linear-gradient';
+import { isFeatureEnabled } from '@/utils/featureAvailability';
 
 const SIDEBAR_WIDTH = 290;
 
@@ -258,22 +259,43 @@ export default function FreeUserSidebar({ isOpen, onClose }: SidebarProps) {
               <Text style={styles.menuItemText}>FAQs</Text>
             </TouchableOpacity>
 
-            {/* 3. GT Tracker */}
-            <TouchableOpacity style={styles.menuItem} onPress={() => openSectionModal('gt-tracker')}>
+            {/* 3. GT Tracker — TEMPORARY FEATURE FREEZE */}
+            <TouchableOpacity
+              style={[styles.menuItem, !isFeatureEnabled('freeUserContent') && styles.menuItemDisabled]}
+              disabled={!isFeatureEnabled('freeUserContent')}
+              onPress={() => openSectionModal('gt-tracker')}
+            >
               <Activity size={20} color="#01b4ae" />
               <Text style={styles.menuItemText}>GT Tracker</Text>
+              {!isFeatureEnabled('freeUserContent') && (
+                <Text style={styles.menuItemBadge}>Soon</Text>
+              )}
             </TouchableOpacity>
 
-            {/* 4. Resources */}
-            <TouchableOpacity style={styles.menuItem} onPress={() => openSectionModal('resources')}>
+            {/* 4. Resources — TEMPORARY FEATURE FREEZE */}
+            <TouchableOpacity
+              style={[styles.menuItem, !isFeatureEnabled('freeUserContent') && styles.menuItemDisabled]}
+              disabled={!isFeatureEnabled('freeUserContent')}
+              onPress={() => openSectionModal('resources')}
+            >
               <FileText size={20} color="#01b4ae" />
               <Text style={styles.menuItemText}>Resources</Text>
+              {!isFeatureEnabled('freeUserContent') && (
+                <Text style={styles.menuItemBadge}>Soon</Text>
+              )}
             </TouchableOpacity>
 
-            {/* 5. Free Content */}
-            <TouchableOpacity style={styles.menuItem} onPress={() => openSectionModal('free-content')}>
+            {/* 5. Free Content — TEMPORARY FEATURE FREEZE */}
+            <TouchableOpacity
+              style={[styles.menuItem, !isFeatureEnabled('freeUserContent') && styles.menuItemDisabled]}
+              disabled={!isFeatureEnabled('freeUserContent')}
+              onPress={() => openSectionModal('free-content')}
+            >
               <BookOpen size={20} color="#01b4ae" />
               <Text style={styles.menuItemText}>Free Content</Text>
+              {!isFeatureEnabled('freeUserContent') && (
+                <Text style={styles.menuItemBadge}>Soon</Text>
+              )}
             </TouchableOpacity>
 
             {/* 7. Terms & Conditions */}
@@ -616,6 +638,22 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     paddingHorizontal: 24,
     gap: 14,
+  },
+  // TEMPORARY FEATURE FREEZE — disabled learning-tool entries
+  // (utils/featureAvailability.ts).
+  menuItemDisabled: {
+    opacity: 0.5,
+  },
+  menuItemBadge: {
+    marginLeft: 'auto',
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#01b4ae',
+    backgroundColor: 'rgba(1, 180, 174, 0.12)',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    overflow: 'hidden',
   },
   menuItemText: {
     fontSize: 15,

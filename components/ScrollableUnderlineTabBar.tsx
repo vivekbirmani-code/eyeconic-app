@@ -15,6 +15,11 @@ export interface UnderlineTabItem {
   icon: LucideIcon;
   badge?: number;
   onPress: () => void;
+  /**
+   * TEMPORARY FEATURE FREEZE — disabled tabs stay visible but are
+   * non-tappable and visually de-emphasized (utils/featureAvailability.ts).
+   */
+  disabled?: boolean;
 }
 
 interface ScrollableUnderlineTabBarProps {
@@ -54,28 +59,36 @@ export function ScrollableUnderlineTabBar({
         contentContainerStyle={styles.scrollContent}
       >
         {tabs.map((tab) => {
-          const isActive = tab.id === activeTabId;
+          const isActive = tab.id === activeTabId && !tab.disabled;
           const Icon = tab.icon;
 
           return (
             <TouchableOpacity
               key={tab.id}
-              style={[styles.tab, isActive && styles.tabActive]}
+              style={[
+                styles.tab,
+                isActive && styles.tabActive,
+                tab.disabled && styles.tabDisabled,
+              ]}
               onPress={tab.onPress}
               activeOpacity={0.7}
+              disabled={tab.disabled}
               onLayout={(event) => handleTabLayout(tab.id, event)}
               accessibilityRole="tab"
-              accessibilityState={{ selected: isActive }}
+              accessibilityState={{ selected: isActive, disabled: tab.disabled }}
             >
               <View style={styles.tabInner}>
-                <Icon color={isActive ? '#01b4ae' : '#6B7280'} size={18} />
+                <Icon
+                  color={tab.disabled ? '#C4C9D2' : isActive ? '#01b4ae' : '#6B7280'}
+                  size={18}
+                />
                 <Text
                   style={[styles.tabText, isActive && styles.tabTextActive]}
                   numberOfLines={1}
                 >
                   {tab.label}
                 </Text>
-                {tab.badge != null && tab.badge > 0 && (
+                {tab.badge != null && tab.badge > 0 && !tab.disabled && (
                   <View style={styles.badge}>
                     <Text style={styles.badgeText}>
                       {tab.badge > 99 ? '99+' : tab.badge}
@@ -111,6 +124,9 @@ const styles = StyleSheet.create({
   },
   tabActive: {
     borderBottomColor: '#01b4ae',
+  },
+  tabDisabled: {
+    opacity: 0.55,
   },
   tabInner: {
     flexDirection: 'row',

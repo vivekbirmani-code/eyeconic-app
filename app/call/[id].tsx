@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { withFeatureGate } from '@/components/withFeatureGate';
 import {
   View,
   Text,
@@ -40,7 +41,7 @@ function resolveRouteParam(value: string | string[] | undefined): string | undef
   return value;
 }
 
-export default function CallScreen() {
+function CallScreen() {
   const { id: groupIdParam, callId: callIdParam } = useLocalSearchParams<{ id: string; callId?: string }>();
   const groupId = resolveRouteParam(groupIdParam);
   const callId = resolveRouteParam(callIdParam);
@@ -738,3 +739,5 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
+// TEMPORARY FEATURE FREEZE — quiz-only availability (utils/featureAvailability.ts).
+export default withFeatureGate('chat')(CallScreen);

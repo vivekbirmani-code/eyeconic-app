@@ -22,6 +22,7 @@ import { useRouter } from 'expo-router';
 import FreeUserSidebar from '@/components/FreeUserSidebar';
 import ProfilePictureManager from '@/components/ProfilePictureManager';
 import UserAvatar from '@/components/UserAvatar';
+import { isFeatureEnabled } from '@/utils/featureAvailability';
 
 interface StudentProfile {
   mbbsBatch: string;
@@ -449,7 +450,11 @@ export default function Dashboard() {
                   <View style={styles.quickActionsGrid}>
                     {/* Groups button - all roles */}
                     <TouchableOpacity
-                      style={styles.quickActionButton}
+                      style={[
+                        styles.quickActionButton,
+                        !isFeatureEnabled('chat') && styles.quickActionDisabled,
+                      ]}
+                      disabled={!isFeatureEnabled('chat')}
                       onPress={() => {
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                         router.push('/(tabs)/groups');
@@ -480,7 +485,11 @@ export default function Dashboard() {
                     {/* My Tasks - student only */}
                     {user?.role === 'student' && (
                       <TouchableOpacity
-                        style={styles.quickActionButton}
+                        style={[
+                          styles.quickActionButton,
+                          !isFeatureEnabled('mentorship') && styles.quickActionDisabled,
+                        ]}
+                        disabled={!isFeatureEnabled('mentorship')}
                         onPress={() => {
                           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                           router.push('/(tabs)/student-assignments');
@@ -497,7 +506,11 @@ export default function Dashboard() {
                     {/* Users - admin only */}
                     {user?.role === 'admin' && (
                       <TouchableOpacity
-                        style={styles.quickActionButton}
+                        style={[
+                          styles.quickActionButton,
+                          !isFeatureEnabled('userManagement') && styles.quickActionDisabled,
+                        ]}
+                        disabled={!isFeatureEnabled('userManagement')}
                         onPress={() => {
                           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                           router.push('/(tabs)/users');
@@ -1076,6 +1089,11 @@ const styles = StyleSheet.create({
     flex: 1,
     borderWidth: 1,
     borderColor: '#F3F4F6',
+  },
+  // TEMPORARY FEATURE FREEZE — visually de-emphasized, non-tappable quick
+  // actions for disabled features (utils/featureAvailability.ts).
+  quickActionDisabled: {
+    opacity: 0.5,
   },
   quickActionIcon: {
     width: 48,

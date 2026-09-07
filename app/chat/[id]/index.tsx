@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { withFeatureGate } from '@/components/withFeatureGate';
 import {
   View,
   Text,
@@ -78,7 +79,7 @@ interface ReadByUser {
   readAt: string;
 }
 
-export default function ChatScreen() {
+function ChatScreen() {
   const { id: groupId } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuth();
   const { markAsRead } = useNotifications();
@@ -1467,3 +1468,5 @@ const styles = StyleSheet.create({
   },
 
 });
+// TEMPORARY FEATURE FREEZE — quiz-only availability (utils/featureAvailability.ts).
+export default withFeatureGate('chat')(ChatScreen);

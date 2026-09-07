@@ -2,15 +2,18 @@ import { useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import {
-  Home, 
-  Menu, 
-  LogOut, 
+  Home,
+  Menu,
+  LogOut,
   X,
   MessageCircle,
   BookOpen,
-  Users
+  Users,
+  Lock
 } from 'lucide-react';
 import UserAvatar from '../components/UserAvatar';
+import { isFeatureEnabled } from '../config/features';
+import type { FeatureKey } from '../config/features';
 
 export default function MainLayout() {
   const { user, logout } = useAuth();
@@ -22,11 +25,13 @@ export default function MainLayout() {
     navigate('/login');
   };
 
- const navItems = [
-  { name: 'Dashboard', path: '/dashboard', icon: Home },
-  { name: 'Groups', path: '/groups', icon: MessageCircle },
-  { name: 'Tests', path: '/quizzes', icon: BookOpen },
-  ...(user?.role === 'admin' ? [{ name: 'Users', path: '/users', icon: Users }] : []),
+ // TEMPORARY FEATURE FREEZE — disabled items stay visible but are not
+ // clickable and carry a "Soon" indicator (config/features.ts).
+ const navItems: { name: string; path: string; icon: typeof Home; feature?: FeatureKey }[] = [
+  { name: 'Dashboard', path: '/dashboard', icon: Home, feature: 'dashboard' },
+  { name: 'Groups', path: '/groups', icon: MessageCircle, feature: 'chat' },
+  { name: 'Tests', path: '/quizzes', icon: BookOpen, feature: 'quizzes' },
+  ...(user?.role === 'admin' ? [{ name: 'Users', path: '/users', icon: Users, feature: 'userManagement' as FeatureKey }] : []),
 ];
 
   return (
@@ -47,14 +52,35 @@ export default function MainLayout() {
         <nav className="flex-1 space-y-1">
           {navItems.map((item) => {
             const Icon = item.icon;
+            const enabled = !item.feature || isFeatureEnabled(item.feature);
+
+            // TEMPORARY FEATURE FREEZE — visible but not clickable
+            if (!enabled) {
+              return (
+                <div
+                  key={item.path}
+                  aria-disabled="true"
+                  title="Coming soon — this feature will be enabled in a future version"
+                  className="flex items-center gap-3 px-4 py-3 rounded-xl font-medium text-gray-400 opacity-70 cursor-not-allowed select-none"
+                >
+                  <Icon size={20} className="text-gray-300" />
+                  <span className="flex-1">{item.name}</span>
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-[#01b4ae] bg-[#01b4ae]/10 rounded-full px-2 py-0.5">
+                    <Lock size={10} />
+                    Soon
+                  </span>
+                </div>
+              );
+            }
+
             return (
               <NavLink
                 key={item.path}
                 to={item.path}
                 className={({ isActive }) =>
                   `flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 group font-medium ${
-                    isActive 
-                      ? 'bg-[#01b4ae]/10 text-[#01b4ae]' 
+                    isActive
+                      ? 'bg-[#01b4ae]/10 text-[#01b4ae]'
                       : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
                   }`
                 }
@@ -119,6 +145,26 @@ export default function MainLayout() {
             <nav className="p-4 space-y-2 relative">
                {navItems.map((item) => {
                   const Icon = item.icon;
+                  const enabled = !item.feature || isFeatureEnabled(item.feature);
+
+                  // TEMPORARY FEATURE FREEZE — visible but not clickable
+                  if (!enabled) {
+                    return (
+                      <div
+                        key={item.path}
+                        aria-disabled="true"
+                        className="flex items-center gap-3 px-4 py-3 rounded-xl font-medium text-gray-400 opacity-70 cursor-not-allowed select-none"
+                      >
+                        <Icon size={20} className="text-gray-300" />
+                        <span className="flex-1">{item.name}</span>
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-[#01b4ae] bg-[#01b4ae]/10 rounded-full px-2 py-0.5">
+                          <Lock size={10} />
+                          Soon
+                        </span>
+                      </div>
+                    );
+                  }
+
                   return (
                     <NavLink
                       key={item.path}
@@ -126,8 +172,8 @@ export default function MainLayout() {
                       onClick={() => setIsMobileMenuOpen(false)}
                       className={({ isActive }) =>
                         `flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 font-medium ${
-                          isActive 
-                            ? 'bg-[#01b4ae]/10 text-[#01b4ae]' 
+                          isActive
+                            ? 'bg-[#01b4ae]/10 text-[#01b4ae]'
                             : 'text-gray-600 hover:bg-gray-50'
                         }`
                       }

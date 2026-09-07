@@ -26,6 +26,9 @@ import PublicQuizEntryPage from './pages/public/PublicQuizEntryPage';
 import PublicQuizTakingPage from './pages/public/PublicQuizTakingPage';
 import PublicQuizResultPage from './pages/public/PublicQuizResultPage';
 
+// TEMPORARY FEATURE FREEZE — route-level guard (config/features.ts)
+import { FeatureGate } from './components/FeatureGate';
+
 // Protected Route Wrapper
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, isLoading } = useAuth();
@@ -69,26 +72,41 @@ function App() {
             }
           >
             <Route index element={<Navigate to="/dashboard" replace />} />
-            <Route path="dashboard" element={<DashboardScreen />} />
+            {/* TEMPORARY FEATURE FREEZE — non-quiz pages render the Coming
+                Soon state via FeatureGate (config/features.ts). Quiz routes
+                below are intentionally ungated. */}
+            <Route path="dashboard" element={
+              <ProtectedRoute>
+                <FeatureGate feature="dashboard">
+                  <DashboardScreen />
+                </FeatureGate>
+              </ProtectedRoute>
+            } />
             {/* Add more routes here as we port them: e.g., /exams, /analytics */}
 
             {/* Admin Routes - these will replace the mobile dashboard and tabs */}
             {/* The /admin path here is a placeholder, actual admin routes are below */}
             <Route path="admin" element={<Navigate to="/dashboard" replace />} />
-            
+
             <Route path="users" element={
               <ProtectedRoute>
-                <Users />
+                <FeatureGate feature="userManagement">
+                  <Users />
+                </FeatureGate>
               </ProtectedRoute>
             } />
             <Route path="groups" element={
               <ProtectedRoute>
-                <Groups />
+                <FeatureGate feature="chat">
+                  <Groups />
+                </FeatureGate>
               </ProtectedRoute>
             } />
             <Route path="groups/:id" element={
               <ProtectedRoute>
-                <Chat />
+                <FeatureGate feature="chat">
+                  <Chat />
+                </FeatureGate>
               </ProtectedRoute>
             } />
 

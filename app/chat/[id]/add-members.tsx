@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect } from 'react';
+import { withFeatureGate } from '@/components/withFeatureGate';
 import {
   View,
   Text,
@@ -33,7 +34,7 @@ interface Group {
 // screen (not a RN Modal) so safe-area insets apply, the native iOS
 // edge-swipe / Android back navigation work, and the search input behaves
 // correctly with the keyboard on Android.
-export default function AddMembersScreen() {
+function AddMembersScreen() {
   const { id: groupId } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
   const [group, setGroup] = useState<Group | null>(null);
@@ -263,3 +264,5 @@ const styles = StyleSheet.create({
     padding: 20,
   },
 });
+// TEMPORARY FEATURE FREEZE — quiz-only availability (utils/featureAvailability.ts).
+export default withFeatureGate('chat')(AddMembersScreen);

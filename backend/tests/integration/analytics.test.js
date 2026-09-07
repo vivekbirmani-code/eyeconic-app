@@ -207,3 +207,133 @@ describe('Analytics endpoints', () => {
     expect(filteredRes.body.summary.totalTests).toBe(0);
   });
 });
+
+describe('CSV export hardening', () => {
+  let admin;
+  let student;
+  let subject;
+
+  async function createQuizWithTitle(title) {
+    return Quiz.create({
+      title,
+      subject: subject._id,
+      testType: 'daily',
+      duration: 30,
+      questions: [],
+      positiveMarks: 4,
+      negativeMarks: 1,
+      assignedStudents: [],
+      createdBy: admin.user._id,
+    });
+  }
+
+  beforeEach(async () => {
+    await db.clearDatabase();
+    admin = await createUser({ role: 'admin' });
+    student = await createUser({ role: 'student', name: 'Student One' });
+    subject = await createSubject('Pathology');
+  });
+
+  it('sanitizes hostile quiz titles in the filename header and CSV cells', async () => {
+    // Quotes, newlines and control chars previously reached Content-Disposition
+    // raw (header injection / 500) and the title cell unescaped.
+    const quiz = await createQuizWithTitle('Bad"Title\r\n=SUM(A1)');
+
+    const res = await request(app)
+      .get(`/api/quizzes/analytics/test-report/${quiz._id}/csv`)
+      .set('Authorization', `Bearer ${admin.token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.headers['content-disposition']).toBe(
+      'attachment; filename="Bad Title SUMA1_report.csv"; ' +
+        "filename*=UTF-8''Bad%20Title%20%3DSUM(A1)_report.csv"
+    );
+    // Title cell survives in the body, RFC-4180 quoted.
+    expect(res.text).toContain('"Bad""Title =SUM(A1)"');
+  });
+
+  it('neutralizes Excel formula cells while keeping negative numeric marks', async () => {
+    const quiz = await createQuizWithTitle('=SUM(A1)');
+    await QuizAttempt.create({
+      quiz: quiz._id,
+      student: student.user._id,
+      status: 'completed',
+      startTime: new Date(Date.now() - 60 * 60 * 1000),
+      endTime: new Date(),
+      score: 0,
+      totalQuestions: 0,
+      marksObtained: -2,
+      totalMarks: 0,
+      answers: [],
+    });
+
+    const res = await request(app)
+      .get(`/api/quizzes/analytics/test-report/${quiz._id}/csv`)
+      .set('Authorization', `Bearer ${admin.token}`);
+
+    expect(res.status).toBe(200);
+    // Leading = is neutralized with an apostrophe prefix in the cell...
+    expect(res.text).toContain("'=SUM(A1)");
+    // ...and stripped from the ASCII download filename, but preserved in the
+    // RFC 5987 filename* parameter.
+    expect(res.headers['content-disposition']).toBe(
+      "attachment; filename=\"SUMA1_report.csv\"; filename*=UTF-8''%3DSUM(A1)_report.csv"
+    );
+    // Plain negative marks (negative marking) stay numeric, not apostrophe-prefixed.
+    expect(res.text).toMatch(/,-2,/);
+    expect(res.text).not.toContain("'-2");
+  });
+
+  it('keeps phone-number cells intact (no apostrophe prefix on +91...)', async () => {
+    // Lead phones are the point of the guest-participant export; escaping
+    // their leading "+" would corrupt click-to-dial / CRM matching.
+    const quiz = await createQuizWithTitle('+919876543210');
+
+    const res = await request(app)
+      .get(`/api/quizzes/analytics/test-report/${quiz._id}/csv`)
+      .set('Authorization', `Bearer ${admin.token}`);
+
+    expect(res.status).toBe(200);
+    // The cell (quiz title row) carries the phone verbatim...
+    expect(res.text).toContain('+919876543210');
+    expect(res.text).not.toContain("'+91");
+    // ...while genuinely hostile "+" payloads are still neutralized.
+    const hostile = await createQuizWithTitle('+cmd|/C calc');
+    const hostileRes = await request(app)
+      .get(`/api/quizzes/analytics/test-report/${hostile._id}/csv`)
+      .set('Authorization', `Bearer ${admin.token}`);
+    expect(hostileRes.text).toContain("'+cmd|/C calc");
+  });
+
+  it('preserves non-ASCII titles via the RFC 5987 filename* parameter', async () => {
+    // Devanagari/Tamil titles used to collapse to the same ASCII fallback,
+    // making consecutive exports overwrite each other.
+    const quiz = await createQuizWithTitle('डिजिटल टेस्ट');
+
+    const res = await request(app)
+      .get(`/api/quizzes/analytics/test-report/${quiz._id}/csv`)
+      .set('Authorization', `Bearer ${admin.token}`);
+
+    expect(res.status).toBe(200);
+    // ASCII fallback stays injection-safe...
+    expect(res.headers['content-disposition']).toContain(
+      'filename="test_report.csv"'
+    );
+    // ...and the Unicode title survives in filename*.
+    expect(res.headers['content-disposition']).toContain(
+      "filename*=UTF-8''%E0%A4%A1%E0%A4%BF%E0%A4%9C%E0%A4%BF%E0%A4%9F%E0%A4%B2%20%E0%A4%9F%E0%A5%87%E0%A4%B8%E0%A5%8D%E0%A4%9F_report.csv"
+    );
+  });
+
+  it('serves the export with download-safe response headers', async () => {
+    const quiz = await createQuizWithTitle('Header Test');
+
+    const res = await request(app)
+      .get(`/api/quizzes/analytics/test-report/${quiz._id}/csv`)
+      .set('Authorization', `Bearer ${admin.token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toBe('text/csv; charset=utf-8');
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+  });
+});

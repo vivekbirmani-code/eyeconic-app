@@ -71,16 +71,66 @@ const roundTo2 = (value) => {
   return Math.round((num + Number.EPSILON) * 100) / 100;
 };
 
+const CSV_FORMULA_PREFIX_PATTERN = /^[=+\t\r@]/;
+const isNumericLiteral = (str) => str !== '' && Number.isFinite(Number(str));
+// Phone numbers ("+919876543210", "+44 20 7946 0018") are inert data, never
+// formula payloads — escaping their leading "+" would corrupt the lead-phone
+// column this export exists to deliver (click-to-dial / CRM matching).
+const isPhoneLikeLiteral = (str) => /^\+?[0-9][0-9\s().-]*$/.test(str);
+
 const csvEscape = (value) => {
   if (value === null || value === undefined) return '';
   const str = String(value).replace(/\r?\n/g, ' ').trim();
-  if (/[",\n]/.test(str)) {
-    return `"${str.replace(/"/g, '""')}"`;
+  // CSV formula injection: a cell starting with =, +, @, tab, CR (or a
+  // non-numeric leading "-") would execute as a formula in Excel/Sheets.
+  // Plain negative numbers (negative marking) and phone numbers are left
+  // untouched.
+  const looksLikeFormula =
+    (CSV_FORMULA_PREFIX_PATTERN.test(str) && !isPhoneLikeLiteral(str)) ||
+    (str.startsWith('-') && !isNumericLiteral(str));
+  const safe = looksLikeFormula ? `'${str}` : str;
+  if (/[",\n]/.test(safe)) {
+    return `"${safe.replace(/"/g, '""')}"`;
   }
-  return str;
+  return safe;
 };
 
 const toCsvRow = (values) => values.map(csvEscape).join(',');
+
+// Content-Disposition filenames: strips control chars (header injection),
+// path separators and anything filesystem-hostile. Falls back when nothing
+// safe remains (e.g. emoji-only titles).
+const sanitizeCsvFileName = (value, fallback) => {
+  const sanitized = String(value ?? '')
+    .replace(/[\x00-\x1f\x7f"\\\/]/g, ' ')
+    .replace(/[^a-zA-Z0-9-_ ]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 100);
+  // Non-ASCII-only titles (emoji, Devanagari) may strip down to nothing but
+  // separators — use the fallback so exports stay distinguishable.
+  return /[a-zA-Z0-9]/.test(sanitized) ? sanitized : fallback;
+};
+
+// RFC 5987/6266 Content-Disposition: ASCII fallback filename plus a
+// filename* parameter carrying the original Unicode (Hindi/Tamil titles,
+// accented names) so distinct exports keep distinct, readable names. The
+// suffix ("_report", ids) is kept out of the fallback decision so a
+// non-ASCII-only name still falls back rather than collapsing to the suffix.
+const contentDispositionAttachment = (value, fallback, suffix = '', extension = 'csv') => {
+  const asciiBase = sanitizeCsvFileName(value, fallback);
+  const ext = extension ? `.${extension}` : '';
+  const utf8 = encodeURIComponent(
+    `${String(value ?? '')
+      .replace(/[\x00-\x1f\x7f"\\\/]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 100)}${suffix}`
+  );
+  return `attachment; filename="${asciiBase}${suffix}${ext}"${
+    utf8 ? `; filename*=UTF-8''${utf8}${ext}` : ''
+  }`;
+};
 
 const optionLabelFromIndex = (index) => {
   const idx = Number(index);
@@ -1741,8 +1791,12 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
       ]));
     });
 
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename="${quiz.title.replace(/"/g, '')}_report.csv"`);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader(
+      'Content-Disposition',
+      contentDispositionAttachment(quiz.title, 'test', '_report')
+    );
     res.send(csvLines.join('\n'));
   } catch (error) {
     console.error('CSV export error:', error);
@@ -1941,11 +1995,16 @@ router.get('/analytics/student/:studentId/csv', auth, authorize('admin'), async 
       });
     });
 
-    const sanitizedName = (student.name || 'student').replace(/[^a-zA-Z0-9-_ ]/g, '').trim() || 'student';
-    const fileName = `${sanitizedName}_${student._id}_analytics.csv`;
-
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader(
+      'Content-Disposition',
+      contentDispositionAttachment(
+        student.name,
+        'student',
+        `_${student._id}_analytics`
+      )
+    );
     res.send(csvLines.join('\n'));
   } catch (error) {
     console.error('Student CSV export error:', error);

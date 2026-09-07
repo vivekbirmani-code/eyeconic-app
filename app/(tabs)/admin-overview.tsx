@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { withFeatureGate } from '@/components/withFeatureGate';
 import {
   View,
   Text,
@@ -104,7 +105,7 @@ interface MentorDetails {
 
 type TabType = 'students' | 'mentors';
 
-export default function AdminOverview() {
+function AdminOverview() {
   const { user } = useAuth();
   const { socket } = useNotifications();
   const [activeTab, setActiveTab] = useState<TabType>('students');
@@ -1009,3 +1010,5 @@ const styles = StyleSheet.create({
     color: '#9CA3AF',
   },
 });
+// TEMPORARY FEATURE FREEZE — quiz-only availability (utils/featureAvailability.ts).
+export default withFeatureGate('adminOverview')(AdminOverview);

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { withFeatureGate } from '@/components/withFeatureGate';
 import {
   View,
   Text,
@@ -60,7 +61,7 @@ const STAT_HORIZONTAL_PADDING = 16;
 const STAT_CARD_MIN_WIDTH = 96;
 const STAT_CARD_MAX_WIDTH = 120;
 
-export default function StudentAssignments() {
+function StudentAssignments() {
   const { width: screenWidth } = useWindowDimensions();
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<TabType>('all');
@@ -681,3 +682,5 @@ const styles = StyleSheet.create({
     marginTop: 50,
   },
 });
+// TEMPORARY FEATURE FREEZE — quiz-only availability (utils/featureAvailability.ts).
+export default withFeatureGate('mentorship')(StudentAssignments);

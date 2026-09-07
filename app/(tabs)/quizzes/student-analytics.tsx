@@ -11,7 +11,6 @@ import {
   Alert,
 } from 'react-native';
 import { ScreenContainer } from '@/components/layout';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useRouter } from 'expo-router';
 import {
   Search,
@@ -25,8 +24,8 @@ import {
   Grid3X3
 } from 'lucide-react-native';
 import { api } from '@/services/api';
+import { downloadApiReport, getReportDownloadErrorMessage } from '@/services/downloads';
 import { useAuth } from '@/context/AuthContext';
-import { openExternalUrl } from '@/utils/openExternalUrl';
 import TabSwitcher from '@/components/analytics/TabSwitcher';
 import TestDropdown from '@/components/analytics/test-analytics/TestDropdown';
 import TestOverview from '@/components/analytics/test-analytics/TestOverview';
@@ -291,39 +290,18 @@ export default function Analytics() {
   const handleDownloadCSV = async () => {
     if (!selectedTest) return;
     try {
-      const baseURL = api.defaults.baseURL || '';
-      // Read token from AsyncStorage safely to guarantee it works on both web and native
-      const token = await AsyncStorage.getItem('authToken');
-      
-      if (!token) {
-        Alert.alert('Error', 'Authentication token missing. Please log in again.');
-        return;
-      }
-
-      // Append the token as a query parameter so the backend auth middleware can read it
-      const url = `${baseURL}/quizzes/analytics/test-report/${selectedTest._id}/csv?token=${token}`;
-      
-      await openExternalUrl(url);
+      await downloadApiReport(`/quizzes/analytics/test-report/${selectedTest._id}/csv`);
     } catch (error) {
-      Alert.alert('Error', 'Failed to download CSV');
+      Alert.alert('Download failed', getReportDownloadErrorMessage(error));
     }
   };
 
   const handleDownloadStudentCSV = async () => {
     if (!selectedStudent) return;
     try {
-      const baseURL = api.defaults.baseURL || '';
-      const token = await AsyncStorage.getItem('authToken');
-
-      if (!token) {
-        Alert.alert('Error', 'Authentication token missing. Please log in again.');
-        return;
-      }
-
-      const url = `${baseURL}/quizzes/analytics/student/${selectedStudent._id}/csv?token=${token}`;
-      await openExternalUrl(url);
+      await downloadApiReport(`/quizzes/analytics/student/${selectedStudent._id}/csv`);
     } catch (error) {
-      Alert.alert('Error', 'Failed to download student CSV');
+      Alert.alert('Download failed', getReportDownloadErrorMessage(error));
     }
   };
 

@@ -34,6 +34,15 @@ const shouldRetryRequest = (error: AxiosError, config?: RetryableAxiosRequestCon
   const retryCount = config._retryCount ?? 0;
   if (retryCount >= MAX_RETRIES) return false;
 
+  // Temporary feature freeze: a 503 FEATURE_DISABLED answer is permanent for
+  // as long as the freeze lasts — retrying only stacks backoff delays.
+  if (
+    (error.response?.data as { code?: string } | undefined)?.code ===
+    'FEATURE_DISABLED'
+  ) {
+    return false;
+  }
+
   return isRetryableError(error);
 };
 

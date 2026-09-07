@@ -72,11 +72,16 @@ type TabType = 'students' | 'create' | 'thisWeek' | 'verify' | 'analytics';
 
 import { useRouter } from 'expo-router';
 import { ScrollableUnderlineTabBar } from '@/components/ScrollableUnderlineTabBar';
+import { FeatureComingSoon } from '@/components/FeatureComingSoon';
 import UserAvatar from '@/components/UserAvatar';
+import { isFeatureEnabled } from '@/utils/featureAvailability';
 
 export default function MentorDashboard() {
   const router = useRouter();
   const { user } = useAuth();
+  // TEMPORARY FEATURE FREEZE — assignments management is disabled, but the
+  // Analytics entry (Test Analytics — a quiz feature) stays reachable.
+  const mentorshipEnabled = isFeatureEnabled('mentorship');
   const [activeTab, setActiveTab] = useState<TabType>('students');
   const [students, setStudents] = useState<Student[]>([]);
   const [assignments, setAssignments] = useState<Assignment[]>([]);
@@ -99,11 +104,11 @@ export default function MentorDashboard() {
   const [isVerifying, setIsVerifying] = useState(false);
 
   useEffect(() => {
-    if (user?.role === 'mentor') {
+    if (user?.role === 'mentor' && mentorshipEnabled) {
       fetchStudents();
       fetchAssignments();
     }
-  }, [user]);
+  }, [user, mentorshipEnabled]);
 
   useEffect(() => {
     if (activeTab === 'verify') {
@@ -401,12 +406,13 @@ export default function MentorDashboard() {
 
       {/* Tab Navigation */}
       <ScrollableUnderlineTabBar
-        activeTabId={activeTab}
+        activeTabId={mentorshipEnabled ? activeTab : 'analytics'}
         tabs={[
           {
             id: 'students',
             label: 'Students',
             icon: Users,
+            disabled: !mentorshipEnabled,
             onPress: () => {
               setActiveTab('students');
               Haptics.selectionAsync();
@@ -416,6 +422,7 @@ export default function MentorDashboard() {
             id: 'create',
             label: 'Create',
             icon: Plus,
+            disabled: !mentorshipEnabled,
             onPress: () => {
               setActiveTab('create');
               Haptics.selectionAsync();
@@ -425,6 +432,7 @@ export default function MentorDashboard() {
             id: 'thisWeek',
             label: 'This Week',
             icon: Calendar,
+            disabled: !mentorshipEnabled,
             onPress: () => {
               setActiveTab('thisWeek');
               Haptics.selectionAsync();
@@ -435,6 +443,7 @@ export default function MentorDashboard() {
             label: 'Verify',
             icon: CheckCircle,
             badge: pendingVerification.length,
+            disabled: !mentorshipEnabled,
             onPress: () => {
               setActiveTab('verify');
               Haptics.selectionAsync();
@@ -454,7 +463,9 @@ export default function MentorDashboard() {
 
       {/* Tab Content */}
       <View style={styles.content}>
-        {isLoading ? (
+        {!mentorshipEnabled ? (
+          <FeatureComingSoon feature="mentorship" variant="inline" />
+        ) : isLoading ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#01b4ae" />
             <Text style={styles.loadingText}>Loading...</Text>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { withFeatureGate } from '@/components/withFeatureGate';
 import {
   View,
   Text,
@@ -51,7 +52,7 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
  * window, KeyboardAvoidingView + ScrollView keep the focused input reachable.
  * Visuals (dim + blur + spring card) are identical to the old modal.
  */
-export default function UserDetailsScreen() {
+function UserDetailsScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ user?: string }>();
 
@@ -1533,3 +1534,5 @@ const styles = StyleSheet.create({
     color: '#01b4ae',
   },
 });
+// TEMPORARY FEATURE FREEZE — quiz-only availability (utils/featureAvailability.ts).
+export default withFeatureGate('userManagement')(UserDetailsScreen);

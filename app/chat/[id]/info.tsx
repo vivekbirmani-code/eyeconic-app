@@ -1,4 +1,5 @@
 import { useCallback, useState } from 'react';
+import { withFeatureGate } from '@/components/withFeatureGate';
 import {
   View,
   Text,
@@ -42,7 +43,7 @@ interface Subject {
 // Group Info screen. Presented as a regular stack screen (not a RN Modal) so
 // safe-area insets apply and the native iOS edge-swipe / Android back
 // navigation work.
-export default function GroupInfoScreen() {
+function GroupInfoScreen() {
   const { id: groupId } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuth();
   const router = useRouter();
@@ -427,3 +428,5 @@ const styles = StyleSheet.create({
     color: '#6B7280',
   },
 });
+// TEMPORARY FEATURE FREEZE — quiz-only availability (utils/featureAvailability.ts).
+export default withFeatureGate('chat')(GroupInfoScreen);

@@ -9,6 +9,8 @@ const logger = require('./utils/logger');
 const { createCorsOptions, createSocketCorsOptions } = require('./config/cors');
 const requestId = require('./middleware/requestId');
 const errorHandler = require('./middleware/errorHandler');
+const featureGate = require('./middleware/featureGate');
+const { isFeatureEnabled } = require('./config/featureAvailability');
 const healthRoutes = require('./routes/health');
 
 // Import socket helpers BEFORE routes to avoid circular deps
@@ -195,19 +197,31 @@ app.get('/', (req, res) => {
 });
 
 // Routes
+//
+// TEMPORARY FEATURE FREEZE — quiz-only availability. Routers below are gated
+// by middleware/featureGate.js using config/featureAvailability.js: quiz
+// routers stay fully live, frozen routers answer 503 FEATURE_DISABLED except
+// for the Quiz-workflow dependencies allowlisted in the config. Re-enable a
+// feature by flipping its flag in config/featureAvailability.js.
+//
+// `auth` runs BEFORE the gate on gated routers whose every route is
+// authenticated, so expired/invalid sessions still receive the 401 that
+// triggers client logout instead of a 503. `/api/settings` is excluded
+// because its GET /public probe must stay unauthenticated.
+const { auth: authMiddleware } = require('./middleware/auth');
 app.use('/api/auth', authRoutes);
-app.use('/api/users', userRoutes);
-app.use('/api/groups', groupRoutes);
-app.use('/api/messages', messageRoutes);
+app.use('/api/users', authMiddleware, featureGate('userManagement', 'users'), userRoutes);
+app.use('/api/groups', authMiddleware, featureGate('chat', 'groups'), groupRoutes);
+app.use('/api/messages', authMiddleware, featureGate('chat'), messageRoutes);
 app.use('/api/quizzes', quizRoutes);
 app.use('/api/question-bank', questionBankRoutes);
 app.use('/api/subjects', subjectRoutes);
-app.use('/api/student-subjects', studentSubjectRoutes);
-app.use('/api/mentor-students', mentorStudentRoutes);
-app.use('/api/assignments', assignmentRoutes);
-app.use('/api/admin-overview', adminOverviewRoutes);
-app.use('/api/settings', settingsRoutes);
-app.use('/api/upload', uploadRoutes);
+app.use('/api/student-subjects', authMiddleware, featureGate('mentorship'), studentSubjectRoutes);
+app.use('/api/mentor-students', authMiddleware, featureGate('mentorship'), mentorStudentRoutes);
+app.use('/api/assignments', authMiddleware, featureGate('mentorship', 'assignments'), assignmentRoutes);
+app.use('/api/admin-overview', authMiddleware, featureGate('adminOverview'), adminOverviewRoutes);
+app.use('/api/settings', featureGate('userManagement', 'settings'), settingsRoutes);
+app.use('/api/upload', authMiddleware, featureGate('chat', 'upload'), uploadRoutes);
 app.use('/api/public', publicQuizRoutes);
 app.use('/api/public', publicLeadRoutes);
 app.use('/api/student-analytics', studentAnalyticsRoutes);
@@ -377,15 +391,34 @@ io.on('connection', (socket) => {
     console.log(`User ${socket.id} left room ${roomId}`);
   });
 
+  // TEMPORARY FEATURE FREEZE — chat/call client events are inert while the
+  // feature is disabled (see config/featureAvailability.js). Connections,
+  // register_user and room joins stay open so quiz emissions
+  // (new_quiz_assigned / quiz_submitted) keep working.
+  const chatFeatureDisabled = () => {
+    if (isFeatureEnabled('chat')) {
+      return false;
+    }
+    socket.emit('feature_disabled', {
+      feature: 'chat',
+      message:
+        'This feature is temporarily unavailable and will be enabled in a future version.',
+    });
+    return true;
+  };
+
   socket.on('send_message', (data) => {
+    if (chatFeatureDisabled()) return;
     socket.to(data.groupId).emit('receive_message', data);
   });
 
   socket.on('message_updated', (data) => {
+    if (chatFeatureDisabled()) return;
     socket.to(data.groupId).emit('message_updated', data);
   });
 
   socket.on('message_deleted', (data) => {
+    if (chatFeatureDisabled()) return;
     socket.to(data.groupId).emit('message_deleted', data);
   });
 
@@ -393,6 +426,7 @@ io.on('connection', (socket) => {
 
   // Initiate a call
   socket.on('call_initiate', async (data) => {
+    if (chatFeatureDisabled()) return;
     const { groupId, groupName, initiatorId, initiatorName, targetUserIds } = data;
 
     try {
@@ -484,6 +518,7 @@ io.on('connection', (socket) => {
 
   // Send WebRTC offer
   socket.on('call_offer', (data) => {
+    if (chatFeatureDisabled()) return;
     const { callId, groupId, targetUserId, offer, fromUserId } = data;
     socket.to(groupId).emit('call_offer', {
       callId,
@@ -494,6 +529,7 @@ io.on('connection', (socket) => {
 
   // Send WebRTC answer
   socket.on('call_answer', (data) => {
+    if (chatFeatureDisabled()) return;
     const { callId, groupId, answer, fromUserId, toUserId } = data;
     socket.to(groupId).emit('call_answer', {
       callId,
@@ -504,6 +540,7 @@ io.on('connection', (socket) => {
 
   // Send ICE candidate
   socket.on('call_ice_candidate', (data) => {
+    if (chatFeatureDisabled()) return;
     const { callId, groupId, candidate, fromUserId } = data;
     socket.to(groupId).emit('call_ice_candidate', {
       callId,
@@ -514,6 +551,7 @@ io.on('connection', (socket) => {
 
   // Join an active call
   socket.on('call_join', async (data) => {
+    if (chatFeatureDisabled()) return;
     const { callId, userId, userName } = data;
 
     try {
@@ -564,6 +602,7 @@ io.on('connection', (socket) => {
 
   // Leave a call
   socket.on('call_leave', async (data) => {
+    if (chatFeatureDisabled()) return;
     const { callId, userId } = data;
 
     try {
@@ -633,6 +672,7 @@ io.on('connection', (socket) => {
 
   // Toggle mute
   socket.on('call_mute', async (data) => {
+    if (chatFeatureDisabled()) return;
     const { callId, userId, isMuted } = data;
 
     try {
@@ -659,6 +699,7 @@ io.on('connection', (socket) => {
 
   // End call for everyone
   socket.on('call_end', async (data) => {
+    if (chatFeatureDisabled()) return;
     const { callId, endedBy, endedByName } = data;
 
     try {
@@ -714,6 +755,7 @@ io.on('connection', (socket) => {
 
   // Decline an incoming call
   socket.on('call_decline', async (data) => {
+    if (chatFeatureDisabled()) return;
     const { callId, userId, groupId } = data;
     console.log(`User ${userId} declined call ${callId}`);
 
@@ -759,6 +801,7 @@ io.on('connection', (socket) => {
 
   // Get active call for a group
   socket.on('get_active_call', async (data) => {
+    if (chatFeatureDisabled()) return;
     const { groupId } = data;
 
     try {

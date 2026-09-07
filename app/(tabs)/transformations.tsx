@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { withFeatureGate } from '@/components/withFeatureGate';
 import {
   View,
   Text,
@@ -44,7 +45,7 @@ const stories = [
   }
 ];
 
-export default function Transformations() {
+function Transformations() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
@@ -332,3 +333,5 @@ const styles = StyleSheet.create({
     fontStyle: 'italic',
   },
 });
+// TEMPORARY FEATURE FREEZE — quiz-only availability (utils/featureAvailability.ts).
+export default withFeatureGate('freeUserContent')(Transformations);

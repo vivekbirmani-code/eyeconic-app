@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { withFeatureGate } from '@/components/withFeatureGate';
 import {
   View,
   Text,
@@ -34,7 +35,7 @@ import { useAppRefresh } from '@/hooks/useAppRefresh';
 import UserAvatar from '@/components/UserAvatar';
 import type { User } from '@/types/user';
 
-export default function Users() {
+function Users() {
   const { user } = useAuth();
   const { socket } = useNotifications();
   const router = useRouter();
@@ -932,3 +933,5 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
+// TEMPORARY FEATURE FREEZE — quiz-only availability (utils/featureAvailability.ts).
+export default withFeatureGate('userManagement')(Users);

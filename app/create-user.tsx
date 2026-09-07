@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { withFeatureGate } from '@/components/withFeatureGate';
 import {
   View,
   Text,
@@ -28,7 +29,7 @@ const SEGMENT_TRACK_INSET = 4;
  * the keyboard. In the main window, KeyboardAvoidingView + ScrollView keep
  * every field and the Create button reachable while typing.
  */
-export default function CreateUserScreen() {
+function CreateUserScreen() {
   const router = useRouter();
 
   const [newUser, setNewUser] = useState({
@@ -333,3 +334,5 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 });
+// TEMPORARY FEATURE FREEZE — quiz-only availability (utils/featureAvailability.ts).
+export default withFeatureGate('userManagement')(CreateUserScreen);

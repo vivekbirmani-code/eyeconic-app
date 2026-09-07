@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { withFeatureGate } from '@/components/withFeatureGate';
 import {
   View,
   Text,
@@ -21,7 +22,7 @@ import { api } from '@/services/api';
  * route slides in from the bottom like the old Modal did; KeyboardAvoidingView
  * inside KeyboardAvoidingDialog keeps the card above the keyboard.
  */
-export default function EditGroupScreen() {
+function EditGroupScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ groupId?: string; name?: string; description?: string }>();
 
@@ -198,3 +199,5 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
 });
+// TEMPORARY FEATURE FREEZE — quiz-only availability (utils/featureAvailability.ts).
+export default withFeatureGate('chat')(EditGroupScreen);

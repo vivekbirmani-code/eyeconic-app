@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { useAuth } from './AuthContext';
+import { isFeatureEnabled } from '../config/features';
 
 interface NotificationContextData {
   socket: Socket | null;
@@ -24,6 +25,12 @@ export const NotificationProvider = ({ children }: { children: React.ReactNode }
         setSocket(null);
         setIsConnected(false);
       }
+      return;
+    }
+
+    // TEMPORARY FEATURE FREEZE — this socket only serves group chat; skip
+    // connecting while chat is disabled (config/features.ts).
+    if (!isFeatureEnabled('chat')) {
       return;
     }
 

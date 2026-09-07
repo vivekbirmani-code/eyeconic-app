@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { withFeatureGate } from '@/components/withFeatureGate';
 import {
   View,
   Text,
@@ -36,7 +37,7 @@ type SearchRole = 'mentor' | 'student' | 'admin';
  * In the main window, KeyboardAvoidingView + ScrollView keep every field and
  * control reachable while typing.
  */
-export default function CreateGroup() {
+function CreateGroup() {
   const { user } = useAuth();
   const router = useRouter();
 
@@ -640,3 +641,5 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 });
+// TEMPORARY FEATURE FREEZE — quiz-only availability (utils/featureAvailability.ts).
+export default withFeatureGate('chat')(CreateGroup);
