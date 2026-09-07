@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { X, CheckCircle, XCircle, MinusCircle, Clock, Award, BarChart3, FileText, ChevronDown } from 'lucide-react-native';
 import { api } from '@/services/api';
+import { DataTable, DataTableColumn } from '@/components/DataTable';
 
 interface AttemptDetailModalProps {
     attemptId: string | null;
@@ -227,6 +228,92 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
 
     const activeGroupOption = GROUP_BY_OPTIONS.find(option => option.value === groupBy) ?? GROUP_BY_OPTIONS[0];
 
+    // Shared responsive table: the name column flexes to fill wide viewports,
+    // stat columns keep guaranteed minimum widths so headers ("Correct",
+    // "Time") never wrap or clip on narrow phones, and the card scrolls
+    // horizontally when even the minimums don't fit.
+    const performanceColumns: Array<DataTableColumn<{
+        sectionName: string;
+        correct: number;
+        incorrect: number;
+        skipped: number;
+        accuracy: number;
+        timeSpent: number;
+    }>> = [
+        {
+            key: 'name',
+            header: activeGroupOption.rowLabel,
+            width: 96,
+            grow: true,
+            headerStyle: styles.tableHeaderText,
+            renderCell: (row) => (
+                <Text style={styles.tableCell} numberOfLines={1}>
+                    {row.sectionName}
+                </Text>
+            ),
+        },
+        {
+            key: 'correct',
+            header: 'Correct',
+            width: 56,
+            align: 'center',
+            headerStyle: styles.tableHeaderText,
+            renderCell: (row) => (
+                <Text style={[styles.tableCell, styles.correctText]} numberOfLines={1}>
+                    {row.correct}
+                </Text>
+            ),
+        },
+        {
+            key: 'wrong',
+            header: 'Wrong',
+            width: 48,
+            align: 'center',
+            headerStyle: styles.tableHeaderText,
+            renderCell: (row) => (
+                <Text style={[styles.tableCell, styles.incorrectText]} numberOfLines={1}>
+                    {row.incorrect}
+                </Text>
+            ),
+        },
+        {
+            key: 'skip',
+            header: 'Skip',
+            width: 42,
+            align: 'center',
+            headerStyle: styles.tableHeaderText,
+            renderCell: (row) => (
+                <Text style={[styles.tableCell, styles.skippedText]} numberOfLines={1}>
+                    {row.skipped}
+                </Text>
+            ),
+        },
+        {
+            key: 'acc',
+            header: 'Acc%',
+            width: 42,
+            align: 'center',
+            headerStyle: styles.tableHeaderText,
+            renderCell: (row) => (
+                <Text style={styles.tableCell} numberOfLines={1}>
+                    {row.accuracy}%
+                </Text>
+            ),
+        },
+        {
+            key: 'time',
+            header: 'Time',
+            width: 66,
+            align: 'right',
+            headerStyle: styles.tableHeaderText,
+            renderCell: (row) => (
+                <Text style={styles.tableCell} numberOfLines={1}>
+                    {formatTime(row.timeSpent)}
+                </Text>
+            ),
+        },
+    ];
+
     return (
         <Modal
             visible={visible}
@@ -238,10 +325,10 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
                 <View style={styles.modal}>
                     {/* Header */}
                     <View style={styles.header}>
-                        <Text style={styles.title}>
+                        <Text style={styles.title} numberOfLines={1} ellipsizeMode="tail">
                              {attemptData ? attemptData.student.name : 'Attempt Details'}
                         </Text>
-                        <TouchableOpacity onPress={onClose}>
+                        <TouchableOpacity onPress={onClose} style={styles.closeButton} accessibilityLabel="Close attempt details">
                             <X color="#1F2937" size={24} />
                         </TouchableOpacity>
                     </View>
@@ -377,41 +464,12 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
 
                              <View style={styles.sectionContainer}>
                                 <Text style={styles.sectionTitle}>{activeGroupOption.rowLabel} Performance</Text>
-                                <View style={styles.tableContainer}>
-                                    {/* Table Header */}
-                                    <View style={styles.tableHeader}>
-                                        <Text style={[styles.tableHeaderText, styles.colSection]}>{activeGroupOption.rowLabel}</Text>
-                                        <Text style={[styles.tableHeaderText, styles.colStat]}>Correct</Text>
-                                        <Text style={[styles.tableHeaderText, styles.colStat]}>Wrong</Text>
-                                        <Text style={[styles.tableHeaderText, styles.colStat]}>Skip</Text>
-                                        <Text style={[styles.tableHeaderText, styles.colStat]}>Acc%</Text>
-                                        <Text style={[styles.tableHeaderText, styles.colTime]}>Time</Text>
-                                    </View>
-
-                                    {/* Table Rows */}
-                                    {sectionPerformanceWithAccuracy.map((section, index) => (
-                                        <View key={index} style={styles.tableRow}>
-                                            <Text style={[styles.tableCell, styles.colSection]} numberOfLines={1}>
-                                                {section.sectionName}
-                                            </Text>
-                                            <Text style={[styles.tableCell, styles.colStat, styles.correctText]}>
-                                                {section.correct}
-                                            </Text>
-                                            <Text style={[styles.tableCell, styles.colStat, styles.incorrectText]}>
-                                                {section.incorrect}
-                                            </Text>
-                                            <Text style={[styles.tableCell, styles.colStat, styles.skippedText]}>
-                                                {section.skipped}
-                                            </Text>
-                                            <Text style={[styles.tableCell, styles.colStat]}>
-                                                {section.accuracy}%
-                                            </Text>
-                                            <Text style={[styles.tableCell, styles.colTime]}>
-                                                {formatTime(section.timeSpent)}
-                                            </Text>
-                                        </View>
-                                    ))}
-                                </View>
+                                <DataTable
+                                    columns={performanceColumns}
+                                    data={sectionPerformanceWithAccuracy}
+                                    keyExtractor={(_row, index) => `perf-${index}`}
+                                    style={styles.tableContainer}
+                                />
                             </View>
 
                             {/* Tab Switch Warning */}
@@ -465,6 +523,11 @@ const styles = StyleSheet.create({
         fontSize: 18,
         fontWeight: '700',
         color: '#1F2937',
+        flexShrink: 1,
+        marginRight: 12,
+    },
+    closeButton: {
+        padding: 4,
     },
     loadingContainer: {
         padding: 40,
@@ -590,50 +653,22 @@ const styles = StyleSheet.create({
         marginBottom: 12,
         marginLeft: 4,
     },
+    // Card chrome for the shared DataTable (background/radius come from the
+    // component itself).
     tableContainer: {
-        backgroundColor: '#FFFFFF',
-        borderRadius: 12,
-        overflow: 'hidden',
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 2 },
         shadowOpacity: 0.1,
         shadowRadius: 4,
         elevation: 2,
     },
-    tableHeader: {
-        flexDirection: 'row',
-        backgroundColor: '#F9FAFB',
-        paddingVertical: 12,
-        paddingHorizontal: 12,
-        borderBottomWidth: 1,
-        borderBottomColor: '#E5E7EB',
-    },
     tableHeaderText: {
         fontSize: 11,
-        fontWeight: '700',
         color: '#4B5563',
-    },
-    tableRow: {
-        flexDirection: 'row',
-        paddingVertical: 12,
-        paddingHorizontal: 12,
-        borderBottomWidth: 1,
-        borderBottomColor: '#F3F4F6',
     },
     tableCell: {
         fontSize: 12,
         color: '#4B5563',
-    },
-    colSection: {
-        flex: 2,
-    },
-    colStat: {
-        flex: 1,
-        textAlign: 'center',
-    },
-    colTime: {
-        flex: 1.2,
-        textAlign: 'right',
     },
     correctText: {
         color: '#10B981',

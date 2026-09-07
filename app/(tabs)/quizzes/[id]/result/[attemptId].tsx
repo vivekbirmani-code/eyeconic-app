@@ -21,9 +21,10 @@ import {
   AlertTriangle,
 } from 'lucide-react-native';
 import { api } from '@/services/api';
-import { QuizResultData } from '@/types/quiz-result';
+import { QuizResultData, SectionPerformance } from '@/types/quiz-result';
 import { formatDuration, formatMarks, formatPercentage, pluralize } from '@/utils/quizFormat';
 import { buildPerformanceChartData, mapQuizResultsResponse } from '@/utils/quizResult';
+import { DataTable, DataTableColumn } from '@/components/DataTable';
 import { PerformanceMetricGrid } from '@/components/quiz/PerformanceMetricGrid';
 import { PerformanceChart } from '@/components/quiz/PerformanceChart';
 import { WrongQuestionSection } from '@/components/quiz/WrongQuestionSection';
@@ -173,6 +174,84 @@ export default function QuizResult() {
 
   const chartData = buildPerformanceChartData(summary);
 
+  // Shared responsive table: stat columns have guaranteed minimum widths (so
+  // headers never wrap mid-word), the Section column flexes to fill wide
+  // viewports, and the card scrolls horizontally on narrow phones.
+  const sectionColumns: Array<DataTableColumn<SectionPerformance>> = [
+    {
+      key: 'section',
+      header: 'Section',
+      width: 104,
+      grow: true,
+      headerStyle: styles.tableHeaderText,
+      renderCell: (section) => (
+        <Text style={styles.tableCell} numberOfLines={1}>
+          {section.sectionName}
+        </Text>
+      ),
+    },
+    {
+      key: 'correct',
+      header: 'Correct',
+      width: 58,
+      align: 'center',
+      headerStyle: styles.tableHeaderText,
+      renderCell: (section) => (
+        <Text style={[styles.tableCell, styles.correctText]} numberOfLines={1}>
+          {section.correct}
+        </Text>
+      ),
+    },
+    {
+      key: 'wrong',
+      header: 'Wrong',
+      width: 50,
+      align: 'center',
+      headerStyle: styles.tableHeaderText,
+      renderCell: (section) => (
+        <Text style={[styles.tableCell, styles.incorrectText]} numberOfLines={1}>
+          {section.incorrect}
+        </Text>
+      ),
+    },
+    {
+      key: 'skip',
+      header: 'Skip',
+      width: 44,
+      align: 'center',
+      headerStyle: styles.tableHeaderText,
+      renderCell: (section) => (
+        <Text style={[styles.tableCell, styles.skippedText]} numberOfLines={1}>
+          {section.skipped}
+        </Text>
+      ),
+    },
+    {
+      key: 'acc',
+      header: 'Acc%',
+      width: 46,
+      align: 'center',
+      headerStyle: styles.tableHeaderText,
+      renderCell: (section) => (
+        <Text style={styles.tableCell} numberOfLines={1}>
+          {section.accuracy}%
+        </Text>
+      ),
+    },
+    {
+      key: 'time',
+      header: 'Time',
+      width: 72,
+      align: 'right',
+      headerStyle: styles.tableHeaderText,
+      renderCell: (section) => (
+        <Text style={styles.tableCell} numberOfLines={1}>
+          {formatDuration(section.timeSpent)}
+        </Text>
+      ),
+    },
+  ];
+
   return (
     <ScreenContainer style={styles.container}>
       <ScrollView
@@ -245,36 +324,23 @@ export default function QuizResult() {
         {result.hasSectionData && result.sectionPerformance.length > 0 && (
           <View style={styles.section}>
             <Text style={styles.sectionTitle}>Section Performance</Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-              <View style={styles.tableContainer}>
-                <View style={styles.tableHeader}>
-                  <Text style={[styles.tableHeaderText, styles.colSection]}>Section</Text>
-                  <Text style={[styles.tableHeaderText, styles.colStat]}>Correct</Text>
-                  <Text style={[styles.tableHeaderText, styles.colStat]}>Wrong</Text>
-                  <Text style={[styles.tableHeaderText, styles.colStat]}>Skip</Text>
-                  <Text style={[styles.tableHeaderText, styles.colStat]}>Acc%</Text>
-                  <Text style={[styles.tableHeaderText, styles.colTime]}>Time</Text>
-                </View>
-
-                {result.sectionPerformance.map((section, index) => (
-                  <TouchableOpacity
-                    key={`${section.sectionName}-${index}`}
-                    style={styles.tableRow}
-                    onPress={() => router.push(`/quizzes/${id}/review/${attemptId}?section=${encodeURIComponent(section.sectionName)}`)}
-                    disabled={!result.quiz.shareSolution}
-                  >
-                    <Text style={[styles.tableCell, styles.colSection]} numberOfLines={1}>
-                      {section.sectionName}
-                    </Text>
-                    <Text style={[styles.tableCell, styles.colStat, styles.correctText]}>{section.correct}</Text>
-                    <Text style={[styles.tableCell, styles.colStat, styles.incorrectText]}>{section.incorrect}</Text>
-                    <Text style={[styles.tableCell, styles.colStat, styles.skippedText]}>{section.skipped}</Text>
-                    <Text style={[styles.tableCell, styles.colStat]}>{section.accuracy}%</Text>
-                    <Text style={[styles.tableCell, styles.colTime]}>{formatDuration(section.timeSpent)}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </ScrollView>
+            <DataTable
+              columns={sectionColumns}
+              data={result.sectionPerformance}
+              keyExtractor={(section, index) => `${section.sectionName}-${index}`}
+              onRowPress={
+                result.quiz.shareSolution
+                  ? (section) =>
+                      router.push(
+                        `/quizzes/${id}/review/${attemptId}?section=${encodeURIComponent(section.sectionName)}`
+                      )
+                  : undefined
+              }
+              rowAccessibilityLabel={(section) =>
+                `Section ${section.sectionName}: ${section.correct} correct, ${section.incorrect} wrong, ${section.skipped} skipped, ${section.accuracy} percent accuracy`
+              }
+              style={styles.tableContainer}
+            />
           </View>
         )}
 
@@ -502,51 +568,21 @@ const styles = StyleSheet.create({
     color: '#1F2937',
     marginBottom: 12,
   },
+  // Card chrome for the shared DataTable (background/radius come from the
+  // component itself).
   tableContainer: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    overflow: 'hidden',
-    minWidth: 520,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
   },
-  tableHeader: {
-    flexDirection: 'row',
-    backgroundColor: '#F3F4F6',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-  },
   tableHeaderText: {
-    fontSize: 12,
-    fontWeight: '700',
     color: '#1F2937',
-  },
-  tableRow: {
-    flexDirection: 'row',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
   },
   tableCell: {
     fontSize: 13,
     color: '#4B5563',
-  },
-  colSection: {
-    width: 140,
-  },
-  colStat: {
-    width: 56,
-    textAlign: 'center',
-  },
-  colTime: {
-    width: 72,
-    textAlign: 'right',
   },
   correctText: {
     color: '#10B981',

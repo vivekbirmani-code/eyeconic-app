@@ -157,21 +157,21 @@ export default function Analytics() {
             <div className="bg-white border border-gray-100 rounded-2xl shadow-sm p-6 overflow-hidden">
               <h3 className="text-lg font-bold text-gray-900 mb-4">Student Performance</h3>
               <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
+                <table className="w-full text-left border-collapse min-w-[560px]">
                   <thead>
                     <tr className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
-                      <th className="p-3 font-bold rounded-tl-lg">Student</th>
-                      <th className="p-3 font-bold">Score</th>
-                      <th className="p-3 font-bold">C / W / S</th>
-                      <th className="p-3 font-bold">Time</th>
-                      <th className="p-3 font-bold rounded-tr-lg">Warnings</th>
+                      <th className="p-3 font-bold rounded-tl-lg whitespace-nowrap">Student</th>
+                      <th className="p-3 font-bold whitespace-nowrap">Score</th>
+                      <th className="p-3 font-bold whitespace-nowrap">C / W / S</th>
+                      <th className="p-3 font-bold whitespace-nowrap">Time</th>
+                      <th className="p-3 font-bold rounded-tr-lg whitespace-nowrap">Warnings</th>
                     </tr>
                   </thead>
                   <tbody>
                     {(testData.studentPerformance || []).map((sp: any, i: number) => (
                       <tr key={i} className="border-b border-gray-50 last:border-0 hover:bg-gray-50">
-                        <td className="p-3 font-bold text-gray-800">{sp.studentName}</td>
-                        <td className="p-3 font-bold text-purple-600">{sp.percentage?.toFixed(1)}%</td>
+                        <td className="p-3 font-bold text-gray-800 max-w-[220px] truncate" title={sp.studentName}>{sp.studentName}</td>
+                        <td className="p-3 font-bold text-purple-600 whitespace-nowrap tabular-nums">{sp.percentage?.toFixed(1)}%</td>
                         <td className="p-3 text-sm text-gray-600">{sp.correct} <span className="text-gray-300">/</span> {sp.wrong} <span className="text-gray-300">/</span> {sp.skipped}</td>
                         <td className="p-3 text-sm text-gray-600">{Math.floor(sp.timeTaken / 60)}m {sp.timeTaken % 60}s</td>
                         <td className="p-3">
@@ -195,33 +195,33 @@ export default function Analytics() {
                   <span className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-lg">Unranked · OTP-verified leads</span>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
+                  <table className="w-full text-left border-collapse min-w-[760px]">
                     <thead>
                       <tr className="bg-gray-50 text-gray-500 text-xs uppercase tracking-wider">
-                        <th className="p-3 font-bold rounded-tl-lg">Guest</th>
-                        <th className="p-3 font-bold">Email</th>
-                        <th className="p-3 font-bold">Phone</th>
-                        <th className="p-3 font-bold">Consent</th>
-                        <th className="p-3 font-bold">Score</th>
-                        <th className="p-3 font-bold">C / W / S</th>
-                        <th className="p-3 font-bold rounded-tr-lg">Submitted</th>
+                        <th className="p-3 font-bold rounded-tl-lg whitespace-nowrap">Guest</th>
+                        <th className="p-3 font-bold whitespace-nowrap">Email</th>
+                        <th className="p-3 font-bold whitespace-nowrap">Phone</th>
+                        <th className="p-3 font-bold whitespace-nowrap">Consent</th>
+                        <th className="p-3 font-bold whitespace-nowrap">Score</th>
+                        <th className="p-3 font-bold whitespace-nowrap">C / W / S</th>
+                        <th className="p-3 font-bold rounded-tr-lg whitespace-nowrap">Submitted</th>
                       </tr>
                     </thead>
                     <tbody>
                       {testData.guestParticipants.map((gp: any) => (
                         <tr key={gp.attemptId} className="border-b border-gray-50 last:border-0 hover:bg-gray-50">
-                          <td className="p-3 font-bold text-gray-800">{gp.name}</td>
-                          <td className="p-3 text-sm text-gray-600">
+                          <td className="p-3 font-bold text-gray-800 max-w-[200px] truncate" title={gp.name}>{gp.name}</td>
+                          <td className="p-3 text-sm text-gray-600 max-w-[260px]" title={gp.email ?? undefined}>
                             {gp.email ? (
-                              <span className="inline-flex items-center gap-1.5">
-                                {gp.email}
-                                {gp.emailVerified && <span title="Email verified" className="text-emerald-500">✓</span>}
+                              <span className="flex items-center gap-1.5 min-w-0">
+                                <span className="truncate">{gp.email}</span>
+                                {gp.emailVerified && <span title="Email verified" className="text-emerald-500 shrink-0">✓</span>}
                               </span>
                             ) : (
                               <span className="text-gray-400">—</span>
                             )}
                           </td>
-                          <td className="p-3 text-sm text-gray-600 font-mono">{gp.phone ?? gp.phoneMasked}</td>
+                          <td className="p-3 text-sm text-gray-600 font-mono whitespace-nowrap">{gp.phone ?? gp.phoneMasked}</td>
                           <td className="p-3">
                             {gp.marketingConsent
                               ? <span className="px-2 py-1 bg-emerald-50 text-emerald-700 rounded-lg text-xs font-bold border border-emerald-200">Yes</span>

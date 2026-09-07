@@ -1,5 +1,6 @@
 import React from 'react';
-import { View, Text, FlatList, StyleSheet } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
+import { DataTable, DataTableColumn } from '@/components/DataTable';
 
 interface QuestionAnalytic {
     questionNumber: number;
@@ -30,54 +31,79 @@ export default function QuestionAnalytics({ questions }: QuestionAnalyticsProps)
 
     const sampleSize = questions[0]?.sampleSize ?? 0;
 
+    // The question column is the flexible one — it absorbs leftover width on
+    // larger devices; the fixed stat columns are guaranteed enough room for
+    // their headers, so "CORRECT" can never break mid-word. When even the
+    // minimums exceed the viewport, the table scrolls horizontally inside the
+    // card (see DataTable).
+    const columns: Array<DataTableColumn<QuestionAnalytic>> = [
+        {
+            key: 'question',
+            header: 'Question',
+            width: 110,
+            grow: true,
+            renderCell: (item) => (
+                <View>
+                    <Text style={styles.questionNumber}>Q{item.questionNumber}</Text>
+                    {item.topicName ? (
+                        <Text style={styles.topicName} numberOfLines={2}>
+                            {item.topicName}
+                        </Text>
+                    ) : null}
+                    <Text style={styles.counts} numberOfLines={1}>
+                        {item.correctCount}C • {item.wrongCount}W • {item.skippedCount}S
+                    </Text>
+                </View>
+            ),
+        },
+        {
+            key: 'correct',
+            header: 'Correct',
+            width: 60,
+            align: 'center',
+            renderCell: (item) => (
+                <Text style={[styles.percentText, styles.correctText]} numberOfLines={1}>
+                    {item.percentCorrect}%
+                </Text>
+            ),
+        },
+        {
+            key: 'wrong',
+            header: 'Wrong',
+            width: 60,
+            align: 'center',
+            renderCell: (item) => (
+                <Text style={[styles.percentText, styles.wrongText]} numberOfLines={1}>
+                    {item.percentWrong}%
+                </Text>
+            ),
+        },
+        {
+            key: 'skip',
+            header: 'Skip',
+            width: 60,
+            align: 'center',
+            renderCell: (item) => (
+                <Text style={[styles.percentText, styles.skippedText]} numberOfLines={1}>
+                    {item.percentSkipped}%
+                </Text>
+            ),
+        },
+    ];
+
     return (
         <View style={styles.container}>
             <Text style={styles.sectionTitle}>Question-wise Analytics</Text>
             <Text style={styles.note}>
                 Percentages are based on {sampleSize} completed attempt{sampleSize === 1 ? '' : 's'}.
             </Text>
-            <View style={styles.card}>
-                <View style={styles.header}>
-                    <Text style={[styles.headerText, styles.questionCol]}>Question</Text>
-                    <Text style={[styles.headerText, styles.percentCol]}>Correct</Text>
-                    <Text style={[styles.headerText, styles.percentCol]}>Wrong</Text>
-                    <Text style={[styles.headerText, styles.percentCol]}>Skip</Text>
-                </View>
-
-                <FlatList
-                    data={questions}
-                    keyExtractor={(item) => item.questionNumber.toString()}
-                    renderItem={({ item }) => (
-                        <View style={styles.row}>
-                            <View style={styles.questionCol}>
-                                <Text style={styles.questionNumber}>Q{item.questionNumber}</Text>
-                                {item.topicName ? (
-                                    <Text style={styles.topicName}>{item.topicName}</Text>
-                                ) : null}
-                                <Text style={styles.counts}>
-                                    {item.correctCount}C • {item.wrongCount}W • {item.skippedCount}S
-                                </Text>
-                            </View>
-                            <View style={styles.percentCol}>
-                                <Text style={[styles.percentText, styles.correctText]}>
-                                    {item.percentCorrect}%
-                                </Text>
-                            </View>
-                            <View style={styles.percentCol}>
-                                <Text style={[styles.percentText, styles.wrongText]}>
-                                    {item.percentWrong}%
-                                </Text>
-                            </View>
-                            <View style={styles.percentCol}>
-                                <Text style={[styles.percentText, styles.skippedText]}>
-                                    {item.percentSkipped}%
-                                </Text>
-                            </View>
-                        </View>
-                    )}
-                    scrollEnabled={false}
-                />
-            </View>
+            <DataTable
+                columns={columns}
+                data={questions}
+                keyExtractor={(item) => item.questionNumber.toString()}
+                cellPadding={16}
+                style={styles.card}
+            />
         </View>
     );
 }
@@ -105,42 +131,9 @@ const styles = StyleSheet.create({
         marginHorizontal: 16,
     },
     card: {
-        backgroundColor: '#FFFFFF',
-        borderRadius: 12,
         marginHorizontal: 16,
         borderWidth: 1,
         borderColor: '#E5E7EB',
-        overflow: 'hidden',
-    },
-    header: {
-        flexDirection: 'row',
-        backgroundColor: '#F9FAFB',
-        paddingVertical: 12,
-        paddingHorizontal: 16,
-        borderBottomWidth: 1,
-        borderBottomColor: '#E5E7EB',
-    },
-    headerText: {
-        fontSize: 12,
-        fontWeight: '700',
-        color: '#6B7280',
-        textTransform: 'uppercase',
-    },
-    row: {
-        flexDirection: 'row',
-        paddingVertical: 12,
-        paddingHorizontal: 16,
-        borderBottomWidth: 1,
-        borderBottomColor: '#F3F4F6',
-    },
-    questionCol: {
-        flex: 2,
-        justifyContent: 'center',
-    },
-    percentCol: {
-        flex: 1,
-        alignItems: 'center',
-        justifyContent: 'center',
     },
     questionNumber: {
         fontSize: 14,

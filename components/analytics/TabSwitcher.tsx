@@ -54,7 +54,11 @@ const styles = StyleSheet.create({
     tab: {
         flex: 1,
         paddingVertical: 10,
-        paddingHorizontal: 16,
+        // Modest horizontal padding so three labels ("Test Analytics",
+        // "Student Analytics", "Heat Map") share narrow phones without
+        // squeezing each other into mid-word breaks; longer labels wrap at
+        // word boundaries instead.
+        paddingHorizontal: 6,
         borderRadius: 8,
         alignItems: 'center',
         justifyContent: 'center',
@@ -68,9 +72,10 @@ const styles = StyleSheet.create({
         elevation: 3,
     },
     tabText: {
-        fontSize: 14,
+        fontSize: 13,
         fontWeight: '600',
         color: '#6B7280',
+        textAlign: 'center',
     },
     activeTabText: {
         color: '#FFFFFF',
