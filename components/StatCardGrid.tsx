@@ -117,7 +117,7 @@ export default function StatCardGrid({
       <View
         style={[
           styles.card,
-          { width: cardWidth, backgroundColor: item.backgroundColor },
+          { width: cardWidth, ...(item.backgroundColor != null ? { backgroundColor: item.backgroundColor } : {}) },
           cardStyle,
         ]}
       >
