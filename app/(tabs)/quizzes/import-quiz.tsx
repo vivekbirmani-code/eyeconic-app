@@ -314,9 +314,96 @@ export default function ImportQuiz() {
         <View style={styles.card}>
           <Text style={styles.sectionTitle}>1. Upload Guidelines</Text>
           <View style={styles.guidelinesBox}>
-            <Text style={styles.guidelineText}>• File must be .xlsx or .xls</Text>
-            <Text style={styles.guidelineText}>• Required columns: SUBJECT, QUESTION, OPTION1, OPTION2, CORRECT</Text>
-            <Text style={styles.guidelineText}>• CORRECT should be 1, 2, 3, 4 or A, B, C, D</Text>
+            <View style={styles.guideBlock}>
+              <Text style={styles.guideHeading}>File</Text>
+              <Text style={styles.guideBody}>.xlsx or .xls · one question per row · headers in row 1</Text>
+            </View>
+
+            <View style={styles.guideBlock}>
+              <Text style={styles.guideHeading}>Required every row</Text>
+              <View style={styles.chipWrap}>
+                {['SUBJECT', 'TOPIC', 'SUBTOPIC', 'SYSTEM', 'QUESTION_TYPE', 'DIFFICULTY', 'QUESTION', 'CORRECT'].map((col) => (
+                  <View key={col} style={styles.requiredChip}>
+                    <Text style={styles.requiredChipText}>{col}</Text>
+                  </View>
+                ))}
+              </View>
+              <Text style={styles.guideHint}>SUBJECT must match an existing subject. DIFFICULTY: Easy, Medium, or Hard.</Text>
+            </View>
+
+            <View style={styles.guideBlock}>
+              <Text style={styles.guideHeading}>Also required by type</Text>
+              <Text style={styles.guideLine}><Text style={styles.guideKey}>MCQ / Image / Multiple</Text>  OPTION1, OPTION2 (at least 2 options)</Text>
+              <Text style={styles.guideLine}><Text style={styles.guideKey}>Assertion & Reason</Text>  ASSERTION, REASON</Text>
+              <Text style={styles.guideLine}><Text style={styles.guideKey}>Match the Following</Text>  COLUMN_A, COLUMN_B</Text>
+              <Text style={styles.guideLine}><Text style={styles.guideKey}>Image-based</Text>  Q_IMAGE</Text>
+            </View>
+
+            <View style={styles.guideBlock}>
+              <Text style={styles.guideHeading}>Optional</Text>
+              <View style={styles.chipWrap}>
+                {['TAGS', 'SOLUTION', 'OPTION3–6', 'Q_IMAGE', 'QID'].map((col) => (
+                  <View key={col} style={styles.optionalChip}>
+                    <Text style={styles.optionalChipText}>{col}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+
+            <View style={styles.guideBlock}>
+              <Text style={styles.guideHeading}>Question types</Text>
+              <Text style={styles.guideHint}>Use the id, or a close label. A few accepted examples:</Text>
+              <Text style={styles.guideLine}><Text style={styles.guideKey}>mcq_single</Text>  mcq · mcq-single correct · MCQ-Single Correct</Text>
+              <Text style={styles.guideLine}><Text style={styles.guideKey}>assertion_reason</Text>  Assertion & Reason · Assertions/Reason · Assertion and Reasoning</Text>
+              <Text style={styles.guideLine}><Text style={styles.guideKey}>match_the_following</Text>  Match the Following</Text>
+              <Text style={styles.guideLine}><Text style={styles.guideKey}>image_based</Text>  Image-Based</Text>
+              <Text style={styles.guideLine}><Text style={styles.guideKey}>multiple_correct</Text>  Multiple Correct</Text>
+              <Text style={styles.guideLine}><Text style={styles.guideKey}>numerical</Text>  Numeric</Text>
+            </View>
+
+            <View style={styles.guideBlock}>
+              <Text style={styles.guideHeading}>CORRECT</Text>
+              <Text style={styles.guideLine}><Text style={styles.guideKey}>MCQ / Image</Text>  1–6 or A–F</Text>
+              <Text style={styles.guideLine}><Text style={styles.guideKey}>Multiple</Text>  1,3 or A,C</Text>
+              <Text style={styles.guideLine}><Text style={styles.guideKey}>Match</Text>  1-C,2-A,3-D,4-B</Text>
+              <Text style={styles.guideLine}><Text style={styles.guideKey}>Numerical</Text>  a number, e.g. 12.5</Text>
+              <Text style={styles.guideLine}><Text style={styles.guideKey}>Assertion</Text>  1–4 (or A–D if you include options)</Text>
+            </View>
+
+            <View style={styles.guideBlock}>
+              <Text style={styles.guideHeading}>Example (MCQ)</Text>
+              {[
+                ['SUBJECT', 'ANATOMY'],
+                ['TOPIC', 'Upper Limb'],
+                ['SUBTOPIC', 'Nerves'],
+                ['SYSTEM', 'Musculoskeletal'],
+                ['QUESTION_TYPE', 'mcq_single'],
+                ['DIFFICULTY', 'Medium'],
+                ['QUESTION', 'Which nerve supplies…'],
+                ['OPTION1', 'Median nerve'],
+                ['OPTION2', 'Ulnar nerve'],
+                ['CORRECT', '1'],
+                ['TAGS', 'nerve, upper limb'],
+              ].map(([col, ex]) => (
+                <View key={col} style={styles.exampleRow}>
+                  <Text style={styles.exampleCol}>{col}</Text>
+                  <Text style={styles.exampleVal}>{ex}</Text>
+                </View>
+              ))}
+            </View>
+
+            <View style={styles.guideCallout}>
+              <View style={{ marginTop: 1 }}>
+                <AlertCircle color="#1E40AF" size={16} />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.guideCalloutTitle}>TOPIC and TAGS</Text>
+                <Text style={styles.guideCalloutText}>
+                  TOPIC is required — the topic this question belongs to.{'\n'}
+                  TAGS are optional keywords for filtering and grouping questions. Accurate tags are strongly recommended.
+                </Text>
+              </View>
+            </View>
           </View>
 
           <Text style={styles.sectionTitle}>2. Quiz Details</Text>
@@ -656,15 +743,112 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   guidelinesBox: {
-    backgroundColor: '#F3F4F6',
+    backgroundColor: '#F9FAFB',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
     padding: 12,
-    borderRadius: 8,
+    borderRadius: 12,
     marginBottom: 8,
+    gap: 12,
   },
-  guidelineText: {
-    fontSize: 13,
+  guideBlock: {
+    gap: 4,
+  },
+  guideHeading: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1F2937',
+    marginBottom: 2,
+  },
+  guideBody: {
+    fontSize: 12,
     color: '#4B5563',
-    marginBottom: 4,
+    lineHeight: 17,
+  },
+  guideHint: {
+    fontSize: 11,
+    color: '#6B7280',
+    lineHeight: 15,
+    marginTop: 2,
+  },
+  guideLine: {
+    fontSize: 12,
+    color: '#4B5563',
+    lineHeight: 18,
+  },
+  guideKey: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1E40AF',
+  },
+  chipWrap: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  requiredChip: {
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  requiredChipText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#1D4ED8',
+  },
+  optionalChip: {
+    backgroundColor: '#F3F4F6',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  optionalChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#4B5563',
+  },
+  exampleRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    paddingVertical: 2,
+    gap: 8,
+  },
+  exampleCol: {
+    width: 108,
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#2563EB',
+  },
+  exampleVal: {
+    flex: 1,
+    fontSize: 11,
+    color: '#4B5563',
+  },
+  guideCallout: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: '#EBF5FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+    borderRadius: 8,
+    padding: 10,
+  },
+  guideCalloutTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#1E40AF',
+    marginBottom: 2,
+  },
+  guideCalloutText: {
+    fontSize: 12,
+    color: '#1E40AF',
+    lineHeight: 17,
   },
   label: {
     fontSize: 14,
