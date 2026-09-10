@@ -99,7 +99,10 @@ const recoverMisplacedTypeFields = (questionType, rowData) => {
 /**
  * Pick the worksheet that contains question rows. Prefers a sheet named
  * "Question Bank" (or common variants) over the first sheet so workbooks with a
- * leading "Format Guide" sheet still import correctly.
+ * leading "Format Guide" sheet still import correctly. When the preferred
+ * sheet exists but has no data rows, later sheets are tried in order — a
+ * hand-made workbook whose table ended up on "Sheet2" (with an empty first
+ * sheet) is a real import pattern, not an error.
  */
 const selectImportWorksheet = (workbook) => {
     const names = workbook.SheetNames || [];
@@ -107,13 +110,35 @@ const selectImportWorksheet = (workbook) => {
         throw new Error('Excel workbook has no worksheets');
     }
 
-    const preferred = names.find((name) =>
+    const preferredNames = names.filter((name) =>
         IMPORT_SHEET_NAMES.includes(name.toLowerCase().trim())
     );
 
-    const sheetName = preferred || names[0];
+    const hasDataRows = (name) => {
+        const sheet = workbook.Sheets[name];
+        if (!sheet) return false;
+        try {
+            return xlsx.utils.sheet_to_json(sheet).length > 0;
+        } catch {
+            return false;
+        }
+    };
+
+    // Preferred names first (workbook order), then every remaining sheet.
+    const candidates = [...preferredNames, ...names.filter((n) => !preferredNames.includes(n))];
+    const sheetName = candidates.find(hasDataRows) || names[0];
     return { sheet: workbook.Sheets[sheetName], sheetName };
 };
+
+// File-level (not row-level) failures. These are returned — never thrown — so
+// routes answer with an actionable 400 instead of the generic catch-all 500
+// "Server error" the admin used to see for a merely misplaced/corrupt file.
+const fileFatal = (code, message, hint) => ({
+    questions: [],
+    errors: [],
+    sheetName: null,
+    fatal: { code, message, hint },
+});
 
 /**
  * Convert an option reference from Excel (letter A-F, 1-based number, or
@@ -228,239 +253,267 @@ const mapRowFromHeaders = (row) => {
  * objects plus a list of row-level validation errors. This is the single
  * canonical parser used by both the standalone Question Bank bulk import and
  * the "import quiz from Excel" flow — do not duplicate this logic elsewhere.
+ *
+ * File-level problems (unreadable workbook, no worksheets, no data rows on
+ * any sheet) come back as `{ fatal: { code, message, hint } }` — callers must
+ * map that to a 400. Row-level problems accumulate in `errors`. Only genuine
+ * programming errors propagate as exceptions.
  */
 const parseExcel = async (buffer) => {
+    let workbook;
     try {
-        const workbook = xlsx.read(buffer, { type: 'buffer' });
-        const { sheet, sheetName } = selectImportWorksheet(workbook);
-        const rawData = xlsx.utils.sheet_to_json(sheet);
-
-        if (!rawData || rawData.length === 0) {
-            throw new Error(`Excel sheet "${sheetName}" is empty`);
-        }
-
-        // Legacy-format detection. The canonical template requires the full
-        // seven-parameter metadata matrix, but sheets produced by the tech
-        // team (e.g. "Q_BankTechTeamFinal.xlsx": QUESTION NO / SUBJECT /
-        // TOPIC / TAG / QUESTION / Q_IMAGE / OPTION1-4 / CORRECT / SOLUTION)
-        // predate it and carry only a subset. When such a column is absent
-        // from the ENTIRE sheet, safe deterministic defaults fill the gap;
-        // when the column exists but a cell is blank, the original strict
-        // row-level error still applies. (A real import of the legacy file
-        // failing on all 133 rows is what previously left the question bank
-        // empty while the admin believed the questions were imported.)
-        const presentHeaders = new Set();
-        rawData.forEach((row) => Object.keys(row).forEach((key) => presentHeaders.add(normalizeHeader(key))));
-        const legacySheet = {
-            subtopic: !presentHeaders.has('SUBTOPIC'),
-            system: !presentHeaders.has('SYSTEM'),
-            questionType: !presentHeaders.has('QUESTIONTYPE') && !presentHeaders.has('TYPE'),
-            difficulty: !presentHeaders.has('DIFFICULTY'),
-        };
-        const usesLegacyDefaults = Object.values(legacySheet).some(Boolean);
-
-        const questions = [];
-        const errors = [];
-
-        for (let i = 0; i < rawData.length; i++) {
-            const row = rawData[i];
-            const rowNum = i + 2; // header is row 1
-            const rowLabel = `Row ${rowNum}`;
-            const rowData = mapRowFromHeaders(row);
-
-            // Skip fully blank rows silently.
-            if (!rowData.subject && !rowData.question) continue;
-
-            const rowErrors = [];
-
-            const subjectName = str(rowData.subject);
-            if (!subjectName) rowErrors.push(`${rowLabel}: Subject is required.`);
-
-            const topicName = str(rowData.topicName);
-            if (!topicName) rowErrors.push(`${rowLabel}: Topic is required.`);
-
-            let subtopicName = str(rowData.subtopicName);
-            if (!subtopicName && legacySheet.subtopic) subtopicName = topicName;
-            if (!subtopicName) rowErrors.push(`${rowLabel}: Subtopic is required.`);
-
-            let system = str(rowData.system);
-            if (!system && legacySheet.system) system = topicName;
-            if (!system) rowErrors.push(`${rowLabel}: System is required.`);
-
-            // Legacy sheets have no QUESTION_TYPE column: a row with Q_IMAGE
-            // is an image_based question, everything else is mcq_single (the
-            // OPTION1-4/CORRECT layout they all use).
-            let questionType = normalizeQuestionType(rowData.questionType);
-            if (!rowData.questionType && legacySheet.questionType) {
-                questionType = str(rowData.questionImage)
-                    ? QUESTION_TYPES.IMAGE_BASED
-                    : QUESTION_TYPES.MCQ_SINGLE;
-            } else if (!rowData.questionType) {
-                rowErrors.push(`${rowLabel}: Question Type is required.`);
-            } else if (!questionType) {
-                rowErrors.push(`${rowLabel}: Invalid Question Type "${rowData.questionType}".`);
-            }
-
-            let difficulty = normalizeDifficulty(rowData.difficulty);
-            if (!rowData.difficulty && legacySheet.difficulty) {
-                difficulty = DIFFICULTY_LEVELS.MEDIUM;
-            } else if (!rowData.difficulty) {
-                rowErrors.push(`${rowLabel}: Difficulty is required.`);
-            } else if (!difficulty) {
-                rowErrors.push(`${rowLabel}: Difficulty must be one of easy, medium, hard.`);
-            }
-
-            const question = str(rowData.question);
-            if (!question) rowErrors.push(`${rowLabel}: Question text is required.`);
-
-            if (rowErrors.length > 0 || !questionType) {
-                errors.push(...rowErrors);
-                continue;
-            }
-
-            recoverMisplacedTypeFields(questionType, rowData);
-
-            const tags = rowData.tags
-                ? String(rowData.tags).split(',').map((t) => t.trim()).filter(Boolean)
-                : [];
-
-            const optionImages = [
-                rowData.option1Image, rowData.option2Image, rowData.option3Image,
-                rowData.option4Image, rowData.option5Image, rowData.option6Image,
-            ].map((v) => str(v) || '');
-
-            const rawOptions = [
-                rowData.option1, rowData.option2, rowData.option3,
-                rowData.option4, rowData.option5, rowData.option6,
-            ].map(str);
-            const options = rawOptions.filter((o) => o.length > 0);
-            const trimmedOptionImages = optionImages.slice(0, options.length);
-
-            const parsed = {
-                qid: str(rowData.qid) || undefined,
-                subjectName,
-                topicName,
-                subtopicName,
-                system,
-                questionType,
-                difficulty: difficulty || undefined,
-                tags,
-                question,
-                questionImage: str(rowData.questionImage) || undefined,
-                explanation: str(rowData.explanation),
-                explanationImage: str(rowData.explanationImage) || undefined,
-                marrowCode: str(rowData.marrowCode) || undefined,
-                source: 'excel_import',
-            };
-
-            switch (questionType) {
-                case QUESTION_TYPES.MCQ_SINGLE:
-                case QUESTION_TYPES.IMAGE_BASED: {
-                    if (options.length < 2) {
-                        rowErrors.push(`${rowLabel}: At least 2 options are required.`);
-                        break;
-                    }
-                    if (questionType === QUESTION_TYPES.IMAGE_BASED && !parsed.questionImage) {
-                        rowErrors.push(`${rowLabel}: Image-Based questions require Q_IMAGE.`);
-                    }
-                    const idx = resolveOptionIndex(rowData.correctRaw, options);
-                    if (idx === -1) {
-                        rowErrors.push(`${rowLabel}: Invalid correct answer '${rowData.correctRaw}'.`);
-                        break;
-                    }
-                    parsed.options = options;
-                    parsed.optionImages = trimmedOptionImages;
-                    parsed.correctAnswer = idx;
-                    break;
-                }
-
-                case QUESTION_TYPES.MULTIPLE_CORRECT: {
-                    if (options.length < 2) {
-                        rowErrors.push(`${rowLabel}: At least 2 options are required.`);
-                        break;
-                    }
-                    const raws = String(rowData.correctRaw || '').split(/[,;]/).map((v) => v.trim()).filter(Boolean);
-                    if (raws.length === 0) {
-                        rowErrors.push(`${rowLabel}: At least one correct option must be specified.`);
-                        break;
-                    }
-                    const indices = raws.map((r) => resolveOptionIndex(r, options));
-                    if (indices.some((idx) => idx === -1)) {
-                        rowErrors.push(`${rowLabel}: Invalid correct answer '${rowData.correctRaw}'.`);
-                        break;
-                    }
-                    parsed.options = options;
-                    parsed.optionImages = trimmedOptionImages;
-                    parsed.correctAnswer = [...new Set(indices)];
-                    break;
-                }
-
-                case QUESTION_TYPES.ASSERTION_REASON: {
-                    parsed.assertion = str(rowData.assertion);
-                    parsed.reason = str(rowData.reason);
-                    if (!parsed.assertion) rowErrors.push(`${rowLabel}: Assertion is required.`);
-                    if (!parsed.reason) rowErrors.push(`${rowLabel}: Reason is required.`);
-                    if (options.length >= 2) {
-                        parsed.options = options;
-                        parsed.optionImages = trimmedOptionImages;
-                    }
-                    const optsForIndex = parsed.options && parsed.options.length ? parsed.options : null;
-                    const idx = optsForIndex ? resolveOptionIndex(rowData.correctRaw, optsForIndex) : (() => {
-                        const n = Number(rowData.correctRaw);
-                        return Number.isInteger(n) && n >= 1 && n <= 4 ? n - 1 : -1;
-                    })();
-                    if (idx === -1) {
-                        rowErrors.push(`${rowLabel}: Invalid correct answer '${rowData.correctRaw}'.`);
-                        break;
-                    }
-                    parsed.correctAnswer = idx;
-                    break;
-                }
-
-                case QUESTION_TYPES.MATCH_THE_FOLLOWING: {
-                    const columnA = splitList(rowData.columnA);
-                    const columnB = splitList(rowData.columnB);
-                    if (columnA.length < 2) rowErrors.push(`${rowLabel}: Column A needs at least 2 entries.`);
-                    if (columnB.length < 2) rowErrors.push(`${rowLabel}: Column B needs at least 2 entries.`);
-                    if (columnA.length >= 2 && columnB.length >= 2) {
-                        const mapping = parseMapping(rowData.correctRaw, columnB.length);
-                        if (!mapping || Object.keys(mapping).length !== columnA.length) {
-                            rowErrors.push(`${rowLabel}: Invalid or incomplete mapping '${rowData.correctRaw}'.`);
-                            break;
-                        }
-                        parsed.columnA = columnA;
-                        parsed.columnB = columnB;
-                        parsed.correctAnswer = mapping;
-                    }
-                    break;
-                }
-
-                case QUESTION_TYPES.NUMERICAL: {
-                    const num = Number(rowData.correctRaw);
-                    if (Number.isNaN(num)) {
-                        rowErrors.push(`${rowLabel}: Correct answer must be a valid number.`);
-                        break;
-                    }
-                    parsed.correctAnswer = num;
-                    break;
-                }
-
-                default:
-                    rowErrors.push(`${rowLabel}: Invalid Question Type "${rowData.questionType}".`);
-            }
-
-            if (rowErrors.length > 0) {
-                errors.push(...rowErrors);
-                continue;
-            }
-
-            questions.push(parsed);
-        }
-
-        return { questions, errors, sheetName };
-    } catch (error) {
-        throw new Error('Failed to parse Excel: ' + error.message);
+        workbook = xlsx.read(buffer, { type: 'buffer' });
+    } catch {
+        return fileFatal(
+            'UNREADABLE_WORKBOOK',
+            'The file could not be read as an Excel workbook.',
+            'Re-export the sheet as .xlsx from Excel or Google Sheets and try again.'
+        );
     }
+
+    const sheetNames = workbook.SheetNames || [];
+    if (sheetNames.length === 0) {
+        return fileFatal(
+            'NO_WORKSHEETS',
+            'The Excel workbook contains no worksheets.',
+            'Re-export the sheet as .xlsx and try again.'
+        );
+    }
+
+    const { sheet, sheetName } = selectImportWorksheet(workbook);
+    const rawData = xlsx.utils.sheet_to_json(sheet);
+
+    if (!rawData || rawData.length === 0) {
+        return fileFatal(
+            'NO_QUESTION_ROWS',
+            `No question rows were found in this workbook (sheets: ${sheetNames.join(', ')}).`,
+            'Put the question table on the first sheet — or a sheet named "Question Bank" — with the column headers in row 1.'
+        );
+    }
+
+    // Legacy-format detection. The canonical template requires the full
+    // seven-parameter metadata matrix, but sheets produced by the tech
+    // team (e.g. "Q_BankTechTeamFinal.xlsx": QUESTION NO / SUBJECT /
+    // TOPIC / TAG / QUESTION / Q_IMAGE / OPTION1-4 / CORRECT / SOLUTION)
+    // predate it and carry only a subset. When such a column is absent
+    // from the ENTIRE sheet, safe deterministic defaults fill the gap;
+    // when the column exists but a cell is blank, the original strict
+    // row-level error still applies. (A real import of the legacy file
+    // failing on all 133 rows is what previously left the question bank
+    // empty while the admin believed the questions were imported.)
+    const presentHeaders = new Set();
+    rawData.forEach((row) => Object.keys(row).forEach((key) => presentHeaders.add(normalizeHeader(key))));
+    const legacySheet = {
+        subtopic: !presentHeaders.has('SUBTOPIC'),
+        system: !presentHeaders.has('SYSTEM'),
+        questionType: !presentHeaders.has('QUESTIONTYPE') && !presentHeaders.has('TYPE'),
+        difficulty: !presentHeaders.has('DIFFICULTY'),
+    };
+    const usesLegacyDefaults = Object.values(legacySheet).some(Boolean);
+
+    const questions = [];
+    const errors = [];
+
+    for (let i = 0; i < rawData.length; i++) {
+        const row = rawData[i];
+        const rowNum = i + 2; // header is row 1
+        const rowLabel = `Row ${rowNum}`;
+        const rowData = mapRowFromHeaders(row);
+
+        // Skip fully blank rows silently.
+        if (!rowData.subject && !rowData.question) continue;
+
+        const rowErrors = [];
+
+        const subjectName = str(rowData.subject);
+        if (!subjectName) rowErrors.push(`${rowLabel}: Subject is required.`);
+
+        const topicName = str(rowData.topicName);
+        if (!topicName) rowErrors.push(`${rowLabel}: Topic is required.`);
+
+        let subtopicName = str(rowData.subtopicName);
+        if (!subtopicName && legacySheet.subtopic) subtopicName = topicName;
+        if (!subtopicName) rowErrors.push(`${rowLabel}: Subtopic is required.`);
+
+        let system = str(rowData.system);
+        if (!system && legacySheet.system) system = topicName;
+        if (!system) rowErrors.push(`${rowLabel}: System is required.`);
+
+        // Legacy sheets have no QUESTION_TYPE column: a row with Q_IMAGE
+        // is an image_based question, everything else is mcq_single (the
+        // OPTION1-4/CORRECT layout they all use).
+        let questionType = normalizeQuestionType(rowData.questionType);
+        if (!rowData.questionType && legacySheet.questionType) {
+            questionType = str(rowData.questionImage)
+                ? QUESTION_TYPES.IMAGE_BASED
+                : QUESTION_TYPES.MCQ_SINGLE;
+        } else if (!rowData.questionType) {
+            rowErrors.push(`${rowLabel}: Question Type is required.`);
+        } else if (!questionType) {
+            rowErrors.push(`${rowLabel}: Invalid Question Type "${rowData.questionType}".`);
+        }
+
+        let difficulty = normalizeDifficulty(rowData.difficulty);
+        if (!rowData.difficulty && legacySheet.difficulty) {
+            difficulty = DIFFICULTY_LEVELS.MEDIUM;
+        } else if (!rowData.difficulty) {
+            rowErrors.push(`${rowLabel}: Difficulty is required.`);
+        } else if (!difficulty) {
+            rowErrors.push(`${rowLabel}: Difficulty must be one of easy, medium, hard.`);
+        }
+
+        const question = str(rowData.question);
+        if (!question) rowErrors.push(`${rowLabel}: Question text is required.`);
+
+        if (rowErrors.length > 0 || !questionType) {
+            errors.push(...rowErrors);
+            continue;
+        }
+
+        recoverMisplacedTypeFields(questionType, rowData);
+
+        const tags = rowData.tags
+            ? String(rowData.tags).split(',').map((t) => t.trim()).filter(Boolean)
+            : [];
+
+        const optionImages = [
+            rowData.option1Image, rowData.option2Image, rowData.option3Image,
+            rowData.option4Image, rowData.option5Image, rowData.option6Image,
+        ].map((v) => str(v) || '');
+
+        const rawOptions = [
+            rowData.option1, rowData.option2, rowData.option3,
+            rowData.option4, rowData.option5, rowData.option6,
+        ].map(str);
+        const options = rawOptions.filter((o) => o.length > 0);
+        const trimmedOptionImages = optionImages.slice(0, options.length);
+
+        const parsed = {
+            qid: str(rowData.qid) || undefined,
+            // Original 1-based sheet row, so downstream validation errors keep
+            // pointing at the row the admin sees in Excel even when blank rows
+            // were skipped.
+            rowNumber: rowNum,
+            subjectName,
+            topicName,
+            subtopicName,
+            system,
+            questionType,
+            difficulty: difficulty || undefined,
+            tags,
+            question,
+            questionImage: str(rowData.questionImage) || undefined,
+            explanation: str(rowData.explanation),
+            explanationImage: str(rowData.explanationImage) || undefined,
+            marrowCode: str(rowData.marrowCode) || undefined,
+            source: 'excel_import',
+        };
+
+        switch (questionType) {
+            case QUESTION_TYPES.MCQ_SINGLE:
+            case QUESTION_TYPES.IMAGE_BASED: {
+                if (options.length < 2) {
+                    rowErrors.push(`${rowLabel}: At least 2 options are required.`);
+                    break;
+                }
+                if (questionType === QUESTION_TYPES.IMAGE_BASED && !parsed.questionImage) {
+                    rowErrors.push(`${rowLabel}: Image-Based questions require Q_IMAGE.`);
+                }
+                const idx = resolveOptionIndex(rowData.correctRaw, options);
+                if (idx === -1) {
+                    rowErrors.push(`${rowLabel}: Invalid correct answer '${rowData.correctRaw}'.`);
+                    break;
+                }
+                parsed.options = options;
+                parsed.optionImages = trimmedOptionImages;
+                parsed.correctAnswer = idx;
+                break;
+            }
+
+            case QUESTION_TYPES.MULTIPLE_CORRECT: {
+                if (options.length < 2) {
+                    rowErrors.push(`${rowLabel}: At least 2 options are required.`);
+                    break;
+                }
+                const raws = String(rowData.correctRaw || '').split(/[,;]/).map((v) => v.trim()).filter(Boolean);
+                if (raws.length === 0) {
+                    rowErrors.push(`${rowLabel}: At least one correct option must be specified.`);
+                    break;
+                }
+                const indices = raws.map((r) => resolveOptionIndex(r, options));
+                if (indices.some((idx) => idx === -1)) {
+                    rowErrors.push(`${rowLabel}: Invalid correct answer '${rowData.correctRaw}'.`);
+                    break;
+                }
+                parsed.options = options;
+                parsed.optionImages = trimmedOptionImages;
+                parsed.correctAnswer = [...new Set(indices)];
+                break;
+            }
+
+            case QUESTION_TYPES.ASSERTION_REASON: {
+                parsed.assertion = str(rowData.assertion);
+                parsed.reason = str(rowData.reason);
+                if (!parsed.assertion) rowErrors.push(`${rowLabel}: Assertion is required.`);
+                if (!parsed.reason) rowErrors.push(`${rowLabel}: Reason is required.`);
+                if (options.length >= 2) {
+                    parsed.options = options;
+                    parsed.optionImages = trimmedOptionImages;
+                }
+                const optsForIndex = parsed.options && parsed.options.length ? parsed.options : null;
+                const idx = optsForIndex ? resolveOptionIndex(rowData.correctRaw, optsForIndex) : (() => {
+                    const n = Number(rowData.correctRaw);
+                    return Number.isInteger(n) && n >= 1 && n <= 4 ? n - 1 : -1;
+                })();
+                if (idx === -1) {
+                    rowErrors.push(`${rowLabel}: Invalid correct answer '${rowData.correctRaw}'.`);
+                    break;
+                }
+                parsed.correctAnswer = idx;
+                break;
+            }
+
+            case QUESTION_TYPES.MATCH_THE_FOLLOWING: {
+                const columnA = splitList(rowData.columnA);
+                const columnB = splitList(rowData.columnB);
+                if (columnA.length < 2) rowErrors.push(`${rowLabel}: Column A needs at least 2 entries.`);
+                if (columnB.length < 2) rowErrors.push(`${rowLabel}: Column B needs at least 2 entries.`);
+                if (columnA.length >= 2 && columnB.length >= 2) {
+                    const mapping = parseMapping(rowData.correctRaw, columnB.length);
+                    if (!mapping || Object.keys(mapping).length !== columnA.length) {
+                        rowErrors.push(`${rowLabel}: Invalid or incomplete mapping '${rowData.correctRaw}'.`);
+                        break;
+                    }
+                    parsed.columnA = columnA;
+                    parsed.columnB = columnB;
+                    parsed.correctAnswer = mapping;
+                }
+                break;
+            }
+
+            case QUESTION_TYPES.NUMERICAL: {
+                const num = Number(rowData.correctRaw);
+                if (Number.isNaN(num)) {
+                    rowErrors.push(`${rowLabel}: Correct answer must be a valid number.`);
+                    break;
+                }
+                parsed.correctAnswer = num;
+                break;
+            }
+
+            default:
+                rowErrors.push(`${rowLabel}: Invalid Question Type "${rowData.questionType}".`);
+        }
+
+        if (rowErrors.length > 0) {
+            errors.push(...rowErrors);
+            continue;
+        }
+
+        questions.push(parsed);
+    }
+
+    return { questions, errors, sheetName };
 };
 
 module.exports = {

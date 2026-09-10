@@ -9,6 +9,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { ScreenContainer } from '@/components/layout';
+import StatCardGrid from '@/components/StatCardGrid';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { BookOpen, Clock, FileText, Award } from 'lucide-react-native';
 import { api } from '@/services/api';
@@ -196,23 +197,33 @@ export default function QuizInstructions() {
         </View>
 
         <View style={styles.statsContainer}>
-          <View style={styles.statCard}>
-            <FileText color="#2563EB" size={24} />
-            <Text style={styles.statValue}>{quiz.questions.length}</Text>
-            <Text style={styles.statLabel}>Questions</Text>
-          </View>
-
-          <View style={styles.statCard}>
-            <Award color="#10B981" size={24} />
-            <Text style={styles.statValue}>{quiz.totalMarks}</Text>
-            <Text style={styles.statLabel}>Total Marks</Text>
-          </View>
-
-          <View style={styles.statCard}>
-            <Clock color="#F59E0B" size={24} />
-            <Text style={styles.statValue}>{quiz.duration}</Text>
-            <Text style={styles.statLabel}>Minutes</Text>
-          </View>
+          <StatCardGrid
+            items={[
+              {
+                value: quiz.questions.length,
+                label: 'Questions',
+                icon: FileText,
+                iconColor: '#2563EB',
+                valueColor: '#1F2937',
+              },
+              {
+                value: quiz.totalMarks,
+                label: 'Total Marks',
+                icon: Award,
+                iconColor: '#10B981',
+                valueColor: '#1F2937',
+              },
+              {
+                value: quiz.duration,
+                label: 'Minutes',
+                icon: Clock,
+                iconColor: '#F59E0B',
+                valueColor: '#1F2937',
+              },
+            ]}
+            gap={12}
+            cardStyle={styles.statCardOverride}
+          />
         </View>
 
         {/* Time Window (IST) */}
@@ -353,33 +364,16 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   statsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
     padding: 16,
-    gap: 12,
   },
-  statCard: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
+  // Matches the original stat card look on top of StatCardGrid's defaults.
+  statCardOverride: {
     borderRadius: 12,
-    padding: 16,
-    alignItems: 'center',
-    shadowColor: '#000',
+    borderWidth: 0,
     shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.1,
     shadowRadius: 4,
     elevation: 3,
-  },
-  statValue: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#1F2937',
-    marginTop: 8,
-  },
-  statLabel: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginTop: 4,
   },
   section: {
     padding: 16,

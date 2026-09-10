@@ -103,7 +103,7 @@ export default function MentorDetailsModal({
                 )}
               </div>
 
-              <div className="grid grid-cols-4 gap-3 bg-white rounded-xl p-4 border border-gray-100">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-white rounded-xl p-4 border border-gray-100">
                 <div className="text-center">
                   <p className="text-2xl font-bold text-blue-600">{mentorData.stats.assignedStudents}</p>
                   <p className="text-xs font-medium text-gray-500 uppercase">Students</p>

@@ -9,6 +9,12 @@ const { auth, authorize } = require('../middleware/auth');
 const multer = require('multer');
 const { parseExcel } = require('../utils/excelParser');
 const { processQuestionImages } = require('../utils/imageUploader');
+const {
+  QuestionValidationError,
+  normalizeQuestionImageFields,
+  validateQuestionPayload,
+} = require('../utils/questionValidation');
+const { buildImportValidationPayload } = require('../utils/importErrors');
 const Subject = require('../models/Subject');
 const MentorStudentAssignment = require('../models/MentorStudentAssignment');
 const User = require('../models/User');
@@ -61,7 +67,13 @@ const {
   syncExpiredSections,
 } = require('../utils/sectionLocking');
 
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  // Import payloads are single Excel files; bound them so a runaway upload
+  // can't buffer unbounded memory. Excel files realistically stay far below
+  // this — the real 294KB tech-team bank included.
+  limits: { fileSize: 25 * 1024 * 1024, files: 1, fields: 25 },
+});
 
 const router = express.Router();
 
@@ -884,18 +896,78 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
 
 // Import Quiz from Excel
 router.post('/import-excel', auth, authorize('admin'), upload.single('file'), async (req, res) => {
+  // Questions created by this import. Any failure after creation begins
+  // deletes exactly these, so a failed import never leaves orphaned
+  // questions in the bank (and a retry starts from clean state).
+  const createdQuestionIds = [];
+
+  const rollbackCreatedQuestions = async () => {
+    if (createdQuestionIds.length === 0) return;
+    try {
+      await QuestionBank.deleteMany({ _id: { $in: createdQuestionIds } });
+      console.log(`Import rolled back ${createdQuestionIds.length} created question(s) after failure.`);
+    } catch (cleanupError) {
+      // Never mask the original failure — but leave enough of a trail to
+      // clean up manually if the delete itself failed.
+      console.error('Import rollback FAILED — orphaned questions may remain:', {
+        requestId: req.requestId,
+        ids: createdQuestionIds.map(String),
+        cleanupError: cleanupError.message,
+      });
+    }
+  };
+
   try {
     if (!req.file) {
       return res.status(400).json({ message: 'No file uploaded' });
     }
 
+    // Reject non-Excel uploads up front with a clear message instead of
+    // letting them fail deep inside the parser.
+    const originalName = String(req.file.originalname || '').toLowerCase();
+    const mimeType = String(req.file.mimetype || '').toLowerCase();
+    const hasExcelExtension = originalName.endsWith('.xlsx') || originalName.endsWith('.xls');
+    const knownExcelMime = [
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+      'application/vnd.ms-excel', // .xls
+      'application/octet-stream', // some pickers send a generic type; extension decides
+    ].includes(mimeType);
+    if (!hasExcelExtension && !knownExcelMime) {
+      return res.status(400).json({
+        message: 'Unsupported file type. Please upload an Excel (.xlsx or .xls) file.',
+      });
+    }
+
     const { quizTitle, testType, duration, subjectId, instructions, scheduledDate, expiryDate, positiveMarks, negativeMarks, sections, lockSectionsAfterSubmission } = req.body;
 
-    // Parse Excel
-    const { questions: parsedQuestions, errors } = await parseExcel(req.file.buffer);
+    if (!quizTitle || !String(quizTitle).trim()) {
+      return res.status(400).json({ message: 'Quiz title is required.' });
+    }
+
+    // Fail fast on a duplicate title BEFORE creating any questions — this
+    // check used to run after the whole question loop, leaving orphaned
+    // (tagged) questions behind whenever the title was taken.
+    const existingQuiz = await Quiz.findOne({ title: String(quizTitle).trim() });
+    if (existingQuiz) {
+      return res.status(400).json({
+        message: `A quiz with the title "${quizTitle}" already exists. Please use a different name.`,
+        errorType: 'DUPLICATE_TITLE'
+      });
+    }
+
+    // Parse Excel. File-level problems (unreadable workbook, no data rows on
+    // any sheet) come back as `fatal` — map them to an actionable 400, never
+    // the generic catch-all 500 "Server error".
+    const parseResult = await parseExcel(req.file.buffer);
+    if (parseResult.fatal) {
+      return res.status(400).json(buildImportValidationPayload(
+        [parseResult.fatal.message],
+        { totalErrors: 1, hint: parseResult.fatal.hint }
+      ));
+    }
+    const { questions: parsedQuestions, errors } = parseResult;
 
     if (errors.length > 0) {
-      const { buildImportValidationPayload } = require('../utils/importErrors');
       return res.status(400).json(buildImportValidationPayload(errors.slice(0, 50), {
         totalErrors: errors.length,
       }));
@@ -996,6 +1068,59 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
       });
     }
 
+    // Run every row through the SAME validation pipeline the question bank
+    // create/update/bulk-import paths use (metadata matrix, type structure,
+    // image URL quality). Previously this route skipped it, so e.g. the
+    // template's placeholder example.com image imported as a broken
+    // image_based question.
+    const validatedCandidates = [];
+    const rowValidationErrors = [];
+    for (const qData of parsedQuestions) {
+      const rowLabel = `Row ${qData.rowNumber || '?'}`;
+      const candidate = {
+        subject: subjectsMap[qData._normalizedSubject || qData.subjectName.toLowerCase()],
+        topicName: qData.topicName,
+        subtopicName: qData.subtopicName,
+        system: qData.system,
+        questionType: qData.questionType,
+        difficulty: qData.difficulty,
+        tags: qData.tags,
+        question: qData.question,
+        questionImage: qData.questionImage,
+        options: qData.options,
+        optionImages: qData.optionImages,
+        assertion: qData.assertion,
+        reason: qData.reason,
+        columnA: qData.columnA,
+        columnB: qData.columnB,
+        correctAnswer: qData.correctAnswer,
+        explanation: qData.explanation,
+        explanationImage: qData.explanationImage,
+        marrowCode: qData.marrowCode,
+        source: qData.source,
+      };
+
+      try {
+        // Same normalization the other write paths apply (Drive share-link
+        // conversion, whitespace) so imports store identical shapes.
+        normalizeQuestionImageFields(candidate);
+        validateQuestionPayload(candidate, { rowLabel });
+        validatedCandidates.push(candidate);
+      } catch (err) {
+        if (err instanceof QuestionValidationError) {
+          rowValidationErrors.push(...err.errors);
+        } else {
+          rowValidationErrors.push(`${rowLabel}: ${err.message}`);
+        }
+      }
+    }
+
+    if (rowValidationErrors.length > 0) {
+      return res.status(400).json(buildImportValidationPayload(rowValidationErrors.slice(0, 50), {
+        totalErrors: rowValidationErrors.length,
+      }));
+    }
+
 
     const questionIds = [];
     const createdQuestions = [];
@@ -1009,8 +1134,8 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
     const previewQuestions = [];
 
     // Create Questions with duplicate detection
-    for (const qData of parsedQuestions) {
-      let subId = subjectsMap[qData._normalizedSubject || qData.subjectName.toLowerCase()];
+    for (const candidate of validatedCandidates) {
+      const subId = candidate.subject;
 
       // Track first subject for quiz creation
       if (!firstSubjectId) {
@@ -1020,8 +1145,8 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
       // Check for duplicate: same question text + same options (types without
       // options, e.g. numerical/match_the_following, are matched on text +
       // questionType only)
-      const normalizedQuestion = qData.question.trim().toLowerCase();
-      const normalizedOptions = (qData.options || []).map(o => String(o).trim().toLowerCase()).sort().join('|');
+      const normalizedQuestion = candidate.question.trim().toLowerCase();
+      const normalizedOptions = (candidate.options || []).map(o => String(o).trim().toLowerCase()).sort().join('|');
 
       const existingQuestion = await QuestionBank.findOne({
         subject: subId,
@@ -1034,26 +1159,31 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
       // Check if options match (or, for optionless types, that the question type matches)
       let isDuplicate = false;
       if (existingQuestion) {
-        if (!qData.options || qData.options.length === 0) {
-          isDuplicate = existingQuestion.questionType === qData.questionType;
+        if (!candidate.options || candidate.options.length === 0) {
+          isDuplicate = existingQuestion.questionType === candidate.questionType;
         } else {
           const existingOptions = (existingQuestion.options || []).map(o => String(o).trim().toLowerCase()).sort().join('|');
           isDuplicate = existingOptions === normalizedOptions;
         }
       }
 
-      const newHasImage = !!(qData.questionImage || qData.optionImages?.some(img => img));
+      const newHasImage = !!(candidate.questionImage || candidate.optionImages?.some(img => img));
 
       if (isDuplicate) {
         const existingHasImage = !!(existingQuestion.questionImage || existingQuestion.optionImages?.some(img => img));
 
         if (newHasImage && !existingHasImage) {
-          // Update existing with new images
-          existingQuestion.questionImage = qData.questionImage || existingQuestion.questionImage;
-          existingQuestion.optionImages = qData.optionImages?.some(img => img) ? qData.optionImages : existingQuestion.optionImages;
-          existingQuestion.explanationImage = qData.explanationImage || existingQuestion.explanationImage;
+          // Update existing with new images. Transfer them to Cloudinary
+          // first — same treatment new questions get — so updated questions
+          // never store hotlinked third-party URLs.
+          console.log(`\n🖼️ Processing images for duplicate question: ${candidate.question.substring(0, 50)}...`);
+          const processed = await processQuestionImages(candidate);
+
+          existingQuestion.questionImage = processed.questionImage || existingQuestion.questionImage;
+          existingQuestion.optionImages = processed.optionImages?.some(img => img) ? processed.optionImages : existingQuestion.optionImages;
+          existingQuestion.explanationImage = processed.explanationImage || existingQuestion.explanationImage;
           // Also update tags to include import tag
-          existingQuestion.tags = [...new Set([...existingQuestion.tags, ...qData.tags, 'excel-import', `quiz:${quizTitle}`])];
+          existingQuestion.tags = [...new Set([...existingQuestion.tags, ...(candidate.tags || []), 'excel-import', `quiz:${quizTitle}`])];
           await existingQuestion.save();
 
           duplicatesUpdated++;
@@ -1089,39 +1219,42 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
       } else {
         // Create new question
         // Upload images to Cloudinary
-        console.log(`\n📝 Processing question ${questionsCreated + 1}: ${qData.question.substring(0, 50)}...`);
-        const processedQData = await processQuestionImages(qData);
+        console.log(`\n📝 Processing question ${questionsCreated + 1}: ${candidate.question.substring(0, 50)}...`);
+        const processed = await processQuestionImages(candidate);
 
         const question = new QuestionBank({
           subject: subId,
-          topicName: processedQData.topicName,
-          subtopicName: qData.subtopicName,
-          system: qData.system,
-          questionType: qData.questionType,
-          difficulty: qData.difficulty,
-          question: processedQData.question,
-          questionImage: processedQData.questionImage,
-          options: processedQData.options,
-          optionImages: processedQData.optionImages,
-          assertion: qData.assertion,
-          reason: qData.reason,
-          columnA: qData.columnA,
-          columnB: qData.columnB,
-          correctAnswer: processedQData.correctAnswer !== undefined ? processedQData.correctAnswer : qData.correctAnswer,
-          explanation: processedQData.explanation,
-          explanationImage: processedQData.explanationImage,
-          tags: [...(qData.tags || []), 'excel-import', `quiz:${quizTitle}`],
+          topicName: processed.topicName,
+          subtopicName: processed.subtopicName,
+          system: processed.system,
+          questionType: processed.questionType,
+          difficulty: processed.difficulty,
+          question: processed.question,
+          questionImage: processed.questionImage,
+          options: processed.options,
+          optionImages: processed.optionImages,
+          assertion: processed.assertion,
+          reason: processed.reason,
+          columnA: processed.columnA,
+          columnB: processed.columnB,
+          correctAnswer: processed.correctAnswer,
+          explanation: processed.explanation,
+          explanationImage: processed.explanationImage,
+          marrowCode: processed.marrowCode,
+          source: processed.source,
+          tags: [...(candidate.tags || []), 'excel-import', `quiz:${quizTitle}`],
           createdBy: req.user._id,
           isActive: true
         });
 
         await question.save();
         createdQuestions.push(question);
+        createdQuestionIds.push(question._id);
         questionIds.push(question._id);
         questionsCreated++;
 
-        const newHasImage = !!(question.questionImage || question.optionImages?.some(img => img));
-        if (newHasImage) questionsWithImages++;
+        const createdHasImage = !!(question.questionImage || question.optionImages?.some(img => img));
+        if (createdHasImage) questionsWithImages++;
 
         previewQuestions.push({
           _id: question._id,
@@ -1132,20 +1265,6 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
         });
       }
     }
-
-    // Check for duplicate quiz title
-    const existingQuiz = await Quiz.findOne({ title: quizTitle.trim() });
-    if (existingQuiz) {
-      return res.status(400).json({
-        message: `A quiz with the title "${quizTitle}" already exists. Please use a different name.`,
-        errorType: 'DUPLICATE_TITLE'
-      });
-    }
-
-    // Collect all unique subject IDs from the created/linked questions
-    const allSubjectIds = [...new Set(
-      createdQuestions.map(q => q.subject?.toString()).filter(Boolean)
-    )];
 
     const timeWindowResult = parseQuizTimeWindow({ scheduledDate, expiryDate });
     if (timeWindowResult.error) {
@@ -1204,8 +1323,50 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
     });
 
   } catch (error) {
-    console.error('Import error:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
+    // Roll back every question this import created — a failed import must
+    // leave no partial quiz behind, and a retry must not duplicate content.
+    await rollbackCreatedQuestions();
+
+    // Client-data problems that surface at save time come back as 400s with
+    // field messages; everything else is logged server-side (with the
+    // request id) and answered with a safe generic message — internals like
+    // driver errors must never reach the client.
+    if (error.name === 'ValidationError') {
+      const fieldErrors = Object.values(error.errors || {}).map(e => e.message);
+      console.warn('Import validation failed at save time', {
+        requestId: req.requestId,
+        title: req.body?.quizTitle,
+        fieldErrors,
+      });
+      return res.status(400).json({
+        message: 'Import failed validation. Please check the quiz details and try again.',
+        errors: fieldErrors.length > 0 ? fieldErrors : ['Invalid data submitted.'],
+        errorType: 'VALIDATION_ERROR',
+      });
+    }
+
+    if (error.code === 11000) {
+      console.warn('Import hit a duplicate-key constraint', {
+        requestId: req.requestId,
+        keyValue: error.keyValue,
+      });
+      return res.status(409).json({
+        message: 'Import failed because a question with the same unique identifier already exists. Please check for duplicate rows and try again.',
+        errorType: 'DUPLICATE_KEY',
+      });
+    }
+
+    console.error('Import error:', {
+      requestId: req.requestId,
+      errorName: error.name,
+      errorMessage: error.message,
+      stack: error.stack,
+    });
+    res.status(500).json({
+      message: 'Import failed while saving. Nothing was kept — please try again.',
+      code: 'IMPORT_FAILED',
+      requestId: req.requestId,
+    });
   }
 });
 
@@ -1213,8 +1374,8 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
 router.post('/:id/duplicate', auth, authorize('admin'), async (req, res) => {
   try {
     const originalQuiz = await Quiz.findById(req.params.id);
-    if (!originalQuiz) {
-      return res.status(404).json({ message: 'Quiz not found' });
+    if (!originalQuiz || !originalQuiz.isActive || originalQuiz.isDeleted) {
+      return res.status(404).json({ message: 'Quiz not found or has been deleted' });
     }
 
     const newQuiz = new Quiz({
@@ -1249,8 +1410,8 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
 
     // Check if quiz exists
     const quiz = await Quiz.findById(req.params.id);
-    if (!quiz) {
-      return res.status(404).json({ message: 'Quiz not found' });
+    if (!quiz || !quiz.isActive || quiz.isDeleted) {
+      return res.status(404).json({ message: 'Quiz not found or has been deleted' });
     }
 
     const prevAssigned = quiz.assignedStudents.map(id => id.toString());
@@ -1375,6 +1536,86 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
   } catch (error) {
     console.error('Update quiz error:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Delete Quiz (Admin only)
+router.delete('/:id', auth, authorize('admin'), async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: 'Invalid test ID format' });
+    }
+
+    const quiz = await Quiz.findById(id);
+
+    if (!quiz || !quiz.isActive || quiz.isDeleted) {
+      return res.status(404).json({ message: 'Test not found or already deleted' });
+    }
+
+    const quizTitle = quiz.title;
+    const assignedStudentIds = (quiz.assignedStudents || []).map(sid => sid.toString());
+
+    // Perform atomic soft deletion
+    quiz.isActive = false;
+    quiz.isDeleted = true;
+    quiz.deletedAt = new Date();
+    quiz.deletedBy = req.user._id;
+    quiz.isPublic = false; // Revoke public share access
+
+    await quiz.save();
+
+    // Pull quiz ID from User.unseenQuizzes
+    await User.updateMany(
+      { unseenQuizzes: quiz._id },
+      { $pull: { unseenQuizzes: quiz._id } }
+    );
+
+    // Notify assigned students via push notification
+    if (assignedStudentIds.length > 0) {
+      const assignedUsers = await User.find({
+        _id: { $in: assignedStudentIds },
+        $or: [
+          { expoPushToken: { $exists: true, $ne: null } },
+          { fcmToken: { $exists: true, $ne: null } }
+        ]
+      }).select('expoPushToken fcmToken');
+
+      const pushPromises = assignedUsers.map(user =>
+        sendPushToUser({
+          expoPushToken: user.expoPushToken,
+          fcmToken: user.fcmToken,
+          title: 'Test Removed',
+          body: `The test "${quizTitle}" was deleted by the administrator.`,
+          data: {
+            type: 'quiz_deleted',
+            quizId: quiz._id.toString()
+          }
+        }).catch(err => console.error('Error sending delete push to user:', user._id, err))
+      );
+
+      Promise.all(pushPromises).catch(err => console.error('Error in batch delete push:', err));
+    }
+
+    // Emit real-time WebSocket event so frontend automatically updates
+    const io = req.app.get('io');
+    if (io) {
+      io.emit('quiz_deleted', {
+        quizId: quiz._id.toString(),
+        title: quizTitle,
+        assignedStudents: assignedStudentIds
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Test deleted successfully',
+      quizId: quiz._id
+    });
+  } catch (error) {
+    console.error('Error deleting quiz:', error);
+    res.status(500).json({ message: 'Failed to delete test. Please try again.' });
   }
 });
 
@@ -2328,8 +2569,8 @@ router.get('/:id', auth, async (req, res) => {
       })
       .populate('assignedMentors', 'name email');
 
-    if (!quiz) {
-      return res.status(404).json({ message: 'Quiz not found' });
+    if (!quiz || !quiz.isActive || quiz.isDeleted) {
+      return res.status(404).json({ message: 'This test was deleted by the administrator and is no longer available.' });
     }
 
     // Check access for mentors
@@ -2427,8 +2668,8 @@ router.post('/:id/start', auth, authorize('student'), async (req, res) => {
   try {
     const quiz = await Quiz.findById(req.params.id);
 
-    if (!quiz) {
-      return res.status(404).json({ message: 'Quiz not found' });
+    if (!quiz || !quiz.isActive || quiz.isDeleted) {
+      return res.status(404).json({ message: 'This test was deleted by the administrator and is no longer available.' });
     }
 
     if (!quiz.assignedStudents.includes(req.user._id)) {

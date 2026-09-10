@@ -6,6 +6,7 @@ const { auth, authorize } = require('../middleware/auth');
 const multer = require('multer');
 const { parseExcel } = require('../utils/excelParser');
 const { buildImportTemplateBuffer } = require('../utils/excelTemplate');
+const { buildImportValidationPayload } = require('../utils/importErrors');
 const {
     QuestionValidationError,
     normalizeQuestionInput,
@@ -17,6 +18,28 @@ const {
     transferQuestionImages,
 } = require('../utils/imageUploader');
 const logger = require('../utils/logger');
+
+/**
+ * Duplicate guard for manual question writes: the same question text within
+ * the same subject (case- and whitespace-insensitive, active questions only)
+ * is rejected with 409 — the same match semantics the Excel import uses for
+ * reuse detection. Soft-deleted questions never block creation.
+ * `excludeId` lets the update path check against every OTHER question.
+ */
+const DUPLICATE_QUESTION_MESSAGE = 'This question already exists in the question bank.';
+
+const findDuplicateQuestion = (subjectId, questionText, excludeId = null) => {
+    const normalizedText = String(questionText || '').trim().toLowerCase();
+    if (!subjectId || !normalizedText) return null;
+
+    const filter = {
+        subject: subjectId,
+        isActive: true,
+        $expr: { $eq: [{ $toLower: '$question' }, normalizedText] },
+    };
+    if (excludeId) filter._id = { $ne: excludeId };
+    return QuestionBank.findOne(filter);
+};
 
 const router = express.Router();
 
@@ -107,6 +130,18 @@ router.post('/', auth, authorize('admin'), async (req, res) => {
         const normalized = normalizeQuestionInput(req.body);
         validateQuestionPayload(normalized);
 
+        const duplicate = await findDuplicateQuestion(normalized.subject, normalized.question);
+        if (duplicate) {
+            logger.info('Duplicate question creation blocked', {
+                userId: req.user._id.toString(),
+                existingQuestionId: duplicate._id.toString(),
+            });
+            return res.status(409).json({
+                message: DUPLICATE_QUESTION_MESSAGE,
+                errorType: 'DUPLICATE_QUESTION',
+            });
+        }
+
         const question = new QuestionBank({
             ...normalized,
             createdBy: req.user._id
@@ -133,7 +168,16 @@ router.post('/', auth, authorize('admin'), async (req, res) => {
  * points enforce identical rules.
  */
 async function handleBulkImport(req, res, buffer) {
-    const { questions: parsedRows, errors: parseErrors } = await parseExcel(buffer);
+    const parseResult = await parseExcel(buffer);
+    if (parseResult.fatal) {
+        return res.status(400).json({
+            ...buildImportValidationPayload([parseResult.fatal.message], {
+                totalErrors: 1,
+                hint: parseResult.fatal.hint,
+            }),
+        });
+    }
+    const { questions: parsedRows, errors: parseErrors } = parseResult;
 
     const subjectsMap = {};
     const allSubjects = await Subject.find();
@@ -295,10 +339,10 @@ router.post('/bulk-import', auth, authorize('admin'), upload.single('file'), asy
 
         await handleBulkImport(req, res, req.file.buffer);
     } catch (error) {
-        logger.error('Bulk import error', { error: error.message });
+        logger.error('Bulk import error', { error: error.message, requestId: req.requestId });
         res.status(500).json({
             message: 'Error importing questions',
-            error: error.message
+            requestId: req.requestId
         });
     }
 });
@@ -318,10 +362,10 @@ router.post('/bulk-import-base64', auth, authorize('admin'), async (req, res) =>
         const buffer = Buffer.from(data, 'base64');
         await handleBulkImport(req, res, buffer);
     } catch (error) {
-        logger.error('Bulk import (base64) error', { error: error.message });
+        logger.error('Bulk import (base64) error', { error: error.message, requestId: req.requestId });
         res.status(500).json({
             message: 'Error importing questions',
-            error: error.message
+            requestId: req.requestId
         });
     }
 });
@@ -479,6 +523,20 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
 
         const { _id, createdAt, updatedAt, __v, ...safeMerged } = merged;
         Object.assign(existing, safeMerged);
+
+        // An edit must not turn this question into a copy of another one.
+        const duplicate = await findDuplicateQuestion(existing.subject, existing.question, existing._id);
+        if (duplicate) {
+            logger.info('Duplicate question update blocked', {
+                userId: req.user._id.toString(),
+                questionId: existing._id.toString(),
+                duplicateOf: duplicate._id.toString(),
+            });
+            return res.status(409).json({
+                message: DUPLICATE_QUESTION_MESSAGE,
+                errorType: 'DUPLICATE_QUESTION',
+            });
+        }
 
         await existing.save();
         logger.info('Question updated', { questionId: existing._id.toString(), userId: req.user._id.toString() });

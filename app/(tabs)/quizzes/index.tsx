@@ -215,10 +215,12 @@ function QuizzesContent() {
 
     socket.on('new_quiz_assigned', handleQuizUpdate);
     socket.on('quiz_submitted', handleQuizUpdate);
+    socket.on('quiz_deleted', handleQuizUpdate);
 
     return () => {
       socket.off('new_quiz_assigned', handleQuizUpdate);
       socket.off('quiz_submitted', handleQuizUpdate);
+      socket.off('quiz_deleted', handleQuizUpdate);
     };
   }, [socket]);
 

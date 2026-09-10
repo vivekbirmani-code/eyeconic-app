@@ -1,6 +1,6 @@
 const cloudinary = require('cloudinary').v2;
 const axios = require('axios');
-const { convertGoogleDriveUrl } = require('./imageUrls');
+const { convertGoogleDriveUrl, isGoogleDriveUrl } = require('./imageUrls');
 
 // Configure Cloudinary
 cloudinary.config({
@@ -20,7 +20,11 @@ const uploadImageFromUrl = async (imageUrl, folder = 'eyeconic_questions') => {
         return null;
     }
 
-    const url = convertGoogleDriveUrl(imageUrl);
+    // Only genuine Drive share links are rewritten. convertGoogleDriveUrl
+    // matches any URL containing a 25+ char token, so applying it blindly
+    // (as this path used to) corrupted perfectly good non-Drive URLs — e.g.
+    // signed CDN links — into dead lh3.googleusercontent.com URLs.
+    const url = isGoogleDriveUrl(imageUrl) ? convertGoogleDriveUrl(imageUrl) : imageUrl;
     if (!url) {
         console.log('⚠️ Invalid image URL:', imageUrl);
         return null;

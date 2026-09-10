@@ -16,6 +16,9 @@ afterAll(async () => {
   await db.closeDatabase();
 });
 
+// Same-subject duplicate stems are rejected by the API now — default to a unique stem; explicit question overrides still win.
+let questionSeed = 0;
+
 async function createQuestion(admin, subject, overrides = {}) {
   const res = await request(app)
     .post('/api/question-bank')
@@ -27,7 +30,7 @@ async function createQuestion(admin, subject, overrides = {}) {
       system: 'Genetic Disorders',
       questionType: 'mcq_single',
       difficulty: 'medium',
-      question: 'What is the powerhouse of the cell?',
+      question: `Auto question #${++questionSeed}?`,
       options: ['Nucleus', 'Mitochondria', 'Ribosome', 'Golgi'],
       correctAnswer: 1,
       ...overrides,
@@ -614,13 +617,15 @@ describe('Results grouping — Group by controls the aggregation', () => {
     ];
 
     const questions = [];
-    for (const def of questionDefs) {
+    for (let idx = 0; idx < questionDefs.length; idx++) {
+      const def = questionDefs[idx];
       questions.push(await createQuestion(admin, def.subject, {
         topicName: def.topicName,
         questionType: def.questionType || 'mcq_single',
         options: def.options || ['A', 'B', 'C'],
         correctAnswer: def.correctAnswer !== undefined ? def.correctAnswer : 1,
-        question: `${def.topicName} question`,
+        // Unique stem per question — same-subject duplicate text is rejected now.
+        question: `${def.topicName} question ${idx + 1}`,
       }));
     }
 

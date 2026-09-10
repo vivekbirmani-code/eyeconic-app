@@ -17,6 +17,9 @@ afterAll(async () => {
   await db.closeDatabase();
 });
 
+// Same-subject duplicate stems are rejected by the API now — default to a unique stem; explicit question overrides still win.
+let questionSeed = 0;
+
 async function createQuestion(admin, subject, overrides = {}) {
   const res = await request(app)
     .post('/api/question-bank')
@@ -28,7 +31,7 @@ async function createQuestion(admin, subject, overrides = {}) {
       system: 'Genetic Disorders',
       questionType: 'mcq_single',
       difficulty: 'medium',
-      question: 'Sample question?',
+      question: `Auto question #${++questionSeed}?`,
       options: ['A', 'B', 'C', 'D'],
       correctAnswer: 1,
       ...overrides,

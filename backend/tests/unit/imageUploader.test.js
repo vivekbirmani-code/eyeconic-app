@@ -39,6 +39,34 @@ describe('needsCloudinaryTransfer', () => {
   });
 });
 
+describe('processQuestionImages — URL handling', () => {
+  beforeEach(() => {
+    axios.get.mockReset();
+    cloudinary.uploader.upload.mockReset();
+  });
+
+  it('downloads from the given URL unchanged when it is not a Drive link', async () => {
+    stubDownload();
+    stubUpload();
+    // 25+ char token in a NON-Drive URL: must NOT be rewritten to
+    // lh3.googleusercontent.com (the quiz-import path used to corrupt these).
+    const signedCdnUrl = 'https://cdn.example-medical.org/images/abcdefghij0123456789abcdef0123456789?sig=tok';
+    const { questionImage } = await (require('../../utils/imageUploader').processQuestionImages({
+      questionImage: signedCdnUrl,
+    }));
+    expect(questionImage).toBe(CLOUDINARY_URL);
+    expect(axios.get.mock.calls[0][0]).toBe(signedCdnUrl);
+  });
+
+  it('converts Drive share links to the direct delivery host', async () => {
+    stubDownload();
+    stubUpload();
+    const shareUrl = 'https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789/view';
+    await (require('../../utils/imageUploader').processQuestionImages({ questionImage: shareUrl }));
+    expect(axios.get.mock.calls[0][0]).toBe(DRIVE_URL);
+  });
+});
+
 describe('transferQuestionImages', () => {
   beforeEach(() => {
     axios.get.mockReset();

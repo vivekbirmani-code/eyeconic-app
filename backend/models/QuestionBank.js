@@ -138,10 +138,13 @@ const questionBankSchema = new mongoose.Schema({
 
 // Indexes for efficient queries — chosen based on actual filter/query patterns
 // used by the question bank list, quiz builder, and analytics, not one per field.
+// NOTE: qid needs no entry here — the field-level `unique: true, sparse: true`
+// above already creates `qid_1`. Declaring it twice made mongoose send two
+// createIndexes calls with the same name but different options, which fails
+// with IndexKeySpecsConflict on any fresh database.
 questionBankSchema.index({ subject: 1, topic: 1 });
 questionBankSchema.index({ subject: 1, isActive: 1 });
 questionBankSchema.index({ subject: 1, topicName: 1, isActive: 1 });
-questionBankSchema.index({ qid: 1 });
 questionBankSchema.index({ topicName: 1 });
 questionBankSchema.index({ subtopicName: 1, isActive: 1 });
 questionBankSchema.index({ system: 1, isActive: 1 });

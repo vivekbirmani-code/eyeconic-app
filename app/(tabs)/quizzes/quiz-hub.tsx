@@ -7,8 +7,10 @@ import {
   TouchableOpacity,
   Animated,
   Pressable,
+  useWindowDimensions,
 } from 'react-native';
 import { ScreenContainer } from '@/components/layout';
+import StatCardGrid from '@/components/StatCardGrid';
 import { useRouter } from 'expo-router';
 import {
   BookOpen,
@@ -45,9 +47,13 @@ interface RecentQuiz {
   createdAt: string;
 }
 
+/** Height (dp) of the decorative top-glow fade — see the LinearGradient wrapper. */
+const TOP_GLOW_HEIGHT = 250;
+
 export default function AdminQuizHub() {
   const { user } = useAuth();
   const router = useRouter();
+  const { height: windowHeight } = useWindowDimensions();
 
   const [loading, setLoading] = useState(true);
   const [quizStats, setQuizStats] = useState<QuizStats>({ total: 0, daily: 0, weekly: 0, grand: 0 });
@@ -191,6 +197,12 @@ export default function AdminQuizHub() {
     );
   }
 
+  // The decorative top glow fades out within the original 250dp band; the
+  // stops are scaled to the window height because the gradient now fills the
+  // whole screen as the scroll content's background.
+  const glowEnd = Math.min(0.98, TOP_GLOW_HEIGHT / Math.max(windowHeight, TOP_GLOW_HEIGHT + 1));
+  const glowLocations = [0, glowEnd * 0.5, glowEnd, 1];
+
   const menuItems = [
     {
       title: 'Question Bank',
@@ -258,18 +270,23 @@ export default function AdminQuizHub() {
 
   return (
     <ScreenContainer style={styles.container}>
-      {/* Top glow effect */}
+      {/* Decorative top glow rendered as the ScrollView's own background.
+          It must composite BEHIND the content: as a sibling overlay it could
+          only be layered under it via zIndex, which Android does not honor
+          against elevated children (the KPI cards use elevation for their
+          shadows), so the glow tinted the first row of cards grey. A parent
+          gradient is always painted behind its children on every platform. */}
       <LinearGradient
         colors={[
           'rgba(1, 180, 174, 0.18)',
           'rgba(1, 180, 174, 0.08)',
+          'rgba(255, 255, 255, 0)',
           'rgba(255, 255, 255, 0)'
         ]}
-        locations={[0, 0.5, 1]}
-        style={styles.topGlow}
-      />
-
-      <ScrollView showsVerticalScrollIndicator={false}>
+        locations={glowLocations}
+        style={styles.contentGradient}
+      >
+      <ScrollView showsVerticalScrollIndicator={false} style={styles.scrollView}>
         {/* Animated Header with Gradient */}
         <Animated.View style={{ opacity: headerOpacity }}>
           <LinearGradient
@@ -294,31 +311,14 @@ export default function AdminQuizHub() {
           ]}
         >
           {loading ? (
-            // Skeleton loaders for stats
-            <>
-              {[1, 2, 3, 4].map((i) => (
-                <View key={i} style={styles.statCard}>
-                  <Skeleton style={styles.skeletonNumber} />
-                  <Skeleton style={styles.skeletonLabel} />
-                </View>
-              ))}
-            </>
+            <StatCardGrid items={statCards} isLoading />
           ) : (
-            statCards.map((stat, index) => (
-              <Pressable
-                key={index}
-                style={({ pressed }) => [
-                  styles.statCard,
-                  pressed && styles.statCardPressed
-                ]}
-                onPress={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
-              >
-                <Animated.View style={{ opacity: contentOpacity }}>
-                  <Text style={styles.statNumber}>{stat.value}</Text>
-                  <Text style={styles.statLabel}>{stat.label}</Text>
-                </Animated.View>
-              </Pressable>
-            ))
+            <Animated.View style={{ opacity: contentOpacity }}>
+              <StatCardGrid
+                items={statCards}
+                onPressItem={() => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light)}
+              />
+            </Animated.View>
           )}
         </Animated.View>
 
@@ -506,6 +506,7 @@ export default function AdminQuizHub() {
 
         <View style={{ height: 40 }} />
       </ScrollView>
+      </LinearGradient>
     </ScreenContainer>
   );
 }
@@ -515,14 +516,13 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#FFFFFF',
   },
-  // Top glow effect
-  topGlow: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 250,
-    zIndex: 0,
+  // Parent gradient that carries the decorative top glow behind all scrolled
+  // content — see the comment at the LinearGradient in the JSX.
+  contentGradient: {
+    flex: 1,
+  },
+  scrollView: {
+    flex: 1,
   },
   // Header with gradient
   headerGradient: {
@@ -551,41 +551,7 @@ const styles = StyleSheet.create({
   },
   // Stats cards
   statsContainer: {
-    flexDirection: 'row',
     padding: 16,
-    gap: 10,
-  },
-  statCard: {
-    flex: 1,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 16,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(1, 180, 174, 0.15)',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 4,
-  },
-  statCardPressed: {
-    transform: [{ scale: 0.97 }],
-    shadowOpacity: 0.04,
-  },
-  statNumber: {
-    fontSize: 26,
-    fontWeight: '700',
-    color: '#01b4ae',
-    textAlign: 'center',
-  },
-  statLabel: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: '#6B7280',
-    marginTop: 4,
-    textAlign: 'center',
-    letterSpacing: 0.2,
   },
   // Menu items
   menuContainer: {
@@ -837,17 +803,6 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     backgroundColor: '#E5E7EB',
-  },
-  skeletonNumber: {
-    width: 40,
-    height: 28,
-    marginBottom: 6,
-    alignSelf: 'center',
-  },
-  skeletonLabel: {
-    width: 50,
-    height: 12,
-    alignSelf: 'center',
   },
   skeletonIcon: {
     width: 48,

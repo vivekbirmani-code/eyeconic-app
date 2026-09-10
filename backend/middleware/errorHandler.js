@@ -1,5 +1,15 @@
 const logger = require('../utils/logger');
 
+// multer upload failures (bad multipart body, oversized file) are client
+// problems — without this mapping they surfaced as 500 INTERNAL_ERROR.
+const MULTER_ERROR_RESPONSES = {
+  LIMIT_FILE_SIZE: { status: 413, message: 'The uploaded file is too large.' },
+  LIMIT_FILE_COUNT: { status: 400, message: 'Too many files were uploaded.' },
+  LIMIT_FIELD_COUNT: { status: 400, message: 'Too many form fields were submitted.' },
+  LIMIT_FIELD_VALUE: { status: 400, message: 'A form field value is too large.' },
+  LIMIT_UNEXPECTED_FILE: { status: 400, message: 'Unexpected file field in the upload.' },
+};
+
 /**
  * Global Express error handler.
  * Ensures internal errors never leak stack traces or raw DB messages to clients.
@@ -7,6 +17,21 @@ const logger = require('../utils/logger');
 // eslint-disable-next-line no-unused-vars
 const errorHandler = (err, req, res, next) => {
   const requestId = req.requestId || 'unknown';
+
+  if (res.headersSent) {
+    logger.warn('Error after response started', { requestId, path: req.path, errorName: err.name });
+    return next(err);
+  }
+
+  if (err.name === 'MulterError' && MULTER_ERROR_RESPONSES[err.code]) {
+    const mapped = MULTER_ERROR_RESPONSES[err.code];
+    logger.warn('Upload rejected by multer', { requestId, path: req.path, multerCode: err.code });
+    return res.status(mapped.status).json({
+      message: mapped.message,
+      code: err.code,
+      requestId,
+    });
+  }
 
   logger.error('Unhandled request error', {
     requestId,
@@ -16,10 +41,6 @@ const errorHandler = (err, req, res, next) => {
     errorMessage: err.message,
     stack: process.env.NODE_ENV === 'production' ? undefined : err.stack,
   });
-
-  if (res.headersSent) {
-    return next(err);
-  }
 
   const statusCode = err.statusCode || err.status || 500;
   const safeStatus = statusCode >= 400 && statusCode < 600 ? statusCode : 500;

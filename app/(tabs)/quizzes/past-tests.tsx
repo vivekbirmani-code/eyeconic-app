@@ -20,10 +20,12 @@ import {
   X,
   Copy,
   Edit,
+  Trash2,
 } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
 import ShareQuizModal from '@/components/ShareQuizModal';
+import DeleteQuizModal, { DeleteQuizTarget } from '@/components/DeleteQuizModal';
 
 interface Quiz {
   _id: string;
@@ -49,6 +51,11 @@ export default function PastTests() {
   // Share modal state
   const [shareModalVisible, setShareModalVisible] = useState(false);
   const [selectedQuiz, setSelectedQuiz] = useState<Quiz | null>(null);
+
+  // Delete modal state
+  const [deleteModalVisible, setDeleteModalVisible] = useState(false);
+  const [quizToDelete, setQuizToDelete] = useState<Quiz | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     fetchQuizzes();
@@ -88,6 +95,30 @@ export default function PastTests() {
   const openShareModal = (quiz: Quiz) => {
     setSelectedQuiz(quiz);
     setShareModalVisible(true);
+  };
+
+  const openDeleteModal = (quiz: Quiz) => {
+    setQuizToDelete(quiz);
+    setDeleteModalVisible(true);
+  };
+
+  const handleConfirmDelete = async (quiz: DeleteQuizTarget) => {
+    try {
+      setDeleting(true);
+      await api.delete(`/quizzes/${quiz._id}`);
+      setDeleteModalVisible(false);
+      setQuizToDelete(null);
+      // Immediately remove from local state
+      setQuizzes(prev => prev.filter(q => q._id !== quiz._id));
+      setFilteredQuizzes(prev => prev.filter(q => q._id !== quiz._id));
+      Alert.alert('Success', 'Test deleted successfully');
+    } catch (error: any) {
+      console.error('Delete error:', error);
+      const message = error.response?.data?.message || 'Something went wrong while deleting this test. Please try again.';
+      Alert.alert('Unable to delete test', message);
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const handleDuplicate = async (quiz: Quiz) => {
@@ -230,6 +261,14 @@ export default function PastTests() {
                   <Share2 color="#2563EB" size={20} />
                   <Text style={[styles.actionButtonText, styles.shareBtnText]}>Share</Text>
                 </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[styles.actionButton, styles.deleteBtn]}
+                  onPress={() => openDeleteModal(quiz)}
+                >
+                  <Trash2 color="#EF4444" size={20} />
+                  <Text style={[styles.actionButtonText, styles.deleteBtnText]}>Delete</Text>
+                </TouchableOpacity>
               </View>
             </View>
           ))
@@ -243,6 +282,20 @@ export default function PastTests() {
         quiz={selectedQuiz}
         onClose={() => setShareModalVisible(false)}
         onShareComplete={fetchQuizzes}
+      />
+
+      {/* Delete Confirmation Modal */}
+      <DeleteQuizModal
+        visible={deleteModalVisible}
+        quiz={quizToDelete}
+        deleting={deleting}
+        onClose={() => {
+          if (!deleting) {
+            setDeleteModalVisible(false);
+            setQuizToDelete(null);
+          }
+        }}
+        onConfirmDelete={handleConfirmDelete}
       />
     </ScreenContainer>
   );
@@ -377,7 +430,7 @@ const styles = StyleSheet.create({
   },
   actionButtons: {
     flexDirection: 'column',
-    gap: 12,
+    gap: 8,
     justifyContent: 'center',
     paddingLeft: 12,
     borderLeftWidth: 1,
@@ -385,7 +438,7 @@ const styles = StyleSheet.create({
   },
   actionButton: {
     alignItems: 'center',
-    gap: 4,
+    gap: 2,
   },
   actionButtonText: {
     fontSize: 11,
@@ -395,5 +448,9 @@ const styles = StyleSheet.create({
   shareBtn: {},
   shareBtnText: {
     color: '#2563EB',
+  },
+  deleteBtn: {},
+  deleteBtnText: {
+    color: '#EF4444',
   },
 });

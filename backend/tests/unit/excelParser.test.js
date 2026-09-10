@@ -233,6 +233,64 @@ describe('parseExcel — regression fixture (misplaced template columns)', () =>
   });
 });
 
+// File-level failures must surface as a structured `fatal` result (mapped to
+// a 400 by the routes), never as a thrown error — a throw lands in the route
+// catch-all and the admin sees a generic "Server error" (production issue:
+// a valid-looking .xlsx whose data sat on the second sheet).
+describe('parseExcel — file-level failures (no throws)', () => {
+  const emptySheet = (name) => {
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(workbook, xlsx.utils.aoa_to_sheet([['SUBJECT', 'QUESTION']]), name);
+    return xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+  };
+
+  it('returns fatal (not a throw) when the workbook has no data rows anywhere', async () => {
+    const result = await parseExcel(emptySheet('Sheet1'));
+    expect(result.questions).toEqual([]);
+    expect(result.fatal).toBeTruthy();
+    expect(result.fatal.message).toMatch(/no question rows/i);
+    expect(result.fatal.hint).toBeTruthy();
+  });
+
+  it('returns fatal when the file is not a readable Excel workbook', async () => {
+    const result = await parseExcel(Buffer.from('definitely not an excel file'));
+    // SheetJS may either throw on read (UNREADABLE_WORKBOOK) or yield an
+    // empty workbook (NO_QUESTION_ROWS) — both must be a structured fatal,
+    // never a thrown error.
+    expect(result.fatal).toBeTruthy();
+    expect(['UNREADABLE_WORKBOOK', 'NO_WORKSHEETS', 'NO_QUESTION_ROWS']).toContain(result.fatal.code);
+  });
+
+  it('returns fatal for a zero-byte file', async () => {
+    const result = await parseExcel(Buffer.alloc(0));
+    expect(result.fatal).toBeTruthy();
+  });
+
+  it('falls back to a later sheet when the first/preferred sheet has no rows', async () => {
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(workbook, xlsx.utils.aoa_to_sheet([['SUBJECT', 'QUESTION']]), 'Sheet1');
+    xlsx.utils.book_append_sheet(workbook, xlsx.utils.json_to_sheet([baseRow()]), 'Sheet2');
+    const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+    const result = await parseExcel(buffer);
+    expect(result.fatal).toBeFalsy();
+    expect(result.errors).toHaveLength(0);
+    expect(result.questions).toHaveLength(1);
+    expect(result.sheetName).toBe('Sheet2');
+  });
+
+  it('still prefers a named "Question Bank" sheet over a non-empty first sheet', async () => {
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(workbook, xlsx.utils.json_to_sheet([baseRow({ QUESTION: 'first sheet q?' })]), 'Notes');
+    xlsx.utils.book_append_sheet(workbook, xlsx.utils.json_to_sheet([baseRow()]), 'Question Bank');
+    const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+    const { sheetName, questions } = await parseExcel(buffer);
+    expect(sheetName).toBe('Question Bank');
+    expect(questions[0].question).toBe(baseRow().QUESTION);
+  });
+});
+
 describe('excelTemplate', () => {
   it('generates a valid template that passes parseExcel', async () => {
     const buffer = buildImportTemplateBuffer();

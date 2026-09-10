@@ -25,7 +25,7 @@ beforeEach(async () => {
   subject = await createSubject('Pathology');
 });
 
-const validMcq = () => ({
+const validMcq = (overrides = {}) => ({
   subject: subject._id.toString(),
   topicName: 'Genetics',
   subtopicName: 'Mendelian Inheritance',
@@ -35,6 +35,7 @@ const validMcq = () => ({
   question: 'What is the powerhouse of the cell?',
   options: ['Nucleus', 'Mitochondria', 'Ribosome', 'Golgi'],
   correctAnswer: 1,
+  ...overrides,
 });
 
 describe('POST /api/question-bank — create', () => {
@@ -166,10 +167,11 @@ describe('GET /api/question-bank — student answer-key stripping', () => {
 
 describe('GET /api/question-bank — filters', () => {
   beforeEach(async () => {
+    // Distinct question texts — same-subject duplicates are rejected now.
     await request(app).post('/api/question-bank').set('Authorization', `Bearer ${adminToken}`)
-      .send({ ...validMcq(), difficulty: 'easy', system: 'Cardiovascular', subtopicName: 'Heart' });
+      .send(validMcq({ difficulty: 'easy', system: 'Cardiovascular', subtopicName: 'Heart', question: 'Easy heart question?' }));
     await request(app).post('/api/question-bank').set('Authorization', `Bearer ${adminToken}`)
-      .send({ ...validMcq(), difficulty: 'hard', system: 'Respiratory', subtopicName: 'Lungs' });
+      .send(validMcq({ difficulty: 'hard', system: 'Respiratory', subtopicName: 'Lungs', question: 'Hard lungs question?' }));
   });
 
   it('filters by difficulty', async () => {
@@ -188,6 +190,95 @@ describe('GET /api/question-bank — filters', () => {
     expect(res.status).toBe(200);
     expect(res.body.length).toBe(1);
     expect(res.body[0].system).toBe('Cardiovascular');
+  });
+});
+
+describe('POST /api/question-bank — duplicate guard', () => {
+  it('rejects an exact duplicate (same subject + same text) with the duplicate message', async () => {
+    const first = await request(app).post('/api/question-bank')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(validMcq());
+    expect(first.status).toBe(201);
+
+    const res = await request(app).post('/api/question-bank')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(validMcq());
+    expect(res.status).toBe(409);
+    expect(res.body.message).toBe('This question already exists in the question bank.');
+    expect(res.body.errorType).toBe('DUPLICATE_QUESTION');
+  });
+
+  it('matches case and surrounding whitespace, and different options', async () => {
+    await request(app).post('/api/question-bank')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(validMcq());
+
+    const res = await request(app).post('/api/question-bank')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(validMcq({
+        question: '   what IS the POWERHOUSE of the cell?  ',
+        options: ['Different', 'Options', 'Entirely', 'Here'],
+      }));
+    expect(res.status).toBe(409);
+  });
+
+  it('allows the same text under a different subject', async () => {
+    const other = await createSubject('Physiology');
+    await request(app).post('/api/question-bank')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(validMcq());
+
+    const res = await request(app).post('/api/question-bank')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(validMcq({ subject: other._id.toString() }));
+    expect(res.status).toBe(201);
+  });
+
+  it('allows different text in the same subject', async () => {
+    await request(app).post('/api/question-bank')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(validMcq());
+
+    const res = await request(app).post('/api/question-bank')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(validMcq({ question: 'What is the control center of the cell?' }));
+    expect(res.status).toBe(201);
+  });
+});
+
+describe('PUT /api/question-bank/:id — duplicate guard', () => {
+  it('rejects an edit that makes the question a duplicate of another', async () => {
+    const first = await request(app).post('/api/question-bank')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(validMcq({ question: 'First question?' }));
+    expect(first.status).toBe(201);
+
+    const second = await request(app).post('/api/question-bank')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(validMcq({ question: 'Second question?' }));
+    expect(second.status).toBe(201);
+
+    const res = await request(app)
+      .put(`/api/question-bank/${second.body._id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ question: 'First question?' });
+
+    expect(res.status).toBe(409);
+    expect(res.body.message).toBe('This question already exists in the question bank.');
+  });
+
+  it('allows saving a question with its own unchanged text (no self-match)', async () => {
+    const created = await request(app).post('/api/question-bank')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(validMcq());
+    expect(created.status).toBe(201);
+
+    const res = await request(app)
+      .put(`/api/question-bank/${created.body._id}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ difficulty: 'hard' });
+
+    expect(res.status).toBe(200);
   });
 });
 

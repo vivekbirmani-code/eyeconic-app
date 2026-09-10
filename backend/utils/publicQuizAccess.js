@@ -29,6 +29,16 @@ const findActivePublicQuiz = async (shareToken, options = null) => {
   const quiz = await query;
 
   if (!quiz) {
+    const deletedQuiz = await Quiz.findOne({ shareToken });
+    if (deletedQuiz && (!deletedQuiz.isActive || deletedQuiz.isDeleted)) {
+      return {
+        error: {
+          statusCode: 404,
+          code: 'QUIZ_DELETED',
+          message: 'This test was deleted by the administrator and is no longer available.',
+        },
+      };
+    }
     return {
       error: {
         statusCode: 404,

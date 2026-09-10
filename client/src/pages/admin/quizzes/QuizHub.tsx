@@ -124,7 +124,7 @@ export default function QuizHub() {
       <div className="max-w-5xl mx-auto px-4 md:px-8 py-6 md:py-8">
         
         {/* Stats Grid */}
-        <div className="grid grid-cols-4 gap-3 md:gap-4 mb-8">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 md:gap-4 mb-8">
           {[
             { label: 'Questions', value: questionCount, loading: isLoading },
             { label: 'Total Tests', value: stats.total, loading: isLoading },
@@ -139,7 +139,7 @@ export default function QuizHub() {
                   {stat.value}
                 </span>
               )}
-              <span className="text-[12px] md:text-[14px] font-semibold text-gray-500 uppercase tracking-wider text-center">
+              <span className="text-[11px] md:text-[14px] font-semibold text-gray-500 uppercase tracking-wide md:tracking-wider text-center">
                 {stat.label}
               </span>
             </div>
