@@ -536,6 +536,24 @@ const parseQuizTimeWindow = ({ scheduledDate, expiryDate }) => {
   return { value };
 };
 
+// Checks whether an active (non-deleted) quiz already exists with the given title.
+// Excludes soft-deleted quizzes (isDeleted: true or isActive: false).
+// If `excludeQuizId` is provided, excludes that quiz ID from the check (useful for updates).
+const isQuizTitleTaken = async (title, excludeQuizId = null) => {
+  if (!title || !String(title).trim()) return false;
+  const normalizedTitle = String(title).trim();
+  const query = {
+    title: normalizedTitle,
+    isDeleted: { $ne: true },
+    isActive: { $ne: false },
+  };
+  if (excludeQuizId) {
+    query._id = { $ne: excludeQuizId };
+  }
+  const existing = await Quiz.findOne(query).select('_id');
+  return !!existing;
+};
+
 // Get quiz stats
 router.get('/stats', auth, authorize('admin', 'mentor'), async (req, res) => {
   try {
@@ -725,6 +743,17 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
     const timeWindowResult = parseQuizTimeWindow({ scheduledDate, expiryDate });
     if (timeWindowResult.error) {
       return res.status(400).json({ message: timeWindowResult.error });
+    }
+
+    if (!title || !String(title).trim()) {
+      return res.status(400).json({ message: 'Quiz title is required.' });
+    }
+
+    if (await isQuizTitleTaken(title)) {
+      return res.status(400).json({
+        message: `A quiz with the title "${String(title).trim()}" already exists. Please use a different name.`,
+        errorType: 'DUPLICATE_TITLE'
+      });
     }
 
     // Support both single subject and multiple subjects
@@ -945,12 +974,10 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
     }
 
     // Fail fast on a duplicate title BEFORE creating any questions — this
-    // check used to run after the whole question loop, leaving orphaned
-    // (tagged) questions behind whenever the title was taken.
-    const existingQuiz = await Quiz.findOne({ title: String(quizTitle).trim() });
-    if (existingQuiz) {
+    // check excludes soft-deleted quizzes so deleted quiz titles can be reused.
+    if (await isQuizTitleTaken(quizTitle)) {
       return res.status(400).json({
-        message: `A quiz with the title "${quizTitle}" already exists. Please use a different name.`,
+        message: `A quiz with the title "${String(quizTitle).trim()}" already exists. Please use a different name.`,
         errorType: 'DUPLICATE_TITLE'
       });
     }
@@ -1423,7 +1450,19 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
     //   return res.status(400).json({ message: 'Cannot modify questions/type of a quiz with attempts' });
     // }
 
-    if (title) quiz.title = title;
+    if (title !== undefined) {
+      const trimmedTitle = String(title).trim();
+      if (!trimmedTitle) {
+        return res.status(400).json({ message: 'Quiz title cannot be empty.' });
+      }
+      if (await isQuizTitleTaken(trimmedTitle, req.params.id)) {
+        return res.status(400).json({
+          message: `A quiz with the title "${trimmedTitle}" already exists. Please use a different name.`,
+          errorType: 'DUPLICATE_TITLE'
+        });
+      }
+      quiz.title = trimmedTitle;
+    }
     if (duration !== undefined) {
       const parsedDuration = parseInt(duration, 10);
       if (!Number.isFinite(parsedDuration) || parsedDuration <= 0) {
