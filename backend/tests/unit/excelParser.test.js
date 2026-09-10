@@ -371,3 +371,154 @@ describe('parseExcel — legacy sheet format (missing canonical columns)', () =>
     expect(errors.some((e) => /Subtopic is required/.test(e))).toBe(true);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QUESTION_TYPE alias normalization — every accepted alias must resolve to its
+// canonical value. Tests cover:
+//   • All new aliases added in this task (mcq_single + assertion_reason)
+//   • All pre-existing aliases (regression)
+//   • Leading/trailing whitespace handling
+//   • Mixed-case inputs
+//   • Invalid types still produce a useful error
+// ─────────────────────────────────────────────────────────────────────────────
+describe('QUESTION_TYPE alias normalization — mcq_single', () => {
+  const mcqAliases = [
+    // Canonical id
+    'mcq_single',
+    // Pre-existing aliases
+    'mcq',
+    'MCQ Single Correct',
+    'single correct',
+    // New aliases (this task)
+    'mcq-single correct',
+    'mcq-single_correct',
+    'MCQ-Single Correct',
+  ];
+
+  mcqAliases.forEach((alias) => {
+    it(`resolves "${alias}" → mcq_single`, async () => {
+      const { questions, errors } = await parseExcel(toBuffer([baseRow({ QUESTION_TYPE: alias })]));
+      expect(errors).toHaveLength(0);
+      expect(questions).toHaveLength(1);
+      expect(questions[0].questionType).toBe(QUESTION_TYPES.MCQ_SINGLE);
+    });
+  });
+
+  it('resolves "MCQ — Single Correct" (em-dash label) → mcq_single', async () => {
+    // QUESTION_TYPE_LABELS[mcq_single] = 'MCQ — Single Correct' — round-trip must work.
+    const { questions, errors } = await parseExcel(toBuffer([baseRow({ QUESTION_TYPE: 'MCQ \u2014 Single Correct' })]));
+    expect(errors).toHaveLength(0);
+    expect(questions[0].questionType).toBe(QUESTION_TYPES.MCQ_SINGLE);
+  });
+
+  it('strips leading/trailing whitespace from QUESTION_TYPE before matching', async () => {
+    const { questions, errors } = await parseExcel(toBuffer([baseRow({ QUESTION_TYPE: '  mcq_single  ' })]));
+    expect(errors).toHaveLength(0);
+    expect(questions[0].questionType).toBe(QUESTION_TYPES.MCQ_SINGLE);
+  });
+});
+
+describe('QUESTION_TYPE alias normalization — assertion_reason', () => {
+  const baseAR = () => baseRow({
+    QUESTION_TYPE: 'assertion_reason',
+    ASSERTION: 'Mitochondria produce ATP.',
+    REASON: 'They have a double membrane.',
+    OPTION1: '', OPTION2: '', OPTION3: '', OPTION4: '',
+    CORRECT: '1',
+  });
+
+  const arAliases = [
+    // Canonical id
+    'assertion_reason',
+    // Pre-existing aliases
+    'assertion reason',
+    'assertion / reason',
+    'assertion-reason',
+    // New aliases (this task)
+    'Assertion & Reason',
+    'Assertions/Reason',
+    'Assertion and Reasoning',
+  ];
+
+  arAliases.forEach((alias) => {
+    it(`resolves "${alias}" → assertion_reason`, async () => {
+      const { questions, errors } = await parseExcel(toBuffer([{ ...baseAR(), QUESTION_TYPE: alias }]));
+      expect(errors).toHaveLength(0);
+      expect(questions).toHaveLength(1);
+      expect(questions[0].questionType).toBe(QUESTION_TYPES.ASSERTION_REASON);
+    });
+  });
+});
+
+describe('QUESTION_TYPE alias normalization — other canonical types (regression)', () => {
+  const cases = [
+    { alias: 'match_the_following', expected: QUESTION_TYPES.MATCH_THE_FOLLOWING },
+    { alias: 'Match the Following', expected: QUESTION_TYPES.MATCH_THE_FOLLOWING },
+    { alias: 'Matching', expected: QUESTION_TYPES.MATCH_THE_FOLLOWING },
+    { alias: 'multiple_correct', expected: QUESTION_TYPES.MULTIPLE_CORRECT },
+    { alias: 'Multiple Correct', expected: QUESTION_TYPES.MULTIPLE_CORRECT },
+    { alias: 'Multi Correct', expected: QUESTION_TYPES.MULTIPLE_CORRECT },
+    { alias: 'numerical', expected: QUESTION_TYPES.NUMERICAL },
+    { alias: 'Numeric', expected: QUESTION_TYPES.NUMERICAL },
+    { alias: 'image_based', expected: QUESTION_TYPES.IMAGE_BASED },
+    { alias: 'Image-Based', expected: QUESTION_TYPES.IMAGE_BASED },
+  ];
+
+  // Build a row appropriate for each type so the parser doesn't fail on
+  // type-specific required fields before it can check the question type.
+  const rowForType = (type) => {
+    if (type === QUESTION_TYPES.MATCH_THE_FOLLOWING) {
+      return baseRow({
+        QUESTION_TYPE: undefined, // will be set per-alias
+        COLUMN_A: 'Item1;Item2',
+        COLUMN_B: 'MatchA;MatchB',
+        OPTION1: '', OPTION2: '', OPTION3: '', OPTION4: '',
+        CORRECT: '1-B,2-A',
+      });
+    }
+    if (type === QUESTION_TYPES.MULTIPLE_CORRECT) {
+      return baseRow({ QUESTION_TYPE: undefined, CORRECT: 'A,C' });
+    }
+    if (type === QUESTION_TYPES.NUMERICAL) {
+      return baseRow({
+        QUESTION_TYPE: undefined,
+        OPTION1: '', OPTION2: '', OPTION3: '', OPTION4: '',
+        CORRECT: '42',
+      });
+    }
+    if (type === QUESTION_TYPES.IMAGE_BASED) {
+      return baseRow({ QUESTION_TYPE: undefined, Q_IMAGE: 'https://picsum.photos/seed/test/320/200' });
+    }
+    return baseRow({ QUESTION_TYPE: undefined });
+  };
+
+  cases.forEach(({ alias, expected }) => {
+    it(`resolves "${alias}" → ${expected}`, async () => {
+      const row = { ...rowForType(expected), QUESTION_TYPE: alias };
+      const { questions, errors } = await parseExcel(toBuffer([row]));
+      expect(errors).toHaveLength(0);
+      expect(questions[0].questionType).toBe(expected);
+    });
+  });
+});
+
+describe('QUESTION_TYPE alias normalization — invalid values', () => {
+  it('rejects an unrecognised QUESTION_TYPE with a row-numbered error', async () => {
+    const { questions, errors } = await parseExcel(toBuffer([baseRow({ QUESTION_TYPE: 'essay' })]));
+    expect(questions).toHaveLength(0);
+    expect(errors.some((e) => e.startsWith('Row 2:') && /Invalid Question Type/.test(e))).toBe(true);
+  });
+
+  it('rejects an empty QUESTION_TYPE with a "required" error', async () => {
+    const { questions, errors } = await parseExcel(toBuffer([baseRow({ QUESTION_TYPE: '' })]));
+    expect(questions).toHaveLength(0);
+    expect(errors.some((e) => /Question Type is required/.test(e))).toBe(true);
+  });
+
+  it('rejects a whitespace-only QUESTION_TYPE with a "required" error', async () => {
+    const { questions, errors } = await parseExcel(toBuffer([baseRow({ QUESTION_TYPE: '   ' })]));
+    expect(questions).toHaveLength(0);
+    expect(errors.some((e) => /Question Type is required/.test(e))).toBe(true);
+  });
+});
+

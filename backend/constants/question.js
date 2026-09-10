@@ -27,31 +27,43 @@ const QUESTION_TYPE_LABELS = Object.freeze({
 // variants, and normalizes them all to one canonical value. Used by both the
 // API (create/update) and the Excel importer so the same rules apply everywhere.
 const QUESTION_TYPE_ALIASES = Object.freeze({
+    // ── MCQ Single ───────────────────────────────────────────────────────────
     'mcq_single': QUESTION_TYPES.MCQ_SINGLE,
     'mcq single': QUESTION_TYPES.MCQ_SINGLE,
     'mcq': QUESTION_TYPES.MCQ_SINGLE,
-    'mcq - single correct': QUESTION_TYPES.MCQ_SINGLE,
+    'mcq - single correct': QUESTION_TYPES.MCQ_SINGLE,   // "MCQ — Single Correct" (em-dash normalised)
     'mcq single correct': QUESTION_TYPES.MCQ_SINGLE,
     'single correct': QUESTION_TYPES.MCQ_SINGLE,
+    // Plain-hyphen variants (normalizeQuestionType does not strip hyphens)
+    'mcq-single correct': QUESTION_TYPES.MCQ_SINGLE,     // "mcq-single correct" / "MCQ-Single Correct"
+    'mcq-single_correct': QUESTION_TYPES.MCQ_SINGLE,     // "mcq-single_correct"
 
+    // ── Assertion / Reason ───────────────────────────────────────────────────
     'assertion_reason': QUESTION_TYPES.ASSERTION_REASON,
     'assertion reason': QUESTION_TYPES.ASSERTION_REASON,
     'assertion / reason': QUESTION_TYPES.ASSERTION_REASON,
     'assertion-reason': QUESTION_TYPES.ASSERTION_REASON,
+    'assertion & reason': QUESTION_TYPES.ASSERTION_REASON,    // "Assertion & Reason"
+    'assertions/reason': QUESTION_TYPES.ASSERTION_REASON,    // "Assertions/Reason"
+    'assertion and reasoning': QUESTION_TYPES.ASSERTION_REASON, // "Assertion and Reasoning"
 
+    // ── Match the Following ──────────────────────────────────────────────────
     'match_the_following': QUESTION_TYPES.MATCH_THE_FOLLOWING,
     'match the following': QUESTION_TYPES.MATCH_THE_FOLLOWING,
     'matching': QUESTION_TYPES.MATCH_THE_FOLLOWING,
 
+    // ── Image Based ──────────────────────────────────────────────────────────
     'image_based': QUESTION_TYPES.IMAGE_BASED,
     'image based': QUESTION_TYPES.IMAGE_BASED,
     'image-based': QUESTION_TYPES.IMAGE_BASED,
 
+    // ── Multiple Correct ─────────────────────────────────────────────────────
     'multiple_correct': QUESTION_TYPES.MULTIPLE_CORRECT,
     'multiple correct': QUESTION_TYPES.MULTIPLE_CORRECT,
     'multi correct': QUESTION_TYPES.MULTIPLE_CORRECT,
     'multi_correct': QUESTION_TYPES.MULTIPLE_CORRECT,
 
+    // ── Numerical ────────────────────────────────────────────────────────────
     'numerical': QUESTION_TYPES.NUMERICAL,
     'numeric': QUESTION_TYPES.NUMERICAL,
 });

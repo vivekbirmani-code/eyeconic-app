@@ -34,8 +34,8 @@ optional), plus the columns required by that row's Question Type.
 
 | Canonical id | Accepted labels |
 | :--- | :--- |
-| `mcq_single` | MCQ — Single Correct, MCQ, MCQ Single, Single Correct |
-| `assertion_reason` | Assertion / Reason, Assertion Reason |
+| `mcq_single` | MCQ — Single Correct, MCQ, MCQ Single, Single Correct, mcq-single correct, mcq-single_correct, MCQ-Single Correct |
+| `assertion_reason` | Assertion / Reason, Assertion Reason, Assertion & Reason, Assertions/Reason, Assertion and Reasoning |
 | `match_the_following` | Match the Following, Matching |
 | `image_based` | Image-Based, Image Based |
 | `multiple_correct` | Multiple Correct, Multi Correct |
