@@ -30,7 +30,25 @@ const studentsData = [
   { name: 'SAVAN', email: 'savan.tejani2001@gmail.com', password: 'student24' },
   { name: 'MOHAN AGARWAL', email: 'mohan.agarwal2204@gmail.com', password: 'student25' },
   { name: 'FARAZ', email: 'farazansary788@gmail.com', password: 'student26' },
-  { name: 'ARCHIT JOHRI', email: 'architjohri27@gmail.com', password: 'student27' }
+  { name: 'ARCHIT JOHRI', email: 'architjohri27@gmail.com', password: 'student27' },
+  { name: 'RAHGIR SHARMA', email: 'shamsshams6171@gmail.com', password: 'student28'},
+  { name: 'YASHWANT', email: 'yashwantsami.natarajan@gmail.com', password: 'student29'},
+  { name: 'NISHCHAY RATHORE', email: 'nishchaykrathore306@gmail.com', password: 'student30'},
+  { name: 'SATYA CHOWDARY CHAVA', email: 'satyachava36@gmail.com', password: 'student31'},
+  { name: 'AANSHI SHARMA', email: 'aanshisharma38@gmail.com', password: 'student32'},
+  { name: 'MINAL SINGH SEJWAL', email: 'sminal-singh@seu.edu.ge', password: 'student33'},
+  { name: 'MANOJ KUMAR', email: 'manojkumarmkasval002@gmail.com', password: 'student34'},
+  { name: 'SHRISHTI SAIGAL', email: 'Shrishtisaigal19@gmail.com', password: 'student35'},
+  { name: 'RYAN ALWYN', email: 'Drryanalwyn@gmail.com', password: 'student36'},
+  { name: 'HARSHAD ZALA', email: 'harshadsinhzala8055@gmail.com', password: 'student37'},
+  { name: 'DINESH SHARMA', email: 'Dinesh2041sharma@gmail.com', password: 'student38'},
+  { name: 'SANAM', email: 'Sanamm1402@gmail.com', password: 'student39'},
+  { name: 'JAYANTH', email: 'Jayanthnandyala@gmail.com', password: 'student40'},
+  { name: 'MAJULIAN JOSEPH', email: 'bobmaju99@gmail.com', password: 'student41'},
+  { name: 'GURSUEHAJ', email: 'gursehajkaur239@gmail.com', password: 'student42'},
+  { name: 'ASTHA MAHESHWARI', email: 'asthamaheshwari0502@gmail.com', password: 'student43'},
+  { name: 'WAZBIR UDDIN AHMED', email: 'wazbirahmed786@gmail.com', password: 'student44'},
+  { name: 'AASHUTOSH', email: 'aashutosh0705@gmail.com', password: 'student45'}
 ];
 
 const seedStudents = async () => {
