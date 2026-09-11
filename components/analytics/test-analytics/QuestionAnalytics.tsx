@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Animated,
-  Easing,
-  LayoutChangeEvent,
+  LayoutAnimation,
+  Platform,
+  UIManager,
   View,
   Text,
   StyleSheet,
@@ -28,81 +29,46 @@ interface QuestionAnalyticsProps {
     questions: QuestionAnalytic[];
 }
 
-// Matches the app's other motion timing (modals, sheets) — fast enough to
-// feel instant, slow enough for the height change to read as intentional.
-const TOGGLE_DURATION_MS = 220;
-const TOGGLE_EASING = Easing.bezier(0.4, 0, 0.2, 1);
+// LayoutAnimation needs a one-time opt-in on Android (iOS + web are no-ops /
+// enabled by default).
+if (Platform.OS === 'android') {
+    UIManager.setLayoutAnimationEnabledExperimental?.(true);
+}
+
+const CHEVRON_DURATION_MS = 200;
 
 /**
  * Question-wise analytics table behind a collapse/expand control.
  *
- * Tests routinely carry 100+ questions; rendering every row inline pushed the
- * participant sections far below the fold. The section ships COLLAPSED by
- * default — this screen's primary job is reaching participant analytics —
- * and expands on demand with a measured-height animation (no layout jumps).
- * Content is only mounted while expanded, so a collapsed 100-question table
- * costs nothing to render.
+ * Expanded content is rendered UNCONDITIONALLY while expanded — visibility
+ * never depends on a measured/animated height, so the section can never sit
+ * "expanded but invisible" (the failure mode of the previous height-animation
+ * implementation, which wedged when the mount→measure chain was slow or
+ * interrupted on 100-question tests). The open/close motion is the NATIVE
+ * LayoutAnimation: smooth, UI-thread, zero height bookkeeping, and collapse
+ * unmounts the rows entirely so the section is fully gone.
  *
- * The animated height is a PURE function of (expanded, contentHeight) driven
- * by an effect — never by tap-time closures. That is the fix for the control
- * dying on large tests: with 100 rows the mount→measure window is long, and
- * a second tap (or a late onLayout) during it used to leave the section
- * wedged invisible. State-driven animation recovers from every interleaving.
+ * The section ships EXPANDED by default — question analytics is primary
+ * content; collapsing is for shortening the scroll to the participant lists.
  */
 export default function QuestionAnalytics({ questions }: QuestionAnalyticsProps) {
-    const [expanded, setExpanded] = useState(false);
-    const [contentHeight, setContentHeight] = useState(0);
-    const [contentMounted, setContentMounted] = useState(false);
-    const heightAnim = useRef(new Animated.Value(0)).current;
-    const chevronAnim = useRef(new Animated.Value(0)).current;
+    const [expanded, setExpanded] = useState(true);
+    const chevronAnim = useRef(new Animated.Value(1)).current;
 
     useEffect(() => {
         Animated.timing(chevronAnim, {
             toValue: expanded ? 1 : 0,
-            duration: TOGGLE_DURATION_MS,
-            easing: TOGGLE_EASING,
+            duration: CHEVRON_DURATION_MS,
             useNativeDriver: true,
         }).start();
+    }, [expanded, chevronAnim]);
 
-        if (expanded) {
-            setContentMounted(true);
-            if (contentHeight > 0) {
-                Animated.timing(heightAnim, {
-                    toValue: contentHeight,
-                    duration: TOGGLE_DURATION_MS,
-                    easing: TOGGLE_EASING,
-                    useNativeDriver: false, // height is a layout property
-                }).start();
-            }
-            // contentHeight === 0 → first expansion: the mount triggers an
-            // onLayout, which sets contentHeight and re-runs this effect to
-            // run the open animation.
-            return;
-        }
-
-        Animated.timing(heightAnim, {
-            toValue: 0,
-            duration: TOGGLE_DURATION_MS,
-            easing: TOGGLE_EASING,
-            useNativeDriver: false,
-        }).start(({ finished }) => {
-            // Unmount only when the collapse actually completed — an
-            // interrupted animation (quick re-toggle) keeps the content
-            // alive so re-expanding is instant.
-            if (finished) setContentMounted(false);
-        });
-    }, [expanded, contentHeight, heightAnim, chevronAnim]);
-
-    const handleContentLayout = (event: LayoutChangeEvent) => {
-        const height = event.nativeEvent.layout.height;
-        // Zero-height layouts (initial pass, mid-collapse) are noise; a
-        // repeated measurement must not restart a running animation.
-        if (height > 0) {
-            setContentHeight((prev) => (prev === height ? prev : height));
-        }
+    const toggleExpanded = () => {
+        // Animates this layout change natively: the table's appearance and
+        // everything below it sliding up/down.
+        LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+        setExpanded((prev) => !prev);
     };
-
-    const toggleExpanded = () => setExpanded((prev) => !prev);
 
     if (!questions || questions.length === 0) {
         return (
@@ -200,21 +166,19 @@ export default function QuestionAnalytics({ questions }: QuestionAnalyticsProps)
                     </Animated.View>
                 </Animated.View>
             </TouchableOpacity>
-            {contentMounted ? (
-                <Animated.View style={[styles.content, { height: heightAnim }]}>
-                    <View onLayout={handleContentLayout} collapsable={false}>
-                        <Text style={styles.note}>
-                            Percentages are based on {sampleSize} completed attempt{sampleSize === 1 ? '' : 's'}.
-                        </Text>
-                        <DataTable
-                            columns={columns}
-                            data={questions}
-                            keyExtractor={(item) => item.questionNumber.toString()}
-                            cellPadding={16}
-                            style={styles.card}
-                        />
-                    </View>
-                </Animated.View>
+            {expanded ? (
+                <View>
+                    <Text style={styles.note}>
+                        Percentages are based on {sampleSize} completed attempt{sampleSize === 1 ? '' : 's'}.
+                    </Text>
+                    <DataTable
+                        columns={columns}
+                        data={questions}
+                        keyExtractor={(item) => item.questionNumber.toString()}
+                        cellPadding={16}
+                        style={styles.card}
+                    />
+                </View>
             ) : null}
         </View>
     );
@@ -242,9 +206,6 @@ const styles = StyleSheet.create({
     },
     chevronWrap: {
         padding: 4,
-    },
-    content: {
-        overflow: 'hidden',
     },
     note: {
         fontSize: 12,
