@@ -101,12 +101,19 @@ export default function PublicQuizTakingPage() {
         if (cancelled) return;
         const data = response.data;
         if (data.attemptFinalized) {
-          const attemptId = recallAttemptId(token);
+          // Prefer the localStorage pointer; fall back to the server-returned
+          // attempt ID so we always route to the result even if forgetAttempt()
+          // cleared the pointer (e.g. the student re-verified after session
+          // expiry on the result page, came back here, and the localStorage
+          // key was already cleared by the previous result page visit).
+          const attemptId = recallAttemptId(token) || data.attempt?._id;
           if (attemptId) {
             navigate(`/public-quiz/${token}/result/${attemptId}`, { replace: true });
           } else {
-            setLoadError('This attempt has already ended.');
-            setLoading(false);
+            // Belt-and-suspenders: server returned finalized but no ID at all.
+            // Route to entry so the student can at least re-verify and see
+            // their result once the server resumes responding correctly.
+            navigate(`/public-quiz/${token}`, { replace: true });
           }
           return;
         }

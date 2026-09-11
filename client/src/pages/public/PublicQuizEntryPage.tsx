@@ -51,8 +51,26 @@ export default function PublicQuizEntryPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<{ code?: string; message: string } | null>(null);
   const [info, setInfo] = useState<string | null>(null);
-  const [resendIn, setResendIn] = useState(0);
+  // Track the absolute timestamp of the last OTP send so the cooldown
+  // survives component re-renders and mobile browser focus/blur events.
+  // Computing remainingResendSeconds at render time from Date.now() is more
+  // reliable than decrementing a counter that resets whenever the step
+  // effect re-fires (which happens on iOS Safari focus/blur transitions).
+  const [otpSentAt, setOtpSentAt] = useState<number | null>(null);
+  const [nowTick, setNowTick] = useState(Date.now());
   const otpInputRef = useRef<HTMLInputElement>(null);
+
+  // Tick every second while the OTP step is visible so the cooldown
+  // countdown re-renders without decrementing a counter in state.
+  useEffect(() => {
+    if (step !== 'otp' || !otpSentAt) return;
+    const timer = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [step, otpSentAt]);
+
+  const remainingResendSeconds = otpSentAt
+    ? Math.max(0, Math.ceil((otpSentAt + RESEND_COOLDOWN_SECONDS * 1000 - nowTick) / 1000))
+    : 0;
 
   const invalidLink = searchParams.get('invalid') === '1';
 
@@ -63,18 +81,7 @@ export default function PublicQuizEntryPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, invalidLink]);
 
-  useEffect(() => {
-    if (step === 'otp') {
-      setResendIn(RESEND_COOLDOWN_SECONDS);
-      otpInputRef.current?.focus();
-    }
-  }, [step]);
 
-  useEffect(() => {
-    if (resendIn <= 0) return;
-    const timer = setInterval(() => setResendIn((v) => (v <= 1 ? 0 : v - 1)), 1000);
-    return () => clearInterval(timer);
-  }, [resendIn]);
 
   const phoneValid = useMemo(() => isValidIndianMobile(phoneDigits), [phoneDigits]);
   const emailValid = useMemo(() => isValidEmail(email), [email]);
@@ -106,8 +113,12 @@ export default function PublicQuizEntryPage() {
         phone: `+91${phoneDigits}`,
         marketingConsent,
       });
+      setOtpSentAt(Date.now());
+      setNowTick(Date.now());
       setStep('otp');
       setOtp('');
+      // Focus is deferred to after state settles so the OTP input is mounted.
+      setTimeout(() => otpInputRef.current?.focus(), 50);
     } catch (err) {
       setError(getPublicApiError(err));
     } finally {
@@ -145,7 +156,7 @@ export default function PublicQuizEntryPage() {
   };
 
   const handleResend = async () => {
-    if (resendIn > 0 || busy) return;
+    if (remainingResendSeconds > 0 || busy) return;
     setBusy(true);
     setError(null);
     try {
@@ -156,7 +167,8 @@ export default function PublicQuizEntryPage() {
         marketingConsent,
       });
       setInfo('A new code has been sent to your email.');
-      setResendIn(RESEND_COOLDOWN_SECONDS);
+      setOtpSentAt(Date.now());
+      setNowTick(Date.now());
       setOtp('');
     } catch (err) {
       setError(getPublicApiError(err));
@@ -469,11 +481,11 @@ export default function PublicQuizEntryPage() {
                 <button
                   type="button"
                   onClick={handleResend}
-                  disabled={resendIn > 0 || busy}
+                  disabled={remainingResendSeconds > 0 || busy}
                   className="inline-flex items-center gap-1.5 text-xs font-medium text-[#008f8a] disabled:text-gray-400"
                 >
                   <RefreshCw className="w-3.5 h-3.5" />
-                  {resendIn > 0 ? `Resend code in ${resendIn}s` : 'Resend code'}
+                  {remainingResendSeconds > 0 ? `Resend code in ${remainingResendSeconds}s` : 'Resend code'}
                 </button>
               </div>
             </form>

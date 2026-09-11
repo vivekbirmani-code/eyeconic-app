@@ -8,7 +8,7 @@ import {
   TimerReset,
 } from 'lucide-react';
 import { publicQuizApi, usePublicQuiz } from '../../contexts/PublicQuizContext';
-import { forgetAttempt, getErrorData } from '../../services/publicApi';
+import { getErrorData } from '../../services/publicApi';
 import DonutChart from '../../components/public/result/DonutChart';
 import MetricGrid from '../../components/public/result/MetricGrid';
 import ScoreCard from '../../components/public/result/ScoreCard';
@@ -65,8 +65,14 @@ export default function PublicQuizResultPage() {
         hasResultRef.current = true;
         setResult(payload);
         setError(null);
-        // The attempt is finished — clear the mid-quiz pointer.
-        forgetAttempt();
+        // NOTE: We intentionally do NOT call forgetAttempt() here. The
+        // attempt pointer in localStorage must remain available so that the
+        // taking page can always resolve the result URL (e.g. if the guest
+        // re-verifies and the taking page calls /start and gets
+        // attemptFinalized:true — it needs the stored pointer to navigate to
+        // /result/:attemptId). The pointer is naturally overwritten when the
+        // student starts a new quiz via rememberAttempt(), so keeping it here
+        // causes no harm.
       } catch (err) {
         if (cancelled) return;
         if (getErrorData(err)?.status === 401) {

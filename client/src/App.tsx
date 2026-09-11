@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { NotificationProvider } from './contexts/NotificationContext';
 
@@ -57,10 +57,20 @@ function App() {
           {/* Public Routes */}
           <Route path="/login" element={<LoginScreen />} />
 
-          {/* Public quiz guest flow — no auth guard; OTP verification happens in-flow */}
-          <Route path="/public-quiz/:token" element={<PublicQuizProvider><PublicQuizEntryPage /></PublicQuizProvider>} />
-          <Route path="/public-quiz/:token/take" element={<PublicQuizProvider><PublicQuizTakingPage /></PublicQuizProvider>} />
-          <Route path="/public-quiz/:token/result/:attemptId" element={<PublicQuizProvider><PublicQuizResultPage /></PublicQuizProvider>} />
+          {/* Public quiz guest flow — OTP-verified leads. All three routes
+              share ONE PublicQuizProvider so guest token, lead identity, and
+              session state persist across the entry → take → result
+              navigation. Previously each route had its own isolated provider,
+              which caused the session to reset on every navigation and was
+              the root cause of the "quiz restarts after submission" bug. */}
+          <Route
+            path="/public-quiz/:token"
+            element={<PublicQuizProvider><Outlet /></PublicQuizProvider>}
+          >
+            <Route index element={<PublicQuizEntryPage />} />
+            <Route path="take" element={<PublicQuizTakingPage />} />
+            <Route path="result/:attemptId" element={<PublicQuizResultPage />} />
+          </Route>
 
           {/* Protected Routes inside Main Layout */}
           <Route

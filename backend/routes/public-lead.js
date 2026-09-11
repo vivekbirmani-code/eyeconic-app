@@ -2,7 +2,7 @@ const express = require('express');
 const Guest = require('../models/Guest');
 const { generateOtp, OTP_TTL_MS, isValidEmail, normalizeEmail } = require('../utils/otpHelpers');
 const { normalizeIndianPhone } = require('../utils/phone');
-const { issueGuestOtp, verifyGuestOtp } = require('../utils/guestOtp');
+const { issueGuestOtp, clearGuestOtp, verifyGuestOtp } = require('../utils/guestOtp');
 const { sendGuestQuizOtpMail, EmailDeliveryError } = require('../utils/mailer');
 const { findActivePublicQuiz, sendPublicQuizError } = require('../utils/publicQuizAccess');
 const { signGuestToken } = require('../middleware/guestAuth');
@@ -64,6 +64,7 @@ router.post('/quiz/:shareToken/lead/send-otp', guestOtpSendRateLimit, async (req
 
     const payload = parseLeadPayload(req.body);
     if (payload.error) {
+      console.warn('Guest lead OTP validation failed', { shareToken, code: payload.error.code });
       return sendPublicQuizError(res, payload.error);
     }
     const { email, phone } = payload;
@@ -71,13 +72,29 @@ router.post('/quiz/:shareToken/lead/send-otp', guestOtpSendRateLimit, async (req
 
     const access = await findActivePublicQuiz(shareToken, '_id title publicExpiryDate');
     if (access.error) {
+      console.warn('Guest lead OTP quiz access failed', { shareToken, code: access.error.code });
       return sendPublicQuizError(res, access.error);
     }
 
+    console.log('Guest lead OTP request initiated', { shareToken, quizId: access.quiz._id });
+
     const otp = generateOtp();
+
+    // Persist OTP hash BEFORE sending the email
+    await issueGuestOtp(email, shareToken, otp);
+    console.log('Guest lead OTP issued in DB', { shareToken, quizId: access.quiz._id });
+
     try {
       await sendGuestQuizOtpMail(email, otp, access.quiz.title);
+      console.log('Guest lead OTP email sent successfully', { shareToken, quizId: access.quiz._id });
     } catch (error) {
+      console.error('Guest lead OTP email delivery failed, cleaning up OTP', { shareToken, quizId: access.quiz._id, error: error.message });
+      try {
+        await clearGuestOtp(email, shareToken);
+      } catch (cleanupError) {
+        console.error('Failed to clean up guest lead OTP after email failure', { shareToken, error: cleanupError.message });
+      }
+
       if (error instanceof EmailDeliveryError) {
         return res.status(error.statusCode).json({
           success: false,
@@ -88,8 +105,6 @@ router.post('/quiz/:shareToken/lead/send-otp', guestOtpSendRateLimit, async (req
       }
       throw error;
     }
-
-    await issueGuestOtp(email, shareToken, otp);
 
     return res.json({
       success: true,
@@ -135,6 +150,12 @@ router.post('/quiz/:shareToken/lead/verify-otp', guestOtpVerifyRateLimit, async 
 
     const verification = await verifyGuestOtp(email, shareToken, String(req.body.otp).trim());
     if (!verification.ok) {
+      console.warn('[GUEST OTP] Verification failed', {
+        requestId: req.requestId,
+        shareToken,
+        reason: verification.reason,
+        emailDomain: email.split('@')[1] || 'unknown',
+      });
       recordGuestVerifyFailure(email);
       return sendPublicQuizError(res, {
         statusCode: 400,
@@ -145,6 +166,11 @@ router.post('/quiz/:shareToken/lead/verify-otp', guestOtpVerifyRateLimit, async 
             : 'Invalid verification code.',
       });
     }
+    console.info('[GUEST OTP] Verification succeeded', {
+      requestId: req.requestId,
+      shareToken,
+      emailDomain: email.split('@')[1] || 'unknown',
+    });
     clearGuestVerifyAttempts(email);
 
     // Upsert the lead keyed by the verified contact's phone — the same

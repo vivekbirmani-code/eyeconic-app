@@ -37,6 +37,13 @@ const issueGuestOtp = async (email, shareToken, otp) => {
   );
 };
 
+// Removes the OTP row for an (email, shareToken) challenge. Used by the
+// send-otp route as a best-effort rollback when email delivery fails after
+// the hash is already persisted — keeps state clean so a retry works.
+const clearGuestOtp = async (email, shareToken) => {
+  await GuestOtp.deleteOne({ email, shareToken });
+};
+
 // Verifies a code against the SAME challenge it was issued for.
 // Returns { ok, reason } — reason is 'OTP_INVALID' (no row / wrong code /
 // wrong link) or 'OTP_EXPIRED'. Deletes the row on success (single use).
@@ -63,5 +70,6 @@ const verifyGuestOtp = async (email, shareToken, otp) => {
 module.exports = {
   hashOtp,
   issueGuestOtp,
+  clearGuestOtp,
   verifyGuestOtp,
 };
