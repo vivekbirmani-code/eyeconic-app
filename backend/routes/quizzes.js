@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 const Quiz = require('../models/Quiz');
 const QuizAttempt = require('../models/QuizAttempt');
 const GuestAttempt = require('../models/GuestAttempt');
+const Guest = require('../models/Guest');
 const QuestionBank = require('../models/QuestionBank');
 const { auth, authorize } = require('../middleware/auth');
 const multer = require('multer');
@@ -2321,6 +2322,51 @@ router.get('/analytics/heatmap', auth, authorize('admin', 'mentor'), async (req,
         studentMap[sId].scores[a.quiz.toString()] = scorePct;
       }
     });
+
+    // Public-quiz participants join the heat map for admins only (mentors
+    // keep the registered-only matrix, same policy as test analytics). Same
+    // cohort rule as utils/guestAnalytics: completed/auto_submitted lead
+    // attempts — legacy anonymous device-keyed attempts have no stable
+    // identity and stay out. One row per verified lead across all tests,
+    // keyed `guest:<leadId>` so it can never collide with a student row.
+    // Names come from the attempt's lead snapshot with the live lead as
+    // fallback (a deleted lead only degrades the name), mirroring
+    // fetchGuestParticipants.
+    if (req.user.role === 'admin' && quizIds.length > 0) {
+      const guestAttempts = await GuestAttempt.find({
+        quiz: { $in: quizIds },
+        status: { $in: ['completed', 'auto_submitted'] },
+        guest: { $ne: null }
+      })
+        .select('quiz guest guestName marksObtained totalMarks')
+        .lean();
+
+      const leadIdsMissingName = [...new Set(
+        guestAttempts.filter(a => !a.guestName).map(a => String(a.guest))
+      )];
+      const leads = leadIdsMissingName.length > 0
+        ? await Guest.find({ _id: { $in: leadIdsMissingName } }).select('name').lean()
+        : [];
+      const leadNameById = new Map(leads.map(l => [String(l._id), l.name]));
+
+      const guestMap = {};
+      guestAttempts.forEach(a => {
+        const gId = String(a.guest);
+        if (!guestMap[gId]) {
+          guestMap[gId] = {
+            studentId: `guest:${gId}`,
+            studentName: a.guestName || leadNameById.get(gId) || 'Guest',
+            isGuest: true,
+            scores: {}
+          };
+        }
+        const scorePct = computeScorePercentage(a.marksObtained, a.totalMarks);
+        if (scorePct !== null) {
+          guestMap[gId].scores[String(a.quiz)] = scorePct;
+        }
+      });
+      Object.assign(studentMap, guestMap);
+    }
 
     res.json({
       tests: quizzes.map(q => ({

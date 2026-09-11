@@ -578,3 +578,227 @@ describe('CSV export hardening', () => {
     expect(res.headers['x-content-type-options']).toBe('nosniff');
   });
 });
+
+// Heat map: public-quiz participants join the students × tests matrix for
+// ADMINS (one row per verified lead, marked isGuest). Mentors keep the
+// registered-only matrix. Same cohort rule as the test-analytics guest
+// surfaces: completed/auto_submitted lead attempts only.
+describe('Heat map with public participants', () => {
+  let admin;
+  let mentor;
+  let student;
+  let subject;
+
+  beforeEach(async () => {
+    await db.clearDatabase();
+    admin = await createUser({ role: 'admin' });
+    mentor = await createUser({ role: 'mentor' });
+    student = await createUser({ role: 'student', name: 'Student One' });
+    subject = await createSubject('Pathology');
+
+    await MentorStudentAssignment.create({
+      mentor: mentor.user._id,
+      student: student.user._id,
+      isActive: true,
+      assignedBy: admin.user._id,
+    });
+  });
+
+  let heatLeadSeed = 0;
+  async function addLead(name) {
+    return Guest.create({
+      name,
+      email: `${name.toLowerCase().replace(/\s+/g, '.')}.${Date.now()}.${(heatLeadSeed += 1)}@example.com`,
+      emailVerifiedAt: new Date(),
+      phone: `+9198700${String(100000 + (heatLeadSeed += 1)).slice(1)}`,
+      marketingConsent: { granted: true, updatedAt: new Date() },
+    });
+  }
+
+  async function addGuestAttempt(quiz, questions, lead, { marksObtained, status = 'completed', guestName = lead.name } = {}) {
+    return GuestAttempt.create({
+      quiz: quiz._id,
+      guest: lead._id,
+      guestId: `device-${lead._id}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      guestName,
+      guestEmail: lead.email,
+      guestPhone: lead.phone,
+      status,
+      startTime: new Date(Date.now() - 30 * 60 * 1000),
+      endTime: new Date(),
+      score: 0,
+      totalQuestions: questions.length,
+      marksObtained,
+      totalMarks: questions.length * 4,
+      answers: [],
+    });
+  }
+
+  function buildHeatQuiz(questions, { assignedStudents = [], title } = {}) {
+    return Quiz.create({
+      title: title || `Heat Test ${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      subject: subject._id,
+      testType: 'daily',
+      duration: 30,
+      questions: questions.map((q) => q._id),
+      positiveMarks: 4,
+      negativeMarks: 1,
+      assignedStudents,
+      createdBy: admin.user._id,
+    });
+  }
+
+  it('includes registered students and public participants with correct score percentages', async () => {
+    const q1 = await createQuestion(admin, subject);
+    const q2 = await createQuestion(admin, subject, { question: 'Heat Q2?' });
+    const quiz = await buildHeatQuiz([q1, q2], { assignedStudents: [student.user._id] });
+
+    await QuizAttempt.create({
+      quiz: quiz._id,
+      student: student.user._id,
+      status: 'completed',
+      startTime: new Date(Date.now() - 60 * 60 * 1000),
+      endTime: new Date(),
+      score: 0,
+      totalQuestions: 2,
+      marksObtained: 6,
+      totalMarks: 8,
+      answers: [],
+    });
+
+    const dinesh = await addLead('Dinesh Sharma');
+    const minal = await addLead('Minal Singh');
+    await addGuestAttempt(quiz, [q1, q2], dinesh, { marksObtained: 3 }); // 37.5%
+    await addGuestAttempt(quiz, [q1, q2], minal, { marksObtained: 8 }); // 100%
+
+    const res = await request(app)
+      .get('/api/quizzes/analytics/heatmap')
+      .set('Authorization', `Bearer ${admin.token}`);
+    expect(res.status).toBe(200);
+
+    expect(res.body.tests).toHaveLength(1);
+    const quizId = res.body.tests[0]._id;
+    expect(res.body.students).toHaveLength(3);
+
+    const studentRow = res.body.students.find((s) => s.studentId === String(student.user._id));
+    expect(studentRow).toBeDefined();
+    expect(studentRow.studentName).toBe('Student One');
+    expect(studentRow.isGuest).toBeUndefined();
+    expect(studentRow.scores[quizId]).toBe(75);
+
+    const guestRows = res.body.students.filter((s) => s.isGuest === true);
+    expect(guestRows).toHaveLength(2);
+    for (const row of guestRows) {
+      expect(row.studentId).toMatch(/^guest:/);
+    }
+    const dineshRow = res.body.students.find((s) => s.studentName === 'Dinesh Sharma');
+    expect(dineshRow.scores[quizId]).toBe(37.5);
+    const minalRow = res.body.students.find((s) => s.studentName === 'Minal Singh');
+    expect(minalRow.scores[quizId]).toBe(100);
+  });
+
+  it('collapses one lead across multiple tests into a single row (no duplication)', async () => {
+    const q1 = await createQuestion(admin, subject);
+    const quizA = await buildHeatQuiz([q1], { title: `Heat A ${Date.now()}` });
+    const quizB = await buildHeatQuiz([q1], { title: `Heat B ${Date.now()}` });
+
+    const lead = await addLead('Repeat Guest');
+    await addGuestAttempt(quizA, [q1], lead, { marksObtained: 4 }); // 100%
+    await addGuestAttempt(quizB, [q1], lead, { marksObtained: 1 }); // 25%
+
+    const res = await request(app)
+      .get('/api/quizzes/analytics/heatmap')
+      .set('Authorization', `Bearer ${admin.token}`);
+    expect(res.status).toBe(200);
+
+    expect(res.body.students).toHaveLength(1);
+    const row = res.body.students[0];
+    expect(row.studentName).toBe('Repeat Guest');
+    expect(row.scores[String(quizA._id)]).toBe(100);
+    expect(row.scores[String(quizB._id)]).toBe(25);
+  });
+
+  it('keeps the heat map registered-only for mentors', async () => {
+    const q1 = await createQuestion(admin, subject);
+    const quiz = await buildHeatQuiz([q1], { assignedStudents: [student.user._id] });
+
+    await QuizAttempt.create({
+      quiz: quiz._id,
+      student: student.user._id,
+      status: 'completed',
+      startTime: new Date(Date.now() - 60 * 60 * 1000),
+      endTime: new Date(),
+      score: 0,
+      totalQuestions: 1,
+      marksObtained: 4,
+      totalMarks: 4,
+      answers: [],
+    });
+
+    const lead = await addLead('Mentor Hidden Guest');
+    await addGuestAttempt(quiz, [q1], lead, { marksObtained: 4 });
+
+    const res = await request(app)
+      .get('/api/quizzes/analytics/heatmap')
+      .set('Authorization', `Bearer ${mentor.token}`);
+    expect(res.status).toBe(200);
+
+    expect(res.body.students).toHaveLength(1);
+    expect(res.body.students[0].studentId).toBe(String(student.user._id));
+    expect(res.body.students.some((s) => s.isGuest)).toBe(false);
+  });
+
+  it('excludes legacy anonymous and unfinished guest attempts', async () => {
+    const q1 = await createQuestion(admin, subject);
+    const quiz = await buildHeatQuiz([q1]);
+
+    // Legacy pre-OTP anonymous attempt: device-keyed, no lead.
+    await GuestAttempt.create({
+      quiz: quiz._id,
+      guestId: 'legacy-device-key',
+      status: 'completed',
+      marksObtained: 4,
+      totalMarks: 4,
+      answers: [],
+    });
+
+    // Verified lead who has not finished yet.
+    const lead = await addLead('Mid Attempt Guest');
+    await addGuestAttempt(quiz, [q1], lead, { marksObtained: 0, status: 'in_progress' });
+
+    const res = await request(app)
+      .get('/api/quizzes/analytics/heatmap')
+      .set('Authorization', `Bearer ${admin.token}`);
+    expect(res.status).toBe(200);
+
+    expect(res.body.tests).toHaveLength(1);
+    expect(res.body.students).toHaveLength(0);
+  });
+
+  it('falls back to the live lead name, then "Guest", for missing snapshots', async () => {
+    const q1 = await createQuestion(admin, subject);
+    const quiz = await buildHeatQuiz([q1]);
+
+    // No snapshot → resolved from the live lead.
+    const namedLead = await addLead('Snapshotless Lead');
+    await addGuestAttempt(quiz, [q1], namedLead, { marksObtained: 2, guestName: null });
+
+    // No snapshot + deleted lead → "Guest", but the attempt still shows.
+    const orphanLead = await addLead('Orphan Lead');
+    await addGuestAttempt(quiz, [q1], orphanLead, { marksObtained: 1, guestName: null });
+    await Guest.deleteOne({ _id: orphanLead._id });
+
+    // Snapshot survives even when the lead is gone.
+    const snapshotLead = await addLead('Snapshot Lead');
+    await addGuestAttempt(quiz, [q1], snapshotLead, { marksObtained: 4, guestName: 'Snapshot Only' });
+    await Guest.deleteOne({ _id: snapshotLead._id });
+
+    const res = await request(app)
+      .get('/api/quizzes/analytics/heatmap')
+      .set('Authorization', `Bearer ${admin.token}`);
+    expect(res.status).toBe(200);
+
+    const names = res.body.students.map((s) => s.studentName).sort();
+    expect(names).toEqual(['Guest', 'Snapshot Only', 'Snapshotless Lead']);
+  });
+});

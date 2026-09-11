@@ -769,7 +769,7 @@ export default function Analytics() {
             <View style={{ padding: 16 }}>
               <Text style={styles.sectionTitle}>Performance Heat Map</Text>
               <Text style={{ color: '#6B7280', fontSize: 13, marginBottom: 16 }}>
-                Students × Tests • Color indicates score percentage (marks-based)
+                Participants × Tests • Color indicates score percentage (marks-based)
               </Text>
               <ScrollView horizontal showsHorizontalScrollIndicator={true}>
                 <View>
@@ -786,7 +786,9 @@ export default function Analytics() {
                   {heatmapData.students.map((s: any) => (
                     <View key={s.studentId} style={{ flexDirection: 'row' }}>
                       <View style={[styles.heatCell, { width: 120, backgroundColor: '#F9FAFB' }]}>
-                        <Text style={{ fontSize: 11, color: '#374151', fontWeight: '500' }} numberOfLines={1}>{s.studentName}</Text>
+                        <Text style={{ fontSize: 11, color: s.isGuest ? '#0E7490' : '#374151', fontWeight: '500' }} numberOfLines={1}>
+                          {s.isGuest ? `${s.studentName} (Guest)` : s.studentName}
+                        </Text>
                       </View>
                       {heatmapData.tests.map((t: any) => {
                         const score = s.scores[t._id];
