@@ -6,6 +6,8 @@ const {
   computeQuestionAnalytics,
   findEasiestHardestQuestions,
   computeScoreDistribution,
+  computeTestAnalytics,
+  computePerformanceMetricsAverages,
   rankStudentAttempts,
   filterAttemptsByDateRange,
   aggregateStudentSummary,
@@ -329,5 +331,107 @@ describe('analytics — marks awarded', () => {
     expect(computeMarksAwarded(true, false, 4, 1)).toBe(4);
     expect(computeMarksAwarded(false, false, 4, 1)).toBe(-1);
     expect(computeMarksAwarded(false, true, 4, 1)).toBe(0);
+  });
+});
+
+describe('analytics — computeTestAnalytics (single source for app + exports)', () => {
+  const questions = [
+    { questionType: QUESTION_TYPES.MCQ_SINGLE, question: 'Q1?', topicName: 'T1', subject: { name: 'S' } },
+    { questionType: QUESTION_TYPES.MCQ_SINGLE, question: 'Q2?', topicName: 'T2', subject: { name: 'S' } },
+  ];
+
+  const registeredAttempt = {
+    _id: 'reg1',
+    student: { _id: 's1', name: 'Student One' },
+    totalQuestions: 2,
+    marksObtained: 3,
+    totalMarks: 8,
+    score: 1,
+    startTime: new Date('2026-09-11T09:00:00Z'),
+    endTime: new Date('2026-09-11T09:30:00Z'),
+    answers: [
+      { questionIndex: 0, selectedAnswer: 1, isCorrect: true, metadataSnapshot: { questionType: 'mcq_single' } },
+      { questionIndex: 1, selectedAnswer: 0, isCorrect: false, metadataSnapshot: { questionType: 'mcq_single' } },
+    ],
+  };
+
+  // Same shape a graded GuestAttempt document carries.
+  const guestAttempt = {
+    _id: 'guest1',
+    totalQuestions: 2,
+    marksObtained: 8,
+    totalMarks: 8,
+    score: 2,
+    startTime: new Date('2026-09-11T10:00:00Z'),
+    endTime: new Date('2026-09-11T10:20:00Z'),
+    answers: [
+      { questionIndex: 0, selectedAnswer: 1, isCorrect: true, metadataSnapshot: { questionType: 'mcq_single' } },
+      { questionIndex: 1, selectedAnswer: 1, isCorrect: true, metadataSnapshot: { questionType: 'mcq_single' } },
+    ],
+  };
+
+  it('aggregates registered + guest attempts as one cohort', () => {
+    const result = computeTestAnalytics([registeredAttempt, guestAttempt], questions, {
+      totalAssigned: 1,
+      registeredCount: 1,
+    });
+
+    expect(result.overview.totalAttempted).toBe(2);
+    expect(result.overview.avgScore).toBe(5.5);
+    expect(result.overview.avgScorePercentage).toBe(68.75);
+    // Completion is scoped to the assigned cohort: 1 assigned / 1 registered
+    // completed — the guest neither dilutes nor inflates it.
+    expect(result.overview.completionRate).toBe(100);
+
+    expect(result.performanceMetrics.avgCorrect).toBe(1.5);
+    expect(result.performanceMetrics.avgWrong).toBe(0.5);
+
+    expect(result.questionAnalytics[0]).toMatchObject({ sampleSize: 2, correctCount: 2 });
+    expect(result.questionAnalytics[1]).toMatchObject({ sampleSize: 2, correctCount: 1 });
+
+    const distributed = result.scoreDistribution.reduce((sum, b) => sum + b.count, 0);
+    expect(distributed).toBe(2);
+    expect(result.easiestQuestion.questionNumber).toBe(1);
+    expect(result.hardestQuestion.questionNumber).toBe(2);
+  });
+
+  it('reports null completion when nothing was assigned (public test)', () => {
+    const result = computeTestAnalytics([guestAttempt], questions, {
+      totalAssigned: 0,
+      registeredCount: 0,
+    });
+    expect(result.overview.totalAttempted).toBe(1);
+    expect(result.overview.completionRate).toBeNull();
+    expect(result.overview.avgScorePercentage).toBe(100);
+  });
+
+  it('keeps an assigned zero-attempt test at 0% completion', () => {
+    const result = computeTestAnalytics([], questions, {
+      totalAssigned: 3,
+      registeredCount: 0,
+    });
+    expect(result.overview.totalAttempted).toBe(0);
+    expect(result.overview.completionRate).toBe(0);
+    expect(result.overview.avgScorePercentage).toBeNull();
+    expect(result.questionAnalytics[0].sampleSize).toBe(0);
+  });
+
+  it('sums RAW durations and rounds only the final average', () => {
+    // 1s + 3s attempts: raw average 0.0333 -> 0.03; summing pre-rounded
+    // values would drift it to 0.04.
+    const base = new Date('2026-09-10T09:00:00Z');
+    const short = { ...registeredAttempt, startTime: base, endTime: new Date(base.getTime() + 1000) };
+    const long = { ...guestAttempt, startTime: base, endTime: new Date(base.getTime() + 3000) };
+
+    const { performanceMetrics } = computeTestAnalytics([short, long], questions, {});
+    expect(performanceMetrics.avgTime).toBe(0.03);
+  });
+
+  it('treats a missing duration as zero minutes, not an excluded attempt', () => {
+    const noEnd = { ...registeredAttempt, startTime: new Date('2026-09-11T09:00:00Z'), endTime: undefined };
+    const thirtyMin = { ...guestAttempt };
+    const performanceMetrics = computePerformanceMetricsAverages([noEnd, thirtyMin], questions, 2);
+    // (0 + 20) / 2 — the attempt count stays the denominator.
+    expect(performanceMetrics.avgTime).toBe(10);
   });
 });

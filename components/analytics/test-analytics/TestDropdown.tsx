@@ -20,6 +20,8 @@ interface Test {
     testType: string;
     assignedCount: number;
     attemptCount: number;
+    // Admin-only: completed public-quiz guest attempts (mentors never get it).
+    guestAttemptCount?: number | null;
 }
 
 interface TestDropdownProps {
@@ -193,7 +195,11 @@ export default function TestDropdown({ tests, selectedTest, onTestSelect, loadin
                                                     <Text style={styles.typeBadgeText}>{item.testType}</Text>
                                                 </View>
                                                 <Text style={styles.testStats}>
-                                                    {item.attemptCount} / {item.assignedCount} attempted
+                                                    {/* Admins see the total completed attempts
+                                                        (registered + public guests) — the same
+                                                        number Test Analytics reports. Mentors
+                                                        never receive guestAttemptCount. */}
+                                                    {item.attemptCount + (item.guestAttemptCount ?? 0)} / {item.assignedCount} attempted
                                                 </Text>
                                             </View>
                                         </View>

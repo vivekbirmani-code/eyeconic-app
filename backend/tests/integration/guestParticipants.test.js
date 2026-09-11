@@ -212,7 +212,7 @@ describe('Public participants in admin analytics', () => {
     expect(mentorLegacy.body).not.toHaveProperty('guestParticipants');
   });
 
-  it('keeps ranked studentPerformance EXACTLY registered-only when guests exist', async () => {
+  it('keeps ranked studentPerformance registered-only while aggregates count guests', async () => {
     // Two registered attempts + two guests.
     const student2 = await createUser({ role: 'student', name: 'Second Student' });
     const seedAttempt = (user, correctCount, marks) =>
@@ -249,8 +249,28 @@ describe('Public participants in admin analytics', () => {
     // Guests never join the ranked list (every row is a populated student).
     expect(withGuests.body.studentPerformance.every((sp) => sp.student?.email)).toBe(true);
 
-    // Overview aggregates stay registered-only: 2 attempts, not 4.
-    expect(withGuests.body.overview.totalAttempted).toBe(2);
+    // Aggregates treat guests as first-class attempts: 2 registered + 2
+    // guests. Completion stays scoped to the assigned cohort (0 students
+    // were assigned to this public quiz → null, not a misleading 0%).
+    expect(withGuests.body.overview.totalAttempted).toBe(4);
+    expect(withGuests.body.overview.completionRate).toBeNull();
+    expect(withGuests.body.performanceMetrics.attemptCount).toBe(4);
+    // Question analytics count all four attempts.
+    expect(withGuests.body.questionAnalytics[0].sampleSize).toBe(4);
+    expect(withGuests.body.scoreDistribution).toHaveLength(5);
+    const distributed = withGuests.body.scoreDistribution.reduce((sum, b) => sum + b.count, 0);
+    expect(distributed).toBe(4);
+
+    // Mentors keep the historical registered-only aggregates — this mentor
+    // has no assigned students, so they see none of the four attempts.
+    const mentorView = await request(app)
+      .get(`/api/quizzes/analytics/test/${quiz._id}`)
+      .set('Authorization', `Bearer ${mentor.token}`);
+    expect(mentorView.status).toBe(200);
+    expect(mentorView.body.overview.totalAttempted).toBe(0);
+    expect(mentorView.body.performanceMetrics.attemptCount).toBe(0);
+    expect(mentorView.body.questionAnalytics[0].sampleSize).toBe(0);
+    expect(mentorView.body).not.toHaveProperty('guestParticipants');
   });
 
   it('exposes guestAttemptCount separately on the test lists (admins only)', async () => {
@@ -284,6 +304,9 @@ describe('Public participants in admin analytics', () => {
     expect(csv).toContain('rahul.sharma@example.com'); // verified lead email lands in the admin export
     expect(csv).toContain('Rahul Sharma');
     expect(csv).toContain('Guest');
+    // The Overview row counts the guest attempt (public quiz: 0 assigned,
+    // 1 attempted, no completion rate) — same numbers as the app + Excel.
+    expect(csv).toContain('0,1,,8,8,8');
 
     const mentorCsv = await request(app)
       .get(`/api/quizzes/analytics/test-report/${quiz._id}/csv`)
@@ -293,6 +316,8 @@ describe('Public participants in admin analytics', () => {
     expect(mentorCsv.text).not.toContain('+919876543210');
     expect(mentorCsv.text).not.toContain('rahul.sharma@example.com');
     expect(mentorCsv.text).not.toContain('Rahul Sharma');
+    // Mentor Overview stays registered-only: nothing attempted.
+    expect(mentorCsv.text).toContain('0,0,,0,0,0');
   });
 
   it('serves the admin attempt-detail + results fallback for guest attempts, rejects others', async () => {

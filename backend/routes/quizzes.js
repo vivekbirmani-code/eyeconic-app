@@ -23,11 +23,7 @@ const { gradeQuestion, isAnswered } = require('../utils/grading');
 const { buildMetadataSnapshot } = require('../utils/questionSnapshot');
 const {
   computeAttemptStats,
-  computeQuestionAnalytics,
-  findEasiestHardestQuestions,
-  computeScoreDistribution,
-  computeTestOverview,
-  computePerformanceMetricsAverages,
+  computeTestAnalytics,
   computePercentile,
   rankStudentAttempts,
   filterAttemptsByDateRange,
@@ -54,7 +50,9 @@ const {
 const { assertStudentPerformanceAccess } = require('../utils/studentPerformanceAuth');
 const { buildAttemptResults } = require('../utils/attemptResults');
 const { buildStudentPerformanceResponse } = require('../utils/studentPerformance');
-const { fetchGuestParticipants, countGuestAttempts } = require('../utils/guestAnalytics');
+const { fetchGuestParticipants, fetchGuestAttemptDocs, countGuestAttempts } = require('../utils/guestAnalytics');
+const { collectTestReportData } = require('../utils/testReportData');
+const { buildTestReportWorkbook } = require('../utils/testReportExcel');
 const { buildPublicQuizUrl } = require('../utils/publicWebUrl');
 const {
   toIdString,
@@ -1789,120 +1787,53 @@ router.get('/analytics/test-report/:testId', auth, authorize('admin', 'mentor'),
   }
 });
 
-// CSV download of test-wise report
+// CSV download of test-wise report. Data comes from collectTestReportData —
+// the same source the Excel export renders — so the two formats can never
+// drift apart.
 router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mentor'), async (req, res) => {
   try {
-    const quiz = await Quiz.findById(req.params.testId)
-      .populate('subject', 'name')
-      .populate('questions');
-    if (!quiz) return res.status(404).json({ message: 'Test not found' });
-
-    const attemptQuery = {
-      quiz: req.params.testId,
-      status: { $in: ['completed', 'auto_submitted'] }
-    };
-
-    let totalAssigned = quiz.assignedStudents?.length || 0;
-
-    if (req.user.role === 'mentor') {
-      const assignments = await MentorStudentAssignment.find({ mentor: req.user._id, isActive: true }).select('student');
-      const mentorStudentIds = assignments.map(a => a.student.toString());
-      attemptQuery.student = { $in: mentorStudentIds };
-
-      if (quiz.assignedStudents && quiz.assignedStudents.length > 0) {
-        totalAssigned = quiz.assignedStudents.filter(id => mentorStudentIds.includes(id.toString())).length;
-      } else {
-        totalAssigned = mentorStudentIds.length;
-      }
-    }
-
-    const attempts = await QuizAttempt.find(attemptQuery).populate('student', 'name email profilePicture');
-    const sorted = [...attempts].sort((a, b) => (b.marksObtained || 0) - (a.marksObtained || 0));
-    const total = sorted.length;
-    const quizQuestionCount = quiz.questions.length || 0;
-    const completionRate = totalAssigned > 0 ? Math.round((total / totalAssigned) * 100) : 0;
-    const marksList = sorted.map(a => Number(a.marksObtained || 0));
-    const avgScore = marksList.length > 0 ? roundTo2(marksList.reduce((sum, val) => sum + val, 0) / marksList.length) : 0;
-    const highestScore = marksList.length > 0 ? roundTo2(Math.max(...marksList)) : 0;
-    const lowestScore = marksList.length > 0 ? roundTo2(Math.min(...marksList)) : 0;
-
-    const getAttemptStats = (attempt) => computeAttemptStats(attempt, quiz.questions);
-
-    let sumCorrect = 0;
-    let sumWrong = 0;
-    let sumSkipped = 0;
-    let sumTimeMinutes = 0;
-
-    sorted.forEach((attempt) => {
-      const stats = getAttemptStats(attempt);
-      sumCorrect += stats.correct;
-      sumWrong += stats.incorrect;
-      sumSkipped += stats.skipped;
-
-      if (attempt.startTime && attempt.endTime) {
-        sumTimeMinutes += Math.max(0, (new Date(attempt.endTime) - new Date(attempt.startTime)) / 1000 / 60);
-      }
-    });
-
-    const avgCorrect = total > 0 ? roundTo2(sumCorrect / total) : 0;
-    const avgWrong = total > 0 ? roundTo2(sumWrong / total) : 0;
-    const avgSkipped = total > 0 ? roundTo2(sumSkipped / total) : 0;
-    const avgTime = total > 0 ? roundTo2(sumTimeMinutes / total) : 0;
-
-    const questionAnalytics = computeQuestionAnalytics(sorted, quiz.questions).map((q) => {
-      const question = quiz.questions[q.questionNumber - 1];
-      const options = Array.isArray(question?.options) ? question.options : [];
-      return {
-        ...q,
-        subjectName: q.subjectName || quiz.subject?.name || 'General',
-        topicName: q.topicName || question?.topicName || '',
-        questionText: question?.question || '',
-        optionA: options[0] || '',
-        optionB: options[1] || '',
-        optionC: options[2] || '',
-        optionD: options[3] || '',
-        correctOptionLabel: optionLabelFromIndex(question?.correctAnswer),
-        correctOptionText: optionTextFromIndex(options, question?.correctAnswer),
-        wrongCount: q.wrongCount,
-      };
-    });
+    const data = await collectTestReportData({ testId: req.params.testId, user: req.user });
+    if (!data) return res.status(404).json({ message: 'Test not found' });
 
     const csvLines = [];
-    const generatedAt = new Date().toISOString();
-    const subjectName = quiz.subject?.name || 'General';
-    const testType = quiz.testType || 'N/A';
+    const isoOrNull = (value) => (value ? new Date(value).toISOString() : '');
+    // Public-quiz guests ride AFTER the ranked registered rows — admin only
+    // (mentor CSVs stay byte-identical to the historical export).
+    const participantRows = [...data.students, ...(data.includeLeadColumns ? data.guests : [])];
 
     csvLines.push(toCsvRow(['Test Report']));
-    csvLines.push(toCsvRow(['Generated At', generatedAt]));
+    csvLines.push(toCsvRow(['Generated At', data.generatedAt.toISOString()]));
     csvLines.push('');
 
     csvLines.push(toCsvRow(['Test Details']));
     csvLines.push(toCsvRow(['Test ID', 'Title', 'Subject', 'Test Type', 'Total Questions', 'Total Marks']));
     csvLines.push(toCsvRow([
-      String(quiz._id),
-      quiz.title || '',
-      subjectName,
-      testType,
-      quizQuestionCount,
-      roundTo2(quiz.totalMarks || 0)
+      data.test.id,
+      data.test.title,
+      data.test.subject,
+      data.test.testType,
+      data.test.totalQuestions,
+      data.test.totalMarks
     ]));
     csvLines.push('');
 
     csvLines.push(toCsvRow(['Overview']));
     csvLines.push(toCsvRow(['Total Assigned', 'Total Attempted', 'Completion Rate (%)', 'Avg Score', 'Highest Score', 'Lowest Score']));
     csvLines.push(toCsvRow([
-      totalAssigned,
-      total,
-      completionRate,
-      avgScore,
-      highestScore,
-      lowestScore
+      data.overview.totalAssigned,
+      data.overview.totalAttempted,
+      // Empty when nothing was assigned (public test) — there is no
+      // completion rate to report, matching the app's "—".
+      data.overview.completionRate ?? '',
+      data.overview.avgScore,
+      data.overview.highestScore,
+      data.overview.lowestScore
     ]));
     csvLines.push('');
 
     csvLines.push(toCsvRow(['Performance Metrics']));
     csvLines.push(toCsvRow(['Avg Correct', 'Avg Wrong', 'Avg Skipped', 'Avg Time (min)']));
-    csvLines.push(toCsvRow([avgCorrect, avgWrong, avgSkipped, avgTime]));
+    csvLines.push(toCsvRow([data.metrics.avgCorrect, data.metrics.avgWrong, data.metrics.avgSkipped, data.metrics.avgTime]));
     csvLines.push('');
 
     csvLines.push(toCsvRow(['Student Performance']));
@@ -1931,103 +1862,39 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
       'Completed At',
       'Section Breakdown',
       // Admin-only lead columns — mentors get the historical header/rows.
-      ...(req.user.role === 'admin' ? ['Participant Type', 'Phone', 'Phone Verified', 'Email Verified', 'Marketing Consent'] : [])
+      ...(data.includeLeadColumns ? ['Participant Type', 'Phone', 'Phone Verified', 'Email Verified', 'Marketing Consent'] : [])
     ]));
 
-    sorted.forEach((attempt, idx) => {
-      const stats = getAttemptStats(attempt);
-      const marksObtained = roundTo2(attempt.marksObtained || 0);
-      const totalMarks = roundTo2(attempt.totalMarks || 0);
-      const scorePercentage = stats.scorePercentage ?? 0;
-      const percentage = scorePercentage;
-      const belowCount = sorted.filter(s => (s.marksObtained || 0) < (attempt.marksObtained || 0)).length;
-      const percentile = total > 0 ? roundTo2((belowCount / total) * 100) : 0;
-      const timeSpentMinutes = (attempt.startTime && attempt.endTime)
-        ? roundTo2((new Date(attempt.endTime) - new Date(attempt.startTime)) / 1000 / 60)
-        : 0;
-
-      const sectionBreakdown = Array.isArray(attempt.sectionPerformance) && attempt.sectionPerformance.length > 0
-        ? attempt.sectionPerformance.map((section) => {
-          const sectionName = section.sectionName || 'Section';
-          return `${sectionName} (C:${section.correct || 0}, W:${section.incorrect || 0}, S:${section.skipped || 0}, Acc:${roundTo2(section.accuracy || 0)}%)`;
-        }).join(' | ')
-        : '';
-
+    participantRows.forEach((row) => {
       csvLines.push(toCsvRow([
-        idx + 1,
-        String(attempt._id),
-        attempt.student?._id ? String(attempt.student._id) : '',
-        attempt.student?.name || 'Unknown',
-        attempt.student?.email || '',
-        stats.correct,
-        stats.incorrect,
-        stats.skipped,
-        stats.answered,
-        stats.accuracy ?? '',
-        scorePercentage,
-        roundTo2(attempt.score || 0),
-        stats.totalQuestions,
-        marksObtained,
-        totalMarks,
-        percentage,
-        percentile,
-        timeSpentMinutes,
-        attempt.tabSwitchCount || 0,
-        attempt.status || '',
-        attempt.startTime ? new Date(attempt.startTime).toISOString() : '',
-        attempt.endTime ? new Date(attempt.endTime).toISOString() : '',
-        sectionBreakdown,
-        ...(req.user.role === 'admin' ? ['Registered', '', '', '', ''] : [])
+        row.rank ?? '',
+        row.attemptId,
+        row.studentId,
+        row.studentName,
+        row.studentEmail,
+        row.correct,
+        row.incorrect,
+        row.skipped,
+        row.answered,
+        row.accuracy ?? '',
+        row.scorePercentage,
+        row.score,
+        row.totalQuestions,
+        row.marksObtained,
+        row.totalMarks,
+        row.scorePercentage,
+        row.percentile ?? '',
+        row.timeSpentMinutes,
+        row.tabSwitchCount,
+        row.status,
+        isoOrNull(row.startedAt),
+        isoOrNull(row.completedAt),
+        row.sectionBreakdown,
+        ...(data.includeLeadColumns
+          ? [row.participantType, row.phone, row.phoneVerified, row.emailVerified, row.marketingConsent]
+          : [])
       ]));
     });
-
-    // Public-quiz guests: appended AFTER the ranked registered rows with a
-    // blank rank — they never join the leaderboard. ADMIN ONLY (mentor CSVs
-    // stay byte-identical to the historical export). This is where the raw
-    // lead phone + consent land for follow-up.
-    if (req.user.role === 'admin') {
-      const guestRows = await fetchGuestParticipants(req.params.testId, { fullPhone: true });
-      guestRows.forEach((guest) => {
-        const timeSpentMinutes = roundTo2((guest.timeTakenSeconds || 0) / 60);
-        const sectionBreakdown = Array.isArray(guest.sectionPerformance) && guest.sectionPerformance.length > 0
-          ? guest.sectionPerformance.map((section) => {
-            const sectionName = section.sectionName || 'Section';
-            return `${sectionName} (C:${section.correct || 0}, W:${section.incorrect || 0}, S:${section.skipped || 0}, Acc:${roundTo2(section.accuracy || 0)}%)`;
-          }).join(' | ')
-          : '';
-
-        csvLines.push(toCsvRow([
-          '', // unranked
-          String(guest.attemptId),
-          guest.guestId ? String(guest.guestId) : '',
-          guest.name,
-          guest.email || '', // verified lead email (blank for legacy pre-email leads)
-          guest.correct,
-          guest.incorrect,
-          guest.skipped,
-          guest.attempted,
-          guest.accuracy,
-          guest.scorePercentage,
-          guest.score,
-          guest.totalQuestions,
-          guest.marksObtained,
-          roundTo2(guest.totalMarks || 0),
-          guest.scorePercentage,
-          '', // percentile — guests are unranked
-          timeSpentMinutes,
-          guest.tabSwitchCount,
-          guest.status || '',
-          guest.startedAt ? new Date(guest.startedAt).toISOString() : '',
-          guest.submittedAt ? new Date(guest.submittedAt).toISOString() : '',
-          sectionBreakdown,
-          'Guest',
-          guest.phone || '',
-          guest.phoneVerified ? 'Yes' : 'No',
-          guest.emailVerified ? 'Yes' : 'No',
-          guest.marketingConsent ? 'Yes' : 'No'
-        ]));
-      });
-    }
 
     csvLines.push('');
     csvLines.push(toCsvRow(['Question-wise Analytics']));
@@ -2050,7 +1917,7 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
       'Skipped (%)'
     ]));
 
-    questionAnalytics.forEach((question) => {
+    data.questions.forEach((question) => {
       csvLines.push(toCsvRow([
         question.questionNumber,
         question.subjectName,
@@ -2075,11 +1942,35 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader(
       'Content-Disposition',
-      contentDispositionAttachment(quiz.title, 'test', '_report')
+      contentDispositionAttachment(data.test.title, 'test', '_report')
     );
     res.send(csvLines.join('\n'));
   } catch (error) {
     console.error('CSV export error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Styled two-sheet Excel (.xlsx) download of the same test report — the
+// mobile/web analytics UI points at this one. Same collector as the CSV, so
+// data is identical; this route only changes presentation.
+router.get('/analytics/test-report/:testId/excel', auth, authorize('admin', 'mentor'), async (req, res) => {
+  try {
+    const data = await collectTestReportData({ testId: req.params.testId, user: req.user });
+    if (!data) return res.status(404).json({ message: 'Test not found' });
+
+    const workbook = buildTestReportWorkbook(data);
+    const buffer = await workbook.xlsx.writeBuffer();
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader(
+      'Content-Disposition',
+      contentDispositionAttachment(data.test.title, 'test', '_report', 'xlsx')
+    );
+    res.send(buffer);
+  } catch (error) {
+    console.error('Excel export error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -3600,17 +3491,34 @@ router.get('/analytics/test/:testId', auth, authorize('admin', 'mentor'), async 
       .sort({ marksObtained: -1 });
 
     const totalQuestions = quiz.questions.length;
-    const overview = computeTestOverview(attempts, totalAssigned);
-    const performanceMetrics = computePerformanceMetricsAverages(attempts, quiz.questions, totalQuestions);
-    const questionAnalytics = computeQuestionAnalytics(attempts, quiz.questions);
-    const { easiest, hardest } = findEasiestHardestQuestions(questionAnalytics);
-    const scoreDistribution = computeScoreDistribution(attempts);
+
+    // Public participants are first-class attempts for analytics: for admins,
+    // guest attempts join EVERY aggregate below (KPIs, performance metrics,
+    // score distribution, question-wise stats) through the same
+    // computeTestAnalytics call the report exports use — one source of truth.
+    // Rankings stay registered-only; guests get their own unranked section.
+    // Mentors keep the historical registered-only response.
+    const guestAttempts = req.user.role === 'admin'
+      ? await fetchGuestAttemptDocs(req.params.testId)
+      : [];
+
+    const {
+      overview,
+      performanceMetrics,
+      questionAnalytics,
+      easiestQuestion,
+      hardestQuestion,
+      scoreDistribution,
+    } = computeTestAnalytics([...attempts, ...guestAttempts], quiz.questions, {
+      totalAssigned,
+      registeredCount: attempts.length,
+    });
+
     const studentPerformance = rankStudentAttempts(attempts, quiz.questions);
 
     // Public-quiz participants: a SEPARATE, unranked list for admins only.
-    // Guests never join studentPerformance/rankings/aggregates; mentors get
-    // an unchanged response. Admins get the full lead phone (same follow-up
-    // policy as the CSV export).
+    // Admins get the full lead phone (same follow-up policy as the CSV
+    // export).
     const guestParticipants = req.user.role === 'admin'
       ? await fetchGuestParticipants(req.params.testId, { fullPhone: true })
       : null;
@@ -3627,8 +3535,8 @@ router.get('/analytics/test/:testId', auth, authorize('admin', 'mentor'), async 
       overview,
       performanceMetrics,
       questionAnalytics,
-      easiestQuestion: easiest,
-      hardestQuestion: hardest,
+      easiestQuestion,
+      hardestQuestion,
       scoreDistribution,
       studentPerformance,
       ...(guestParticipants !== null ? { guestParticipants } : {})

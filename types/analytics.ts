@@ -136,7 +136,8 @@ export interface ScoreDistributionBucket {
 export interface TestOverviewData {
   totalAssigned: number;
   totalAttempted: number;
-  completionRate: number;
+  /** null when nothing was assigned (public test) — render as "—". */
+  completionRate: number | null;
   avgScore: number;
   highestScore: number;
   lowestScore: number;

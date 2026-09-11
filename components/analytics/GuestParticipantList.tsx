@@ -23,7 +23,8 @@ export interface GuestParticipant {
     incorrect: number;
     skipped: number;
     attempted: number;
-    accuracy: number;
+    /** null when the guest attempted nothing (all skipped). */
+    accuracy: number | null;
     timeTakenSeconds: number;
     tabSwitchCount: number;
     status: string;

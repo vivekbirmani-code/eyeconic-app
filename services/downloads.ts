@@ -57,7 +57,7 @@ const openInCurrentTab = (url: string) => {
  * The token is passed as a query parameter because external browsers cannot
  * send an Authorization header; the backend auth middleware accepts both.
  *
- * @param path API path starting with "/" (e.g. `/quizzes/analytics/test-report/<id>/csv`)
+ * @param path API path starting with "/" (e.g. `/quizzes/analytics/test-report/<id>/excel`)
  * @throws {ReportDownloadError} when the auth token is missing or the
  *         resolved URL is not absolute
  */

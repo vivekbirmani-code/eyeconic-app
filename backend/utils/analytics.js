@@ -144,6 +144,19 @@ function getAttemptDurationMinutes(attempt) {
 }
 
 /**
+ * Raw (unrounded) duration in minutes; missing/invalid durations are 0.
+ * Aggregate metrics must sum THIS and round only the final average — summing
+ * pre-rounded per-attempt values drifts the average (1s + 3s attempts:
+ * 0.0333 -> 0.03 raw, but 0.02 + 0.05 -> 0.04 pre-rounded).
+ */
+function getRawAttemptDurationMinutes(attempt) {
+  if (!attempt?.startTime || !attempt?.endTime) return 0;
+  const ms = new Date(attempt.endTime) - new Date(attempt.startTime);
+  if (!Number.isFinite(ms) || ms < 0) return 0;
+  return ms / 1000 / 60;
+}
+
+/**
  * Per-question analytics across completed attempts.
  * Percentages use completed attempts as denominator.
  */
@@ -255,10 +268,24 @@ function computeScoreDistribution(attempts) {
   return distribution;
 }
 
-function computeTestOverview(attempts, totalAssigned) {
+/**
+ * Test-level overview KPIs across the full analytics cohort.
+ *
+ * completionRate measures the ASSIGNED cohort: of the registered students the
+ * test was assigned to, how many completed it. Public guests were never
+ * assigned, so they neither dilute nor inflate it — pass registeredCount when
+ * the cohort includes guests. Tests with no assignments (public links) have no
+ * completion rate at all: null, rendered as "—" (not a misleading 0%).
+ */
+function computeTestOverview(
+  attempts,
+  totalAssigned,
+  { registeredCount = null } = {}
+) {
   const totalAttempted = attempts.length;
+  const assignedCompleted = registeredCount === null ? totalAttempted : registeredCount;
   const completionRate =
-    totalAssigned > 0 ? roundTo2((totalAttempted / totalAssigned) * 100) : 0;
+    totalAssigned > 0 ? roundTo2((assignedCompleted / totalAssigned) * 100) : null;
 
   const marksList = attempts.map((a) => Number(a.marksObtained || 0));
   const avgMarks =
@@ -320,18 +347,15 @@ function computePerformanceMetricsAverages(attempts, questions, totalQuestions) 
   let sumWrong = 0;
   let sumSkipped = 0;
   let sumTime = 0;
-  let timeCount = 0;
 
   attempts.forEach((attempt) => {
     const stats = computeAttemptStats(attempt, questions);
     sumCorrect += stats.correct;
     sumWrong += stats.incorrect;
     sumSkipped += stats.skipped;
-    const duration = getAttemptDurationMinutes(attempt);
-    if (duration !== null) {
-      sumTime += duration;
-      timeCount += 1;
-    }
+    // Raw durations, missing ones count as 0 — the historical export
+    // contract (see getRawAttemptDurationMinutes).
+    sumTime += getRawAttemptDurationMinutes(attempt);
   });
 
   const count = attempts.length;
@@ -340,11 +364,47 @@ function computePerformanceMetricsAverages(attempts, questions, totalQuestions) 
     avgCorrect: roundTo2(sumCorrect / count),
     avgWrong: roundTo2(sumWrong / count),
     avgSkipped: roundTo2(sumSkipped / count),
-    avgTime: timeCount > 0 ? roundTo2(sumTime / timeCount) : 0,
+    avgTime: roundTo2(sumTime / count),
     attemptCount: count,
     totalCorrect: sumCorrect,
     totalWrong: sumWrong,
     totalSkipped: sumSkipped,
+  };
+}
+
+/**
+ * Single source of truth for test-level analytics. Every aggregate the app's
+ * Test Analytics screen renders AND the CSV/Excel reports export is computed
+ * here from ONE attempts array, so the surfaces can never drift apart.
+ *
+ * `attempts` is the full analytics cohort: registered QuizAttempts plus, for
+ * admin callers, public GuestAttempts (guests are first-class attempts for
+ * aggregation — GuestAttempt stores the same graded answers/marks/timing
+ * shape). Guest EXCLUSION from rankings/leaderboards is a caller concern, not
+ * an aggregation concern.
+ *
+ * `registeredCount` scopes the completion rate to the assigned cohort
+ * (see computeTestOverview); pass it whenever guests may be in `attempts`.
+ */
+function computeTestAnalytics(
+  attempts,
+  questions,
+  { totalAssigned = 0, registeredCount = null } = {}
+) {
+  const questionAnalytics = computeQuestionAnalytics(attempts, questions);
+  const { easiest, hardest } = findEasiestHardestQuestions(questionAnalytics);
+
+  return {
+    overview: computeTestOverview(attempts, totalAssigned, { registeredCount }),
+    performanceMetrics: computePerformanceMetricsAverages(
+      attempts,
+      questions,
+      questions.length
+    ),
+    questionAnalytics,
+    easiestQuestion: easiest,
+    hardestQuestion: hardest,
+    scoreDistribution: computeScoreDistribution(attempts),
   };
 }
 
@@ -812,6 +872,8 @@ module.exports = {
   computeScoreDistribution,
   computeTestOverview,
   computePerformanceMetricsAverages,
+  computeTestAnalytics,
+  getRawAttemptDurationMinutes,
   computePercentile,
   rankStudentAttempts,
   parseDateRange,

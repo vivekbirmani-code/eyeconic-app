@@ -6,6 +6,7 @@
 const GuestAttempt = require('../models/GuestAttempt');
 const Guest = require('../models/Guest');
 const { maskPhone } = require('./phone');
+const { computeAttemptStats, computeScorePercentage } = require('./analytics');
 
 const DONE_STATUSES = ['completed', 'auto_submitted'];
 
@@ -16,6 +17,22 @@ const countGuestAttempts = (quizId) =>
     status: { $in: DONE_STATUSES },
     guest: { $ne: null },
   });
+
+// Lean guest-attempt documents for the shared test-analytics aggregates
+// (computeTestAnalytics). Same cohort rule as fetchGuestParticipants —
+// completed/auto_submitted lead attempts only; legacy anonymous device-keyed
+// attempts stay out. The projection carries exactly the fields the analytics
+// helpers read on a QuizAttempt (graded answers, marks, timing).
+const fetchGuestAttemptDocs = (quizId) =>
+  GuestAttempt.find({
+    quiz: quizId,
+    status: { $in: DONE_STATUSES },
+    guest: { $ne: null },
+  })
+    .select(
+      'answers totalQuestions score marksObtained totalMarks startTime endTime status sectionPerformance'
+    )
+    .lean();
 
 const roundTo2 = (value) => {
   const num = Number(value);
@@ -44,7 +61,7 @@ const fetchGuestParticipants = async (quizId, { fullPhone = false } = {}) => {
     status: { $in: DONE_STATUSES },
     guest: { $ne: null },
   })
-    .select('guest guestName guestEmail guestPhone score marksObtained totalMarks answers sectionPerformance status endTime startTime tabSwitchCount')
+    .select('guest guestName guestEmail guestPhone score marksObtained totalMarks totalQuestions answers sectionPerformance status endTime startTime tabSwitchCount')
     .sort({ endTime: -1 })
     .lean();
 
@@ -60,22 +77,17 @@ const fetchGuestParticipants = async (quizId, { fullPhone = false } = {}) => {
 
   return attempts.map((attempt) => {
     const lead = leadById.get(String(attempt.guest));
+    // C/W/S comes from the SAME shared classification the test-level
+    // aggregates use (type-aware isAnswered + the stored server-side
+    // isCorrect), so a participant row always sums to the numbers the KPIs
+    // were computed from — and non-MCQ types (numerical 0, empty multi-select)
+    // classify correctly instead of falling through MCQ-only semantics.
+    const stats = computeAttemptStats(attempt);
     const totalMarks = attempt.totalMarks || 0;
-    const scorePercentage = totalMarks > 0
-      ? Math.round((attempt.marksObtained / totalMarks) * 100)
-      : 0;
-    const correct = attempt.score || 0;
-    const totalQuestions = attempt.answers?.length || 0;
-    const attemptedCount = (attempt.answers || []).filter(
-      (a) => a && a.selectedAnswer !== -1 && a.selectedAnswer !== null && a.selectedAnswer !== undefined
-    ).length;
-    const incorrect = Math.max(0, attemptedCount - correct);
-    const skipped = Math.max(0, totalQuestions - attemptedCount);
     const timeTakenSeconds = attempt.startTime && attempt.endTime
       ? Math.max(0, Math.floor((new Date(attempt.endTime) - new Date(attempt.startTime)) / 1000))
       : 0;
 
-    const attemptedCountFinal = correct + incorrect;
     return {
       attemptId: attempt._id,
       guestId: attempt.guest,
@@ -88,16 +100,16 @@ const fetchGuestParticipants = async (quizId, { fullPhone = false } = {}) => {
       // admin analytics responses).
       phoneMasked: maskPhone(attempt.guestPhone || lead?.phone || ''),
       ...(fullPhone ? { phone: attempt.guestPhone || lead?.phone || '' } : {}),
-      score: correct,
-      totalQuestions,
+      score: attempt.score || stats.correct,
+      totalQuestions: stats.totalQuestions,
       marksObtained: roundTo2(attempt.marksObtained),
       totalMarks,
-      scorePercentage,
-      correct,
-      incorrect,
-      skipped,
-      attempted: attemptedCountFinal,
-      accuracy: attemptedCountFinal > 0 ? Math.round((correct / attemptedCountFinal) * 100) : 0,
+      scorePercentage: computeScorePercentage(attempt.marksObtained, totalMarks) ?? 0,
+      correct: stats.correct,
+      incorrect: stats.incorrect,
+      skipped: stats.skipped,
+      attempted: stats.attempted,
+      accuracy: stats.accuracy,
       timeTakenSeconds,
       tabSwitchCount: attempt.tabSwitchCount || 0,
       status: attempt.status,
@@ -113,5 +125,6 @@ const fetchGuestParticipants = async (quizId, { fullPhone = false } = {}) => {
 
 module.exports = {
   fetchGuestParticipants,
+  fetchGuestAttemptDocs,
   countGuestAttempts,
 };

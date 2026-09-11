@@ -88,6 +88,8 @@ interface TestListItem {
   testType: string;
   assignedCount: number;
   attemptCount: number;
+  // Admin-only: completed public-quiz guest attempts (mentors never get it).
+  guestAttemptCount?: number | null;
 }
 
 interface TestAnalyticsData {
@@ -287,10 +289,10 @@ export default function Analytics() {
     }
   };
 
-  const handleDownloadCSV = async () => {
+  const handleDownloadReport = async () => {
     if (!selectedTest) return;
     try {
-      await downloadApiReport(`/quizzes/analytics/test-report/${selectedTest._id}/csv`);
+      await downloadApiReport(`/quizzes/analytics/test-report/${selectedTest._id}/excel`);
     } catch (error) {
       Alert.alert('Download failed', getReportDownloadErrorMessage(error));
     }
@@ -424,13 +426,13 @@ export default function Analytics() {
                     </View>
                   ) : null}
 
-                  {/* Download CSV Button */}
+                  {/* Download Excel Report Button */}
                   <TouchableOpacity
                     style={styles.downloadButton}
-                    onPress={handleDownloadCSV}
+                    onPress={handleDownloadReport}
                   >
                     <Download color="#FFF" size={18} />
-                    <Text style={styles.downloadButtonText}>Download Report (CSV)</Text>
+                    <Text style={styles.downloadButtonText}>Download Report (Excel)</Text>
                   </TouchableOpacity>
 
                   <QuestionAnalytics questions={testAnalytics.questionAnalytics} />

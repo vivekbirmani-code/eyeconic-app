@@ -25,9 +25,12 @@ export default function TestOverview({ overview, totalMarks }: TestOverviewProps
         },
         {
             icon: TrendingUp,
-            value: `${overview.completionRate}%`,
+            // Null when nothing was assigned (public test) — there is no
+            // completion rate to report, so "—" instead of a misleading 0%.
+            value: overview.completionRate === null ? '—' : `${overview.completionRate}%`,
             label: 'Completion',
             color: '#10B981',
+            sublabel: overview.completionRate === null ? 'no assignments' : undefined,
         },
         {
             icon: Target,
