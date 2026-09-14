@@ -152,10 +152,16 @@ export const publicQuizApi = {
     shareToken: string,
     payload: { name: string; email: string; phone: string; marketingConsent: boolean; otp: string }
   ) =>
-    publicApi.post<{ success: boolean; guestToken: string; guest: GuestLead }>(
-      `/public/quiz/${shareToken}/lead/verify-otp`,
-      payload
-    ),
+    publicApi.post<{
+      success: boolean;
+      guestToken: string;
+      guest: GuestLead;
+      // Advisory one-attempt flag: set when this verified lead already
+      // finished THIS quiz. Verification still succeeds (the guest may need
+      // to re-verify to view their result) — the client uses the flag to
+      // skip the quiz and route to the existing attempt's result.
+      alreadyAttempted?: { code: string; message: string; attemptId?: string };
+    }>(`/public/quiz/${shareToken}/lead/verify-otp`, payload),
 
   start: (shareToken: string, guestId: string) =>
     publicApi.post<StartAttemptResponse>(`/public/quiz/${shareToken}/start`, {

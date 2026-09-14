@@ -204,7 +204,7 @@ function ParticipantCard({
 
 // Unranked public-quiz participant list — rendered for admins inside the
 // existing Test Analytics tab. Guests never appear in the ranked
-// StudentPerformanceList; this is their separate section. Tapping a card
+// LiveLeaderboard; this is their separate section. Tapping a card
 // opens the same attempt detail the registered-student rows use.
 export default function GuestParticipantList({ participants, onParticipantClick }: GuestParticipantListProps) {
     return (

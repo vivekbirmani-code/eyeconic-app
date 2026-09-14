@@ -5,6 +5,11 @@ const { normalizeIndianPhone } = require('../utils/phone');
 const { issueGuestOtp, clearGuestOtp, verifyGuestOtp } = require('../utils/guestOtp');
 const { sendGuestQuizOtpMail, EmailDeliveryError } = require('../utils/mailer');
 const { findActivePublicQuiz, sendPublicQuizError } = require('../utils/publicQuizAccess');
+const {
+  findCompletedAttemptByIdentity,
+  identityFromLead,
+  buildAlreadyAttemptedPayload,
+} = require('../utils/guestAttemptIdentity');
 const { signGuestToken } = require('../middleware/guestAuth');
 const {
   guestOtpSendRateLimit,
@@ -209,6 +214,16 @@ router.post('/quiz/:shareToken/lead/verify-otp', guestOtpVerifyRateLimit, async 
       return res.status(500).json({ success: false, message: 'Server error' });
     }
 
+    // One-attempt-per-person: verification itself must NEVER be blocked — a
+    // guest who already finished this quiz still needs to re-verify to view
+    // their own result. Instead the response carries an advisory flag so the
+    // client can skip the quiz and route straight to the existing result;
+    // the /start route remains the enforcing authority (409).
+    const completedAttempt = await findCompletedAttemptByIdentity(
+      quiz._id,
+      identityFromLead(guest)
+    );
+
     const guestToken = signGuestToken(guest._id);
 
     return res.json({
@@ -222,6 +237,9 @@ router.post('/quiz/:shareToken/lead/verify-otp', guestOtpVerifyRateLimit, async 
         phone: guest.phone,
         marketingConsent: guest.marketingConsent?.granted === true,
       },
+      ...(completedAttempt
+        ? { alreadyAttempted: buildAlreadyAttemptedPayload(completedAttempt, guest) }
+        : {}),
     });
   } catch (error) {
     console.error('Error verifying guest lead OTP:', error);

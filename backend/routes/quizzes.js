@@ -392,6 +392,21 @@ async function finalizeQuizAttempt(attempt, { isAutoSubmit = false, req = null, 
       });
     }
 
+    // Live leaderboard: nudge every admin/mentor currently watching this
+    // test's leaderboard. The event carries no ranking data — viewers refetch
+    // the leaderboard endpoint, so ranking, tie-breakers and mentor scoping
+    // always come from the single rankStudentAttempts source of truth and a
+    // burst of submissions collapses into cheap invalidations instead of N
+    // full-leaderboard fan-outs.
+    io.to(`leaderboard:${quiz._id}`).emit('quiz_leaderboard_updated', {
+      quizId: quiz._id.toString(),
+      attemptId: finalizedAttempt._id.toString(),
+      // The attempt owner, NOT req.user: the expired-section sync path can
+      // finalize another student's attempt from an unrelated request.
+      studentId: (finalizedAttempt.student || attempt.student || req.user._id).toString(),
+      submittedAt: endTime.toISOString(),
+    });
+
     // --- NEW FOR MENTOR/ADMIN REMINDERS ---
     try {
       const studentObj = await User.findById(req.user._id).select('name');
@@ -3502,6 +3517,64 @@ router.get('/analytics/tests/list', auth, authorize('admin', 'mentor'), async (r
   }
 });
 
+/**
+ * Cohort definition shared by /analytics/test/:testId and its /leaderboard
+ * sibling: completed registered attempts, scoped to the mentor's own students
+ * for mentor callers, plus the matching totalAssigned. One definition so the
+ * static analytics view and the live leaderboard can never disagree about who
+ * is in the cohort.
+ */
+async function buildTestAttemptScope(user, quiz) {
+  const attemptQuery = {
+    quiz: quiz._id,
+    status: { $in: ['completed', 'auto_submitted'] },
+  };
+
+  let totalAssigned = quiz.assignedStudents?.length || 0;
+
+  if (user.role === 'mentor') {
+    const assignments = await MentorStudentAssignment.find({ mentor: user._id, isActive: true }).select('student');
+    const mentorStudentIds = assignments.map(a => a.student.toString());
+    attemptQuery.student = { $in: mentorStudentIds };
+
+    if (quiz.assignedStudents && quiz.assignedStudents.length > 0) {
+      totalAssigned = quiz.assignedStudents.filter(id => mentorStudentIds.includes(id.toString())).length;
+    } else {
+      totalAssigned = mentorStudentIds.length;
+    }
+  }
+
+  return { attemptQuery, totalAssigned };
+}
+
+// Live leaderboard (admin, mentor) — the ranked participant list the Test
+// Analytics screen updates in real time. Deliberately returns ONLY
+// rankStudentAttempts output: the realtime refresh path stays light (no
+// question analytics, no guest aggregation), while ranking, tie-breakers and
+// mentor scoping stay identical to /analytics/test/:testId by construction.
+router.get('/analytics/test/:testId/leaderboard', auth, authorize('admin', 'mentor'), async (req, res) => {
+  try {
+    const quiz = await Quiz.findById(req.params.testId).populate('questions');
+
+    if (!quiz) {
+      return res.status(404).json({ message: 'Test not found' });
+    }
+
+    const { attemptQuery } = await buildTestAttemptScope(req.user, quiz);
+    const attempts = await QuizAttempt.find(attemptQuery)
+      .populate('student', 'name email profilePicture')
+      .sort({ marksObtained: -1 });
+
+    res.json({
+      leaderboard: rankStudentAttempts(attempts, quiz.questions),
+      generatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    console.error('Get leaderboard error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Get comprehensive test analytics (admin, mentor)
 router.get('/analytics/test/:testId', auth, authorize('admin', 'mentor'), async (req, res) => {
   try {
@@ -3513,24 +3586,7 @@ router.get('/analytics/test/:testId', auth, authorize('admin', 'mentor'), async 
       return res.status(404).json({ message: 'Test not found' });
     }
 
-    let attemptQuery = {
-      quiz: req.params.testId,
-      status: { $in: ['completed', 'auto_submitted'] }
-    };
-
-    let totalAssigned = quiz.assignedStudents?.length || 0;
-
-    if (req.user.role === 'mentor') {
-      const assignments = await MentorStudentAssignment.find({ mentor: req.user._id, isActive: true }).select('student');
-      const mentorStudentIds = assignments.map(a => a.student.toString());
-      attemptQuery.student = { $in: mentorStudentIds };
-
-      if (quiz.assignedStudents && quiz.assignedStudents.length > 0) {
-        totalAssigned = quiz.assignedStudents.filter(id => mentorStudentIds.includes(id.toString())).length;
-      } else {
-        totalAssigned = mentorStudentIds.length;
-      }
-    }
+    const { attemptQuery, totalAssigned } = await buildTestAttemptScope(req.user, quiz);
 
     const attempts = await QuizAttempt.find(attemptQuery)
       .populate('student', 'name email profilePicture')

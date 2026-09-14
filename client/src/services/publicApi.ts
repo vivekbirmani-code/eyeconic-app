@@ -89,7 +89,7 @@ export const getPublicApiError = (error: unknown): PublicApiError => {
 /** Typed extraction of { status, code, message } from an unknown thrown error. */
 export const getErrorData = (
   error: unknown
-): { status?: number; code?: string; message?: string; offline?: boolean } | undefined => {
+): { status?: number; code?: string; message?: string; attemptId?: string; offline?: boolean } | undefined => {
   if (axios.isAxiosError(error)) {
     // No response at all = the server was unreachable (backend not running,
     // wrong URL, or a network drop). Axios surfaces this as "Network Error";
@@ -107,6 +107,9 @@ export const getErrorData = (
       status: error.response.status,
       code: typeof data?.code === 'string' ? data.code : undefined,
       message: typeof data?.message === 'string' && data.message ? data.message : undefined,
+      // QUIZ_ALREADY_ATTEMPTED responses carry the guest's existing attempt
+      // so the UI can route straight to its result page.
+      attemptId: typeof data?.attemptId === 'string' ? data.attemptId : undefined,
     };
   }
   return undefined;

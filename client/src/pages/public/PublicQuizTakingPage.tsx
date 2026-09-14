@@ -163,6 +163,23 @@ export default function PublicQuizTakingPage() {
           navigate(`/public-quiz/${token}`, { replace: true });
           return;
         }
+        // One attempt per person: the server refuses a new/resumed attempt
+        // because this guest already finished the quiz. Route to the
+        // existing attempt's result when we can (server-returned ID for the
+        // same lead, or this device's stored pointer); otherwise surface
+        // the message.
+        if (extracted?.code === 'QUIZ_ALREADY_ATTEMPTED') {
+          const existingId = extracted.attemptId || recallAttemptId(token);
+          if (existingId) {
+            navigate(`/public-quiz/${token}/result/${existingId}`, {
+              replace: true,
+              state: { alreadyAttempted: true },
+            });
+          } else {
+            setLoadError(extracted.message || 'You have already attempted this quiz.');
+          }
+          return;
+        }
         setLoadError(extracted?.message || 'Unable to start this quiz.');
       } finally {
         if (!cancelled) setLoading(false);
@@ -388,11 +405,33 @@ export default function PublicQuizTakingPage() {
   // ---------- submissions ----------
 
   const goToResult = useCallback(
-    (attemptId: string) => {
+    (attemptId: string, options?: { alreadyAttempted?: boolean }) => {
       submittingRef.current = true;
-      navigate(`/public-quiz/${token}/result/${attemptId}`, { replace: true });
+      navigate(`/public-quiz/${token}/result/${attemptId}`, {
+        replace: true,
+        ...(options?.alreadyAttempted ? { state: { alreadyAttempted: true } } : {}),
+      });
     },
     [navigate, token]
+  );
+
+  // Duplicate-attempt resolution: the server refused a submit because the
+  // same person already finalized an attempt on this quiz. Their first
+  // submission stands — route to it when we can resolve its ID (the server
+  // returns it for the same lead; this device's stored pointer otherwise),
+  // or just explain.
+  const handleAlreadyAttempted = useCallback(
+    (extracted: { attemptId?: string; message?: string } | undefined): void => {
+      const existingId = extracted?.attemptId || recallAttemptId(token);
+      if (existingId) {
+        goToResult(existingId, { alreadyAttempted: true });
+        return;
+      }
+      submittingRef.current = false;
+      setSubmitting(false);
+      setBanner(extracted?.message || 'You have already attempted this quiz.');
+    },
+    [goToResult, token]
   );
 
   const finalizeWholeQuiz = useCallback(
@@ -414,17 +453,24 @@ export default function PublicQuizTakingPage() {
         const attemptId = response.data.attemptId || attempt._id;
         goToResult(attemptId);
       } catch (error) {
-        submittingRef.current = false;
-        setSubmitting(false);
-        if (getErrorData(error)?.status === 401) {
+        const extracted = getErrorData(error);
+        if (extracted?.status === 401) {
+          submittingRef.current = false;
+          setSubmitting(false);
           handleSessionExpired();
           navigate(`/public-quiz/${token}`, { replace: true });
           return;
         }
+        if (extracted?.code === 'QUIZ_ALREADY_ATTEMPTED') {
+          handleAlreadyAttempted(extracted);
+          return;
+        }
+        submittingRef.current = false;
+        setSubmitting(false);
         setBanner(isAuto ? 'Time is up — submitting failed, retrying…' : 'Submission failed. Please try again.');
       }
     },
-    [attempt, token, guestId, buildAnswerPayload, goToResult, handleSessionExpired, navigate]
+    [attempt, token, guestId, buildAnswerPayload, goToResult, handleAlreadyAttempted, handleSessionExpired, navigate]
   );
 
   const submitCurrentSection = useCallback(
@@ -468,9 +514,14 @@ export default function PublicQuizTakingPage() {
           questionStartRef.current = Date.now();
         }
       } catch (error) {
-        if (getErrorData(error)?.status === 401) {
+        const extracted = getErrorData(error);
+        if (extracted?.status === 401) {
           handleSessionExpired();
           navigate(`/public-quiz/${token}`, { replace: true });
+          return;
+        }
+        if (extracted?.code === 'QUIZ_ALREADY_ATTEMPTED') {
+          handleAlreadyAttempted(extracted);
           return;
         }
         setBanner('Submitting this section failed. Please try again.');
@@ -479,7 +530,7 @@ export default function PublicQuizTakingPage() {
         setSubmitting(false);
       }
     },
-    [attempt, activeSectionState, token, guestId, buildAnswerPayload, goToResult, handleSessionExpired, navigate, questions]
+    [attempt, activeSectionState, token, guestId, buildAnswerPayload, goToResult, handleAlreadyAttempted, handleSessionExpired, navigate, questions]
   );
 
   // Timer auto-submit — throttled so a failing submit endpoint is retried at

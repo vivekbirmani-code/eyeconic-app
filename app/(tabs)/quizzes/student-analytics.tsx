@@ -31,7 +31,7 @@ import TestDropdown from '@/components/analytics/test-analytics/TestDropdown';
 import TestOverview from '@/components/analytics/test-analytics/TestOverview';
 import PerformanceMetrics from '@/components/analytics/test-analytics/PerformanceMetrics';
 import QuestionAnalytics from '@/components/analytics/test-analytics/QuestionAnalytics';
-import StudentPerformanceList from '@/components/analytics/test-analytics/StudentPerformanceList';
+import LiveLeaderboard from '@/components/analytics/test-analytics/LiveLeaderboard';
 import GuestParticipantList, { type GuestParticipant } from '@/components/analytics/GuestParticipantList';
 import AttemptDetailModal from '@/components/analytics/AttemptDetailModal';
 import QuestionBankPerformance from '@/components/analytics/QuestionBankPerformance';
@@ -436,8 +436,11 @@ export default function Analytics() {
                   </TouchableOpacity>
 
                   <QuestionAnalytics questions={testAnalytics.questionAnalytics} />
-                  <StudentPerformanceList
-                    students={testAnalytics.studentPerformance}
+                  {/* Real-time ranked participants — supersedes the static
+                      student performance list; updates live as students
+                      submit (socket nudge → coalesced leaderboard refetch). */}
+                  <LiveLeaderboard
+                    testId={selectedTest._id}
                     onStudentClick={handleStudentAttemptClick}
                   />
                   {user?.role === 'admin' && (

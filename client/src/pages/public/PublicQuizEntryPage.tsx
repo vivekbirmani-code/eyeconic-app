@@ -145,6 +145,25 @@ export default function PublicQuizEntryPage() {
       });
       setGuestToken(response.data.guestToken);
       setLead(response.data.guest);
+
+      // One attempt per person: this lead already finished THIS quiz. With
+      // a viewable attempt (same lead) go straight to its result; otherwise
+      // (matched via shared email under another phone) explain inline —
+      // verification itself still succeeded, which the guest may need to
+      // re-view their result later.
+      const attempted = response.data.alreadyAttempted;
+      if (attempted) {
+        if (attempted.attemptId) {
+          navigate(`/public-quiz/${token}/result/${attempted.attemptId}`, {
+            replace: true,
+            state: { alreadyAttempted: true },
+          });
+        } else {
+          setError({ code: attempted.code, message: attempted.message });
+        }
+        return;
+      }
+
       navigate(`/public-quiz/${token}/take`, { replace: true });
     } catch (err) {
       setError(getPublicApiError(err));

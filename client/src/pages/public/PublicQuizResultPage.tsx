@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   AlertTriangle,
   CalendarClock,
   Loader2,
   MailCheck,
+  ShieldCheck,
   TimerReset,
 } from 'lucide-react';
 import { publicQuizApi, usePublicQuiz } from '../../contexts/PublicQuizContext';
@@ -35,7 +36,14 @@ const GROUP_HEADING: Record<GroupByOption, string> = {
 export default function PublicQuizResultPage() {
   const { token = '', attemptId = '' } = useParams<{ token: string; attemptId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const { handleSessionExpired } = usePublicQuiz();
+
+  // Set when the guest was routed here because the one-attempt-per-person
+  // restriction stopped a repeat attempt — the banner explains why they are
+  // seeing their previous result instead of the quiz.
+  const alreadyAttempted =
+    (location.state as { alreadyAttempted?: boolean } | null | undefined)?.alreadyAttempted === true;
 
   const [loading, setLoading] = useState(true);
   const [reloading, setReloading] = useState(false);
@@ -168,6 +176,18 @@ export default function PublicQuizResultPage() {
           </div>
         </div>
       </header>
+
+      {alreadyAttempted && (
+        <div className="max-w-4xl mx-auto px-4 pt-4">
+          <div className="bg-amber-50 border border-amber-200 rounded-xl px-4 py-3 flex items-start gap-2.5">
+            <ShieldCheck className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" aria-hidden="true" />
+            <p className="text-xs text-amber-800 font-medium leading-relaxed">
+              You have already attempted this quiz — each public quiz can be attempted only once. This is your
+              existing result.
+            </p>
+          </div>
+        </div>
+      )}
 
       {isAutoSubmitted && (
         <div className="max-w-4xl mx-auto px-4 pt-4">

@@ -10,6 +10,12 @@ const { guestAuth, optionalGuestAuth } = require('../middleware/guestAuth');
 const { maskPhone } = require('../utils/phone');
 const { getPublicWebAppUrl } = require('../utils/publicWebUrl');
 const { findActivePublicQuiz, sendPublicQuizError } = require('../utils/publicQuizAccess');
+const {
+    findCompletedAttemptByIdentity,
+    identityFromLead,
+    identityFromAttempt,
+    buildAlreadyAttemptedPayload,
+} = require('../utils/guestAttemptIdentity');
 const { buildAttemptResults } = require('../utils/attemptResults');
 const {
     isSectionLockEnforced,
@@ -321,6 +327,28 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
         }
         const quiz = access.quiz;
 
+        // One attempt per identified guest (web OTP flow only — anonymous
+        // device-keyed requests carry no identity and skip this check).
+        // Runs BEFORE the in-progress resume lookup: if the same person
+        // already finished this quiz — via this lead, a prior phone number
+        // on it, or any lead sharing the OTP-verified email — no new
+        // attempt may be created and a leftover duplicate in-progress
+        // attempt must not be resumed either. Re-verification itself stays
+        // possible (the lead/result routes never come through here), so a
+        // finished guest can still reach their own result.
+        if (req.guest) {
+            const duplicate = await findCompletedAttemptByIdentity(
+                quiz._id,
+                identityFromLead(req.guest)
+            );
+            if (duplicate) {
+                return res.status(409).json({
+                    success: false,
+                    ...buildAlreadyAttemptedPayload(duplicate, req.guest),
+                });
+            }
+        }
+
         // Check for existing in-progress attempt — same device first, then
         // (OTP flow) any device under the verified lead. Both lookups sort
         // OLDEST-first: if duplicate live attempts exist (the pre-fix
@@ -617,6 +645,25 @@ router.post('/quiz/:shareToken/submit', optionalGuestAuth, async (req, res) => {
             });
         }
 
+        // Duplicate-finalization defense: two attempts by the same person
+        // can both be live if they were STARTED concurrently (the start gate
+        // only sees finalized attempts). Whoever finalizes first wins; the
+        // other in-progress attempt is refused here instead of becoming a
+        // second graded result. Keyed on the ATTEMPT's own identity
+        // snapshot so it applies even when the submitting session's lead
+        // differs from the attempt's lead (shared email, second phone).
+        const duplicate = await findCompletedAttemptByIdentity(
+            quiz._id,
+            identityFromAttempt(attempt),
+            attempt._id
+        );
+        if (duplicate) {
+            return res.status(409).json({
+                success: false,
+                ...buildAlreadyAttemptedPayload(duplicate, req.guest),
+            });
+        }
+
         // Section-locking defensive path: never offered by the UI, but old
         // clients / crafted requests may hit it. Lazily apply expiries, then
         // only answers for still-open sections are accepted — submitted
@@ -744,6 +791,23 @@ router.post('/quiz/:shareToken/sections/:sectionIndex/submit', optionalGuestAuth
                 success: false,
                 message: 'Section locking is not enabled for this quiz attempt',
                 errorCode: 'SECTION_LOCKING_DISABLED'
+            });
+        }
+
+        // Duplicate-finalization defense (same contract as the whole-quiz
+        // /submit route): refuse to keep grading an in-progress duplicate
+        // once the same person already finalized an attempt on this quiz —
+        // including mid-quiz section submits, so the guest is not left
+        // working through a doomed attempt.
+        const duplicate = await findCompletedAttemptByIdentity(
+            quiz._id,
+            identityFromAttempt(attempt),
+            attempt._id
+        );
+        if (duplicate) {
+            return res.status(409).json({
+                success: false,
+                ...buildAlreadyAttemptedPayload(duplicate, req.guest),
             });
         }
 

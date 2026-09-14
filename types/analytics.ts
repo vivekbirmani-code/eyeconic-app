@@ -145,6 +145,46 @@ export interface TestOverviewData {
   avgAccuracy: number | null;
 }
 
+/**
+ * One ranked row of a test's live leaderboard — the exact shape
+ * rankStudentAttempts returns from GET /quizzes/analytics/test/:id/leaderboard
+ * (identical rows to studentPerformance in the full test analytics response).
+ * rank is null when the cohort has a single attempt; leaderboard position is
+ * index + 1 regardless.
+ */
+export interface LeaderboardEntry {
+  _id: string;
+  student: {
+    _id: string;
+    name: string;
+    email: string;
+  } | null;
+  studentId: string;
+  studentName: string;
+  studentEmail: string;
+  score: number;
+  totalQuestions: number;
+  marksObtained: number;
+  totalMarks: number;
+  scorePercentage: number | null;
+  accuracy: number | null;
+  correct: number;
+  incorrect: number;
+  skipped: number;
+  attempted: number;
+  percentage: number;
+  timeSpent: number;
+  completedAt: string;
+  endTime: string;
+  tabSwitchCount: number;
+  rank: number | null;
+}
+
+export interface LeaderboardResponse {
+  leaderboard: LeaderboardEntry[];
+  generatedAt: string;
+}
+
 export function formatPercent(value: number | null | undefined, fallback = 'N/A'): string {
   if (value === null || value === undefined || !Number.isFinite(value)) return fallback;
   return `${Number(value.toFixed(2))}%`;

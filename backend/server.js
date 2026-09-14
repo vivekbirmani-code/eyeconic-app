@@ -391,6 +391,42 @@ io.on('connection', (socket) => {
     console.log(`User ${socket.id} left room ${roomId}`);
   });
 
+  // ============ LIVE LEADERBOARD ROOMS ============
+  // Admins/mentors watching a test's leaderboard in Test Analytics. Requires
+  // a registered socket (register_user sets socket.userId) and a server-side
+  // role check, so student sockets can never listen in on class rankings.
+  // quiz_leaderboard_updated is emitted to these rooms on submission.
+  const leaderboardRoom = (quizId) =>
+    typeof quizId === 'string' && /^[a-f\d]{24}$/i.test(quizId)
+      ? `leaderboard:${quizId}`
+      : null;
+
+  socket.on('join_leaderboard', async (quizId) => {
+    const room = leaderboardRoom(quizId);
+    if (!room || !socket.userId) return;
+
+    try {
+      const user = await User.findById(socket.userId).select('role');
+      if (!user || (user.role !== 'admin' && user.role !== 'mentor')) {
+        socket.emit('leaderboard_error', { message: 'Not authorized to view leaderboards.' });
+        return;
+      }
+      socket.join(room);
+      socket.emit('leaderboard_joined', { quizId });
+      console.log(`User ${socket.userId} joined leaderboard room ${room}`);
+    } catch (error) {
+      console.error('join_leaderboard error:', error);
+    }
+  });
+
+  socket.on('leave_leaderboard', (quizId) => {
+    const room = leaderboardRoom(quizId);
+    if (room) {
+      socket.leave(room);
+      console.log(`User ${socket.userId || socket.id} left leaderboard room ${room}`);
+    }
+  });
+
   // TEMPORARY FEATURE FREEZE — chat/call client events are inert while the
   // feature is disabled (see config/featureAvailability.js). Connections,
   // register_user and room joins stay open so quiz emissions
