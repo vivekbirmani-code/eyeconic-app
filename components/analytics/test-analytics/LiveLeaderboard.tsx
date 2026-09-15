@@ -445,9 +445,12 @@ export default function LiveLeaderboard({ testId, onStudentClick }: LiveLeaderbo
               </Text>
             </View>
             <TouchableOpacity
+              style={styles.refreshButton}
               onPress={handleManualRefresh}
               activeOpacity={0.7}
               hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityRole="button"
+              accessibilityLabel="Refresh leaderboard"
             >
               {refreshing ? (
                 <ActivityIndicator color="#6B7280" size="small" />
@@ -542,10 +545,20 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     marginTop: 1,
   },
+  // Control stack pinned to the card's right edge: LIVE pill on top, refresh
+  // button directly below it, both flush to the same right edge.
   headerRight: {
-    flexDirection: 'row',
+    flexDirection: 'column',
+    alignItems: 'flex-end',
+    gap: 6,
+  },
+  refreshButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: '#F3F4F6',
     alignItems: 'center',
-    gap: 10,
+    justifyContent: 'center',
   },
   livePill: {
     flexDirection: 'row',
