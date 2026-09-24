@@ -51,6 +51,7 @@ const {
 const { assertStudentPerformanceAccess } = require('../utils/studentPerformanceAuth');
 const { buildAttemptResults } = require('../utils/attemptResults');
 const { buildStudentPerformanceResponse } = require('../utils/studentPerformance');
+const { buildCohortComparison } = require('../utils/cohortComparison');
 const { fetchGuestParticipants, fetchGuestAttemptDocs, countGuestAttempts } = require('../utils/guestAnalytics');
 const { collectTestReportData } = require('../utils/testReportData');
 const { buildTestReportWorkbook } = require('../utils/testReportExcel');
@@ -660,14 +661,17 @@ router.get('/', auth, async (req, res) => {
         return qObj;
       });
     } else {
-      // Student sees only quizzes assigned to them (or free quizzes for free users)
+      // Student sees only quizzes assigned to them (or free quizzes for free
+      // users). Mini CCTs are self-serve: visible to every student without
+      // individual assignment.
       const studentQuery = {
         isActive: true,
         $or: [
-          { assignedStudents: req.user._id }
+          { assignedStudents: req.user._id },
+          { testType: 'mini' }
         ]
       };
-      
+
       if (req.user.isFreeUser) {
         studentQuery.$or.push({ assignToAllFreeUsers: true });
       }
@@ -2431,6 +2435,20 @@ router.get('/analytics/me', auth, authorize('student'), async (req, res) => {
   }
 });
 
+// Anonymous cohort comparison (student self): the caller's most recent
+// finalized attempt vs aggregate statistics of every eligible attempt on
+// that SAME quiz. Registered-only cohort; no other student's identity or
+// individual score ever leaves the server (see utils/cohortComparison.js).
+router.get('/analytics/me/comparison', auth, authorize('student'), async (req, res) => {
+  try {
+    const payload = await buildCohortComparison(req.user._id);
+    res.json(payload);
+  } catch (error) {
+    console.error('Student cohort comparison error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Get detailed quiz analytics
 router.get('/analytics/:id', auth, authorize('admin', 'mentor'), async (req, res) => {
   try {
@@ -2576,7 +2594,15 @@ router.get('/:id', auth, async (req, res) => {
 
     // Check access for students
     if (req.user.role === 'student') {
-      if (!quiz.assignedStudents.includes(req.user._id)) {
+      // Same visibility rule as the list route: an assignToAllFreeUsers quiz
+      // belongs to EVERY free user (including those who signed up after the
+      // quiz was created), and Mini CCTs are self-serve — every student can
+      // open one, assigned or not.
+      const isAssignedOrFreeForAll =
+        quiz.assignedStudents.includes(req.user._id) ||
+        (quiz.assignToAllFreeUsers === true && req.user.isFreeUser === true) ||
+        quiz.testType === 'mini';
+      if (!isAssignedOrFreeForAll) {
         return res.status(403).json({ message: 'Access denied' });
       }
 
@@ -2663,7 +2689,15 @@ router.post('/:id/start', auth, authorize('student'), async (req, res) => {
       return res.status(404).json({ message: 'This test was deleted by the administrator and is no longer available.' });
     }
 
-    if (!quiz.assignedStudents.includes(req.user._id)) {
+    // Mirrors the list/detail visibility rule: free users may start any
+    // assignToAllFreeUsers quiz even when they signed up after it was created
+    // (assignedStudents is only expanded to the free users who existed then),
+    // and Mini CCTs are self-serve for every student.
+    const isAssignedOrFreeForAll =
+      quiz.assignedStudents.includes(req.user._id) ||
+      (quiz.assignToAllFreeUsers === true && req.user.isFreeUser === true) ||
+      quiz.testType === 'mini';
+    if (!isAssignedOrFreeForAll) {
       return res.status(403).json({ message: 'You are not assigned to this quiz' });
     }
 

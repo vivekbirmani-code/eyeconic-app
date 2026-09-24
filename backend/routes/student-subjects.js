@@ -8,6 +8,13 @@ const router = express.Router();
 // Get subjects assigned to a student
 router.get('/:studentId', auth, async (req, res) => {
     try {
+        // Same convention as assignments/mentor-students: the path id is a
+        // target, so students may only read their own record. Admins and
+        // mentors (whose students' subjects are managed here) are allowed.
+        if (req.user.role === 'student' && req.user._id.toString() !== req.params.studentId) {
+            return res.status(403).json({ message: 'Access denied' });
+        }
+
         const assignment = await StudentSubjectAssignment.findOne({
             student: req.params.studentId
         }).populate('subjects').populate('assignedBy', 'name email');

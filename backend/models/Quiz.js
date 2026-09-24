@@ -13,7 +13,7 @@ const quizSchema = new mongoose.Schema({
   },
   testType: {
     type: String,
-    enum: ['daily', 'weekly', 'grand'],
+    enum: ['daily', 'weekly', 'grand', 'mini'],
     required: true
   },
   duration: {

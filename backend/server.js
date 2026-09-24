@@ -22,6 +22,9 @@ const groupRoutes = require('./routes/groups');
 const messageRoutes = require('./routes/messages');
 const quizRoutes = require('./routes/quizzes');
 const questionBankRoutes = require('./routes/question-bank');
+const dailyPyqRoutes = require('./routes/daily-pyq');
+const miniCctRoutes = require('./routes/mini-cct');
+const freeUserAnalyticsRoutes = require('./routes/free-user-analytics');
 const subjectRoutes = require('./routes/subjects');
 const studentSubjectRoutes = require('./routes/student-subjects');
 const mentorStudentRoutes = require('./routes/mentor-students');
@@ -32,6 +35,7 @@ const uploadRoutes = require('./routes/upload');
 const publicQuizRoutes = require('./routes/public-quiz');
 const publicLeadRoutes = require('./routes/public-lead');
 const studentAnalyticsRoutes = require('./routes/student-analytics');
+const integrationRoutes = require('./routes/integration');
 const { cleanupExpiredMedia } = require('./utils/media-cleanup');
 const Call = require('./models/Call');
 const User = require('./models/User');
@@ -214,6 +218,8 @@ app.use('/api/users', authMiddleware, featureGate('userManagement', 'users'), us
 app.use('/api/groups', authMiddleware, featureGate('chat', 'groups'), groupRoutes);
 app.use('/api/messages', authMiddleware, featureGate('chat'), messageRoutes);
 app.use('/api/quizzes', quizRoutes);
+app.use('/api/daily-pyq', dailyPyqRoutes);
+app.use('/api/mini-cct', miniCctRoutes);
 app.use('/api/question-bank', questionBankRoutes);
 app.use('/api/subjects', subjectRoutes);
 app.use('/api/student-subjects', authMiddleware, featureGate('mentorship'), studentSubjectRoutes);
@@ -225,6 +231,15 @@ app.use('/api/upload', authMiddleware, featureGate('chat', 'upload'), uploadRout
 app.use('/api/public', publicQuizRoutes);
 app.use('/api/public', publicLeadRoutes);
 app.use('/api/student-analytics', studentAnalyticsRoutes);
+// Free Login User Dashboard (website Feature 08) — read-only mentor/admin
+// analytics over the free-user population. Ungated like daily-pyq: it only
+// reads the quiz ecosystem's own collections and enforces its own
+// mentor/admin authorization internally.
+app.use('/api/free-user-analytics', freeUserAnalyticsRoutes);
+// Website (eyeconicneetpg.com) integration — versioned service-to-service
+// surface for app → website session handoff. Own feature flag; every route
+// inside is service-token authenticated (middleware/serviceAuth.js).
+app.use('/api/integration/v1', featureGate('integration'), integrationRoutes);
 
 // Track socket to user mapping (socket.id -> userId)
 const socketUserMap = new Map();
@@ -353,32 +368,70 @@ const finalizeCallEventMessage = async ({
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
-  // Register user with socket and auto-join all their group rooms
-  socket.on('register_user', async (userId) => {
-    if (!userId) {
-      console.warn('register_user called with null or undefined userId. Ignoring.');
+  // ---- Socket identity (registration) ----------------------------------
+  // register_user maps a connection to a userId so emitToUser() can deliver
+  // targeted events (quiz_submitted, alerts, calls). That mapping IS identity,
+  // so it is proven with the caller's user JWT — exactly like every HTTP
+  // route — and never taken from a client-claimed id:
+  //   - token from `io(url, { auth: { token } })` (handshake) or as the
+  //     second argument of register_user(userId, token);
+  //   - the socket is registered under the TOKEN's subject, so a claimed
+  //     mismatching userId is ignored (and logged);
+  //   - no/invalid token → registration refused (register_rejected). Legacy
+  //     builds that emit only register_user(userId) lose nothing they can
+  //     verify: targeted emissions fall back to the push notifications the
+  //     same routes already send, and new_quiz_assigned stays a broadcast.
+  const registerVerifiedSocket = async (token, claimedUserId) => {
+    const verified = socketHelpers.verifySocketToken(token);
+    if (!verified.ok) {
+      socket.emit('register_rejected', {
+        message: 'Socket registration requires a valid user token.',
+      });
+      console.warn(`Socket ${socket.id} registration rejected (no/invalid token)`);
       return;
     }
 
-    const userIdStr = userId.toString();
+    const userIdStr = verified.userId;
+    if (claimedUserId && claimedUserId.toString() !== userIdStr) {
+      // The token wins. A mismatch means a buggy client or a probe.
+      console.warn(
+        `Socket ${socket.id} claimed user ${claimedUserId} but token belongs to ${userIdStr} — registering as the token subject`
+      );
+    }
+
     socketUserMap.set(socket.id, userIdStr);
     socket.userId = userIdStr;
-    console.log(`User ${userIdStr} registered with socket ${socket.id}`);
-
-    // Register in reverse map (via socket-helpers)
     socketHelpers.registerSocket(socket.id, userIdStr);
+    console.log(`User ${userIdStr} registered with socket ${socket.id}`);
 
     // Auto-join all groups user belongs to (for receiving calls globally)
     try {
       const groups = await Group.find({ members: userIdStr }).select('_id');
       groups.forEach(group => {
         socket.join(group._id.toString());
-        console.log(`User ${userIdStr} auto-joined group room: ${group._id}`);
       });
       console.log(`User ${userIdStr} joined ${groups.length} group rooms`);
     } catch (error) {
       console.error('Error auto-joining groups:', error);
     }
+  };
+
+  // Clients that pass the token in the handshake are registered immediately.
+  const handshakeToken = socket.handshake?.auth?.token;
+  if (handshakeToken) {
+    registerVerifiedSocket(handshakeToken, null);
+  }
+
+  // Register user with socket and auto-join all their group rooms.
+  // For sockets already registered via a verified handshake token, the legacy
+  // register_user(userId) echo is a no-op; an explicit token argument always
+  // goes through full verification.
+  socket.on('register_user', async (userId, token) => {
+    if (!token && socket.userId) {
+      // Already proven at connect time — keep that registration.
+      return;
+    }
+    await registerVerifiedSocket(token || socket.handshake?.auth?.token, userId);
   });
 
   socket.on('join_room', (roomId) => {
@@ -463,7 +516,16 @@ io.on('connection', (socket) => {
   // Initiate a call
   socket.on('call_initiate', async (data) => {
     if (chatFeatureDisabled()) return;
-    const { groupId, groupName, initiatorId, initiatorName, targetUserIds } = data;
+    const { groupId, groupName, targetUserIds } = data;
+
+    // Identity comes from the VERIFIED socket registration, never from the
+    // payload's initiatorId — a client must not be able to place calls (or
+    // attribute them to someone else) by naming another user.
+    const initiatorId = socket.userId;
+    if (!initiatorId) {
+      socket.emit('call_error', { message: 'Socket is not registered.' });
+      return;
+    }
 
     try {
       // Validate initiator role
@@ -473,6 +535,7 @@ io.on('connection', (socket) => {
         socket.emit('call_error', { message: 'Students are not allowed to initiate calls.' });
         return;
       }
+      const initiatorName = initiator.name;
 
       // Create call record
       const call = new Call({
@@ -951,6 +1014,45 @@ app.use(errorHandler);
 const PORT = process.env.PORT || 3000;
 
 if (require.main === module) {
+  server.on('error', (error) => {
+    if (error.code === 'EADDRINUSE') {
+      let owningPid = null;
+      try {
+        const { execSync } = require('child_process');
+        if (process.platform === 'win32') {
+          const listenLines = execSync('netstat -ano', { encoding: 'utf8' })
+            .split('\n')
+            .filter((line) => line.includes(`:${PORT} `) && line.includes('LISTENING'));
+          if (listenLines.length > 0) {
+            owningPid = listenLines[0].trim().split(/\s+/).pop();
+          }
+        } else {
+          owningPid =
+            execSync(`lsof -t -i :${PORT} -sTCP:LISTEN`, {
+              encoding: 'utf8',
+              stdio: ['ignore', 'pipe', 'ignore'],
+            })
+              .split('\n')
+              .map((line) => line.trim())
+              .filter(Boolean)[0] || null;
+        }
+      } catch (lookupError) {
+        // PID lookup is best-effort; the manual command below works without it
+      }
+
+      logger.error(`Port ${PORT} is already in use${owningPid ? ` by PID ${owningPid}` : ''}.`, {
+        port: PORT,
+        owningPid,
+        hint: owningPid
+          ? `Stop it and restart: ${process.platform === 'win32' ? `Stop-Process -Id ${owningPid} -Force` : `kill -9 ${owningPid}`}`
+          : `Find the holder: ${process.platform === 'win32' ? `Get-NetTCPConnection -LocalPort ${PORT} -State Listen` : `lsof -i :${PORT}`}`,
+      });
+    } else {
+      logger.error('Server failed to start', { port: PORT, code: error.code, errorMessage: error.message });
+    }
+    process.exit(1);
+  });
+
   server.listen(PORT, () => {
     logger.info('Server started', { port: PORT, nodeEnv: process.env.NODE_ENV || 'development' });
   });

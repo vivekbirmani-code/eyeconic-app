@@ -1,9 +1,11 @@
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const User = require('../models/User');
 const GuestAttempt = require('../models/GuestAttempt');
 const QuizAttempt = require('../models/QuizAttempt');
 const Otp = require('../models/Otp');
+const WebHandoffCode = require('../models/WebHandoffCode');
 const {
   EmailDeliveryError,
   EMAIL_DELIVERY_USER_MESSAGE,
@@ -27,6 +29,7 @@ const requireDatabase = require('../middleware/requireDatabase');
 const logger = require('../utils/logger');
 const { toClientUser } = require('../utils/profilePicture');
 const { isSignUpEnabled } = require('../utils/appSettings');
+const { buildWebsiteHandoffUrl } = require('../utils/websiteUrl');
 
 const router = express.Router();
 
@@ -210,6 +213,120 @@ router.get('/me', auth, async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// App → Website session handoff
+//
+// The mobile app calls this with the signed-in user's JWT and receives a
+// one-time, 2-minute handoff code plus the full URL to open in the browser:
+//   https://<website>/app-link?code=...&dest=...
+//
+// The website's server then exchanges the code server-to-server for a fresh
+// user JWT via POST /api/integration/v1/handoff/consume (service-authed).
+// The user's long-lived JWT itself never travels through a URL.
+// ---------------------------------------------------------------------------
+
+// Handoff codes are short-lived; a fresh request supersedes any unused one.
+const WEB_HANDOFF_TTL_MS = Number(process.env.WEB_HANDOFF_TTL_SECONDS || 120) * 1000;
+const WEB_HANDOFF_MAX_PER_USER = Number(process.env.WEB_HANDOFF_MAX_PER_USER || 10);
+
+const handoffCreateTimes = new Map();
+const WEB_HANDOFF_WINDOW_MS = 10 * 60 * 1000;
+
+const webHandoffRateLimited = (userId) => {
+  const now = Date.now();
+  const entry = handoffCreateTimes.get(String(userId)) || [];
+  const recent = entry.filter((ts) => now - ts < WEB_HANDOFF_WINDOW_MS);
+  handoffCreateTimes.set(String(userId), recent);
+  return recent.length >= WEB_HANDOFF_MAX_PER_USER;
+};
+
+const recordHandoffCreate = (userId) => {
+  const key = String(userId);
+  const now = Date.now();
+  const entry = (handoffCreateTimes.get(key) || []).filter((ts) => now - ts < WEB_HANDOFF_WINDOW_MS);
+  entry.push(now);
+  handoffCreateTimes.set(key, entry);
+};
+
+/**
+ * Validate a website destination passed by the app: it must be a
+ * website-RELATIVE path so a handoff URL can never be turned into an
+ * open redirect. Returns '' for empty input, null when invalid.
+ */
+const validateWebsiteDest = (dest) => {
+  if (dest === undefined || dest === null) return '';
+  const value = String(dest);
+  if (!value) return '';
+  if (value.length > 200) return null;
+  if (!value.startsWith('/') || value.startsWith('//')) return null;
+  // Only path characters — no scheme tricks, no control chars.
+  if (!/^\/[A-Za-z0-9\-._~!$&'()*+,;=:@/%]*$/.test(value)) return null;
+  return value;
+};
+
+router.post('/web-handoff', requireDatabase, auth, async (req, res) => {
+  try {
+    if (webHandoffRateLimited(req.user._id)) {
+      return res.status(429).json({
+        success: false,
+        message: 'Too many website links requested. Please try again in a few minutes.',
+        code: 'RATE_LIMITED',
+        requestId: req.requestId,
+      });
+    }
+
+    const dest = validateWebsiteDest((req.body || {}).dest);
+    if (dest === null) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid destination.',
+        code: 'VALIDATION_ERROR',
+        requestId: req.requestId,
+      });
+    }
+
+    // A new code supersedes (and invalidates) any still-unused one for this
+    // user, so there is at most one live handoff per user at any moment.
+    await WebHandoffCode.deleteMany({ user: req.user._id, usedAt: null });
+
+    const code = crypto.randomBytes(32).toString('base64url');
+    const expiresAt = new Date(Date.now() + WEB_HANDOFF_TTL_MS);
+    await WebHandoffCode.create({
+      user: req.user._id,
+      codeHash: crypto.createHash('sha256').update(code).digest('hex'),
+      dest,
+      expiresAt,
+    });
+    recordHandoffCreate(req.user._id);
+
+    logger.info('Website handoff code created', {
+      requestId: req.requestId,
+      userId: String(req.user._id),
+      dest,
+      expiresInMs: WEB_HANDOFF_TTL_MS,
+    });
+
+    return res.json({
+      success: true,
+      code,
+      url: buildWebsiteHandoffUrl(code, dest),
+      expiresAt: expiresAt.toISOString(),
+    });
+  } catch (error) {
+    logger.error('Website handoff code creation failed', {
+      requestId: req.requestId,
+      errorMessage: error.message,
+      errorName: error.name,
+    });
+    return res.status(500).json({
+      success: false,
+      message: 'Could not open the website link. Please try again.',
+      code: 'INTERNAL_ERROR',
+      requestId: req.requestId,
+    });
   }
 });
 

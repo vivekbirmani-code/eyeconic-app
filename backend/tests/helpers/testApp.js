@@ -14,6 +14,9 @@ const groupRoutes = require('../../routes/groups');
 const userRoutes = require('../../routes/users');
 const publicQuizRoutes = require('../../routes/public-quiz');
 const publicLeadRoutes = require('../../routes/public-lead');
+const dailyPyqRoutes = require('../../routes/daily-pyq');
+const miniCctRoutes = require('../../routes/mini-cct');
+const freeUserAnalyticsRoutes = require('../../routes/free-user-analytics');
 
 /**
  * Minimal Express app mounting only the routers under test, so integration
@@ -33,6 +36,9 @@ function buildApp() {
   app.use('/api/users', userRoutes);
   app.use('/api/public', publicQuizRoutes);
   app.use('/api/public', publicLeadRoutes);
+  app.use('/api/daily-pyq', dailyPyqRoutes);
+  app.use('/api/mini-cct', miniCctRoutes);
+  app.use('/api/free-user-analytics', freeUserAnalyticsRoutes);
   return app;
 }
 

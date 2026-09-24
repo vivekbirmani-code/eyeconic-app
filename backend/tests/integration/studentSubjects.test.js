@@ -41,6 +41,38 @@ describe('Student subject assignment API', () => {
     expect(response.body.subjects).toEqual([]);
   });
 
+  it('lets a student read their own subjects but blocks reading another student\'s', async () => {
+    const admin = await createUser({ role: 'admin' });
+    const studentA = await createUser({ role: 'student', name: 'Student A' });
+    const studentB = await createUser({ role: 'student', name: 'Student B' });
+    const subjects = await createSubjects(['ANATOMY']);
+
+    await request(app)
+      .post(`/api/student-subjects/${studentB.user._id}`)
+      .set('Authorization', `Bearer ${admin.token}`)
+      .send({ subjectIds: ids(subjects) });
+
+    // Own record: allowed
+    const own = await request(app)
+      .get(`/api/student-subjects/${studentA.user._id}`)
+      .set('Authorization', `Bearer ${studentA.token}`);
+    expect(own.status).toBe(200);
+
+    // Another student's record: 403 even though the id is well-formed
+    const cross = await request(app)
+      .get(`/api/student-subjects/${studentB.user._id}`)
+      .set('Authorization', `Bearer ${studentA.token}`);
+    expect(cross.status).toBe(403);
+
+    // Mentors (whose students' subjects these are) and admins still may read
+    const mentor = await createUser({ role: 'mentor' });
+    const mentorView = await request(app)
+      .get(`/api/student-subjects/${studentB.user._id}`)
+      .set('Authorization', `Bearer ${mentor.token}`);
+    expect(mentorView.status).toBe(200);
+    expect(mentorView.body.subjects.map((s) => s.name)).toEqual(['ANATOMY']);
+  });
+
   it('persists assigning all subjects and returns them on subsequent fetch', async () => {
     const admin = await createUser({ role: 'admin' });
     const student = await createUser({ role: 'student' });

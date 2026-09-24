@@ -22,6 +22,12 @@ const FEATURE_AVAILABILITY = {
   // Quiz ecosystem — fully enabled.
   quizzes: true,
 
+  // Website (eyeconicneetpg.com) integration — versioned service endpoints
+  // (/api/integration/v1/*). Own flag so the quiz-only freeze never touches
+  // the website's authentication handoff. Service-authenticated; carries no
+  // student data by itself.
+  integration: true,
+
   // Temporarily disabled features — flip to true to re-enable.
   chat: false, // groups management, group chat, messages, calls, chat uploads
   mentorship: false, // assignments, mentor "My Students" CRUD, student tasks
