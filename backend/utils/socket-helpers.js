@@ -4,6 +4,7 @@
  * Routes import emitToUser / emitToAdmins from here.
  */
 
+const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
 let _io = null;
@@ -13,6 +14,31 @@ const userSocketMap = new Map();
 /** Called once from server.js after io is created */
 function setIo(io) {
     _io = io;
+}
+
+/**
+ * Verify the user JWT a socket client presents (handshake `auth.token` or the
+ * second argument of `register_user`). Socket registration maps a connection
+ * to a userId so emitToUser() can deliver targeted events (scores, alerts,
+ * calls) — that mapping is identity, so it must be proven, never claimed.
+ *
+ * Same rules as middleware/auth.js: only real user tokens ({userId, role},
+ * no `kind` claim) qualify. Guest and proctoring-precheck tokens are scoped
+ * credentials and must never register a socket.
+ *
+ * @returns {{ok: true, userId: string} | {ok: false}}
+ */
+function verifySocketToken(token) {
+    if (typeof token !== 'string' || !token.trim()) return { ok: false };
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        if (decoded.kind) return { ok: false };
+        const userId = decoded.userId && decoded.userId.toString();
+        if (!userId) return { ok: false };
+        return { ok: true, userId };
+    } catch {
+        return { ok: false };
+    }
 }
 
 /** Register a socket for a user (called on 'register_user' event) */
@@ -59,4 +85,4 @@ async function emitToAdmins(event, data) {
     }
 }
 
-module.exports = { setIo, registerSocket, unregisterSocket, emitToUser, emitToAdmins };
+module.exports = { setIo, verifySocketToken, registerSocket, unregisterSocket, emitToUser, emitToAdmins };
