@@ -7,6 +7,7 @@ const serviceAuth = require('../middleware/serviceAuth');
 const requireDatabase = require('../middleware/requireDatabase');
 const logger = require('../utils/logger');
 const { toClientUser } = require('../utils/profilePicture');
+const { isValidEmail, normalizeEmail } = require('../utils/otpHelpers');
 
 /**
  * Website-integration endpoints (versioned, service-authenticated).
@@ -171,6 +172,119 @@ router.post('/handoff/consume', requireDatabase, serviceAuth, async (req, res) =
     return res.status(500).json({
       success: false,
       message: 'Server error while validating this link.',
+      code: 'INTERNAL_ERROR',
+      requestId: req.requestId,
+    });
+  }
+});
+
+/**
+ * POST /api/integration/v1/free-user/signup
+ * Body: { name, email, phone, password }
+ *
+ * Creates a free visitor account for the marketing website's "GT Score
+ * Predictor" funnel. The website server calls this service-to-server right
+ * after its own validation + IP rate limit; the account lands in the SAME
+ * User collection that /api/auth/login authenticates against, so a user
+ * created here can immediately sign in on the website (via the website's
+ * /api/app-auth/login proxy) or in the mobile app.
+ *
+ * Shape mirrors the app's own OTP signup (role 'student', isFreeUser true)
+ * except that no email OTP is required — the website funnel has never had
+ * one and the caller is the trusted website server, not a browser. This
+ * endpoint is therefore NOT gated by the admin public-signup toggle
+ * (isSignUpEnabled governs the app's own OTP funnel only).
+ *
+ * Deliberately returns no token: on the website, sign-up is a separate step
+ * from sign-in (the UI shows a success notice, then the user logs in
+ * explicitly through the normal login route).
+ */
+router.post('/free-user/signup', requireDatabase, serviceAuth, async (req, res) => {
+  try {
+    const body = req.body || {};
+    const name = String(body.name || '').trim();
+    const email = normalizeEmail(String(body.email || ''));
+    const phone = body.phone === undefined || body.phone === null
+      ? ''
+      : String(body.phone).replace(/[\s\-()]/g, '');
+    const password = typeof body.password === 'string' ? body.password : '';
+
+    const invalid = (message) =>
+      res.status(400).json({
+        success: false,
+        message,
+        code: 'VALIDATION_ERROR',
+        requestId: req.requestId,
+      });
+
+    if (name.length < 2 || name.length > 80) {
+      return invalid('Name must be 2-80 characters.');
+    }
+    if (!isValidEmail(email)) {
+      return invalid('A valid email is required.');
+    }
+    // Phone is optional at this layer (the website's public form requires it
+    // and validates before proxying); if present it must be digits, 8-15.
+    if (phone && !/^\+?[0-9]{8,15}$/.test(phone)) {
+      return invalid('A valid phone number is required.');
+    }
+    // Matches the model's minlength 6 and bcrypt's 72-byte input cap.
+    if (password.length < 6 || password.length > 72) {
+      return invalid('Password must be 6-72 characters.');
+    }
+
+    const emailTaken = (statusCode) =>
+      res.status(statusCode).json({
+        success: false,
+        message: 'An account with this email already exists.',
+        code: 'EMAIL_TAKEN',
+        requestId: req.requestId,
+      });
+
+    const existingUser = await User.findOne({ email }).lean();
+    if (existingUser) {
+      return emailTaken(400);
+    }
+
+    // The pre-save hook hashes the password with bcrypt.
+    const user = new User({
+      name,
+      email,
+      phone: phone || undefined,
+      password,
+      role: 'student',
+      isFreeUser: true,
+      isProfileComplete: false,
+    });
+    await user.save();
+
+    logger.info('Website free-user signup', {
+      requestId: req.requestId,
+      userId: String(user._id),
+    });
+
+    return res.status(201).json({
+      success: true,
+      user: toClientUser(user),
+    });
+  } catch (error) {
+    // Unique-index race between the findOne and the save.
+    if (error && error.code === 11000) {
+      return res.status(400).json({
+        success: false,
+        message: 'An account with this email already exists.',
+        code: 'EMAIL_TAKEN',
+        requestId: req.requestId,
+      });
+    }
+    logger.error('Website free-user signup failed', {
+      requestId: req.requestId,
+      errorMessage: error.message,
+      errorName: error.name,
+    });
+    return res.status(500).json({
+      success: false,
+      message: 'Could not create the account. Please try again.',
       code: 'INTERNAL_ERROR',
       requestId: req.requestId,
     });
