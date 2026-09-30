@@ -119,6 +119,14 @@ export default function ProctoringSpikeScreen() {
   const [sourceMode, setSourceMode] = useState<'snapshot' | 'streaming'>('snapshot');
   const [streamRunning, setStreamRunning] = useState(false);
   const [streamPaused, setStreamPaused] = useState(false);
+  /** Camera health phase from the native view (binding → bound → open). */
+  const [streamPhase, setStreamPhase] = useState<'binding' | 'bound' | 'open' | null>(null);
+  /**
+   * Bumped on every Start so each run mounts a FRESH native view. A retry
+   * after a camera error must remount — the previous instance is mounted
+   * with no camera bound and would otherwise sit dead until unmount.
+   */
+  const [streamMountId, setStreamMountId] = useState(0);
   const streamFrameIndexRef = useRef(0);
 
   const handleStreamObservation = useCallback((payload: SpikeNativeDetectResult) => {
@@ -139,6 +147,13 @@ export default function ProctoringSpikeScreen() {
   const handleStreamError = useCallback((error: { code: string; message: string }) => {
     trackerRef.current.recordError();
     setLastError(`stream:${error.code} — ${error.message}`);
+    // The pill must not keep lying "RUNNING" while the stream is dead —
+    // this drops the Start button back in so a retry remounts the view.
+    setEngineStatus('camera-error');
+  }, []);
+
+  const handleStreamStatus = useCallback((status: { phase: 'binding' | 'bound' | 'open' }) => {
+    setStreamPhase(status.phase);
   }, []);
 
   const [engineStatus, setEngineStatus] = useState<SpikeEngineStatus | 'permission' | 'module'>(
@@ -239,6 +254,8 @@ export default function ProctoringSpikeScreen() {
   const startAnalysis = useCallback(() => {
     if (sourceMode === 'streaming') {
       setStreamPaused(false);
+      setStreamPhase(null);
+      setStreamMountId((id) => id + 1); // fresh native instance per run
       setStreamRunning(true); // mounts the native view → binds the camera
       setEngineStatus('running');
       setLastError(null);
@@ -251,6 +268,7 @@ export default function ProctoringSpikeScreen() {
     if (sourceMode === 'streaming') {
       setStreamRunning(false); // unmounts the view → camera released
       setStreamPaused(false);
+      setStreamPhase(null);
       setEngineStatus('stopped');
       if (finishScenario && activeScenarioId) {
         const run = trackerRef.current.finishScenario();
@@ -280,6 +298,7 @@ export default function ProctoringSpikeScreen() {
     setLastError(null);
     setStreamRunning(false);
     setStreamPaused(false);
+    setStreamPhase(null);
     streamFrameIndexRef.current = 0;
   }, []);
 
@@ -445,11 +464,13 @@ export default function ProctoringSpikeScreen() {
               {sourceMode === 'streaming' ? (
                 streamRunning && StreamingCameraView ? (
                   <StreamingCameraView
+                    key={streamMountId}
                     style={styles.camera}
                     paused={streamPaused}
                     minIntervalMs={PACING_MS[pacing]}
                     onFrameObservation={(event) => handleStreamObservation(event.nativeEvent)}
                     onCameraError={(event) => handleStreamError(event.nativeEvent)}
+                    onCameraStatus={(event) => handleStreamStatus(event.nativeEvent)}
                   />
                 ) : (
                   <View style={styles.camera} accessibilityLabel="Streaming preview placeholder">
@@ -470,7 +491,9 @@ export default function ProctoringSpikeScreen() {
                 <Text style={styles.previewBadgeText}>
                   {lastFrame
                     ? `${lastFrame.faceCountClass} · ${lastFrame.visibility} · pose ${lastFrame.headPose.band}`
-                    : 'preview — start analysis'}
+                    : sourceMode === 'streaming' && streamRunning
+                      ? `streaming — camera ${streamPhase ?? 'mounting'}…`
+                      : 'preview — start analysis'}
                 </Text>
               </View>
             </View>
@@ -511,6 +534,12 @@ export default function ProctoringSpikeScreen() {
             {/* Live metrics */}
             <View style={styles.card}>
               <Text style={styles.cardTitle}>Live metrics</Text>
+              {sourceMode === 'streaming' ? (
+                <MetricRow
+                  label="Streaming camera"
+                  value={streamRunning ? (streamPhase ?? 'mounting') : 'not started'}
+                />
+              ) : null}
               <MetricRow label="Faces / visibility" value={lastFrame ? `${lastFrame.faceCountClass} / ${lastFrame.visibility}` : '—'} />
               <MetricRow label="Quality proxy (0–1)" value={lastFrame ? lastFrame.qualityProxy.toFixed(2) : '—'} />
               <MetricRow label="Landmarks (of 10)" value={lastFrame ? String(lastFrame.landmarkCount) : '—'} />

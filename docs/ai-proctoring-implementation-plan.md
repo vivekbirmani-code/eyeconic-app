@@ -3128,5 +3128,69 @@ files; `gradlew :proctoring-spike:compileDebugKotlin` BUILD SUCCESSFUL under New
 **On-device behavior (FPS, thermal, lifecycle) is NOT yet validated — that is Track 3, which gates
 D1 and every rollout step.**
 
+### 42.4 Streaming bind-race fix — live-device debugging record (2026-10-01)
+
+**Symptom (first live run, Nord AC2001 / Android 12 dev build).** The spike screen's Streaming tab
+showed a black preview with zero frames, zero errors, and a RUNNING pill after Start; a subsequent
+Stop→Start produced `stream:bind_failed — IllegalStateException: No camera attached to use case`.
+
+**Root cause.** The camera bind is asynchronous (`ProcessCameraProvider.getInstance()` future +
+main-thread listener), but Fabric mount reconciliation can attach → detach → re-attach a native
+view within one commit. The original `bindCamera()` had no attach/generation guard, so a stale
+listener could complete a bind for a view React had already detached (camera owned by an invisible
+instance → black preview, and events that never reach the visible tree), and a teardown racing a
+mid-flight bind left CameraX tearing down use cases it considered unbound, which surfaces inside
+`bindToLifecycle` as `IllegalStateException("No camera attached to use case: …")` (thrown from
+`UseCase.getCameraId()`'s `Preconditions.checkNotNull(getCamera(), …)`). A second, silent failure
+mode was also invisible by design: `bindToLifecycle` returning only means the use cases attached —
+the camera OPEN happens later, and its async failure (device busy / policy / HAL) previously
+produced no event at all.
+
+**Fix (`ProctoringCameraView.kt`, plus screen/binding wiring).**
+
+1. Bind guards: a bind listener only completes for a view that is STILL attached, has not been
+   superseded (per-bind generation token invalidated by every detach/unbind), and is not already
+   bound; re-attach restarts the bind cleanly.
+2. Observable health: new `onCameraStatus` event (`binding → bound → open`) driven by
+   `CameraInfo.cameraState` (classic `LiveData.observe(lifecycleOwner, …)`), async open failures
+   emitted as `camera_state_error` with the `CameraState` error code mapped to a readable cause,
+   and a 6 s first-frame watchdog (`no_frames`) that reports the last camera phase — a dead stream
+   now says WHY instead of showing nothing. New codes reach the engine through the existing bus
+   (`ERR_CAMERA_*` → generic `CAMERA_UNAVAILABLE` classification).
+3. Leak fix: the view-owned `FaceDetector` and analysis executor are now closed on detach
+   (previously never closed — one native handle per mount).
+4. Spike screen: `camera-error` status on stream errors (the pill no longer lies "RUNNING"),
+   a `key`-based remount on every Start (a retry after an error gets a fresh native instance),
+   a "Streaming camera" phase row in Live metrics, and a phase-bearing preview badge.
+
+**Verification (Nord, live).** Streaming Start → camera opens, ~9.9 effective FPS at Max pacing,
+inference 4–47 ms, phase `open`, faces classified (one/ok/centered), 0 errors over 200+ frames;
+Stop→Start cycles clean; Streaming↔Snapshot handoff clean both directions (expo-camera preview
+rebinds after our release); spike jest suites 51/51.
+
+**Hardening (2026-10-01, same day).** The first fix still left two holes, both reproduced live
+via the new instrumentation (`no_frames — last camera phase: open`, camera open but black
+preview, 0 frames):
+
+1. *Dead runtime after transient detach:* a Fabric detach→re-attach after a successful bind ran
+   the full teardown (`detector.close()` + `analysisExecutor.shutdown()`); the re-attach rebound
+   against the dead runtime, so the analyzer never ran. Fix: teardown is DEFERRED 1 s on detach
+   (cancelled on re-attach) and every bind calls `ensureRuntime()` to rebuild disposed resources.
+2. *Bind-before-layout race (the decisive one, confirmed by `dumpsys media.camera`):* binding on
+   `onAttachedToWindow` raced Fabric's first layout pass. When the bind won, CameraX resolved the
+   session while the PreviewView had no size/surface — the capture session was never created and
+   never retried: `dumpsys` showed the camera OPEN with **zero streams and zero requests** while
+   CameraState LiveData reported OPEN (device-level). Per-process timing made it intermittent:
+   identical flows passed or failed depending on which won the race. Fix: the view now binds on
+   LAYOUT-ready (attach of an already-laid-out view, or the first layout change), never on bare
+   attach — `bindWhenLaidOut()` gates on non-zero width/height, with a bind-in-flight guard and
+   the view size included in status/watchdog payloads for on-screen verification.
+
+Re-verified live on the Nord across two app-process generations: fresh cold start, rapid
+Stop→Start ×2, navigate-away→re-enter, background→foreground resume (frames continue), and
+post-process-recycle re-entry — all reach `open` with ~9.9–10 FPS, 0 errors, faces classified;
+the camera-service log shows clean CONNECT/DISCONnect pairs on screen-lock (no leak, no orphan
+client).
+
 
 

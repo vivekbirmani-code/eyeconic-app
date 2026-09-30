@@ -127,7 +127,7 @@ class ProctoringSpikeModule : Module() {
     // screen; plan §5.2/§29.1). One camera owner: Preview + ImageAnalysis in
     // a single bind. Only sanitized observations cross the bridge. =====
     View(ProctoringCameraView::class) {
-      Events("onFrameObservation", "onCameraError")
+      Events("onFrameObservation", "onCameraError", "onCameraStatus")
 
       Prop("paused") { view: ProctoringCameraView, paused: Boolean? ->
         view.analysisPaused = paused ?: false

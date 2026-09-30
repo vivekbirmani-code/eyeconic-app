@@ -91,6 +91,10 @@ export interface ProctoringCameraViewProps {
   onCameraError?: (event: {
     nativeEvent: { code: string; message: string };
   }) => void;
+  /** Camera health phase: binding → bound → open (open = frames imminent). */
+  onCameraStatus?: (event: {
+    nativeEvent: { phase: 'binding' | 'bound' | 'open' };
+  }) => void;
 }
 
 let cachedView: ComponentType<ProctoringCameraViewProps> | null | undefined;
