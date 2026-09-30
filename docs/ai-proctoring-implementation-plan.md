@@ -3017,10 +3017,71 @@ quiz opt-in) remains OFF.
 ---
 
 *End of plan. Revision 3 supersedes revisions 1–2 (2026-09-15). All decisions D1–D15 are applied
-throughout. Phase 0 spike complete (CONDITIONAL GO — device runbook pending); Phases 1–4
-implemented (§37–§40). The Phase 3/4 detector and integrity surfaces are wired but NOT
-production-validated; Phase 5 is the next implementation entry point (detector validation still
-gates rollout).*
+throughout. Phase 0 spike complete (CONDITIONAL GO — device runbook pending); Phases 1–4 + 6-core +
+7-lite implemented (§37–§41). The Phase 3/4 detector and integrity surfaces are wired but NOT
+production-validated; the streaming transport fix (Track 2) is the next implementation entry point
+(detector validation still gates rollout).*
+
+---
+
+## 41. Phase 6 Core + Phase 7-lite Implementation Record (2026-09-30)
+
+Delivered as "Track 1" of the streamlined continuation plan (this conversation): the **non-CV
+proctoring core** — the missing Rules → Risk → Policy → Review layers — with ZERO dependency on
+camera validation. Phases 5, 7-full, 8, 9 remain on the original rails.
+
+### 41.1 What was implemented
+
+| Area | Files |
+|---|---|
+| Rules engine (§18, §20.3) | `backend/utils/proctoring/rulesEngine.js` — pure `evaluatePolicy` over the frozen policy: the D3 ladder (warn each of first `toleratedViolations` qualifying integrity episodes → FINAL_WARN → SUBMIT), CV events warn-only (D8 gate off, structural), attention NEVER acts (D6, property-tested), legacy TAB_HIDDEN point events qualify on existence (web parity), camera revocation = one session-level violation + per-episode warn. Bounded evaluation scope (this batch's fresh events + persisted violations — never a full-session replay per batch); documented stale-low concurrency semantics (under-enforcement only, self-healing; SUBMIT is CAS-protected downstream) |
+| Risk scoring (§19) | `backend/utils/proctoring/riskScore.js` — additive explainable scoring over the pre-existing `DEFAULT_RISK_WEIGHTS` (caps; attention = 0; prompt-recovery credit with sign-correct clamping; breakdown contributions sum EXACTLY to the score — test-enforced) + the threshold-free type-aggregate pipeline builder |
+| Session summary (§25.2) | `backend/utils/proctoring/summary.js` — pure rollup + close-time freeze wired into `closeProctoringSessionForAttempt` (frozen at finalize for every finalize path: manual, duration, cascade, policy) |
+| Ingest wiring (§27.2) | `routes/proctoringEvents.js` — post-ingest evaluation: violations upserted by deterministic `derivationKey` (new unique partial index on `ProctoringViolation` — the multikey `eventRefs` index cannot be unique), `actionTaken` stamped on triggering episodes, `WARNING_DELIVERED` system events with deterministic warnId keys (concurrent deliveries collapse), `emitToUser('proctoring_warning')` socket nudge, batch response gains `actions[]` + `riskCategory` + `attemptFinalized`/`autoSubmitted`, risk + `violationsCount` recomputed per batch (best-effort — a scoring failure never fails a batch), post-submit session state re-read |
+| Policy auto-submit (§20.6) | `makePolicySubmitter` in `routes/quizzes.js` injected into the events router — executes SUBMIT through the SAME `finalizeQuizAttempt` path with `isAutoSubmit:true` + `autoSubmitReason {kind:'policy', ruleId, eventIds}`, closing enforced sections exactly like the manual whole-quiz submit; `AUTO_SUBMITTED` decision event inserted BEFORE finalize (so the frozen summary includes it); straggler batches re-check attempt/session active before acting |
+| Timeline (§25.3 lite) | `GET /api/quizzes/attempt/:attemptId/proctoring/timeline` — serverAt-ordered episode rows + violations + summary (frozen copy for closed sessions, live rollup otherwise) + `autoSubmitReason`; access via `assertAttemptReadAccess` (owner/admin/assigned mentor — D14), shared with the session resync so the two can never disagree |
+| Client warnings (§20.2, §9.2) | `utils/proctoringCopy.ts` warnings block (`warn.focus/final/multipleFaces/faceMissing/camera` + `autoSubmitted` notice); `useProctoringSession` gains the `onActions` transport side-channel + `proctoring_warning` socket listener → one warnId-deduped funnel (WARN auto-dismisses after 10 s, FINAL_WARN persists); `ProctoringBanner` warning variants (FINAL_WARN renders stronger + takes precedence over camera advisories); taking.tsx navigates to results with the auto-submit notice on `autoSubmitted` |
+| Review UI (lite) | `AttemptDetailModal` "Proctoring timeline" section — proctored attempts only (resync hint gates it), lazy-loaded, chronological rows with plain labels + violations + risk chips |
+
+### 41.2 Deviations and reviewed decisions
+
+1. **Camera-loss submit step not implemented** (§20.1's strict cameraHealth row): each
+   `CAMERA_PERMISSION_REVOKED` episode warns, one session-level violation records, but no
+   auto-submit path exists for camera loss — a broken camera must never cost the student their
+   attempt under the default policy, and no V1 quiz can configure otherwise (under-enforcement
+   direction, safe; revisit only with a validated camera pipeline, Track 2+).
+2. **`sessionHealth.onProlongedOutage` beyond 'record' degrades to warn-only**: the §16.3 strict
+   submit variant is deliberately not wired (absence is self-limiting — the §7.5 deadline runs
+   server-side). Under-enforcement, documented.
+3. **Cross-type `maxViolations` submit requires an all-deterministic (focus-loss) violation mix**
+   and `violationAction:'submit'`; the default `'warn'` crossing fires a single FINAL_WARN —
+   suppressed when the focus ladder already delivered one this evaluation (one final warning,
+   never two). Camera revocations are excluded from any submit mix.
+4. **Old Phase 3 transport fixtures moved below the facePresence floor** (7 s episodes): the
+   ingest-mechanics suite now never trips the rules engine; policy behavior lives in its own
+   `proctoringAutoSubmit` suite.
+5. **`verifyProctoringFlow.js` flips `FEATURE_AVAILABILITY.aiProctoring` in-process** (like the
+   jest mocks) — no config file is modified by verification runs.
+
+### 41.3 Verification
+
+| Gate | Result |
+|---|---|
+| `rulesEngine.test.js` (ladder permutations, modes, floors, legacy point events, D6 property over all attention types × modes, D8 property over all CV types, determinism) | 24 passed |
+| `riskScore.test.js` (arithmetic, caps, sign-correct recovery clamping, breakdown-sums-to-score, attention 0, bands, determinism) | 20 passed |
+| `summary.test.js` (rows == summary discipline) | 7 passed |
+| `proctoringAutoSubmit.test.js` (full ladder e2e, blips, replay no-re-warn, attention-only, CV-only never submits, manual-vs-policy CAS race, straggler 409, section-locked policy submit closes sections) | 7 passed |
+| `proctoringTimeline.test.js` (access matrix incl. cross-mentor 403, ordered rows, frozen summary + autoSubmitReason, 400/404/null edges) | 4 passed |
+| `proctoringWarnings.test.ts` (server-code mirror coverage, banned language, consent version untouched) | 5 passed |
+| `backend/scripts/verifyProctoringFlow.js` (real server.js + in-memory Mongo; full lifecycle incl. precheck-fail→pass, consent gating, double-start idempotency, replay/out-of-order, the complete ladder, auto-submit, timeline, access control, duration bypass) | **27/27 checks PASS** |
+| Full backend suite | **920/921** (the single failure is the pre-existing `excelParser` whitespace test, failing on the clean tree since Phase 2) |
+| Full root jest + `tsc -p tsconfig.proctoring.json` + ESLint changed files | 172/172 · 0 errors · 0 new warnings |
+
+### 41.4 Remaining
+
+Track 2 (streaming camera transport — the actual Phase 0 FPS failure), Track 3 (device
+revalidation runbook → D1 acceptance), Phase 5 (record-only attention episodes), Phase 7-full
+(analytics tab, exports, review workflow, overrides), Phase 8–9. Rollout gates remain OFF.
 
 
 
