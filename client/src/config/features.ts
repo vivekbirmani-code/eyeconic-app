@@ -19,7 +19,12 @@
  *  - The public quiz routes (/public-quiz/...) are intentionally ungated.
  */
 
-export type FeatureKey = 'quizzes' | 'dashboard' | 'chat' | 'userManagement';
+export type FeatureKey =
+  | 'quizzes'
+  | 'dashboard'
+  | 'chat'
+  | 'userManagement'
+  | 'aiProctoring';
 
 export const FEATURE_AVAILABILITY: Record<FeatureKey, boolean> = {
   // Quiz ecosystem — fully enabled.
@@ -29,6 +34,10 @@ export const FEATURE_AVAILABILITY: Record<FeatureKey, boolean> = {
   dashboard: false, // admin dashboard overview page
   chat: false, // groups list, group chat
   userManagement: false, // admin Users page
+
+  // AI proctoring rollout flag — mirrors backend/config/featureAvailability.js
+  // and utils/featureAvailability.ts. False until the staged rollout begins.
+  aiProctoring: false,
 };
 
 /** @returns true only when the feature is explicitly enabled. */
@@ -36,10 +45,11 @@ export function isFeatureEnabled(feature: FeatureKey): boolean {
   return FEATURE_AVAILABILITY[feature] === true;
 }
 
-/** Friendly names used by the Coming Soon page. */
+/** Friendly names used for the Coming Soon page. */
 export const FEATURE_LABELS: Record<FeatureKey, string> = {
   quizzes: 'Tests',
   dashboard: 'Dashboard',
   chat: 'Groups & Chat',
   userManagement: 'User Management',
+  aiProctoring: 'Proctoring',
 };

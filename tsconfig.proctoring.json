@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "baseUrl": ".",
+    "paths": { "@/*": ["./*"] },
+    "lib": ["ESNext", "DOM"]
+  },
+  "include": [
+    "services/proctoring/**/*.ts",
+    "services/proctoringSpike/**/*.ts",
+    "modules/proctoring-spike/src/**/*.ts",
+    "utils/proctoringCopy.ts",
+    "context/QuizContext.tsx",
+    "hooks/useProctoringSession.ts",
+    "hooks/useAttemptScreenCapturePrevention.ts",
+    "components/proctoring/ProctoringBanner.tsx",
+    "components/proctoring/ProctoringCameraPip.tsx",
+    "app/(tabs)/quizzes/[id]/precheck.tsx",
+    "app/(tabs)/quizzes/[id]/instructions.tsx",
+    "app/(tabs)/quizzes/[id]/taking.tsx"
+  ]
+}

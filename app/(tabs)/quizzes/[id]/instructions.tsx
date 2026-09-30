@@ -37,6 +37,9 @@ interface Quiz {
   // Missing on quizzes created before the feature — backend normalizes to
   // true; read with `!== false` everywhere.
   lockSectionsAfterSubmission?: boolean;
+  // Server-computed (Phase 2): true only when proctoring is fully effective
+  // right now — routes the student through precheck + consent before /start.
+  proctoringRequired?: boolean;
 }
 
 const getQuestionId = (question: any): string => {
@@ -100,6 +103,32 @@ export default function QuizInstructions() {
         {
           text: 'Start',
           onPress: async () => {
+            // Proctored quizzes: probe /start FIRST. An in_progress attempt
+            // resumes WITHOUT re-gating (a returning student must not be
+            // blocked by a camera that stopped working mid-quiz); only a 403
+            // PROCTORING_* means no resumable attempt → route through the
+            // readiness checks + consent, where the attempt actually begins.
+            if (quiz.proctoringRequired) {
+              try {
+                const result = await startQuiz(quiz._id);
+                if (result?.attemptFinalized) {
+                  router.replace(`/quizzes/${id}/result/${result.attemptId}`);
+                } else {
+                  router.replace(`/quizzes/${id}/taking`);
+                }
+              } catch (error: any) {
+                const errorCode = error?.response?.data?.errorCode;
+                if (
+                  errorCode === 'PROCTORING_CONSENT_REQUIRED' ||
+                  errorCode === 'PROCTORING_PRECHECK_REQUIRED'
+                ) {
+                  // The gate message was already surfaced by the context.
+                  router.push(`/quizzes/${id}/precheck` as any);
+                }
+                // Any other failure was surfaced by the context — stay here.
+              }
+              return;
+            }
             try {
               const result = await startQuiz(quiz._id);
               if (result?.attemptFinalized) {

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect } from 'react';
 import { api } from '@/services/api';
 import { Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -38,11 +38,25 @@ interface QuizAttempt {
   sectionLockEnabled?: boolean;
   sectionDefinitions?: SectionDefinition[];
   sectionStates?: SectionState[];
+  /**
+   * Proctoring session info (Phase 3). Present only for attempts that were
+   * proctored at /start (frozen snapshot) — its presence is what arms the
+   * monitoring engine on the taking screen. Non-proctored attempts never
+   * set it, so their behavior is unchanged.
+   */
+  proctoringSessionId?: string;
+  proctoringPolicy?: Record<string, unknown>;
+  /**
+   * How this attempt object entered the app session: a direct /start response
+   * ('start') or a restore/resync ('resume' — AsyncStorage reload, app
+   * relaunch, re-navigation). Drives SESSION_STARTED vs SESSION_RESUMED.
+   */
+  proctoringArm?: 'start' | 'resume';
 }
 
 interface QuizContextType {
   currentAttempt: QuizAttempt | null;
-  startQuiz: (quizId: string) => Promise<any>;
+  startQuiz: (quizId: string, options?: { precheckToken?: string }) => Promise<any>;
   saveAnswer: (questionIndex: number, selectedAnswer: StudentResponse, markedForReview: boolean, timeSpent: number, questionId?: string) => Promise<void>;
   submitQuiz: (isAutoSubmit?: boolean) => Promise<any>;
   submitSection: (sectionIndex: number, isAutoSubmit?: boolean) => Promise<any>;
@@ -57,6 +71,17 @@ const QuizContext = createContext<QuizContextType | undefined>(undefined);
 // these entries must be dropped (never retried); the section is final.
 const isSectionLockedError = (error: any) =>
   error?.response?.status === 403 && error?.response?.data?.errorCode === 'SECTION_LOCKED';
+
+// True when the server rejected the write because the whole attempt was
+// already finalized by the server-side duration deadline (Phase 1, plan §7.5
+// — e.g. the device clock ran behind the server). Terminal exactly like a
+// locked section: the attempt is over, retrying would silently discard the
+// student's answers forever.
+const isAttemptExpiredError = (error: any) =>
+  error?.response?.status === 403 && error?.response?.data?.errorCode === 'TIME_EXPIRED';
+
+const isFinalWriteRejection = (error: any) =>
+  isSectionLockedError(error) || isAttemptExpiredError(error);
 
 export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentAttempt, setCurrentAttempt] = useState<QuizAttempt | null>(null);
@@ -91,6 +116,9 @@ export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const stored = await AsyncStorage.getItem('currentQuizAttempt');
       if (stored) {
         const attempt = JSON.parse(stored);
+        // A storage restore is by definition not the original /start — the
+        // proctoring engine arms as resumed (SESSION_RESUMED).
+        if (attempt?.proctoringSessionId) attempt.proctoringArm = 'resume';
         setCurrentAttempt(attempt);
       }
     } catch (error) {
@@ -111,7 +139,7 @@ export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children
         try {
           await api.put(`/quizzes/${currentAttempt.quizId}/attempt/${currentAttempt.attemptId}/answer`, answer);
         } catch (error: any) {
-          if (isSectionLockedError(error)) {
+          if (isFinalWriteRejection(error)) {
             setSaveQueue(prevQueue => {
               const newQueue = new Map(prevQueue);
               newQueue.delete(questionIndex);
@@ -132,10 +160,15 @@ export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const startQuiz = async (quizId: string) => {
+  const startQuiz = async (quizId: string, options?: { precheckToken?: string }) => {
     setIsLoading(true);
     try {
-      const response = await api.post(`/quizzes/${quizId}/start`);
+      // Proctored quizzes: the precheck attestation token rides along; the
+      // server gates the start on consent + this token (Phase 2). Non-proctored
+      // quizzes send no token and behave exactly as before.
+      const response = await api.post(`/quizzes/${quizId}/start`, {
+        ...(options?.precheckToken ? { precheckToken: options.precheckToken } : {}),
+      });
 
       const attempt: QuizAttempt = {
         attemptId: response.data.attemptId,
@@ -147,6 +180,11 @@ export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children
         sectionLockEnabled: response.data.sectionLockEnabled === true,
         sectionDefinitions: response.data.sectionDefinitions,
         sectionStates: response.data.sectionStates,
+        ...(response.data.proctoringSessionId ? {
+          proctoringSessionId: response.data.proctoringSessionId,
+          proctoringPolicy: response.data.proctoringPolicy,
+          proctoringArm: 'start' as const,
+        } : {}),
       };
 
       setCurrentAttempt(attempt);
@@ -224,7 +262,7 @@ export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return newQueue;
       });
     } catch (error: any) {
-      if (isSectionLockedError(error)) {
+      if (isFinalWriteRejection(error)) {
         // The section was locked server-side (timer expired on another
         // device / while away). Drop the write — it is final.
         setSaveQueue(prevQueue => {
@@ -333,6 +371,10 @@ export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children
         sectionLockEnabled: data.sectionLockEnabled === true,
         sectionDefinitions: data.sectionDefinitions,
         sectionStates: data.sectionStates,
+        ...(data.proctoringSession?.id ? {
+          proctoringSessionId: data.proctoringSession.id,
+          proctoringArm: 'resume' as const,
+        } : {}),
       };
       setCurrentAttempt(attempt);
       return data;

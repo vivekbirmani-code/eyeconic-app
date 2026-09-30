@@ -1,0 +1,363 @@
+// Per-quiz proctoring configuration, effective-policy resolution and the
+// frozen policy snapshot written onto an attempt at /start (plan §21).
+//
+// Mirrors the section-locking doctrine: editable config lives on the Quiz doc;
+// the EFFECTIVE policy is frozen onto the QuizAttempt at /start and is
+// immutable for that attempt's lifetime — later admin edits never move
+// goalposts for in-flight attempts.
+//
+// Rollout precedence (plan §31): kill switch (AppSettings.proctoringEnabled)
+//   > feature flag (config/featureAvailability.js aiProctoring)
+//   > quiz config (Quiz.proctoring.enabled — opt-in, default false, D15).
+
+const crypto = require('crypto');
+const {
+  POLICY_SCHEMA_VERSION,
+  DEFAULT_PROCTORING_CONFIG,
+  DEFAULT_RISK_WEIGHTS,
+} = require('./defaults');
+
+// ---------- quiz-level enablement (D15: absent config can NEVER enable) ----------
+
+/**
+ * True only when the quiz document explicitly opted into proctoring.
+ * An absent `proctoring` subdoc, an absent `enabled` field, or enabled:false
+ * all read as disabled — the missing-means-on trap is structurally impossible.
+ */
+const isQuizProctoringEnabled = (quiz) =>
+  !!quiz && !!quiz.proctoring && quiz.proctoring.enabled === true;
+
+// ---------- rollout eligibility (kill switch > flag > quiz config) ----------
+
+/**
+ * Pure rollout resolution. The route layer supplies the global kill switch
+ * (utils/appSettings.isProctoringEnabled, fail-closed) and the feature flag
+ * (config/featureAvailability.isFeatureEnabled('aiProctoring')).
+ *
+ * @returns {{enabled: boolean, blockers: string[]}} when enabled, blockers is
+ *          empty; otherwise every failing gate is listed for observability.
+ */
+const resolveProctoringEligibility = ({
+  quizConfigEnabled = false,
+  globalEnabled = false,
+  featureFlagEnabled = false,
+} = {}) => {
+  const blockers = [];
+  if (quizConfigEnabled !== true) blockers.push('quiz_config_disabled');
+  if (globalEnabled !== true) blockers.push('global_kill_switch_off');
+  if (featureFlagEnabled !== true) blockers.push('feature_flag_off');
+  return { enabled: blockers.length === 0, blockers };
+};
+
+// ---------- canonical form + hashing ----------
+
+// Stable, key-sorted JSON so the same logical policy always hashes equally.
+const canonicalize = (value) => {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value && typeof value === 'object') {
+    return Object.keys(value).sort().reduce((acc, key) => {
+      acc[key] = canonicalize(value[key]);
+      return acc;
+    }, {});
+  }
+  return value;
+};
+
+const hashPolicy = (policy) =>
+  crypto.createHash('sha256').update(JSON.stringify(canonicalize(policy))).digest('hex');
+
+const isPlainObject = (value) =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+// Deep merge that only ever copies RECOGNIZED keys from the quiz config onto
+// the defaults — an unknown key written directly to the DB can never inject
+// policy the schema does not know about.
+const mergeSection = (defaults, override) => {
+  if (!isPlainObject(defaults) || !isPlainObject(override)) return defaults;
+  const merged = { ...defaults };
+  for (const key of Object.keys(defaults)) {
+    if (override[key] === undefined) continue;
+    merged[key] = isPlainObject(defaults[key])
+      ? mergeSection(defaults[key], override[key])
+      : override[key];
+  }
+  return merged;
+};
+
+// ---------- effective policy + snapshot ----------
+
+/**
+ * Resolves the quiz's effective policy: defaults merged with the quiz's
+ * validated overrides. Returns null when the quiz has not opted in — a
+ * non-proctored quiz never produces a policy or a snapshot.
+ *
+ * @returns {{policy: object, version: number, hash: string}|null}
+ */
+const buildEffectiveProctoringPolicy = (quiz) => {
+  if (!isQuizProctoringEnabled(quiz)) return null;
+
+  const policy = mergeSection(
+    { ...DEFAULT_PROCTORING_CONFIG, riskWeights: DEFAULT_RISK_WEIGHTS },
+    quiz.proctoring
+  );
+
+  return {
+    policy,
+    version: POLICY_SCHEMA_VERSION,
+    hash: hashPolicy(policy),
+  };
+};
+
+/**
+ * Freezes the effective policy snapshot stored on the attempt at /start
+ * (plan §7.1 step 4). Write-once: callers must only store this when the
+ * attempt has no snapshot yet; it is never recomputed for an existing
+ * attempt.
+ *
+ * @returns {{version: number, hash: string, policy: object, frozenAt: Date}}
+ */
+const freezeProctoringPolicySnapshot = (quiz, now = new Date()) => {
+  const effective = buildEffectiveProctoringPolicy(quiz);
+  if (!effective) return null;
+  return {
+    version: effective.version,
+    hash: effective.hash,
+    policy: effective.policy,
+    frozenAt: new Date(now),
+  };
+};
+
+// ---------- authoring-side validation (quiz create/update payloads) ----------
+
+const clampInt = (value, min, max, fallback) => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return { error: true, fallback };
+  if (num < min || num > max) return { error: true, fallback };
+  return { value: Math.round(num) };
+};
+
+const asBoolean = (value) => value === true || value === 'true';
+
+const oneOf = (value, allowed) => allowed.includes(value);
+
+/**
+ * Validates + normalizes a `proctoring` payload submitted to quiz
+ * create/update routes. Returns { value } with a fully-populated normalized
+ * config, { value: null } when nothing was submitted, or { error } (400).
+ *
+ * Enforces the V1 invariants:
+ *  - `enabled` is opt-in only (D15)
+ *  - attention.mode may ONLY be 'record' (D6 — no V1-representable policy can
+ *    escalate attention events)
+ *  - focusEvents 'warn-then-submit' requires toleratedViolations >= 1 (§21.5)
+ */
+const parseProctoringConfig = (raw) => {
+  if (raw === undefined || raw === null) return { value: null };
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      return { error: 'proctoring must be an object' };
+    }
+  }
+  if (!isPlainObject(raw)) return { error: 'proctoring must be an object' };
+
+  const {
+    enabled, camera, focusEvents, multipleFaces, facePresence, attention,
+    cameraHealth, sessionHealth, screenCapturePrevention, maxViolations,
+    violationAction, riskWeights,
+  } = raw;
+
+  const config = { enabled: false };
+  if (enabled !== undefined) {
+    // Booleans, and the exact strings 'true'/'false' (any case — the same
+    // string-form leniency the section-locking endpoints apply). Anything
+    // else fails LOUDLY: a value like 'yes' must never silently persist as
+    // a disabled (or enabled) quiz.
+    if (typeof enabled === 'boolean') {
+      config.enabled = enabled;
+    } else if (typeof enabled === 'string' && ['true', 'false'].includes(enabled.trim().toLowerCase())) {
+      config.enabled = enabled.trim().toLowerCase() === 'true';
+    } else {
+      return { error: 'proctoring.enabled must be a boolean' };
+    }
+  }
+
+  if (camera !== undefined && !oneOf(camera, ['required', 'optional'])) {
+    return { error: 'proctoring.camera must be "required" or "optional"' };
+  } else if (camera !== undefined) {
+    config.camera = camera;
+  }
+
+  if (focusEvents !== undefined) {
+    if (!isPlainObject(focusEvents)) return { error: 'proctoring.focusEvents must be an object' };
+    const section = {};
+    if (focusEvents.mode !== undefined) {
+      if (!oneOf(focusEvents.mode, ['record', 'warn-only', 'warn-then-submit'])) {
+        return { error: 'proctoring.focusEvents.mode must be "record", "warn-only" or "warn-then-submit"' };
+      }
+      section.mode = focusEvents.mode;
+    }
+    if (focusEvents.toleratedViolations !== undefined) {
+      const parsed = clampInt(focusEvents.toleratedViolations, 1, 10, null);
+      if (parsed.error) return { error: 'proctoring.focusEvents.toleratedViolations must be an integer between 1 and 10' };
+      section.toleratedViolations = parsed.value;
+    }
+    if (focusEvents.minDurationMs !== undefined) {
+      const parsed = clampInt(focusEvents.minDurationMs, 0, 60 * 60 * 1000, null);
+      if (parsed.error) return { error: 'proctoring.focusEvents.minDurationMs must be between 0 and 3600000' };
+      section.minDurationMs = parsed.value;
+    }
+    if (focusEvents.prolongedAbsenceMs !== undefined) {
+      const parsed = clampInt(focusEvents.prolongedAbsenceMs, 0, 24 * 60 * 60 * 1000, null);
+      if (parsed.error) return { error: 'proctoring.focusEvents.prolongedAbsenceMs must be a positive number of milliseconds' };
+      section.prolongedAbsenceMs = parsed.value;
+    }
+    if (Object.keys(section).length > 0) config.focusEvents = section;
+  }
+
+  if (multipleFaces !== undefined) {
+    if (!isPlainObject(multipleFaces)) return { error: 'proctoring.multipleFaces must be an object' };
+    const section = {};
+    if (multipleFaces.mode !== undefined) {
+      if (!oneOf(multipleFaces.mode, ['record', 'warn'])) {
+        return { error: 'proctoring.multipleFaces.mode must be "record" or "warn" (CV-driven auto-submit is not a per-quiz setting)' };
+      }
+      section.mode = multipleFaces.mode;
+    }
+    if (multipleFaces.minDurationMs !== undefined) {
+      const parsed = clampInt(multipleFaces.minDurationMs, 0, 60 * 60 * 1000, null);
+      if (parsed.error) return { error: 'proctoring.multipleFaces.minDurationMs must be between 0 and 3600000' };
+      section.minDurationMs = parsed.value;
+    }
+    if (Object.keys(section).length > 0) config.multipleFaces = section;
+  }
+
+  if (facePresence !== undefined) {
+    if (!isPlainObject(facePresence)) return { error: 'proctoring.facePresence must be an object' };
+    const section = {};
+    if (facePresence.mode !== undefined) {
+      if (!oneOf(facePresence.mode, ['record', 'warn'])) {
+        return { error: 'proctoring.facePresence.mode must be "record" or "warn"' };
+      }
+      section.mode = facePresence.mode;
+    }
+    if (facePresence.minAbsentMs !== undefined) {
+      const parsed = clampInt(facePresence.minAbsentMs, 0, 24 * 60 * 60 * 1000, null);
+      if (parsed.error) return { error: 'proctoring.facePresence.minAbsentMs must be a positive number of milliseconds' };
+      section.minAbsentMs = parsed.value;
+    }
+    if (Object.keys(section).length > 0) config.facePresence = section;
+  }
+
+  // D6: attention is record-only in V1 — reject any attempt to configure it
+  // otherwise at authoring time. (There is deliberately no "submit" option.)
+  if (attention !== undefined) {
+    if (!isPlainObject(attention)) return { error: 'proctoring.attention must be an object' };
+    const section = {};
+    if (attention.enabled !== undefined) {
+      section.enabled = asBoolean(attention.enabled);
+    }
+    if (attention.mode !== undefined) {
+      if (attention.mode !== 'record') {
+        return { error: 'proctoring.attention.mode is locked to "record" in V1 (attention observations can never trigger actions)' };
+      }
+      section.mode = attention.mode;
+    }
+    if (Object.keys(section).length > 0) config.attention = section;
+  }
+
+  if (cameraHealth !== undefined) {
+    if (!isPlainObject(cameraHealth)) return { error: 'proctoring.cameraHealth must be an object' };
+    const section = {};
+    if (cameraHealth.lossWarnAfterMs !== undefined) {
+      const parsed = clampInt(cameraHealth.lossWarnAfterMs, 0, 60 * 60 * 1000, null);
+      if (parsed.error) return { error: 'proctoring.cameraHealth.lossWarnAfterMs must be between 0 and 3600000' };
+      section.lossWarnAfterMs = parsed.value;
+    }
+    if (cameraHealth.lossSubmitAfterMs !== undefined) {
+      const parsed = clampInt(cameraHealth.lossSubmitAfterMs, 0, 24 * 60 * 60 * 1000, null);
+      if (parsed.error) return { error: 'proctoring.cameraHealth.lossSubmitAfterMs must be a positive number of milliseconds' };
+      section.lossSubmitAfterMs = parsed.value;
+    }
+    if (cameraHealth.rejoinAttempts !== undefined) {
+      const parsed = clampInt(cameraHealth.rejoinAttempts, 0, 10, null);
+      if (parsed.error) return { error: 'proctoring.cameraHealth.rejoinAttempts must be an integer between 0 and 10' };
+      section.rejoinAttempts = parsed.value;
+    }
+    if (Object.keys(section).length > 0) config.cameraHealth = section;
+  }
+
+  if (sessionHealth !== undefined) {
+    if (!isPlainObject(sessionHealth)) return { error: 'proctoring.sessionHealth must be an object' };
+    const section = {};
+    if (sessionHealth.heartbeatIntervalMs !== undefined) {
+      const parsed = clampInt(sessionHealth.heartbeatIntervalMs, 5000, 10 * 60 * 1000, null);
+      if (parsed.error) return { error: 'proctoring.sessionHealth.heartbeatIntervalMs must be between 5000 and 600000' };
+      section.heartbeatIntervalMs = parsed.value;
+    }
+    if (sessionHealth.timeoutMs !== undefined) {
+      const parsed = clampInt(sessionHealth.timeoutMs, 10000, 60 * 60 * 1000, null);
+      if (parsed.error) return { error: 'proctoring.sessionHealth.timeoutMs must be between 10000 and 3600000' };
+      section.timeoutMs = parsed.value;
+    }
+    if (sessionHealth.onProlongedOutage !== undefined) {
+      if (!oneOf(sessionHealth.onProlongedOutage, ['record', 'warn', 'submit'])) {
+        return { error: 'proctoring.sessionHealth.onProlongedOutage must be "record", "warn" or "submit"' };
+      }
+      section.onProlongedOutage = sessionHealth.onProlongedOutage;
+    }
+    if (Object.keys(section).length > 0) config.sessionHealth = section;
+  }
+
+  if (screenCapturePrevention !== undefined) {
+    if (!isPlainObject(screenCapturePrevention)) {
+      return { error: 'proctoring.screenCapturePrevention must be an object' };
+    }
+    const section = {};
+    if (screenCapturePrevention.enabled !== undefined) {
+      section.enabled = asBoolean(screenCapturePrevention.enabled);
+    }
+    if (Object.keys(section).length > 0) config.screenCapturePrevention = section;
+  }
+
+  if (maxViolations !== undefined) {
+    const parsed = clampInt(maxViolations, 1, 10, null);
+    if (parsed.error) return { error: 'proctoring.maxViolations must be an integer between 1 and 10' };
+    config.maxViolations = parsed.value;
+  }
+
+  if (violationAction !== undefined) {
+    if (!oneOf(violationAction, ['warn', 'submit'])) {
+      return { error: 'proctoring.violationAction must be "warn" or "submit"' };
+    }
+    config.violationAction = violationAction;
+  }
+
+  // riskWeights are platform-controlled provisional weights (§19); they are
+  // snapshot from defaults, never author-configurable in V1.
+  if (riskWeights !== undefined) {
+    return { error: 'proctoring.riskWeights are platform-controlled and cannot be set per quiz' };
+  }
+
+  // §21.5: the warn-then-submit ladder needs at least one tolerated violation.
+  const effectiveFocus = {
+    ...DEFAULT_PROCTORING_CONFIG.focusEvents,
+    ...(config.focusEvents || {}),
+  };
+  if (effectiveFocus.mode === 'warn-then-submit' && effectiveFocus.toleratedViolations < 1) {
+    return { error: 'focusEvents.toleratedViolations must be at least 1 when mode is "warn-then-submit"' };
+  }
+
+  return { value: config };
+};
+
+module.exports = {
+  isQuizProctoringEnabled,
+  resolveProctoringEligibility,
+  canonicalize,
+  hashPolicy,
+  buildEffectiveProctoringPolicy,
+  freezeProctoringPolicySnapshot,
+  parseProctoringConfig,
+};

@@ -1,0 +1,231 @@
+// Phase 0 CV/ML feasibility spike (AI Proctoring plan §5) — SPIKE ONLY.
+//
+// Wraps Google ML Kit Face Detection behind a single JS-callable function that
+// accepts a base64 JPEG (as produced by expo-camera's takePictureAsync) and
+// returns sanitized face results plus per-stage timings so the spike screen can
+// measure decode vs inference latency separately. No frames, bitmaps, or files
+// are persisted anywhere; everything stays in memory for the duration of one
+// call. This module is not production proctoring code.
+package eyeconic.proctoringspike
+
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.RectF
+import android.util.Base64
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.face.Face
+import com.google.mlkit.vision.face.FaceDetection
+import com.google.mlkit.vision.face.FaceDetector
+import com.google.mlkit.vision.face.FaceDetectorOptions
+import com.google.mlkit.vision.face.FaceLandmark
+import expo.modules.kotlin.Promise
+import expo.modules.kotlin.modules.Module
+import expo.modules.kotlin.modules.ModuleDefinition
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
+
+// Tier identifier mirrors the implementation plan §5.4 ladder (Tier A).
+const val SPIKE_TIER = "mlkit-face-detection"
+const val SPIKE_MLKIT_VERSION = "16.1.7"
+
+class ProctoringSpikeModule : Module() {
+  // ACCURATE mode + landmarks + eye-open classification, contours off.
+  // These are the options the plan's Tier A assumes; the spike exists to
+  // validate them on real devices.
+  private val detector: FaceDetector = FaceDetection.getClient(
+    FaceDetectorOptions.Builder()
+      .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
+      .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)
+      .setContourMode(FaceDetectorOptions.CONTOUR_MODE_NONE)
+      .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
+      .setMinFaceSize(0.08f)
+      .enableTracking()
+      .build()
+  )
+
+  private val decodeExecutor: ExecutorService =
+    Executors.newSingleThreadExecutor { r -> Thread(r, "proctoring-spike-decode") }
+
+  // Landmark types reported back to JS (position only, no pixels). The full
+  // LANDMARK_MODE_ALL set is enabled on the detector; we forward a stable subset
+  // to keep the bridge payload small. Null entries mean "landmark not detected".
+  private val reportedLandmarks = mapOf(
+    "leftEye" to FaceLandmark.LEFT_EYE,
+    "rightEye" to FaceLandmark.RIGHT_EYE,
+    "noseBase" to FaceLandmark.NOSE_BASE,
+    "mouthLeft" to FaceLandmark.MOUTH_LEFT,
+    "mouthRight" to FaceLandmark.MOUTH_RIGHT,
+    "mouthBottom" to FaceLandmark.MOUTH_BOTTOM,
+    "leftEar" to FaceLandmark.LEFT_EAR,
+    "rightEar" to FaceLandmark.RIGHT_EAR,
+    "leftCheek" to FaceLandmark.LEFT_CHEEK,
+    "rightCheek" to FaceLandmark.RIGHT_CHEEK,
+  )
+
+  override fun definition() = ModuleDefinition {
+    Name("ProctoringSpike")
+
+    OnDestroy {
+      detector.close()
+      decodeExecutor.shutdown()
+    }
+
+    Constants(
+      "tier" to SPIKE_TIER,
+      "mlkitVersion" to SPIKE_MLKIT_VERSION,
+      "performanceMode" to "ACCURATE",
+      "landmarkMode" to "ALL",
+      "classificationMode" to "ALL",
+      "contourMode" to "NONE",
+      "minFaceSize" to 0.08f
+    )
+
+    Function("getInfo") {
+      mapOf(
+        "tier" to SPIKE_TIER,
+        "mlkitVersion" to SPIKE_MLKIT_VERSION,
+        "available" to true
+      )
+    }
+
+    // Detect faces in a base64 JPEG. Options map (all optional):
+    //   maxDim: Int  — downscale the decoded bitmap so its long edge is <= maxDim
+    //                  (default 640; mirrors the plan's ~640px analysis budget).
+    // Resolves with { imageWidth, imageHeight, decodeMs, inferenceMs, faces: [...] }
+    // Rejects with code ERR_DECODE (bad input) or ERR_DETECT (ML Kit failure).
+    AsyncFunction("detectFacesJpegBase64") { base64: String, rawOptions: Map<String, Any?>, promise: Promise ->
+      val startedAt = System.currentTimeMillis()
+      val maxDim = (rawOptions?.get("maxDim") as? Number)?.toInt() ?: 640
+      decodeExecutor.execute {
+        try {
+          val t0 = System.currentTimeMillis()
+          val jpegBytes = decodeBase64Jpeg(base64)
+          val bitmap = decodeScaledBitmap(jpegBytes, maxDim)
+            ?: throw SpikeException("ERR_DECODE", "Could not decode the JPEG payload")
+          val decodeMs = System.currentTimeMillis() - t0
+
+          val inputImage = InputImage.fromBitmap(bitmap, 0)
+          val t1 = System.currentTimeMillis()
+          detector.process(inputImage)
+            .addOnSuccessListener { faces ->
+              val inferenceMs = System.currentTimeMillis() - t1
+              try {
+                val payload = buildPayload(bitmap, faces, decodeMs, inferenceMs, startedAt)
+                bitmap.recycle()
+                promise.resolve(payload)
+              } catch (e: Exception) {
+                bitmap.recycle()
+                promise.reject("ERR_PAYLOAD", "Failed to serialize detector output: ${e.message}", e)
+              }
+            }
+            .addOnFailureListener { e ->
+              bitmap.recycle()
+              promise.reject("ERR_DETECT", "ML Kit face detection failed: ${e.message}", e)
+            }
+        } catch (e: SpikeException) {
+          promise.reject(e.code, e.message, e)
+        } catch (e: Exception) {
+          promise.reject("ERR_DECODE", "Unexpected decode error: ${e.message}", e)
+        }
+      }
+    }
+  }
+
+  private fun decodeBase64Jpeg(base64: String): ByteArray {
+    val trimmed = base64.trim()
+    val payload = if (trimmed.startsWith("data:")) {
+      trimmed.substringAfter(",", "")
+    } else {
+      trimmed
+    }
+    if (payload.isEmpty()) {
+      throw SpikeException("ERR_DECODE", "Empty base64 payload")
+    }
+    return Base64.decode(payload, Base64.DEFAULT)
+  }
+
+  // Two-pass decode: read bounds first, compute inSampleSize so the long edge
+  // lands at ~maxDim, then decode once. Keeps the analysis resolution (and ML
+  // Kit inference cost) independent of the camera's full capture size.
+  private fun decodeScaledBitmap(bytes: ByteArray, maxDim: Int): Bitmap? {
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+    var sample = 1
+    while (bounds.outWidth / (sample * 2) >= maxDim || bounds.outHeight / (sample * 2) >= maxDim) {
+      sample *= 2
+    }
+    val options = BitmapFactory.Options().apply { inSampleSize = sample }
+    return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+  }
+
+  private fun buildPayload(
+    bitmap: Bitmap,
+    faces: List<Face>,
+    decodeMs: Long,
+    inferenceMs: Long,
+    startedAt: Long
+  ): Map<String, Any?> {
+    val facePayloads = faces.map { face ->
+      val box = RectF(face.boundingBox)
+      mapOf(
+        "box" to mapOf(
+          "left" to box.left, "top" to box.top,
+          "right" to box.right, "bottom" to box.bottom
+        ),
+        "eulerX" to face.headEulerAngleX,
+        "eulerY" to face.headEulerAngleY,
+        "eulerZ" to face.headEulerAngleZ,
+        "trackingId" to face.trackingId,
+        "leftEyeOpenProbability" to face.leftEyeOpenProbability,
+        "rightEyeOpenProbability" to face.rightEyeOpenProbability,
+        "smilingProbability" to face.smilingProbability,
+        "landmarks" to reportedLandmarks.mapValues { (_, type) ->
+          face.getLandmark(type)?.position?.let { pos ->
+            mapOf("x" to pos.x, "y" to pos.y)
+          }
+        }
+      )
+    }
+    return mapOf(
+      "tier" to SPIKE_TIER,
+      "imageWidth" to bitmap.width,
+      "imageHeight" to bitmap.height,
+      "faceCount" to faces.size,
+      "faces" to facePayloads,
+      "decodeMs" to decodeMs,
+      "inferenceMs" to inferenceMs,
+      "totalNativeMs" to (System.currentTimeMillis() - startedAt),
+      // Mean Rec.601 luma of the downscaled analysis bitmap (0..255) — the
+      // camera-health darkness signal (plan §10.2 CAMERA_FEED_DARK). Computed
+      // AFTER the timed decode/inference stages so spike latency metrics are
+      // unaffected; a few ms on a ≤640px bitmap.
+      "meanLuma" to computeMeanLuma(bitmap)
+    )
+  }
+
+  // Mean luma over the (already ≤maxDim) bitmap. Batch-reads pixels once via
+  // getPixels — per-pixel getPixel calls are a JNI round-trip each and would
+  // dominate the cost at this size.
+  private fun computeMeanLuma(bitmap: Bitmap): Double {
+    return try {
+      val w = bitmap.width
+      val h = bitmap.height
+      val pixels = IntArray(w * h)
+      bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+      var total = 0.0
+      for (p in pixels) {
+        val r = (p shr 16) and 0xFF
+        val g = (p shr 8) and 0xFF
+        val b = p and 0xFF
+        total += 0.299 * r + 0.587 * g + 0.114 * b
+      }
+      total / (w * h)
+    } catch (_: Exception) {
+      -1.0 // sentinel for "unavailable" — sanitized to null on the JS side
+    }
+  }
+}
+
+private class SpikeException(val code: String, message: String) : Exception(message)

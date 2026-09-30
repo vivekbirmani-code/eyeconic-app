@@ -17,6 +17,7 @@ import {
 import { ScreenContainer } from '@/components/layout';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ChevronLeft, ChevronRight, Flag, AlertCircle, X } from 'lucide-react-native';
+import type { CameraView } from 'expo-camera';
 import { api } from '@/services/api';
 import { useQuiz } from '@/context/QuizContext';
 import { QuizTimer } from '@/components/QuizTimer';
@@ -24,6 +25,10 @@ import { QuestionNavigationGrid } from '@/components/QuestionNavigationGrid';
 import { SectionTabs } from '@/components/SectionTabs';
 import { QuestionSkeleton } from '@/components/Skeleton';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
+import { ProctoringBanner } from '@/components/proctoring/ProctoringBanner';
+import { ProctoringCameraPip } from '@/components/proctoring/ProctoringCameraPip';
+import { useProctoringSession } from '@/hooks/useProctoringSession';
+import { useAttemptScreenCapturePrevention } from '@/hooks/useAttemptScreenCapturePrevention';
 import { getSocketURL } from '@/services/config';
 import { formatToIST } from '@/utils/date';
 import QuestionPrompt from '@/components/quiz/QuestionPrompt';
@@ -103,6 +108,28 @@ function QuizTakingContent() {
   const sectionLockOn =
     currentAttempt?.sectionLockEnabled === true &&
     (currentAttempt?.sectionDefinitions?.length ?? 0) > 0;
+
+  // ===== Proctoring (Phase 3) — armed only for snapshot-carrying attempts;
+  // non-proctored attempts never mount a camera or an engine =====
+  const proctoringCameraRef = useRef<CameraView | null>(null);
+  const proctoring = useProctoringSession({
+    quizId: String(id),
+    attemptId: currentAttempt?.attemptId,
+    sessionId: currentAttempt?.proctoringSessionId,
+    policy: currentAttempt?.proctoringPolicy,
+    arm: currentAttempt?.proctoringArm,
+    cameraRef: proctoringCameraRef,
+  });
+  // ===== Proctoring (Phase 4, D13) — attempt-scoped screen-capture
+  // prevention: armed only while the proctored session is active, released on
+  // finalize (context clears the attempt) and on unmount (navigation away).
+  // Never active on non-proctored attempts. Deterrence only — no evidence is
+  // captured or stored, and this is not a guarantee. =====
+  useAttemptScreenCapturePrevention({
+    active: proctoring.active,
+    policy: currentAttempt?.proctoringPolicy,
+    attemptId: currentAttempt?.attemptId,
+  });
   const activeSectionState = sectionLockOn
     ? currentAttempt?.sectionStates?.find(s => s.status === 'in_progress') ?? null
     : null;
@@ -426,7 +453,11 @@ function QuizTakingContent() {
     }
   };
 
+  const recordExitAttempted = proctoring.recordExitAttempted;
   const handleBackPress = useCallback(() => {
+    // Proctored attempts record the exit attempt (informational, plan §14.3);
+    // no-op for non-proctored attempts.
+    recordExitAttempted();
     Alert.alert(
       'Exit Quiz?',
       'Your progress has been saved. Are you sure you want to exit?',
@@ -435,7 +466,7 @@ function QuizTakingContent() {
         { text: 'Exit', style: 'destructive', onPress: () => router.back() }
       ]
     );
-  }, [router]);
+  }, [recordExitAttempted, router]);
 
   const handleResponseChange = useCallback(async (response: StudentResponse) => {
     // Button press animation
@@ -888,6 +919,10 @@ function QuizTakingContent() {
         </View>
       )}
 
+      {/* Proctoring: technical-status banner (display only — no policy
+          warnings exist in this phase) */}
+      {proctoring.active && <ProctoringBanner cameraIssue={proctoring.cameraIssue} />}
+
       {/* Section Tabs */}
       <SectionTabs
         sections={sections}
@@ -898,12 +933,25 @@ function QuizTakingContent() {
       />
 
       <View style={styles.mainContent}>
+        {/* Proctoring: student-visible PiP preview — the same CameraView the
+            engine captures from (one camera session, never recorded) */}
+        {proctoring.active && (
+          <ProctoringCameraPip
+            ref={proctoringCameraRef}
+            dimmed={proctoring.status !== 'monitoring'}
+          />
+        )}
+
         {/* Question Area */}
         <View style={styles.questionAreaWrapper}>
           <ScrollView
             ref={scrollViewRef}
             style={styles.questionArea}
-            contentContainerStyle={styles.questionContentContainer}
+            contentContainerStyle={
+              proctoring.active
+                ? [styles.questionContentContainer, styles.questionContentContainerProctored]
+                : styles.questionContentContainer
+            }
             showsVerticalScrollIndicator={false}
           >
             <View style={styles.questionContainer}>
@@ -1392,6 +1440,10 @@ const styles = StyleSheet.create({
   },
   questionContentContainer: {
     paddingBottom: 20,
+  },
+  // Clear the question text below the floating PiP camera (proctored only).
+  questionContentContainerProctored: {
+    paddingTop: 152,
   },
   bottomNavWrapper: {
     backgroundColor: '#FFFFFF',

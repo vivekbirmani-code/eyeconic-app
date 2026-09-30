@@ -24,7 +24,8 @@ export type FeatureKey =
   | 'mentorship'
   | 'userManagement'
   | 'adminOverview'
-  | 'freeUserContent';
+  | 'freeUserContent'
+  | 'aiProctoring';
 
 export const FEATURE_AVAILABILITY: Record<FeatureKey, boolean> = {
   // Quiz ecosystem — fully enabled.
@@ -36,6 +37,10 @@ export const FEATURE_AVAILABILITY: Record<FeatureKey, boolean> = {
   userManagement: false, // admin Users screen, create/edit user modals
   adminOverview: false, // admin Overview dashboard
   freeUserContent: false, // free-user Transformations, Graphs, learning tools
+
+  // AI proctoring rollout flag — mirrors backend/config/featureAvailability.js
+  // and client/src/config/features.ts. False until the staged rollout begins.
+  aiProctoring: false,
 };
 
 /** @returns true only when the feature is explicitly enabled. */
@@ -51,4 +56,5 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   userManagement: 'User Management',
   adminOverview: 'Overview',
   freeUserContent: 'Learning Tools',
+  aiProctoring: 'Proctoring',
 };

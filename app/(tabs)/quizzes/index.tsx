@@ -392,6 +392,18 @@ function QuizzesContent() {
 
         {/* Custom Tabs */}
         <View style={styles.tabContainer}>
+          {/* PHASE 0 SPIKE ENTRY — development builds only. Dead-code eliminated
+              in production bundles (__DEV__ === false). Remove with the spike. */}
+          {__DEV__ && (
+            <Pressable
+              style={styles.spikeChip}
+              onPress={() => router.push('/quizzes/proctoring-spike' as any)}
+              accessibilityRole="button"
+              accessibilityLabel="Open Phase 0 CV spike screen"
+            >
+              <Text style={styles.spikeChipText}>Phase 0 CV Spike</Text>
+            </Pressable>
+          )}
           <Pressable
             style={[styles.tab, activeTab === 'available' && styles.activeTab]}
             onPress={() => {
@@ -482,6 +494,22 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#FFFFFF', // Clean white background
+  },
+  spikeChip: {
+    alignSelf: 'flex-start',
+    borderWidth: 1,
+    borderColor: '#94A3B8',
+    borderStyle: 'dashed',
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    marginBottom: 8,
+    backgroundColor: '#F8FAFC',
+  },
+  spikeChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#64748B',
   },
   topGlow: {
     position: 'absolute',

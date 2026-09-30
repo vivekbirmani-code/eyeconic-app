@@ -1,0 +1,26 @@
+// Phase 0 CV/ML feasibility spike — local Expo module (AI Proctoring plan §5).
+// Wraps Google ML Kit Face Detection (bundled variant, no Play Services download
+// needed at runtime). SPIKE ONLY — this module is not production proctoring code
+// and must be removed or replaced when Phase 3 picks the production pipeline.
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'com.eyeconic.proctoringspike'
+version = '0.1.0'
+
+android {
+  namespace "eyeconic.proctoringspike"
+  defaultConfig {
+    versionCode 1
+    versionName '0.1.0'
+  }
+}
+
+dependencies {
+  // Bundled ML Kit face detection (~model ships in the APK; the GMS "thin"
+  // variant com.google.android.gms:play-services-mlkit-face-detection would
+  // download the model via Play Services — a production decision, not a spike one).
+  implementation 'com.google.mlkit:face-detection:16.1.7'
+}

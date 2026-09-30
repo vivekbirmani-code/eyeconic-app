@@ -19,6 +19,22 @@ const appSettingsSchema = new mongoose.Schema({
     type: Boolean,
     default: false,
   },
+  // AI proctoring global kill switch (plan §21.3/§31). Rollout precedence:
+  // this switch > aiProctoring feature flag > per-quiz proctoring config.
+  // Defaults to false and fails closed — new environments (and DB errors)
+  // read as "proctoring off", so no quiz is ever proctored without explicit
+  // admin action on all three gates.
+  proctoringEnabled: {
+    type: Boolean,
+    default: false,
+  },
+  // Restricted strict-CV enforcement gate (decision D8): allowing
+  // probabilistic CV events to auto-submit. NOT a per-quiz setting; stays
+  // false for the entire V1 rollout. Fails closed like the kill switch.
+  proctoringStrictCv: {
+    type: Boolean,
+    default: false,
+  },
   updatedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',

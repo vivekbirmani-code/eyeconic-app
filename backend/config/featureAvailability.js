@@ -33,6 +33,13 @@ const FEATURE_AVAILABILITY = {
   mentorship: false, // assignments, mentor "My Students" CRUD, student tasks
   userManagement: false, // admin user CRUD, admin settings screen
   adminOverview: false, // admin mentorship overview dashboard
+
+  // AI proctoring (plan §31 rollout flag). False until the staged rollout
+  // begins; gated routes answer 503 while off. Combined with the
+  // AppSettings.proctoringEnabled kill switch (utils/appSettings.js) and the
+  // per-quiz opt-in (Quiz.proctoring.enabled, default false — D15), all three
+  // gates must be on before any quiz is proctored.
+  aiProctoring: true, // TEMP: §40.4 device-acceptance rerun — restored after
 };
 
 /**

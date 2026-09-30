@@ -147,6 +147,32 @@ const attemptSchema = new mongoose.Schema({
     default: true
   },
 
+  // ===== Server-authoritative duration (plan §7.5, decision D12) =====
+  // Computed server-side at /start for FLAT (non-section-locked) attempts:
+  // startTime + quiz duration. Section-locked attempts never set this — their
+  // authority remains sectionStates[].endsAt (utils/sectionLocking.js).
+  // Clients receive it for display-only countdowns; enforcement compares
+  // server time against it on every attempt touch (lazy finalize).
+  durationDeadline: {
+    type: Date
+  },
+
+  // ===== Proctoring policy snapshot (frozen at /start, plan §21.1) =====
+  // {version, hash, policy, frozenAt}. Write-once: created together with the
+  // attempt and NEVER rewritten — later admin edits of quiz.proctoring cannot
+  // move goalposts for an in-flight attempt (mirrors sectionDefinitions).
+  proctoringSnapshot: {
+    type: mongoose.Schema.Types.Mixed
+  },
+
+  // Machine-readable reason recorded when an attempt ends auto_submitted by
+  // the server: {kind:'duration', deadline, detectedAt} today; policy rules
+  // add {kind:'policy', ruleId, ...} in a later phase. Absent for manual
+  // submits and client-timer auto-submits within the allowed window.
+  autoSubmitReason: {
+    type: mongoose.Schema.Types.Mixed
+  },
+
   // ===== Section locking (snapshot copied from the quiz at /start) =====
   // Deliberately defaults to false: attempts created before this feature (and
   // attempts on quizzes without sections) must keep free-navigation behavior.

@@ -39,6 +39,14 @@ const integrationRoutes = require('./routes/integration');
 const { cleanupExpiredMedia } = require('./utils/media-cleanup');
 const Call = require('./models/Call');
 const User = require('./models/User');
+// Proctoring foundation models (plan §26): registering them at startup
+// ensures their collections and indexes exist. Sessions are created by the
+// /start sequence via utils/proctoring/session.js; consent, events and
+// violations get their routes/pipelines in later phases.
+require('./models/ProctoringConsent');
+require('./models/ProctoringViolation');
+require('./models/ProctoringOverride');
+require('./models/ProctoringEvent');
 
 const { sendPushNotification, sendPushToUser } = require('./utils/notifications');
 

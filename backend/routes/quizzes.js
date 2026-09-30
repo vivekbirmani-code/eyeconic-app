@@ -18,6 +18,8 @@ const {
 const { buildImportValidationPayload } = require('../utils/importErrors');
 const Subject = require('../models/Subject');
 const MentorStudentAssignment = require('../models/MentorStudentAssignment');
+const ProctoringSession = require('../models/ProctoringSession');
+const ProctoringEvent = require('../models/ProctoringEvent');
 const User = require('../models/User');
 const { sendPushToUser } = require('../utils/notifications');
 const { gradeQuestion, isAnswered } = require('../utils/grading');
@@ -66,6 +68,30 @@ const {
   closeSectionStates,
   syncExpiredSections,
 } = require('../utils/sectionLocking');
+const {
+  computeFlatDurationDeadline,
+  isPastSubmissionWindow,
+  resolveSubmissionStatus,
+  syncExpiredDuration,
+} = require('../utils/proctoring/durationEnforcement');
+const {
+  isQuizProctoringEnabled,
+  freezeProctoringPolicySnapshot,
+  parseProctoringConfig,
+} = require('../utils/proctoring/policySnapshot');
+const {
+  ensureProctoringSession,
+  closeProctoringSessionForAttempt,
+} = require('../utils/proctoring/session');
+const {
+  buildEffectiveProctoringPolicy,
+} = require('../utils/proctoring/policySnapshot');
+const {
+  assertProctoringStartPrerequisites,
+} = require('../utils/proctoring/startGating');
+const { resolveEligibilityForQuiz } = require('../utils/proctoring/rollout');
+const { buildEventRecord } = require('../utils/proctoring/eventIngest');
+const { tabSwitchRateLimit } = require('../middleware/proctoringRateLimit');
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -76,6 +102,11 @@ const upload = multer({
 });
 
 const router = express.Router();
+
+// Proctoring lifecycle sub-routes (Phase 2, plan §27.2): precheck reporting
+// + consent. They never create attempts or sessions; /start enforces both
+// before creating anything (utils/proctoring/startGating.js).
+router.use('/:id/proctoring', require('./proctoring'));
 
 const roundTo2 = (value) => {
   const num = Number(value);
@@ -219,17 +250,24 @@ const buildSubmitResponsePayload = (attempt, quiz, stats) => ({
 
 // Grades and atomically finalizes an in_progress attempt. Shared by the
 // whole-quiz submit route, the last-section submit path, and the lazy
-// timer-expiry cascade (via syncExpiredSections). The CAS on
-// status:'in_progress' is the single finalize gate — only its winner emits
-// socket events / notifications, so side effects fire exactly once.
+// timer-expiry cascades (syncExpiredSections AND syncExpiredDuration — plan
+// §7.5). The CAS on status:'in_progress' is the single finalize gate — only
+// its winner emits socket events / notifications, so side effects fire
+// exactly once, whichever path (manual, section cascade, duration deadline,
+// and later proctoring policy) races in.
 //
 // `sectionStates` (optional): when provided, written atomically together
 // with the grades — used by the defensive whole-submit path to close every
 // remaining section in the same update.
+// `autoSubmitReason` (optional): machine-readable reason supplied by a
+// policy-driven caller (later phase). For flat attempts the server-side
+// duration deadline overrides: resolveSubmissionStatus decides status from
+// SERVER time vs the stored deadline, never from the client's isAutoSubmit
+// claim (§7.5 — the flag is a hint about who initiated the request).
 // Returns { ok: true, kind: 'finalized', attempt, quiz, payload }
 //       | { ok: true, kind: 'already_submitted', attempt, payload }
 //       | { ok: false, kind: 'conflict' | 'quiz_not_found' | 'no_questions' }
-async function finalizeQuizAttempt(attempt, { isAutoSubmit = false, req = null, sectionStates = null } = {}) {
+async function finalizeQuizAttempt(attempt, { isAutoSubmit = false, req = null, sectionStates = null, autoSubmitReason = null } = {}) {
   const quiz = await Quiz.findById(attempt.quiz?._id || attempt.quiz).populate('questions');
   // Populate subject on each question so section performance uses subject names
   if (quiz && quiz.questions) {
@@ -319,7 +357,18 @@ async function finalizeQuizAttempt(attempt, { isAutoSubmit = false, req = null, 
 
   marksObtained = roundTo2(marksObtained);
 
-  const finalStatus = isAutoSubmit ? 'auto_submitted' : 'completed';
+  // Server-authoritative status (plan §7.5, D12): for flat attempts with a
+  // stored durationDeadline, status derives from server time vs the deadline
+  // (+grace); the client's isAutoSubmit flag only decides within the allowed
+  // window. Section-locked attempts keep the endsAt cascade's semantics
+  // (isAutoSubmit derived from the section states) — resolveSubmissionStatus
+  // is a no-op for them because they carry no durationDeadline.
+  const decided = resolveSubmissionStatus(attempt, { isAutoSubmit });
+  const finalStatus = decided.status;
+  let finalAutoSubmitReason = decided.autoSubmitReason;
+  if (!finalAutoSubmitReason && autoSubmitReason && finalStatus === 'auto_submitted') {
+    finalAutoSubmitReason = autoSubmitReason; // explicit policy reason (later phase)
+  }
   const endTime = new Date();
   const shareSolutionAtSubmission = quiz.shareSolution !== undefined ? quiz.shareSolution : true;
 
@@ -337,6 +386,9 @@ async function finalizeQuizAttempt(attempt, { isAutoSubmit = false, req = null, 
   };
   if (sectionStates !== null) {
     finalizedFields.sectionStates = sectionStates;
+  }
+  if (finalAutoSubmitReason && finalStatus === 'auto_submitted') {
+    finalizedFields.autoSubmitReason = finalAutoSubmitReason;
   }
 
   const finalizedAttempt = await QuizAttempt.findOneAndUpdate(
@@ -377,7 +429,19 @@ async function finalizeQuizAttempt(attempt, { isAutoSubmit = false, req = null, 
     return { ok: false, kind: 'conflict' };
   }
 
-  console.log(`[Submit Quiz] Successfully submitted: ${finalizedAttempt._id}, Score: ${correctCount}/${quiz.questions.length}`);
+  console.log(`[Submit Quiz] Successfully submitted: ${finalizedAttempt._id}, Score: ${correctCount}/${quiz.questions.length}, Status: ${finalStatus}${finalAutoSubmitReason ? `, Reason: ${finalAutoSubmitReason.kind}` : ''}`);
+
+  // Close the attempt's proctoring session (if any) on the finalize winner
+  // — manual, section-cascade, duration-deadline and (later) policy
+  // auto-submits all converge here (plan §7.5). Best-effort by design: the
+  // attempt is already finalized and must never roll back over this.
+  try {
+    await closeProctoringSessionForAttempt(finalizedAttempt, {
+      reason: `attempt_${finalStatus}`,
+    });
+  } catch (sessionError) {
+    console.error('[Submit Quiz] Failed to close proctoring session:', sessionError?.message || sessionError);
+  }
 
   // Emit quiz_submitted event back to the student
   const io = req ? req.app.get('io') : null;
@@ -472,9 +536,68 @@ async function finalizeQuizAttempt(attempt, { isAutoSubmit = false, req = null, 
 // Finalize callback handed to syncExpiredSections: wraps finalizeQuizAttempt
 // with the triggering request (socket/user context) and returns the attempt
 // doc back to the sync engine.
-const makeSyncFinalizer = (req) => async (attempt, { isAutoSubmit }) => {
-  const result = await finalizeQuizAttempt(attempt, { isAutoSubmit, req });
+const makeSyncFinalizer = (req) => async (attempt, { isAutoSubmit, autoSubmitReason } = {}) => {
+  const result = await finalizeQuizAttempt(attempt, { isAutoSubmit, req, autoSubmitReason });
   return result.attempt || attempt;
+};
+
+// Proctoring event transport — Phase 3 (plan §27.2). Mounted AFTER
+// makeSyncFinalizer exists because the events route performs the same lazy
+// §7.5 duration finalize as every other attempt-touching route (the factory
+// injects this file's closure-bound finalizer; routes/proctoringEvents.js
+// never imports this module, so there is no cycle).
+const {
+  buildEventsRouter,
+  buildSessionRouter,
+} = require('./proctoringEvents');
+router.use('/:id/attempt/:attemptId/proctoring', buildEventsRouter({ makeFinalizer: makeSyncFinalizer }));
+router.use('/attempt/:attemptId/proctoring', buildSessionRouter());
+
+// Compact proctoring-session hint on the GET /attempt/:id resync payload
+// (plan §6.4: "return session state for engine re-arm"). Snapshot-carrying
+// attempts only — legacy attempts are never retro-proctored.
+const buildProctoringSessionHint = async (attempt) => {
+  if (!attempt?.proctoringSnapshot) return null;
+  const session = await ProctoringSession.findOne({ attempt: attempt._id }).select('_id status');
+  if (!session) return null;
+  return { id: session._id, status: session.status };
+};
+
+// Effective proctoring for THIS quiz right now — the shared rollout helper
+// (utils/proctoring/rollout.js) so /start and the precheck/consent routes can
+// never disagree about precedence.
+const resolveQuizProctoringEligibility = resolveEligibilityForQuiz;
+
+// Converge concurrent /start calls onto a single in_progress attempt. Two
+// simultaneous starts can both pass the existence check and both create;
+// deterministic convergence (earliest startTime, ties by _id — the same
+// order the resume lookup uses) makes every racer return the same attempt.
+//
+// SAFETY: only the attempt THIS request created is ever deleted. A racer that
+// already responded may have handed its attempt id to a client, so deleting
+// another request's attempt could strand that client with a dead id. The
+// narrow residue (a same-millisecond creation tie where the earlier racer
+// returned before this one saved) at worst leaves a dormant, never-returned
+// duplicate — no client ever holds a deleted id.
+const convergeConcurrentStart = async (createdAttempt) => {
+  const inProgress = await QuizAttempt.find({
+    quiz: createdAttempt.quiz,
+    student: createdAttempt.student,
+    status: 'in_progress',
+  }).sort({ startTime: 1, _id: 1 });
+
+  const canonical = inProgress[0];
+  if (!canonical || inProgress.length <= 1) return createdAttempt;
+  if (String(canonical._id) === String(createdAttempt._id)) return canonical;
+
+  // This request created a loser: remove it before responding, while it is
+  // still empty (answers/sessions/notifications all happen after this point).
+  await QuizAttempt.deleteOne({
+    _id: createdAttempt._id,
+    status: 'in_progress',
+    answers: { $size: 0 },
+  });
+  return canonical;
 };
 
 const notifyQuizAssignedToStudents = async ({ studentIds, quiz, assignedByName = 'Admin' }) => {
@@ -743,6 +866,7 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
       selectedQuestionIds,  // NEW: optional array of specific question IDs for manual selection
       shareSolution,  // NEW: whether to share solutions with students (defaults to true)
       lockSectionsAfterSubmission,  // Section locking (defaults to true; see utils/sectionLocking.js)
+      proctoring,  // Optional proctoring config (strictly opt-in, default off — D15)
       positiveMarks,
       negativeMarks,
       scheduledDate,
@@ -761,6 +885,14 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
     const timeWindowResult = parseQuizTimeWindow({ scheduledDate, expiryDate });
     if (timeWindowResult.error) {
       return res.status(400).json({ message: timeWindowResult.error });
+    }
+
+    // Proctoring config is validated (not trusted): unknown keys, out-of-range
+    // values, attention escalation attempts and riskWeight injection all fail
+    // here with a clear 400. Absent payload = unproctored quiz (D15).
+    const proctoringResult = parseProctoringConfig(proctoring);
+    if (proctoringResult.error) {
+      return res.status(400).json({ message: proctoringResult.error });
     }
 
     if (!title || !String(title).trim()) {
@@ -881,6 +1013,7 @@ router.post('/create-from-bank', auth, authorize('admin'), async (req, res) => {
       createdBy: req.user._id,
       shareSolution: shareSolution !== undefined ? shareSolution : true,  // Default to true
       lockSectionsAfterSubmission: lockSectionsAfterSubmission !== false,  // Missing = ON (never treat legacy as false)
+      ...(proctoringResult.value ? { proctoring: proctoringResult.value } : {}),  // Missing = OFF (never treat legacy as on)
       scheduledDate: timeWindowResult.value.scheduledDate,
       expiryDate: timeWindowResult.value.expiryDate,
       sections: sectionResult.sections,
@@ -1451,7 +1584,7 @@ router.post('/:id/duplicate', auth, authorize('admin'), async (req, res) => {
 // Update Quiz
 router.put('/:id', auth, authorize('admin'), async (req, res) => {
   try {
-    const { title, duration, instructions, questions, testType, subject, assignedStudents, assignedMentors, shareSolution, assignToAllFreeUsers, lockSectionsAfterSubmission, scheduledDate, expiryDate, positiveMarks, negativeMarks, sections } = req.body;
+    const { title, duration, instructions, questions, testType, subject, assignedStudents, assignedMentors, shareSolution, assignToAllFreeUsers, lockSectionsAfterSubmission, proctoring, scheduledDate, expiryDate, positiveMarks, negativeMarks, sections } = req.body;
 
     // Check if quiz exists
     const quiz = await Quiz.findById(req.params.id);
@@ -1511,6 +1644,25 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
     // accept both boolean and string forms since import-style clients send strings.
     if (lockSectionsAfterSubmission !== undefined) {
       quiz.lockSectionsAfterSubmission = lockSectionsAfterSubmission === true || lockSectionsAfterSubmission === 'true';
+    }
+
+    // Proctoring: absent = preserve stored value (schema default FALSE — the
+    // opposite polarity of section locking on purpose, D15: existing quizzes
+    // must never silently become proctored). A provided payload fully
+    // replaces the config (validated by parseProctoringConfig); in-flight
+    // attempts are immune — they run their frozen proctoringSnapshot.
+    if (proctoring !== undefined) {
+      const proctoringResult = parseProctoringConfig(proctoring);
+      if (proctoringResult.error) {
+        return res.status(400).json({ message: proctoringResult.error });
+      }
+      if (proctoringResult.value) {
+        quiz.proctoring = proctoringResult.value;
+      } else {
+        // Explicitly clearing the payload disables proctoring for FUTURE
+        // attempts only.
+        quiz.proctoring = { enabled: false };
+      }
     }
 
     const timeWindowResult = parseQuizTimeWindow({ scheduledDate, expiryDate });
@@ -2673,6 +2825,14 @@ router.get('/:id', auth, async (req, res) => {
       qObj.attemptStatus = _attemptStatus;
     }
 
+    // Proctoring routing hint (Phase 2): true only when proctoring is fully
+    // effective right now (kill switch > flag > quiz opt-in — the same
+    // resolver /start gates with), so the instructions screen can route the
+    // student through precheck + consent instead of starting directly.
+    if (req.user.role === 'student' && isQuizProctoringEnabled(quiz)) {
+      qObj.proctoringRequired = (await resolveQuizProctoringEligibility(quiz)).enabled;
+    }
+
     res.json(qObj);
   } catch (error) {
     console.error(error);
@@ -2718,12 +2878,13 @@ router.post('/:id/start', auth, authorize('student'), async (req, res) => {
       });
     }
 
-    // Check for existing attempt
+    // Check for existing attempt (deterministic order: the earliest of any
+    // concurrent-start survivors is the canonical one).
     let attempt = await QuizAttempt.findOne({
       quiz: quiz._id,
       student: req.user._id,
       status: 'in_progress'
-    });
+    }).sort({ startTime: 1, _id: 1 });
 
     if (attempt) {
       // Resume existing attempt. For section-locked attempts, first lazily
@@ -2756,19 +2917,65 @@ router.post('/:id/start', auth, authorize('student'), async (req, res) => {
         });
       }
 
+      // Flat attempt: lazily enforce the server-side duration deadline
+      // (§7.5) — a resume long after the deadline finalizes as auto_submitted
+      // instead of resurrecting the attempt.
+      if (isPastSubmissionWindow(attempt)) {
+        const durationSync = await syncExpiredDuration(QuizAttempt, {
+          _id: attempt._id,
+          student: req.user._id,
+        }, { finalize: makeSyncFinalizer(req) });
+
+        if (!durationSync.attempt || durationSync.attempt.status !== 'in_progress') {
+          return res.json({
+            message: 'This quiz attempt has ended and has been submitted',
+            attemptFinalized: true,
+            attemptId: attempt._id,
+            status: durationSync.attempt?.status || 'auto_submitted',
+          });
+        }
+        attempt = durationSync.attempt;
+      }
+
+      // Self-heal a missing proctoring session (crash between the attempt
+      // save and the session create — plan §7.2). Only attempts that were
+      // proctored at creation (snapshot present) are healed; a rollout gate
+      // turned off mid-attempt simply stops creating new sessions while
+      // existing ones ride to the end on their frozen snapshots (§31).
+      let proctoringSession = null;
+      if (attempt.proctoringSnapshot && (await resolveQuizProctoringEligibility(quiz)).enabled) {
+        proctoringSession = await ensureProctoringSession(attempt, {
+          policySnapshot: attempt.proctoringSnapshot,
+          reason: 'resume_self_heal',
+        });
+      }
+
       return res.json({
         message: 'Resuming existing attempt',
         attemptId: attempt._id,
         startTime: attempt.startTime,
-        answers: attempt.answers
+        answers: attempt.answers,
+        ...(attempt.durationDeadline ? {
+          durationDeadline: attempt.durationDeadline,
+          serverNow: new Date().toISOString(),
+        } : {}),
+        ...(proctoringSession ? {
+          proctoringSessionId: proctoringSession._id,
+          proctoringPolicyDigest: attempt.proctoringSnapshot?.hash,
+          proctoringPolicy: attempt.proctoringSnapshot?.policy,
+        } : {}),
       });
     }
 
-    // Check if completed before
+    // Check if completed before. BOTH final statuses count: an auto_submitted
+    // attempt (timer/section cascade/duration deadline) is a used-up attempt
+    // too — otherwise restarting after an expiry would hand the student a
+    // fresh time window and bypass the server-side duration entirely
+    // (§7.5). The approved-retest escape hatch covers both statuses.
     const completedAttempt = await QuizAttempt.findOne({
       quiz: quiz._id,
       student: req.user._id,
-      status: 'completed'
+      status: { $in: ['completed', 'auto_submitted'] }
     });
 
     if (completedAttempt && !completedAttempt.retestApproved) {
@@ -2778,21 +2985,84 @@ router.post('/:id/start', auth, authorize('student'), async (req, res) => {
       });
     }
 
+    // Phase 2 gating (plan §7.1): a proctored quiz starts only after recorded
+    // consent AND a valid precheck attestation token. Enforced BEFORE anything
+    // is created — a gating failure leaves zero attempt/session rows and the
+    // student can retry freely (nothing is consumed by a failed start).
+    const proctoringEligibility = await resolveQuizProctoringEligibility(quiz);
+    const effectiveProctoringPolicy = proctoringEligibility.enabled
+      ? buildEffectiveProctoringPolicy(quiz)
+      : null;
+    if (effectiveProctoringPolicy) {
+      const gate = await assertProctoringStartPrerequisites(
+        quiz,
+        effectiveProctoringPolicy,
+        req.user._id,
+        req.body?.precheckToken
+      );
+      if (!gate.ok) {
+        return res.status(gate.status).json({
+          message: gate.message,
+          errorCode: gate.code,
+        });
+      }
+    }
+
     // Create new attempt. The section-locking snapshot is frozen here: the
     // definitions (and the flag) live on the attempt for its lifetime, so a
     // later admin edit of the quiz cannot corrupt an in-flight attempt.
-    const sectionSnapshot = buildSectionSnapshot(quiz, new Date());
+    const startedAt = new Date();
+    const sectionSnapshot = buildSectionSnapshot(quiz, startedAt);
+    const sectionLockEnabled = sectionSnapshot.sectionLockEnabled === true;
+
+    // Server-side duration deadline for FLAT attempts (plan §7.5, D12): the
+    // client countdown becomes display-only from here on — the server
+    // enforces this deadline lazily on every attempt touch. Section-locked
+    // attempts deliberately get none; their authority stays the
+    // sectionStates[].endsAt cascade.
+    const durationDeadline = computeFlatDurationDeadline(
+      { durationMinutes: quiz.duration, sectionLockEnabled },
+      startedAt
+    );
+
+    // Proctoring policy snapshot (plan §7.1): frozen onto the attempt at
+    // creation, immutable for its lifetime (later admin edits never move
+    // goalposts). Sessions are only created when EVERY rollout gate is on —
+    // quiz opt-in (D15, default false) AND the AppSettings kill switch AND
+    // the aiProctoring feature flag (gating above already verified consent
+    // and the precheck token for this same eligibility).
+    const proctoringSnapshot = proctoringEligibility.enabled
+      ? freezeProctoringPolicySnapshot(quiz, startedAt)
+      : null;
+
     attempt = new QuizAttempt({
       quiz: quiz._id,
       student: req.user._id,
-      startTime: new Date(),
+      startTime: startedAt,
       status: 'in_progress',
       answers: [],
       tabSwitchCount: 0,
-      ...(sectionSnapshot.sectionLockEnabled ? sectionSnapshot : {}),
+      ...(sectionLockEnabled ? sectionSnapshot : {}),
+      ...(durationDeadline ? { durationDeadline } : {}),
+      ...(proctoringSnapshot ? { proctoringSnapshot } : {}),
     });
 
     await attempt.save();
+
+    // Close the concurrent-start window: simultaneous /start calls converge
+    // onto exactly one attempt before anything else references it.
+    attempt = await convergeConcurrentStart(attempt);
+
+    // Proctoring session — created in the same /start sequence as the
+    // attempt, never earlier (plan §7). Idempotent: the unique {attempt}
+    // index converges racing creators onto one row.
+    let proctoringSession = null;
+    if (proctoringEligibility.enabled && attempt.proctoringSnapshot) {
+      proctoringSession = await ensureProctoringSession(attempt, {
+        policySnapshot: attempt.proctoringSnapshot,
+        reason: 'start',
+      });
+    }
 
     res.status(201).json({
       message: 'Quiz started',
@@ -2804,6 +3074,18 @@ router.post('/:id/start', auth, authorize('student'), async (req, res) => {
         sectionStates: attempt.sectionStates,
         duration: quiz.duration,
       } : {}),
+      ...(attempt.durationDeadline ? {
+        durationDeadline: attempt.durationDeadline,
+        serverNow: new Date().toISOString(),
+      } : {}),
+      ...(proctoringSession ? {
+        proctoringSessionId: proctoringSession._id,
+        proctoringPolicyDigest: attempt.proctoringSnapshot?.hash,
+        // The FROZEN policy drives client-side episode/heartbeat thresholds
+        // (Phase 3 engine). Additive; the server never trusts conclusions a
+        // client derives from it.
+        proctoringPolicy: attempt.proctoringSnapshot?.policy,
+      } : {}),
     });
   } catch (error) {
     console.error(error);
@@ -2811,10 +3093,15 @@ router.post('/:id/start', auth, authorize('student'), async (req, res) => {
   }
 });
 
-// Log tab switch (for monitoring)
-router.post('/:id/attempt/:attemptId/tab-switch', auth, authorize('student'), async (req, res) => {
+// Log tab switch (for monitoring) — the LEGACY telemetry channel (web
+// visibilitychange). Phase 4 (plan §27.5): keeps working for old app builds in
+// the field, but gains the state filter, rate limit and lazy §7.5 duration
+// sync it was missing, and dual-writes the equivalent TAB_HIDDEN integrity
+// event into the proctoring pipeline for proctored attempts so both channels
+// stay in agreement during the migration window.
+router.post('/:id/attempt/:attemptId/tab-switch', auth, authorize('student'), tabSwitchRateLimit, async (req, res) => {
   try {
-    const attempt = await QuizAttempt.findOne({
+    let attempt = await QuizAttempt.findOne({
       _id: req.params.attemptId,
       student: req.user._id
     });
@@ -2823,10 +3110,67 @@ router.post('/:id/attempt/:attemptId/tab-switch', auth, authorize('student'), as
       return res.status(404).json({ message: 'Attempt not found' });
     }
 
-    attempt.tabSwitchCount = (attempt.tabSwitchCount || 0) + 1;
+    // Lazy §7.5 duration sync (same doctrine as the answer route): a
+    // past-deadline attempt is finalized first, then rejected below — a
+    // tab-switch must never land on (or dual-write into) an expired attempt.
+    if (attempt.status === 'in_progress' && isPastSubmissionWindow(attempt)) {
+      const durationSync = await syncExpiredDuration(QuizAttempt, {
+        _id: attempt._id,
+        student: req.user._id
+      }, { finalize: makeSyncFinalizer(req) });
+      attempt = durationSync.attempt || attempt;
+    }
+
+    if (attempt.status !== 'in_progress') {
+      return res.status(400).json({
+        message: 'Attempt is no longer in progress',
+        errorCode: 'INVALID_ATTEMPT_STATUS'
+      });
+    }
+
+    const newCount = (attempt.tabSwitchCount || 0) + 1;
+    attempt.tabSwitchCount = newCount;
     attempt.tabSwitchLog = attempt.tabSwitchLog || [];
     attempt.tabSwitchLog.push(new Date());
     await attempt.save();
+
+    // Dual-write (plan §27.5): for proctored attempts with an active session,
+    // the same switch also becomes a TAB_HIDDEN integrity event (source
+    // 'browser', legacy marker). Non-proctored attempts keep the counter as
+    // their only channel — exactly as before. Best-effort by design: the
+    // legacy counter stays authoritative and the route must never fail over
+    // the secondary write.
+    if (attempt.proctoringSnapshot) {
+      const session = await ProctoringSession.findOne({
+        attempt: attempt._id,
+        status: { $in: ['ACTIVE', 'DEGRADED'] }
+      });
+      if (session) {
+        const now = new Date();
+        try {
+          await ProctoringEvent.insertMany([buildEventRecord(
+            {
+              source: 'browser',
+              openedAt: now,
+              closedAt: now,
+              metadata: { legacy: true },
+              idempotencyKey: `legacy-tab:${attempt._id}:${newCount}`
+            },
+            { type: 'TAB_HIDDEN', session, attempt, quizId: attempt.quiz, now }
+          )], { ordered: false });
+          await ProctoringSession.updateOne(
+            { _id: session._id },
+            { $inc: { 'eventCounts.TAB_HIDDEN': 1 } }
+          ).exec();
+        } catch (dualWriteError) {
+          // E11000 = deterministic-key replay (already written). Any other
+          // failure is logged and swallowed — the counter above already won.
+          if (dualWriteError?.code !== 11000 && dualWriteError?.codeName !== 'DuplicateKey') {
+            console.error(dualWriteError);
+          }
+        }
+      }
+    }
 
     res.json({
       message: 'Tab switch logged',
@@ -2855,6 +3199,28 @@ router.put('/:id/attempt/:attemptId/answer', auth, authorize('student'), async (
 
     if (!attempt) {
       return res.status(404).json({ message: 'No active attempt found' });
+    }
+
+    // Flat-quiz duration enforcement (§7.5): lazily finalize the attempt when
+    // the server-side deadline (+grace) has passed, then reject the write
+    // like any completed attempt. A tampered/offline/delayed client cannot
+    // keep saving past the deadline — the check uses server time against the
+    // server-stored deadline only. Cheap guard first: the sync runs only when
+    // the stored deadline has actually passed.
+    if (isPastSubmissionWindow(attempt)) {
+      const durationSync = await syncExpiredDuration(QuizAttempt, {
+        _id: attempt._id,
+        student: req.user._id,
+      }, { finalize: makeSyncFinalizer(req) });
+
+      if (!durationSync.attempt || durationSync.attempt.status !== 'in_progress') {
+        return res.status(403).json({
+          message: "This quiz's time has ended and it has been submitted.",
+          errorCode: 'TIME_EXPIRED',
+          attemptFinalized: true,
+        });
+      }
+      attempt = durationSync.attempt;
     }
 
     // Resolve the canonical question id server-side from the quiz's ordered
@@ -4017,11 +4383,41 @@ router.get('/attempt/:id', auth, async (req, res) => {
       if (synced.attempt) {
         const syncedObj = synced.attempt.toObject();
         syncedObj.quiz = attempt.quiz;
-        return res.json({ ...syncedObj, serverNow: new Date().toISOString() });
+        const syncedSessionHint = await buildProctoringSessionHint(synced.attempt);
+        return res.json({
+          ...syncedObj,
+          ...(syncedSessionHint ? { proctoringSession: syncedSessionHint } : {}),
+          serverNow: new Date().toISOString(),
+        });
       }
     }
 
-    res.json({ ...attempt.toObject(), serverNow: new Date().toISOString() });
+    // Flat-quiz duration re-sync (§7.5): same doctrine — a client that was
+    // closed/disconnected past the deadline adopts the server's finalized
+    // state on the next mount instead of resuming a stale timer.
+    if (isOwner && attempt.status === 'in_progress' && isPastSubmissionWindow(attempt)) {
+      const synced = await syncExpiredDuration(QuizAttempt, {
+        _id: attempt._id,
+        student: req.user._id,
+      }, { finalize: makeSyncFinalizer(req) });
+      if (synced.attempt) {
+        const syncedObj = synced.attempt.toObject();
+        syncedObj.quiz = attempt.quiz;
+        const syncedSessionHint = await buildProctoringSessionHint(synced.attempt);
+        return res.json({
+          ...syncedObj,
+          ...(syncedSessionHint ? { proctoringSession: syncedSessionHint } : {}),
+          serverNow: new Date().toISOString(),
+        });
+      }
+    }
+
+    const sessionHint = await buildProctoringSessionHint(attempt);
+    res.json({
+      ...attempt.toObject(),
+      ...(sessionHint ? { proctoringSession: sessionHint } : {}),
+      serverNow: new Date().toISOString(),
+    });
   } catch (error) {
     console.error('Get attempt error:', error);
     res.status(500).json({ message: 'Server error' });

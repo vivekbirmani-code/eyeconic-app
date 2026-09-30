@@ -36,6 +36,42 @@ function AppContent() {
     // Handle deep links
     const handleDeepLink = async (event: { url: string }) => {
       const parsed = Linking.parse(event.url);
+
+      // Website → App links (see the website's OpenInAppButton):
+      //   mentorship://dashboard            → student dashboard tab
+      //   mentorship://quizzes              → tests tab
+      //   mentorship://quizzes/{quizId}     → that test's instructions
+      // `mentorship://quiz/{shareToken}` (public share links) is handled below.
+      if (parsed.hostname === 'dashboard') {
+        const token = await AsyncStorage.getItem('authToken');
+        if (token) {
+          router.replace('/(tabs)/dashboard' as any);
+        } else {
+          router.replace('/login' as any);
+        }
+        return;
+      }
+      if (parsed.hostname === 'quizzes') {
+        const quizId = parsed.path?.replace(/^quizzes\//, '').split('/')[0];
+        if (quizId && /^[a-f\d]{24}$/i.test(quizId)) {
+          const token = await AsyncStorage.getItem('authToken');
+          if (token) {
+            router.replace(`/(tabs)/quizzes/${quizId}/instructions` as any);
+          } else {
+            // Not signed in — park on login; the user can find the test in
+            // the Tests tab afterwards.
+            Alert.alert(
+              'Sign in required',
+              'Please sign in to open this test, then find it under the Tests tab.'
+            );
+            router.replace('/login' as any);
+          }
+        } else {
+          router.replace('/(tabs)/quizzes' as any);
+        }
+        return;
+      }
+
       // Handle mentorship://quiz/{shareToken} deep links
       if (parsed.path?.startsWith('quiz/') || parsed.hostname === 'quiz') {
         const shareToken = parsed.path?.replace('quiz/', '') || parsed.queryParams?.token;

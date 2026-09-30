@@ -13,6 +13,8 @@ export default function QuizzesLayout() {
             <Stack.Screen name="past-tests" />
             <Stack.Screen name="retest-requests" />
             <Stack.Screen name="student-analytics" />
+            {/* Phase 0 CV/ML feasibility spike — isolated test surface, no production entry point. */}
+            <Stack.Screen name="proctoring-spike" />
             <Stack.Screen name="[id]" />
         </Stack>
     );
