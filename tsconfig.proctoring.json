@@ -23,6 +23,7 @@
     "hooks/useAttemptScreenCapturePrevention.ts",
     "components/proctoring/ProctoringBanner.tsx",
     "components/proctoring/ProctoringCameraPip.tsx",
+    "app/(tabs)/quizzes/proctoring-spike.tsx",
     "app/(tabs)/quizzes/[id]/precheck.tsx",
     "app/(tabs)/quizzes/[id]/instructions.tsx",
     "app/(tabs)/quizzes/[id]/taking.tsx"

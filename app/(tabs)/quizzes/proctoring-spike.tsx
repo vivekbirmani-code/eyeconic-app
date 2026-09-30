@@ -17,7 +17,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   AppState,
-  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -32,10 +31,13 @@ import { Camera, ClipboardCopy, Play, RotateCcw, Square } from 'lucide-react-nat
 
 import { ScreenContainer } from '../../../components/layout/ScreenContainer';
 import {
-  getProctoringCameraView,
   getProctoringSpikeInfo,
   isProctoringSpikeNativeAvailable,
   nativeDetectFaces,
+  setProctoringStreamingPaused,
+  startProctoringStreaming,
+  stopProctoringStreaming,
+  subscribeProctoringStreamEvents,
 } from '../../../modules/proctoring-spike/src';
 import { CameraLoop } from '../../../services/proctoringSpike/cameraLoop';
 import { classifyFrame, DEFAULT_CLASSIFY_THRESHOLDS } from '../../../services/proctoringSpike/classifyFrame';
@@ -109,24 +111,17 @@ export default function ProctoringSpikeScreen() {
   const loopRef = useRef<CameraLoop | null>(null);
   const trackerRef = useRef<SpikeMetricsTracker>(new SpikeMetricsTracker());
 
-  // ===== Track 2 — streaming source (CameraX ImageAnalysis via the native
-  // view). The SAME tracker/scenario/export tooling measures both transports
-  // so runbook numbers stay comparable across the Phase 0 tables. =====
-  const StreamingCameraView = useMemo(
-    () => (Platform.OS === 'android' ? getProctoringCameraView() : null),
-    []
-  );
+  // ===== Track 2b — streaming source (HEADLESS module transport: CameraX
+  // ImageAnalysis bound by the native module, no camera view mounted at all
+  // in this phase). The SAME tracker/scenario/export tooling measures both
+  // transports so runbook numbers stay comparable across the Phase 0 tables.
+  // Module events deliver the payload DIRECTLY (no nativeEvent wrapper). =====
   const [sourceMode, setSourceMode] = useState<'snapshot' | 'streaming'>('snapshot');
   const [streamRunning, setStreamRunning] = useState(false);
-  const [streamPaused, setStreamPaused] = useState(false);
-  /** Camera health phase from the native view (binding → bound → open). */
+  /** Camera health phase from the native service (binding → bound → open). */
   const [streamPhase, setStreamPhase] = useState<'binding' | 'bound' | 'open' | null>(null);
-  /**
-   * Bumped on every Start so each run mounts a FRESH native view. A retry
-   * after a camera error must remount — the previous instance is mounted
-   * with no camera bound and would otherwise sit dead until unmount.
-   */
-  const [streamMountId, setStreamMountId] = useState(0);
+  /** Stream-event subscription for the active run (removed on stop). */
+  const streamSubscriptionRef = useRef<{ remove(): void } | null>(null);
   const streamFrameIndexRef = useRef(0);
 
   const handleStreamObservation = useCallback((payload: SpikeNativeDetectResult) => {
@@ -148,7 +143,7 @@ export default function ProctoringSpikeScreen() {
     trackerRef.current.recordError();
     setLastError(`stream:${error.code} — ${error.message}`);
     // The pill must not keep lying "RUNNING" while the stream is dead —
-    // this drops the Start button back in so a retry remounts the view.
+    // this drops the Start button back in so a retry can start again.
     setEngineStatus('camera-error');
   }, []);
 
@@ -187,10 +182,23 @@ export default function ProctoringSpikeScreen() {
         }
       }
       if (streamRunningRef.current) {
-        setStreamPaused(state !== 'active');
+        // Analysis pauses in native WITHOUT unbinding the camera.
+        setProctoringStreamingPaused(state !== 'active');
       }
     });
     return () => subscription.remove();
+  }, []);
+
+  /**
+   * Stop the headless stream + drop its subscription. Shared by the Stop
+   * button, session reset, and unmount so the camera can never outlive the
+   * screen. Fire-and-forget: no callback may fire after remove().
+   */
+  const teardownStreaming = useCallback(() => {
+    streamSubscriptionRef.current?.remove();
+    streamSubscriptionRef.current = null;
+    setProctoringStreamingPaused(false);
+    void stopProctoringStreaming().catch(() => undefined);
   }, []);
 
   // Tear everything down on unmount.
@@ -198,8 +206,11 @@ export default function ProctoringSpikeScreen() {
     return () => {
       loopRef.current?.stop();
       loopRef.current = null;
+      if (streamRunningRef.current) {
+        teardownStreaming();
+      }
     };
-  }, []);
+  }, [teardownStreaming]);
 
   const startLoop = useCallback(() => {
     if (loopRef.current) return;
@@ -253,21 +264,35 @@ export default function ProctoringSpikeScreen() {
   // source is selected, and the scenario/export tooling is shared.
   const startAnalysis = useCallback(() => {
     if (sourceMode === 'streaming') {
-      setStreamPaused(false);
       setStreamPhase(null);
-      setStreamMountId((id) => id + 1); // fresh native instance per run
-      setStreamRunning(true); // mounts the native view → binds the camera
+      setStreamRunning(true);
       setEngineStatus('running');
       setLastError(null);
+      // Events first, then start — a bind that resolves (or fails) fast can
+      // never outrun its own subscription. A retry after a camera error
+      // replaces the dead run's subscription instead of leaking it.
+      streamSubscriptionRef.current?.remove();
+      streamSubscriptionRef.current = subscribeProctoringStreamEvents({
+        onFrameObservation: handleStreamObservation,
+        onCameraError: handleStreamError,
+        onCameraStatus: handleStreamStatus,
+      });
+      void startProctoringStreaming({ minIntervalMs: PACING_MS[pacing] }).catch(
+        (error: unknown) => {
+          const message =
+            error instanceof Error ? error.message : String(error ?? 'startStreaming failed');
+          handleStreamError({ code: 'start_failed', message });
+        }
+      );
       return;
     }
     startLoop();
-  }, [sourceMode, startLoop]);
+  }, [sourceMode, startLoop, pacing, handleStreamObservation, handleStreamError, handleStreamStatus]);
 
   const stopAnalysis = useCallback((finishScenario: boolean) => {
     if (sourceMode === 'streaming') {
-      setStreamRunning(false); // unmounts the view → camera released
-      setStreamPaused(false);
+      teardownStreaming(); // stops the headless camera + drops the subscription
+      setStreamRunning(false);
       setStreamPhase(null);
       setEngineStatus('stopped');
       if (finishScenario && activeScenarioId) {
@@ -278,7 +303,7 @@ export default function ProctoringSpikeScreen() {
       return;
     }
     stopLoop(finishScenario);
-  }, [sourceMode, stopLoop, activeScenarioId]);
+  }, [sourceMode, stopLoop, activeScenarioId, teardownStreaming]);
 
   const startScenario = useCallback((scenarioId: string) => {
     const scenario = SPIKE_SCENARIOS.find((s) => s.id === scenarioId);
@@ -291,16 +316,18 @@ export default function ProctoringSpikeScreen() {
   }, []);
 
   const resetSession = useCallback(() => {
+    if (streamRunningRef.current) {
+      teardownStreaming(); // reset must not leave the headless camera running
+    }
     trackerRef.current = new SpikeMetricsTracker();
     setScenarioRuns([]);
     setLastFrame(null);
     setSummary(null);
     setLastError(null);
     setStreamRunning(false);
-    setStreamPaused(false);
     setStreamPhase(null);
     streamFrameIndexRef.current = 0;
-  }, []);
+  }, [teardownStreaming]);
 
   // ---- SYNTHETIC REPLAY (prerecorded footage through the same pipeline) ----
   const [replayStatus, setReplayStatus] = useState<string | null>(null);
@@ -392,7 +419,7 @@ export default function ProctoringSpikeScreen() {
             <Text style={styles.title}>Phase 0 · CV Spike</Text>
             <Text style={styles.subtitle}>
               {moduleInfo
-                ? `${moduleInfo.tier} · ML Kit ${moduleInfo.mlkitVersion}`
+                ? `${moduleInfo.tier} · ML Kit ${moduleInfo.mlkitVersion} · transport ${moduleInfo.transportRevision}`
                 : 'native module unavailable'}
             </Text>
           </View>
@@ -448,13 +475,13 @@ export default function ProctoringSpikeScreen() {
                 style={[
                   styles.pacingButton,
                   sourceMode === 'streaming' && styles.pacingActive,
-                  (!StreamingCameraView || running) && styles.pacingDisabled,
+                  (!moduleAvailable || running) && styles.pacingDisabled,
                 ]}
-                disabled={!StreamingCameraView || running}
+                disabled={!moduleAvailable || running}
                 onPress={() => setSourceMode('streaming')}
               >
                 <Text style={styles.pacingText}>
-                  {StreamingCameraView ? 'Streaming' : 'Streaming (Android only)'}
+                  {moduleAvailable ? 'Streaming' : 'Streaming (Android only)'}
                 </Text>
               </Pressable>
             </View>
@@ -462,23 +489,16 @@ export default function ProctoringSpikeScreen() {
             {/* Camera preview */}
             <View style={styles.cameraWrap}>
               {sourceMode === 'streaming' ? (
-                streamRunning && StreamingCameraView ? (
-                  <StreamingCameraView
-                    key={streamMountId}
-                    style={styles.camera}
-                    paused={streamPaused}
-                    minIntervalMs={PACING_MS[pacing]}
-                    onFrameObservation={(event) => handleStreamObservation(event.nativeEvent)}
-                    onCameraError={(event) => handleStreamError(event.nativeEvent)}
-                    onCameraStatus={(event) => handleStreamStatus(event.nativeEvent)}
-                  />
-                ) : (
-                  <View style={styles.camera} accessibilityLabel="Streaming preview placeholder">
-                    <Text style={styles.previewPlaceholder}>
-                      Streaming view mounts on Start (Track 2 — CameraX ImageAnalysis)
-                    </Text>
-                  </View>
-                )
+                // Track 2b Phase 1: the headless transport mounts NO camera
+                // view — that is the point of this phase (analysis must not
+                // depend on a preview surface). The box shows stream health.
+                <View style={styles.camera} accessibilityLabel="Streaming analysis placeholder">
+                  <Text style={styles.previewPlaceholder}>
+                    {streamRunning
+                      ? `headless analysis running — camera ${streamPhase ?? 'starting'}… (no preview view by design, Track 2b)`
+                      : 'Streaming = headless CameraX ImageAnalysis (Track 2b) — no preview view on the critical path'}
+                  </Text>
+                </View>
               ) : (
                 <CameraView
                   ref={cameraRef}
@@ -537,7 +557,7 @@ export default function ProctoringSpikeScreen() {
               {sourceMode === 'streaming' ? (
                 <MetricRow
                   label="Streaming camera"
-                  value={streamRunning ? (streamPhase ?? 'mounting') : 'not started'}
+                  value={streamRunning ? (streamPhase ?? 'starting') : 'not started'}
                 />
               ) : null}
               <MetricRow label="Faces / visibility" value={lastFrame ? `${lastFrame.faceCountClass} / ${lastFrame.visibility}` : '—'} />

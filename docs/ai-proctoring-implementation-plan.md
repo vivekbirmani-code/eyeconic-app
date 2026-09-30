@@ -3194,3 +3194,42 @@ client).
 
 
 
+
+## 43. Track 2b — Headless Camera Transport (2026-10-01)
+
+**Decision (B1).** The Fabric-view transport is retired as the camera owner. Despite two verified
+live rounds (§42.4), the `stream:no_frames` failure recurred on the Nord: the architecture keeps
+frame delivery dependent on React Native view timing (Preview surface from `PreviewView` under
+Fabric mount churn), and CameraX waits on that surface forever — camera OPEN, zero streams. The fix
+is structural, not another guard: **the native MODULE owns the camera and binds ImageAnalysis
+ALONE**; Preview becomes an optional, non-blocking attachment in a later step. If Preview is late,
+missing, remounted, or fails, analysis must continue — that is the core requirement.
+
+Baseline commit `ea4325d` (the §42.4 state) precedes the migration so every device build traces to
+a commit.
+
+### 43.1 Phase 1 — analysis-only transport (implemented 2026-10-01)
+
+| Area | Change |
+|---|---|
+| `ProctoringCameraService.kt` (NEW) | Process-wide singleton runtime: `start()` binds **ImageAnalysis only** (same resolution selector 640×480 / KEEP_ONLY_LATEST, same ML Kit options, same sanitized payload via `FacePayload`, same luma sampling), activity as LifecycleOwner (same backgrounding semantics), generation-guarded start/stop, CameraState observation, 6s first-frame watchdog (`no_frames` now reports "analysis-only bind — no preview use case"), full runtime release on stop (detector + executor — one native handle per run). NO Preview, NO PreviewView, NO view attachment anywhere on the frame path |
+| `ProctoringSpikeModule.kt` | Module-level `Events` (`onFrameObservation`/`onCameraError`/`onCameraStatus` — same payloads/codes as the view events) + `startStreaming(options)` (resolves `{ok, transportRevision}` or rejects with the camera code) + `stopStreaming()` + `setStreamingPaused(paused)`; `getInfo`/Constants expose `transportRevision` (**build marker** — any screenshot now proves which native transport a device runs; the 2026-10-01 stale-build ambiguity cannot recur) |
+| Legacy view | Untouched except one guard: `bindCamera()` refuses with `module_owns_camera` while the service is active (single camera owner during the migration window) |
+| `modules/proctoring-spike/src/index.ts` | `startProctoringStreaming` / `stopProctoringStreaming` / `setProctoringStreamingPaused` / `subscribeProctoringStreamEvents` (module events deliver the payload directly — no `nativeEvent` wrapper, a view-event-only convention); `getProctoringSpikeInfo` carries `transportRevision` |
+| Spike screen | Streaming mode drives the MODULE: subscribe-then-start, Stop/Reset/unmount tear down (subscription removed, camera stopped, pause cleared), AppState pauses native analysis without unbinding, NO camera view mounted in streaming mode at all (the Phase 2 test condition); header + clipboard export carry `transportRevision` |
+| Tests/typecheck | `tsconfig.proctoring.json` now includes the spike screen |
+
+**Verification (this phase):** `gradlew :proctoring-spike:compileDebugKotlin` BUILD SUCCESSFUL;
+`tsc -p tsconfig.proctoring.json` 0 errors; ESLint clean on changed files; root jest suites green
+(proctoring engine/streaming source/spike unchanged — the JS engine side is untouched in Phase 1).
+**On-device behavior is Phase 2's gate** (below) — the spike screen's Streaming tab is now the
+analysis-only harness.
+
+### 43.2 Phase 2 — Nord device gate (pending)
+
+Uninstall → rebuild from working tree → install (kills the stale-build variable; `transportRevision`
+on screen confirms). Spike screen → Streaming: frames must arrive and sustain **≥2 FPS with 0
+`no_frames`** across cold starts, Stop→Start cycles, and background/foreground. **PASS** → Phase 3
+(preview as optional attachment). **FAIL** (analysis-only still 0 frames) → STOP: the problem is
+CameraX/device/HAL level, not view timing; escalate there. No retries, no delays, no watchdog
+masking — the watchdog only ever reports.

@@ -211,6 +211,12 @@ class ProctoringCameraView(
   private fun bindCamera() {
     if (!attached) return
     if (boundAnalysis != null) return // already bound (Fabric re-attach)
+    // Single-owner doctrine during the Track 2b migration (§42.5): while the
+    // headless service holds the camera, the legacy view must not bind.
+    if (ProctoringCameraService.isActive) {
+      emitError("module_owns_camera", "Headless streaming service owns the camera; the view cannot bind.")
+      return
+    }
     val lifecycleOwner = try {
       appContext.throwingActivity as? LifecycleOwner
     } catch (_: Exception) {

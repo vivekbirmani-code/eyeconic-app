@@ -11,6 +11,7 @@ package eyeconic.proctoringspike
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
+import androidx.lifecycle.LifecycleOwner
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetector
@@ -61,13 +62,15 @@ class ProctoringSpikeModule : Module() {
       "landmarkMode" to "ALL",
       "classificationMode" to "ALL",
       "contourMode" to "NONE",
-      "minFaceSize" to 0.08f
+      "minFaceSize" to 0.08f,
+      "transportRevision" to ProctoringCameraService.TRANSPORT_REVISION
     )
 
     Function("getInfo") {
       mapOf(
         "tier" to SPIKE_TIER,
         "mlkitVersion" to SPIKE_MLKIT_VERSION,
+        "transportRevision" to ProctoringCameraService.TRANSPORT_REVISION,
         "available" to true
       )
     }
@@ -123,9 +126,79 @@ class ProctoringSpikeModule : Module() {
       }
     }
 
-    // ===== Track 2 — the streaming camera-analysis view (production taking
-    // screen; plan §5.2/§29.1). One camera owner: Preview + ImageAnalysis in
-    // a single bind. Only sanitized observations cross the bridge. =====
+    // ===== Track 2b — HEADLESS streaming transport (plan §42.5). The module
+    // (not a view) owns the camera: ImageAnalysis ALONE is bound, so frame
+    // delivery has NO dependency on PreviewView/Fabric layout. The legacy
+    // view below keeps working for screens still on it (single ownership is
+    // enforced: while the service is active the view refuses to bind). Only
+    // sanitized observations cross the bridge — no pixels, ever. =====
+    Events("onFrameObservation", "onCameraError", "onCameraStatus")
+
+    val serviceListener = object : ProctoringCameraService.Listener {
+      override fun onObservation(payload: Map<String, Any?>) =
+        sendEvent("onFrameObservation", payload)
+
+      override fun onError(code: String, message: String) =
+        sendEvent("onCameraError", mapOf("code" to code, "message" to message))
+
+      override fun onStatus(phase: String) =
+        sendEvent("onCameraStatus", mapOf("phase" to phase))
+    }
+
+    // Start the analysis-only stream. Options map (all optional):
+    //   minIntervalMs: Int — minimum spacing between analyzed frames
+    //                  (default 250; clamped 100–5000, same as the view prop).
+    // Resolves { ok: true, transportRevision } once ImageAnalysis is bound;
+    // rejects with the camera error code otherwise (failures ALSO arrive as
+    // onCameraError events for event-only consumers).
+    AsyncFunction("startStreaming") { rawOptions: Map<String, Any?>?, promise: Promise ->
+      // Capture the activity ONCE — a second throwingActivity call between
+      // checks could throw after the guard already passed.
+      val activity = try {
+        appContext.throwingActivity
+      } catch (_: Exception) {
+        null
+      }
+      val lifecycleOwner = activity as? LifecycleOwner
+      if (lifecycleOwner == null) {
+        promise.reject("no_activity", "No activity to bind the camera lifecycle to.", null)
+        return@AsyncFunction
+      }
+      val minIntervalMs =
+        ((rawOptions?.get("minIntervalMs") as? Number)?.toDouble() ?: 250.0)
+          .toLong().coerceIn(100L, 5000L)
+      ProctoringCameraService.start(
+        context = activity,
+        lifecycleOwner = lifecycleOwner,
+        minIntervalMs = minIntervalMs,
+        listener = serviceListener
+      ) { code, message ->
+        if (code == null) {
+          promise.resolve(
+            mapOf("ok" to true, "transportRevision" to ProctoringCameraService.TRANSPORT_REVISION)
+          )
+        } else {
+          promise.reject(code, message ?: "startStreaming failed", null)
+        }
+      }
+    }
+
+    // Stop the stream and release the whole native runtime (camera, detector,
+    // executor). Idempotent; resolves once teardown is complete.
+    AsyncFunction("stopStreaming") { promise: Promise ->
+      ProctoringCameraService.stop { promise.resolve(mapOf("ok" to true)) }
+    }
+
+    // Pause/resume ANALYSIS without unbinding the camera (AppState
+    // background/foreground — same semantics as the view's `paused` prop).
+    Function("setStreamingPaused") { paused: Boolean ->
+      ProctoringCameraService.analysisPaused = paused
+    }
+
+    // ===== Track 2 (legacy) — the streaming camera-analysis view. While the
+    // headless service above is the transport of record (§42.5), the taking
+    // screen's PiP still renders this view; it refuses to bind while the
+    // service owns the camera. One camera owner at any moment. =====
     View(ProctoringCameraView::class) {
       Events("onFrameObservation", "onCameraError", "onCameraStatus")
 

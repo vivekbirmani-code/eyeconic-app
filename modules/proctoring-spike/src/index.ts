@@ -47,13 +47,19 @@ export function isProctoringSpikeNativeAvailable(): boolean {
   return ProctoringSpike !== null;
 }
 
-/** Static module info (tier + pinned ML Kit version) or null when unavailable. */
-export function getProctoringSpikeInfo(): { tier: string; mlkitVersion: string } | null {
+/** Static module info (tier + pinned ML Kit version + transport revision) or null. */
+export function getProctoringSpikeInfo(): {
+  tier: string;
+  mlkitVersion: string;
+  transportRevision: string;
+} | null {
   if (!ProctoringSpike) return null;
   const info = ProctoringSpike.getInfo() as Record<string, unknown>;
   return {
     tier: typeof info?.tier === 'string' ? info.tier : PROCTORING_SPIKE_TIER,
     mlkitVersion: typeof info?.mlkitVersion === 'string' ? info.mlkitVersion : 'unknown',
+    transportRevision:
+      typeof info?.transportRevision === 'string' ? info.transportRevision : 'unknown',
   };
 }
 
@@ -73,7 +79,93 @@ export async function nativeDetectFaces(
   }) as Promise<SpikeNativeDetectResult>;
 }
 
-// ===== Track 2 — the streaming camera-analysis view (ProctoringCameraView).
+// ===== Track 2b — HEADLESS streaming transport (plan §42.5). The native
+// MODULE (not a view) owns the camera: ImageAnalysis alone is bound, so
+// frame delivery depends on NO PreviewView/Fabric layout. Preview becomes an
+// optional, non-blocking attachment in a later migration step. The payload
+// and error/status codes are IDENTICAL to the legacy view transport — only
+// the ownership changed. Still sanitized-only: no pixels ever cross.
+
+export interface StartProctoringStreamingOptions {
+  /** Minimum spacing between analyzed frames in ms (default 250; 100–5000). */
+  minIntervalMs?: number;
+}
+
+/**
+ * Start the analysis-only camera stream. Resolves once ImageAnalysis is
+ * bound ({ ok, transportRevision }); rejects with the camera error code
+ * (the same failure also arrives through onCameraError subscribers).
+ * Throws SpikeModuleUnavailableError when the native module is not loaded.
+ */
+export async function startProctoringStreaming(
+  options: StartProctoringStreamingOptions = {}
+): Promise<{ ok: true; transportRevision: string }> {
+  if (!ProctoringSpike) {
+    throw new SpikeModuleUnavailableError();
+  }
+  return ProctoringSpike.startStreaming({
+    minIntervalMs: options.minIntervalMs ?? 250,
+  }) as Promise<{ ok: true; transportRevision: string }>;
+}
+
+/**
+ * Stop the stream and release the native runtime (camera, detector,
+ * executor). Idempotent. After it resolves, no further stream events fire.
+ */
+export async function stopProctoringStreaming(): Promise<void> {
+  if (!ProctoringSpike) {
+    throw new SpikeModuleUnavailableError();
+  }
+  await ProctoringSpike.stopStreaming();
+}
+
+/**
+ * Pause/resume ANALYSIS without unbinding the camera (AppState
+ * background/foreground — the same semantics the view's `paused` prop had).
+ * Safe to call when not streaming.
+ */
+export function setProctoringStreamingPaused(paused: boolean): void {
+  if (!ProctoringSpike) return;
+  ProctoringSpike.setStreamingPaused(paused);
+}
+
+/**
+ * Subscribe to the headless transport's module events. Module events arrive
+ * with the payload DIRECTLY (no `nativeEvent` wrapper — that is a view-event
+ * convention), so these handlers take the raw shapes:
+ *   onFrameObservation: SpikeNativeDetectResult (identical payload)
+ *   onCameraError:      { code, message }       (same code taxonomy)
+ *   onCameraStatus:     { phase }               (binding | bound | open)
+ * Returns a handle whose remove() unsubscribes everything.
+ */
+export function subscribeProctoringStreamEvents(handlers: {
+  onFrameObservation?: (payload: SpikeNativeDetectResult) => void;
+  onCameraError?: (error: { code: string; message: string }) => void;
+  onCameraStatus?: (status: { phase: 'binding' | 'bound' | 'open' }) => void;
+}): { remove(): void } {
+  if (!ProctoringSpike) {
+    return { remove: () => undefined };
+  }
+  const module = ProctoringSpike as any;
+  const subscriptions = [
+    handlers.onFrameObservation
+      ? module.addListener('onFrameObservation', handlers.onFrameObservation)
+      : null,
+    handlers.onCameraError
+      ? module.addListener('onCameraError', handlers.onCameraError)
+      : null,
+    handlers.onCameraStatus
+      ? module.addListener('onCameraStatus', handlers.onCameraStatus)
+      : null,
+  ].filter((subscription): subscription is { remove(): void } => subscription !== null);
+  return {
+    remove: () => {
+      subscriptions.forEach((subscription) => subscription.remove());
+    },
+  };
+}
+
+// ===== Track 2 (legacy) — the streaming camera-analysis view (ProctoringCameraView).
 // Preview + ImageAnalysis in one bind; every analyzed frame emits a sanitized
 // `onFrameObservation` with the SAME payload shape nativeDetectFaces returns.
 // Only sanitized observations cross the bridge — no pixels ever do.
