@@ -17,6 +17,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   AppState,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -31,12 +32,13 @@ import { Camera, ClipboardCopy, Play, RotateCcw, Square } from 'lucide-react-nat
 
 import { ScreenContainer } from '../../../components/layout/ScreenContainer';
 import {
+  getProctoringCameraView,
   getProctoringSpikeInfo,
   isProctoringSpikeNativeAvailable,
   nativeDetectFaces,
 } from '../../../modules/proctoring-spike/src';
 import { CameraLoop } from '../../../services/proctoringSpike/cameraLoop';
-import { DEFAULT_CLASSIFY_THRESHOLDS } from '../../../services/proctoringSpike/classifyFrame';
+import { classifyFrame, DEFAULT_CLASSIFY_THRESHOLDS } from '../../../services/proctoringSpike/classifyFrame';
 import { SpikeMetricsTracker } from '../../../services/proctoringSpike/metricsTracker';
 import { runScenarioReplay } from '../../../services/proctoringSpike/replay';
 import { REPLAY_FRAMES_C2 } from '../../../services/proctoringSpike/replayData/c2';
@@ -47,6 +49,7 @@ import {
   type SpikeEngineStatus,
   type SpikeFrameResult,
   type SpikeMetricsSummary,
+  type SpikeNativeDetectResult,
 } from '../../../services/proctoringSpike/types';
 
 type PacingMode = 'max' | '1.5s' | '3s';
@@ -106,6 +109,38 @@ export default function ProctoringSpikeScreen() {
   const loopRef = useRef<CameraLoop | null>(null);
   const trackerRef = useRef<SpikeMetricsTracker>(new SpikeMetricsTracker());
 
+  // ===== Track 2 — streaming source (CameraX ImageAnalysis via the native
+  // view). The SAME tracker/scenario/export tooling measures both transports
+  // so runbook numbers stay comparable across the Phase 0 tables. =====
+  const StreamingCameraView = useMemo(
+    () => (Platform.OS === 'android' ? getProctoringCameraView() : null),
+    []
+  );
+  const [sourceMode, setSourceMode] = useState<'snapshot' | 'streaming'>('snapshot');
+  const [streamRunning, setStreamRunning] = useState(false);
+  const [streamPaused, setStreamPaused] = useState(false);
+  const streamFrameIndexRef = useRef(0);
+
+  const handleStreamObservation = useCallback((payload: SpikeNativeDetectResult) => {
+    const tracker = trackerRef.current;
+    streamFrameIndexRef.current += 1;
+    // Same sanitizer as the snapshot loop — capture/decode are ~0 by design.
+    const frame = classifyFrame(
+      { native: payload, captureMs: 0 },
+      streamFrameIndexRef.current,
+      payload.frameTimestampMs ?? Date.now(),
+      DEFAULT_CLASSIFY_THRESHOLDS
+    );
+    tracker.push(frame);
+    setLastFrame(frame);
+    setSummary(tracker.summary());
+  }, []);
+
+  const handleStreamError = useCallback((error: { code: string; message: string }) => {
+    trackerRef.current.recordError();
+    setLastError(`stream:${error.code} — ${error.message}`);
+  }, []);
+
   const [engineStatus, setEngineStatus] = useState<SpikeEngineStatus | 'permission' | 'module'>(
     moduleAvailable ? 'idle' : 'native-unavailable'
   );
@@ -118,16 +153,26 @@ export default function ProctoringSpikeScreen() {
   const [preventCapture, setPreventCapture] = useState(false);
   const [copied, setCopied] = useState(false);
 
+  // Latest streaming-running flag for the AppState listener (no re-subscribe).
+  const streamRunningRef = useRef(false);
+  useEffect(() => {
+    streamRunningRef.current = streamRunning;
+  }, [streamRunning]);
+
   // Pause/resume the loop on app background/foreground transitions
   // (lifecycle behavior is itself a Phase 0 test item).
   useEffect(() => {
     const subscription = AppState.addEventListener('change', (state) => {
       const loop = loopRef.current;
-      if (!loop) return;
-      if (state === 'active') {
-        loop.resume();
-      } else {
-        loop.pause();
+      if (loop) {
+        if (state === 'active') {
+          loop.resume();
+        } else {
+          loop.pause();
+        }
+      }
+      if (streamRunningRef.current) {
+        setStreamPaused(state !== 'active');
       }
     });
     return () => subscription.remove();
@@ -189,6 +234,34 @@ export default function ProctoringSpikeScreen() {
     setEngineStatus('stopped');
   }, [activeScenarioId]);
 
+  // Transport-agnostic start/stop: the Start/Stop buttons drive whichever
+  // source is selected, and the scenario/export tooling is shared.
+  const startAnalysis = useCallback(() => {
+    if (sourceMode === 'streaming') {
+      setStreamPaused(false);
+      setStreamRunning(true); // mounts the native view → binds the camera
+      setEngineStatus('running');
+      setLastError(null);
+      return;
+    }
+    startLoop();
+  }, [sourceMode, startLoop]);
+
+  const stopAnalysis = useCallback((finishScenario: boolean) => {
+    if (sourceMode === 'streaming') {
+      setStreamRunning(false); // unmounts the view → camera released
+      setStreamPaused(false);
+      setEngineStatus('stopped');
+      if (finishScenario && activeScenarioId) {
+        const run = trackerRef.current.finishScenario();
+        if (run) setScenarioRuns((prev) => [...prev, run]);
+        setActiveScenarioId(null);
+      }
+      return;
+    }
+    stopLoop(finishScenario);
+  }, [sourceMode, stopLoop, activeScenarioId]);
+
   const startScenario = useCallback((scenarioId: string) => {
     const scenario = SPIKE_SCENARIOS.find((s) => s.id === scenarioId);
     if (!scenario) return;
@@ -205,6 +278,9 @@ export default function ProctoringSpikeScreen() {
     setLastFrame(null);
     setSummary(null);
     setLastError(null);
+    setStreamRunning(false);
+    setStreamPaused(false);
+    streamFrameIndexRef.current = 0;
   }, []);
 
   // ---- SYNTHETIC REPLAY (prerecorded footage through the same pipeline) ----
@@ -258,6 +334,9 @@ export default function ProctoringSpikeScreen() {
   const copyResults = useCallback(async () => {
     const payload = {
       phase: 'phase-0-spike',
+      // Transport label — snapshot (Phase 0 stills) vs streaming (Track 2
+      // CameraX ImageAnalysis). Runbook tables keep the runs separable.
+      source: sourceMode,
       module: moduleInfo,
       thresholds: DEFAULT_CLASSIFY_THRESHOLDS,
       summary,
@@ -278,7 +357,7 @@ export default function ProctoringSpikeScreen() {
     await Clipboard.setStringAsync(JSON.stringify(payload, null, 2));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  }, [moduleInfo, summary, scenarioRuns, lastFrame]);
+  }, [moduleInfo, summary, scenarioRuns, lastFrame, sourceMode]);
 
   const running = engineStatus === 'running' || engineStatus === 'degraded';
   const activeScenario = SPIKE_SCENARIOS.find((s) => s.id === activeScenarioId) ?? null;
@@ -335,14 +414,58 @@ export default function ProctoringSpikeScreen() {
           </View>
         ) : (
           <>
+            {/* Source mode — snapshot (Phase 0) vs streaming (Track 2) */}
+            <View style={styles.controlsRow}>
+              <Pressable
+                style={[styles.pacingButton, sourceMode === 'snapshot' && styles.pacingActive]}
+                onPress={() => {
+                  if (running) return;
+                  setSourceMode('snapshot');
+                }}
+              >
+                <Text style={styles.pacingText}>Snapshot</Text>
+              </Pressable>
+              <Pressable
+                style={[
+                  styles.pacingButton,
+                  sourceMode === 'streaming' && styles.pacingActive,
+                  (!StreamingCameraView || running) && styles.pacingDisabled,
+                ]}
+                disabled={!StreamingCameraView || running}
+                onPress={() => setSourceMode('streaming')}
+              >
+                <Text style={styles.pacingText}>
+                  {StreamingCameraView ? 'Streaming' : 'Streaming (Android only)'}
+                </Text>
+              </Pressable>
+            </View>
+
             {/* Camera preview */}
             <View style={styles.cameraWrap}>
-              <CameraView
-                ref={cameraRef}
-                style={styles.camera}
-                facing="front"
-                mode="picture"
-              />
+              {sourceMode === 'streaming' ? (
+                streamRunning && StreamingCameraView ? (
+                  <StreamingCameraView
+                    style={styles.camera}
+                    paused={streamPaused}
+                    minIntervalMs={PACING_MS[pacing]}
+                    onFrameObservation={(event) => handleStreamObservation(event.nativeEvent)}
+                    onCameraError={(event) => handleStreamError(event.nativeEvent)}
+                  />
+                ) : (
+                  <View style={styles.camera} accessibilityLabel="Streaming preview placeholder">
+                    <Text style={styles.previewPlaceholder}>
+                      Streaming view mounts on Start (Track 2 — CameraX ImageAnalysis)
+                    </Text>
+                  </View>
+                )
+              ) : (
+                <CameraView
+                  ref={cameraRef}
+                  style={styles.camera}
+                  facing="front"
+                  mode="picture"
+                />
+              )}
               <View style={styles.previewBadge}>
                 <Text style={styles.previewBadgeText}>
                   {lastFrame
@@ -355,12 +478,12 @@ export default function ProctoringSpikeScreen() {
             {/* Controls */}
             <View style={styles.controlsRow}>
               {!running ? (
-                <Pressable style={styles.primaryButton} onPress={startLoop}>
+                <Pressable style={styles.primaryButton} onPress={startAnalysis}>
                   <Play color="#FFF" size={16} />
                   <Text style={styles.primaryButtonText}>Start</Text>
                 </Pressable>
               ) : (
-                <Pressable style={styles.stopButton} onPress={() => stopLoop(true)}>
+                <Pressable style={styles.stopButton} onPress={() => stopAnalysis(true)}>
                   <Square color="#FFF" size={16} />
                   <Text style={styles.primaryButtonText}>Stop</Text>
                 </Pressable>
@@ -605,6 +728,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF',
   },
   pacingActive: { borderColor: '#01b4ae', backgroundColor: '#F0FDFA' },
+  pacingDisabled: { opacity: 0.4 },
+  previewPlaceholder: {
+    color: '#9CA3AF',
+    fontSize: 12,
+    textAlign: 'center',
+    paddingHorizontal: 16,
+  },
   pacingText: { color: '#0F172A', fontSize: 13, fontWeight: '600' },
   card: {
     backgroundColor: '#FFF',
