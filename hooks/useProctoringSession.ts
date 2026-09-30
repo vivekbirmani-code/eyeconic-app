@@ -20,6 +20,7 @@ import { AppState, Platform } from 'react-native';
 import { Camera, type CameraView } from 'expo-camera';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from '@/services/api';
+import { useNotifications } from '@/context/NotificationContext';
 import {
   createProctoringFrameDetector,
 } from '@/services/proctoring/detector';
@@ -33,6 +34,14 @@ import { FocusTracker } from '@/services/proctoring/focusTracker';
 import { resolveScreenCaptureDeterrence } from '@/services/proctoring/screenCapture';
 import type { EventBufferStorage } from '@/services/proctoring/eventBuffer';
 import type { ProctoringPolicy, ProctoringSendOutcome } from '@/services/proctoring/types';
+
+/** A server-decided policy action from the rules engine (plan §27.2). */
+export interface ProctoringServerAction {
+  kind: 'WARN' | 'FINAL_WARN';
+  code: string;
+  warnId: string;
+  ruleId?: string;
+}
 
 export interface UseProctoringSessionParams {
   quizId: string;
@@ -56,6 +65,14 @@ export interface UseProctoringSessionResult {
    * engine is armed for a proctored attempt.
    */
   recordExitAttempted: () => void;
+  /**
+   * The latest undelivered-yet policy warning (Phase 6, §20.2) — rendered by
+   * the banner from the centralized copy module. WARN variants auto-dismiss;
+   * FINAL_WARN persists until replaced or the attempt ends.
+   */
+  warning: ProctoringServerAction | null;
+  /** True once the server policy-auto-submitted this attempt (§20.3/§20.6). */
+  autoSubmitted: boolean;
 }
 
 const bufferStorageFor = (attemptId: string): EventBufferStorage => ({
@@ -88,7 +105,11 @@ const bufferStorageFor = (attemptId: string): EventBufferStorage => ({
 const sendBatch = async (
   quizId: string,
   attemptId: string,
-  payload: ProctoringBatchPayload
+  payload: ProctoringBatchPayload,
+  onServerSignal?: (signal: {
+    actions?: ProctoringServerAction[];
+    attemptFinalized?: boolean;
+  }) => void
 ): Promise<ProctoringSendOutcome> => {
   try {
     const response = await api.post(
@@ -98,6 +119,16 @@ const sendBatch = async (
     const duplicates = Array.isArray(response.data?.duplicates)
       ? response.data.duplicates.length
       : 0;
+    // Phase 6 side-channel: the batch response carries the server-decided
+    // policy outcome (§27.2) — warnings for the banner and the terminal
+    // auto-submit flag. The engine's transport contract is untouched; this
+    // is display plumbing only (every decision stays server-side).
+    if (onServerSignal) {
+      onServerSignal({
+        actions: Array.isArray(response.data?.actions) ? response.data.actions : undefined,
+        attemptFinalized: response.data?.attemptFinalized === true,
+      });
+    }
     return {
       kind: 'accepted',
       duplicates,
@@ -128,6 +159,10 @@ export function useProctoringSession({
     status: 'idle',
     cameraIssue: null,
   });
+  const [warning, setWarning] = useState<ProctoringServerAction | null>(null);
+  const [autoSubmitted, setAutoSubmitted] = useState(false);
+
+  const { socket } = useNotifications();
 
   const engineRef = useRef<ProctoringEngine | null>(null);
   const focusTrackerRef = useRef<FocusTracker | null>(null);
@@ -135,12 +170,51 @@ export function useProctoringSession({
   // recording helpers until arming is complete (enqueuing into a buffer whose
   // restore() has not settled yet would lose the event).
   const statusRef = useRef<ProctoringEngineState['status']>('idle');
+  /** Delivered warn ids — dedupes batch responses against socket nudges. */
+  const deliveredWarnIdsRef = useRef<Set<string>>(new Set());
+  const warningTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const active = Boolean(sessionId && attemptId);
+
+  /**
+   * Single ingestion point for server-decided policy outcomes (§20.2): batch
+   * responses AND the socket nudge funnel here, so delivery is idempotent by
+   * warnId and the banner shows exactly what the rules engine decided — the
+   * client never derives its own warnings.
+   */
+  const handleServerSignal = useCallback((signal: {
+    actions?: ProctoringServerAction[];
+    attemptFinalized?: boolean;
+  }) => {
+    if (signal.attemptFinalized) {
+      setAutoSubmitted(true);
+      setWarning(null);
+      return;
+    }
+    const next = (signal.actions || []).find(
+      (action) => action?.warnId && !deliveredWarnIdsRef.current.has(action.warnId)
+    );
+    if (!next) return;
+    deliveredWarnIdsRef.current.add(next.warnId);
+    if (warningTimerRef.current) {
+      clearTimeout(warningTimerRef.current);
+      warningTimerRef.current = null;
+    }
+    setWarning(next);
+    // WARN banners auto-dismiss; FINAL_WARN persists until replaced or the
+    // attempt ends — it is the student's last chance message (§20.3).
+    if (next.kind !== 'FINAL_WARN') {
+      warningTimerRef.current = setTimeout(() => {
+        setWarning((current) => (current?.warnId === next.warnId ? null : current));
+      }, 10_000);
+    }
+  }, []);
 
   useEffect(() => {
     if (!sessionId || !attemptId) return;
     let cancelled = false;
+    // Per-attempt warning bookkeeping resets with the attempt.
+    deliveredWarnIdsRef.current = new Set();
 
     const armEngine = async () => {
       const detector = createProctoringFrameDetector();
@@ -187,7 +261,9 @@ export function useProctoringSession({
           }
         },
         detectRaw: (base64) => detector.detectRaw(base64),
-        transport: (payload) => sendBatch(quizId, attemptId, payload),
+        transport: (payload) => sendBatch(quizId, attemptId, payload, (signal) => {
+          if (!cancelled) handleServerSignal(signal);
+        }),
         storage: bufferStorageFor(attemptId),
         checkPermission: async () => {
           try {
@@ -282,5 +358,33 @@ export function useProctoringSession({
     engine.recordEpisodes(focusTracker.onExitAttempted());
   }, []);
 
-  return { active, status: state.status, cameraIssue: state.cameraIssue, recordExitAttempted };
+  // Instant warning delivery (§20.2): the socket nudge carries no payload
+  // data beyond the action identity — the same funnel as batch responses, so
+  // the banner is deduped by warnId and never trusts socket data beyond the
+  // server-decided action codes.
+  useEffect(() => {
+    if (!active || !socket) return;
+    const listener = (payload: ProctoringServerAction & { attemptId?: string }) => {
+      if (payload?.attemptId && attemptId && payload.attemptId !== attemptId) return;
+      handleServerSignal({ actions: [payload] });
+    };
+    socket.on('proctoring_warning', listener);
+    return () => {
+      socket.off('proctoring_warning', listener);
+    };
+  }, [active, socket, attemptId, handleServerSignal]);
+
+  // Clear any pending banner timer on unmount.
+  useEffect(() => () => {
+    if (warningTimerRef.current) clearTimeout(warningTimerRef.current);
+  }, []);
+
+  return {
+    active,
+    status: state.status,
+    cameraIssue: state.cameraIssue,
+    recordExitAttempted,
+    warning,
+    autoSubmitted,
+  };
 }

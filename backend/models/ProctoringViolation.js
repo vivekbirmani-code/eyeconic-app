@@ -44,6 +44,12 @@ const proctoringViolationSchema = new mongoose.Schema({
   },
   // e.g. 'focus.maxViolations'
   ruleId: { type: String, required: true },
+  // Deterministic collision key (`sessionId|ruleId|eventRefs`) — violations
+  // are upserted by it so re-evaluation (late events, replayed batches,
+  // concurrent batches) can never double-count (§7.3, §18.5). The compound
+  // {session, ruleId, eventRefs} index below cannot be unique: eventRefs is
+  // an array (multikey index semantics are unreliable for dedupe).
+  derivationKey: { type: String },
   eventRefs: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'ProctoringEvent',
@@ -62,6 +68,13 @@ const proctoringViolationSchema = new mongoose.Schema({
 
 // Idempotent derivation key — replaying the log can never double-count (§7.3).
 proctoringViolationSchema.index({ session: 1, ruleId: 1, eventRefs: 1 });
+// The ACTUAL dedupe guarantee: unique on the deterministic derivationKey
+// (partial so legacy/absent keys never collide), mirroring the
+// ProctoringEvent idempotencyKey doctrine.
+proctoringViolationSchema.index(
+  { derivationKey: 1 },
+  { unique: true, partialFilterExpression: { derivationKey: { $type: 'string' } } }
+);
 proctoringViolationSchema.index({ quiz: 1, ruleId: 1 });
 proctoringViolationSchema.index({ attempt: 1 });
 

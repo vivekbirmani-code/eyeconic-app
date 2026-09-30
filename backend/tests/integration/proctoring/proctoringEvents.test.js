@@ -61,7 +61,10 @@ const passReport = () => ({
 const episode = (overrides = {}) => ({
   type: 'FACE_NOT_DETECTED',
   source: 'cv',
-  openedAt: Date.now() - 60_000,
+  // 7s — deliberately BELOW the 8s facePresence floor so these TRANSPORT
+  // tests never trip the Phase 6 rules engine (policy behavior has its own
+  // suite in proctoringAutoSubmit.test.js).
+  openedAt: Date.now() - 57_000,
   closedAt: Date.now() - 50_000,
   confidence: 0.91,
   idempotencyKey: `key-${Math.random().toString(36).slice(2, 10)}`,
@@ -159,7 +162,7 @@ describe('Proctoring event transport (Phase 3)', () => {
             openedAt, closedAt: openedAt, idempotencyKey: 's-start', clientSeq: 0,
             metadata: { detectorTier: 'headpose' },
           },
-          episode({ openedAt, closedAt: openedAt + 9000, clientSeq: 1, confidence: 0.91 }),
+          episode({ openedAt, closedAt: openedAt + 7000, clientSeq: 1, confidence: 0.91 }),
         ],
       });
 
@@ -184,7 +187,7 @@ describe('Proctoring event transport (Phase 3)', () => {
         source: 'cv',
         detectorTier: 'headpose',
         confidence: 0.91,
-        durationMs: 9000,
+        durationMs: 7000,
         severity: 'moderate',
       });
 
@@ -260,7 +263,10 @@ describe('Proctoring event transport (Phase 3)', () => {
       const late = await postEvents(student, quiz._id, started.attemptId, {
         sessionId: started.sessionId,
         heartbeat: true,
-        events: [episode({ idempotencyKey: 'late', clientSeq: 5, openedAt: Date.now() - 120_000 })],
+        events: [episode({
+          idempotencyKey: 'late', clientSeq: 5,
+          openedAt: Date.now() - 120_000, closedAt: Date.now() - 114_000, // 6s — under the warn floor
+        })],
       });
       expect(late.status).toBe(200);
       const early = await postEvents(student, quiz._id, started.attemptId, {

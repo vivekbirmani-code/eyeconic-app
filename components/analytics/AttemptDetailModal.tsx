@@ -10,7 +10,7 @@ import {
     Platform,
     StatusBar
 } from 'react-native';
-import { X, CheckCircle, XCircle, MinusCircle, Clock, Award, BarChart3, FileText, ChevronDown } from 'lucide-react-native';
+import { X, CheckCircle, XCircle, MinusCircle, Clock, Award, BarChart3, FileText, ChevronDown, ShieldAlert } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { DataTable, DataTableColumn } from '@/components/DataTable';
 
@@ -28,6 +28,42 @@ const GROUP_BY_OPTIONS: Array<{ value: GroupBy; label: string; rowLabel: string 
     { value: 'topic', label: 'By Topic', rowLabel: 'Topic' },
     { value: 'tag', label: 'By Tag', rowLabel: 'Tag' },
 ];
+
+/**
+ * Admin/mentor labels for proctoring event types (reviewer-facing, plan
+ * §25.3 — observations, never verdicts; student-facing copy lives in
+ * utils/proctoringCopy.ts instead). Unmapped types fall back to the raw
+ * registry name — honest rather than guessed.
+ */
+const TIMELINE_LABELS: Record<string, string> = {
+    SESSION_STARTED: 'Session started',
+    SESSION_RESUMED: 'Session resumed',
+    SESSION_CLOSED: 'Session closed',
+    SESSION_DEGRADED: 'Session degraded',
+    MODEL_UNAVAILABLE: 'Face monitoring unavailable',
+    HEARTBEAT_GAP: 'Connection gap',
+    CAMERA_UNAVAILABLE: 'Camera unavailable',
+    CAMERA_PERMISSION_REVOKED: 'Camera permission lost',
+    CAMERA_TRACK_ENDED: 'Camera stopped',
+    CAMERA_FEED_DARK: 'Camera too dark',
+    CAMERA_FEED_FROZEN: 'Camera frozen',
+    FACE_NOT_DETECTED: 'Face not visible',
+    FACE_PARTIALLY_VISIBLE: 'Face partly visible',
+    FACE_OUT_OF_FRAME: 'Face out of frame',
+    MULTIPLE_FACES_DETECTED: 'More than one face',
+    HEAD_POSE_EXTREME: 'Head turned away (recorded)',
+    HEAD_POSE_REPEATED: 'Repeated head turns (recorded)',
+    ATTENTION_DEVIATION_SUSTAINED: 'Attention deviation (recorded)',
+    ATTENTION_DEVIATION_REPEATED: 'Repeated attention deviation (recorded)',
+    TAB_HIDDEN: 'Tab hidden (web)',
+    WINDOW_BLUR: 'Window lost focus (web)',
+    APP_BACKGROUND: 'Left the test app',
+    APP_INACTIVE: 'App inactive',
+    EXIT_ATTEMPTED: 'Tried to exit',
+    WARNING_DELIVERED: 'Warning shown',
+    AUTO_SUBMITTED: 'Submitted automatically (policy)',
+    POLICY_ACTION_SKIPPED: 'Policy action skipped',
+};
 
 interface AttemptDetail {
     summary?: {
@@ -92,6 +128,12 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
     const [attemptData, setAttemptData] = useState<AttemptDetail | null>(null);
     const [groupBy, setGroupBy] = useState<GroupBy>('section');
     const [showDropdown, setShowDropdown] = useState(false);
+    // ===== Proctoring timeline (Phase 7-lite) — rendered only for proctored
+    // attempts (the resync hint decides) and loaded lazily on first expand. =====
+    const [hasProctoring, setHasProctoring] = useState(false);
+    const [showTimeline, setShowTimeline] = useState(false);
+    const [timelineLoading, setTimelineLoading] = useState(false);
+    const [timeline, setTimeline] = useState<any | null>(null);
 
     useEffect(() => {
         if (visible && attemptId) {
@@ -105,6 +147,28 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
         }
     }, [groupBy]);
 
+    const fetchTimeline = async () => {
+        if (!attemptId) return;
+        setTimelineLoading(true);
+        try {
+            const response = await api.get(`/quizzes/attempt/${attemptId}/proctoring/timeline`);
+            setTimeline(response.data?.timeline ?? null);
+        } catch {
+            // 400 = not a proctored attempt — the section stays hidden anyway.
+            setTimeline(null);
+        } finally {
+            setTimelineLoading(false);
+        }
+    };
+
+    const toggleTimeline = () => {
+        const next = !showTimeline;
+        setShowTimeline(next);
+        if (next && !timeline && !timelineLoading) {
+            fetchTimeline();
+        }
+    };
+
     const fetchAttemptDetails = async () => {
         if (!attemptId) return;
 
@@ -116,6 +180,9 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
             // Following previous pattern:
             const attemptRes = await api.get(`/quizzes/attempt/${attemptId}`);
             const quizId = attemptRes.data.quiz;
+            // The resync payload's compact session hint decides whether the
+            // proctoring section renders at all.
+            setHasProctoring(Boolean(attemptRes.data?.proctoringSession));
 
             const response = await api.get(`/quizzes/${quizId}/attempt/${attemptId}/results?groupBy=${groupBy}`);
             setAttemptData(response.data);
@@ -481,6 +548,91 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
                                 </View>
                             )}
 
+                            {/* Proctoring timeline (Phase 7-lite) — the review
+                                surface for proctored attempts only. Structured
+                                observations; no images exist anywhere. */}
+                            {hasProctoring && (
+                                <View style={styles.timelineContainer}>
+                                    <TouchableOpacity
+                                        style={styles.timelineHeader}
+                                        onPress={toggleTimeline}
+                                        accessibilityRole="button"
+                                        accessibilityLabel="Toggle proctoring timeline"
+                                    >
+                                        <ShieldAlert size={16} color="#6D28D9" />
+                                        <Text style={styles.timelineTitle}>Proctoring timeline</Text>
+                                        {timeline?.summary && (
+                                            <Text style={styles.timelineChips}>
+                                                {timeline.summary.violationCount} violations · risk {timeline.summary.riskCategory}
+                                            </Text>
+                                        )}
+                                        <ChevronDown
+                                            size={16}
+                                            color="#6B7280"
+                                            style={[styles.timelineChevron, showTimeline && { transform: [{ rotate: '180deg' }] }]}
+                                        />
+                                    </TouchableOpacity>
+
+                                    {showTimeline && (
+                                        <View style={styles.timelineBody}>
+                                            {timelineLoading && <ActivityIndicator size="small" color="#6D28D9" />}
+                                            {!timelineLoading && !timeline && (
+                                                <Text style={styles.timelineEmpty}>
+                                                    No proctoring timeline available for this attempt.
+                                                </Text>
+                                            )}
+                                            {!timelineLoading && timeline && (
+                                                <>
+                                                    <View style={styles.timelineMetaRow}>
+                                                        <Text style={styles.timelineMeta}>
+                                                            Session {String(timeline.session?.status ?? '—')}
+                                                            {' · '}{Math.round((timeline.summary?.monitoredMs ?? 0) / 60000)} min monitored
+                                                            {timeline.autoSubmitReason
+                                                                ? ' · auto-submitted (policy)'
+                                                                : ''}
+                                                        </Text>
+                                                    </View>
+                                                    {(timeline.events ?? []).map((event: any) => (
+                                                        <View key={event._id} style={styles.timelineRow}>
+                                                            <Text style={styles.timelineTime}>
+                                                                {new Date(event.serverAt).toLocaleTimeString([], {
+                                                                    hour: '2-digit', minute: '2-digit', second: '2-digit',
+                                                                })}
+                                                            </Text>
+                                                            <View style={styles.timelineRowText}>
+                                                                <Text style={[
+                                                                    styles.timelineLabel,
+                                                                    event.type === 'WARNING_DELIVERED' && styles.timelineLabelWarn,
+                                                                    event.type === 'AUTO_SUBMITTED' && styles.timelineLabelFinal,
+                                                                ]}>
+                                                                    {TIMELINE_LABELS[event.type] ?? event.type}
+                                                                    {(event.durationMs ?? 0) > 0 ? ` · ${Math.round(event.durationMs / 1000)}s` : ''}
+                                                                </Text>
+                                                                {event.type === 'WARNING_DELIVERED' && event.metadata?.code === 'warn.final' && (
+                                                                    <Text style={styles.timelineSub}>Final warning</Text>
+                                                                )}
+                                                                {event.type === 'AUTO_SUBMITTED' && event.metadata?.ruleId && (
+                                                                    <Text style={styles.timelineSub}>
+                                                                        Rule: {event.metadata.ruleId}
+                                                                    </Text>
+                                                                )}
+                                                            </View>
+                                                        </View>
+                                                    ))}
+                                                    {(timeline.violations ?? []).length > 0 && (
+                                                        <Text style={styles.timelineViolations}>
+                                                            Violations: {(timeline.violations ?? [])
+                                                                .map((v: any) => v.ruleId)
+                                                                .join(', ')}
+                                                        </Text>
+                                                    )}
+                                                </>
+                                            )}
+                                        </View>
+                                    )}
+                                </View>
+                            )}
+
                             <View style={{ height: 20 }} />
                         </ScrollView>
                     ) : (
@@ -495,6 +647,92 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
 }
 
 const styles = StyleSheet.create({
+    timelineContainer: {
+        backgroundColor: '#FFFFFF',
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: '#E5E7EB',
+        marginTop: 12,
+        overflow: 'hidden',
+    },
+    timelineHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+    },
+    timelineTitle: {
+        fontSize: 13,
+        fontWeight: '700',
+        color: '#6D28D9',
+        marginLeft: 6,
+    },
+    timelineChips: {
+        flex: 1,
+        fontSize: 11,
+        color: '#6B7280',
+        textAlign: 'right',
+        marginRight: 6,
+    },
+    timelineChevron: {},
+    timelineBody: {
+        borderTopWidth: 1,
+        borderTopColor: '#F3F4F6',
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+    },
+    timelineMetaRow: {
+        marginBottom: 6,
+    },
+    timelineMeta: {
+        fontSize: 11,
+        color: '#6B7280',
+    },
+    timelineRow: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        paddingVertical: 4,
+    },
+    timelineTime: {
+        fontSize: 11,
+        color: '#9CA3AF',
+        fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
+        marginRight: 8,
+        marginTop: 1,
+    },
+    timelineRowText: {
+        flex: 1,
+    },
+    timelineLabel: {
+        fontSize: 12,
+        color: '#374151',
+    },
+    timelineLabelWarn: {
+        color: '#B45309',
+        fontWeight: '600',
+    },
+    timelineLabelFinal: {
+        color: '#B91C1C',
+        fontWeight: '700',
+    },
+    timelineSub: {
+        fontSize: 11,
+        color: '#6B7280',
+        marginTop: 1,
+    },
+    timelineViolations: {
+        fontSize: 11,
+        color: '#6B7280',
+        marginTop: 8,
+        paddingTop: 6,
+        borderTopWidth: 1,
+        borderTopColor: '#F3F4F6',
+    },
+    timelineEmpty: {
+        fontSize: 12,
+        color: '#6B7280',
+        paddingVertical: 6,
+    },
     overlay: {
         flex: 1,
         backgroundColor: 'rgba(0, 0, 0, 0.5)',

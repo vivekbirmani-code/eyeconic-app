@@ -79,6 +79,42 @@ export const PROCTORING_COPY = {
     },
     recovered: 'Monitoring restored',
   },
+  /**
+   * Server-driven policy warnings (Phase 6, plan §20.2). The rules engine
+   * selects the CODE; this module owns the words. Rendered verbatim by the
+   * banner — keyed by the server's WARN_CODES so backend and client can
+   * never drift silently (mirrored + tested in
+   * services/__tests__/proctoringWarnings.test.ts).
+   */
+  warnings: {
+    byCode: {
+      'warn.focus': {
+        title: 'Please come back to the test',
+        body: 'Leaving the test app is recorded. Leaving repeatedly may cause your test to be submitted.',
+      },
+      'warn.final': {
+        title: 'Last warning',
+        body: 'You have left the test several times. If you leave again, your test will be submitted.',
+      },
+      'warn.multipleFaces': {
+        title: 'More than one person visible',
+        body: 'Please make sure you are the only person the camera can see.',
+      },
+      'warn.faceMissing': {
+        title: 'We cannot see your face',
+        body: 'Please sit so your face is clearly visible in the camera.',
+      },
+      'warn.camera': {
+        title: 'Camera access lost',
+        body: 'Your test continues — this has been recorded. Allow camera access again to restore monitoring.',
+      },
+    } as Record<string, { title: string; body: string }>,
+    /** Shown when the policy auto-submits the attempt (terminal, §20.3). */
+    autoSubmitted: {
+      title: 'Test submitted',
+      body: 'Your test was submitted automatically because the app was left too many times. If you think this was a mistake, contact your mentor.',
+    },
+  },
 } as const;
 
 export type ProctoringCopy = typeof PROCTORING_COPY;

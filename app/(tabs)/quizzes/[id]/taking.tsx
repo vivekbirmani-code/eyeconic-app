@@ -29,6 +29,7 @@ import { ProctoringBanner } from '@/components/proctoring/ProctoringBanner';
 import { ProctoringCameraPip } from '@/components/proctoring/ProctoringCameraPip';
 import { useProctoringSession } from '@/hooks/useProctoringSession';
 import { useAttemptScreenCapturePrevention } from '@/hooks/useAttemptScreenCapturePrevention';
+import { PROCTORING_COPY } from '@/utils/proctoringCopy';
 import { getSocketURL } from '@/services/config';
 import { formatToIST } from '@/utils/date';
 import QuestionPrompt from '@/components/quiz/QuestionPrompt';
@@ -130,6 +131,22 @@ function QuizTakingContent() {
     policy: currentAttempt?.proctoringPolicy,
     attemptId: currentAttempt?.attemptId,
   });
+  // ===== Phase 6 (§20.3/§20.6): the server policy-auto-submitted this
+  // attempt (the D3 focus ladder's terminal step — never silent). The student
+  // sees exactly what happened in plain English, then lands on their result —
+  // the same destination as any other submit. =====
+  useEffect(() => {
+    if (!proctoring.autoSubmitted || !currentAttempt?.attemptId) return;
+    const copy = PROCTORING_COPY.warnings.autoSubmitted;
+    Alert.alert(copy.title, copy.body, [
+      {
+        text: 'OK',
+        onPress: () => router.replace(`/quizzes/${id}/result/${currentAttempt.attemptId}`),
+      },
+    ]);
+    // Fire once per attempt — the banner copy is static.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [proctoring.autoSubmitted]);
   const activeSectionState = sectionLockOn
     ? currentAttempt?.sectionStates?.find(s => s.status === 'in_progress') ?? null
     : null;
@@ -921,7 +938,9 @@ function QuizTakingContent() {
 
       {/* Proctoring: technical-status banner (display only — no policy
           warnings exist in this phase) */}
-      {proctoring.active && <ProctoringBanner cameraIssue={proctoring.cameraIssue} />}
+      {proctoring.active && (
+        <ProctoringBanner cameraIssue={proctoring.cameraIssue} warning={proctoring.warning} />
+      )}
 
       {/* Section Tabs */}
       <SectionTabs

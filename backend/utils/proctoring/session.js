@@ -12,6 +12,7 @@
 // asserted by the server only — clients observe it, they never claim it.
 
 const ProctoringSession = require('../../models/ProctoringSession');
+const { freezeSessionSummary } = require('./summary');
 
 const SESSION_STATUSES = ['ACTIVE', 'DEGRADED', 'CLOSED', 'CLOSED_FAILED'];
 
@@ -58,11 +59,13 @@ const ensureProctoringSession = async (attempt, { policySnapshot, reason = 'star
 
 /**
  * Closes the attempt's session (if any) on the finalize winner branch —
- * manual submits, section cascades, duration deadlines and (later) policy
+ * manual submits, section cascades, duration deadlines AND policy
  * auto-submits all converge here (plan §7.5). CAS on a non-terminal status
- * makes concurrent closes converge; the loser simply re-reads.
- * Best-effort by design: a failure here is logged, never propagated — the
- * attempt is already finalized and must not be rolled back.
+ * makes concurrent closes converge; the loser simply re-reads. The close
+ * also freezes the session summary (risk + rollups, Phase 6) from the
+ * attempt's frozen policy. Best-effort by design: a failure here is logged,
+ * never propagated — the attempt is already finalized and must not be rolled
+ * back.
  */
 const closeProctoringSessionForAttempt = async (attempt, { reason } = {}) => {
   if (!attempt?._id) return null;
@@ -80,7 +83,11 @@ const closeProctoringSessionForAttempt = async (attempt, { reason } = {}) => {
     },
     { new: true }
   );
-  return closed || existing;
+  const target = closed || existing;
+  await freezeSessionSummary(target, {
+    policy: attempt.proctoringSnapshot?.policy || {},
+  });
+  return target;
 };
 
 module.exports = {

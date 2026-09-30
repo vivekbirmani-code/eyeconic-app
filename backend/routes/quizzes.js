@@ -541,6 +541,20 @@ const makeSyncFinalizer = (req) => async (attempt, { isAutoSubmit, autoSubmitRea
   return result.attempt || attempt;
 };
 
+// Policy auto-submit executor (Phase 6 rules engine): runs a SUBMIT decision
+// through the SAME finalize path as manual/duration submits, closing any
+// enforced sections exactly like the manual whole-quiz submit (only forfeits
+// remaining questions — nothing is ever unlocked). Returns the FULL finalize
+// result ({ok, kind: finalized|already_submitted|conflict, attempt}) so the
+// events route can report the outcome honestly.
+const makePolicySubmitter = (req) => async (attempt, { autoSubmitReason } = {}) => {
+  let sectionStates = null;
+  if (isSectionLockEnforced(attempt)) {
+    sectionStates = closeSectionStates(attempt.sectionStates, { status: 'auto_submitted' });
+  }
+  return finalizeQuizAttempt(attempt, { isAutoSubmit: true, req, sectionStates, autoSubmitReason });
+};
+
 // Proctoring event transport — Phase 3 (plan §27.2). Mounted AFTER
 // makeSyncFinalizer exists because the events route performs the same lazy
 // §7.5 duration finalize as every other attempt-touching route (the factory
@@ -550,7 +564,10 @@ const {
   buildEventsRouter,
   buildSessionRouter,
 } = require('./proctoringEvents');
-router.use('/:id/attempt/:attemptId/proctoring', buildEventsRouter({ makeFinalizer: makeSyncFinalizer }));
+router.use('/:id/attempt/:attemptId/proctoring', buildEventsRouter({
+  makeFinalizer: makeSyncFinalizer,
+  makePolicySubmitter,
+}));
 router.use('/attempt/:attemptId/proctoring', buildSessionRouter());
 
 // Compact proctoring-session hint on the GET /attempt/:id resync payload
