@@ -3083,5 +3083,50 @@ Track 2 (streaming camera transport — the actual Phase 0 FPS failure), Track 3
 revalidation runbook → D1 acceptance), Phase 5 (record-only attention episodes), Phase 7-full
 (analytics tab, exports, review workflow, overrides), Phase 8–9. Rollout gates remain OFF.
 
+---
+
+## 42. Track 2 — Streaming Camera Transport Implementation Record (2026-09-30)
+
+The Phase 0 FPS failure was transport-bound (capture ~750 ms ≫ decode ~16 ms + inference ~200 ms);
+Track 2 replaces still-photo polling with continuous CameraX ImageAnalysis — same ML Kit detector,
+same on-device inference, same downstream contracts. Committed `12aaefe`.
+
+### 42.1 What was implemented
+
+| Area | Files |
+|---|---|
+| Native streaming view | `modules/proctoring-spike/.../ProctoringCameraView.kt` — Expo Fabric view (the SDK-54 `ExpoView` + `EventDispatcher` pattern, per expo-camera's own Kotlin) binding CameraX Preview + ImageAnalysis (STRATEGY_KEEP_ONLY_LATEST, ~640 px resolution selector) in ONE use-case group; view-owned `FaceDetector` (identical options, closed on unbind); `minIntervalMs` throttle (default 250 ms → ≤4 fps ceiling, clamped 100–5000); stride-aware sampled Y-plane `meanLuma`; emits `onFrameObservation` (the exact `detectFacesJpegBase64` payload shape — sanitized positions/angles/probabilities + timings; **no pixels ever cross the bridge**) + `onCameraError` |
+| Shared serialization | `FacePayload.kt` — one serializer for both detector entry points (still + streaming can never drift) |
+| Gradle | `androidx.camera:{core,camera2,lifecycle,view}` pinned to expo-camera's exact `1.5.0-rc01` (the classes are already in the app graph; sibling modules can't see another module's deps) |
+| JS binding | `modules/proctoring-spike/src/index.ts` — lazy `getProctoringCameraView()` (`requireNativeViewManager`, guarded so importing never throws on platforms without the module) + view prop/event types |
+| Engine-side source | `services/proctoring/streamingCameraSource.ts` — implements the CameraLoop contract (start/pause/resume/stop + `onFrame` through the SAME `classifyFrame` sanitizer; `captureMs`/`decodeMs` = 0); a module bus connects the React view (producer) to the engine (consumer); pause state propagates to the view's `paused` prop; degraded-after-3 parity; error taxonomy routing (`detect_failed` → `ERR_DETECT` → `MODEL_UNAVAILABLE`; camera codes stay camera errors) |
+| Engine seam | `services/proctoring/engine.ts` — optional `frameSource` FACTORY option; when provided it replaces the CameraLoop entirely (engine wires its own hooks, exactly as it constructs CameraLoop); `capture`/`detectRaw` become optional; everything downstream (EpisodeTracker/buffer/transport) untouched |
+| UI wiring | `ProctoringCameraPip.tsx` renders the native view on Android (`paused` bound to the bus, `dimmed` opacity, expo-camera retained as a defensive-only fallback); `useProctoringSession.ts` arms the streaming source when the view exists, snapshots otherwise. **Precheck keeps its snapshot path** (5 stills at its cadence) |
+
+### 42.2 Deviations and reviewed decisions
+
+1. **`resume()` does not park**: CameraLoop parks a coroutine; the streaming source simply flips
+   state (observations start flowing again) — an initial parked-poll implementation deadlocked
+   (resume waited for a state only it could set) and was removed before commit.
+2. **`provider.unbindAll()` before bind**: while this view is mounted it is the SOLE camera owner
+   (the precheck camera unmounts before the taking screen mounts); explicit unbind of our own use
+   cases on detach keeps the release precise.
+3. **The engine's `Provisional 4000 ms` analysis interval does not apply to streaming** — the
+   native `minIntervalMs` (250 ms default) governs; the engine's constant stays for the snapshot
+   fallback path only.
+4. **Spike-screen streaming toggle deferred**: Track 3 measurement can run through the real
+   seeded-quiz rig (`_tmp_phase4_device_driver.js` boots a live proctored quiz whose taking screen
+   now uses the streaming source) or by adding the labeled-scenario toggle to the spike screen if
+   the runbook wants per-scenario tallies.
+
+### 42.3 Verification
+
+`proctoringStreamingSource.test.ts` 10/10 (mapping incl. malformed payloads sanitized, lifecycle,
+bus, taxonomy, degraded→recovered); `proctoringEngine.test.ts` 24/24 (20 prior + 4 new frameSource
+seam tests); root jest 186/186; `tsc -p tsconfig.proctoring.json` 0 errors; ESLint 0 on changed
+files; `gradlew :proctoring-spike:compileDebugKotlin` BUILD SUCCESSFUL under New Architecture.
+**On-device behavior (FPS, thermal, lifecycle) is NOT yet validated — that is Track 3, which gates
+D1 and every rollout step.**
+
 
 
