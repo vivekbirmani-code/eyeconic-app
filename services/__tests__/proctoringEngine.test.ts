@@ -485,3 +485,115 @@ describe('ProctoringEngine — Phase 4 additions', () => {
     expect(harness.transportCalls.length).toBe(callsAtStop);
   });
 });
+
+// ===== Track 2 — the streaming frameSource seam =====
+//
+// The engine must behave identically when frames come from the streaming
+// source instead of the snapshot CameraLoop: lifecycle events, episode
+// formation from pushed observations, detector-failure taxonomy, pause
+// delegation, and stop-close-flush. A fake source captures the engine's
+// hooks and lets the test BE the camera.
+
+import type { ProctoringFrameLoop } from '../proctoring/engine';
+import type { SpikeEngineStatus, SpikeFrameResult } from '../proctoringSpike/types';
+
+describe('ProctoringEngine — streaming frameSource seam', () => {
+  let harness: Harness | null = null;
+  let hooks: {
+    onFrame: (frame: SpikeFrameResult) => void;
+    onError: (error: Error, consecutiveFailures: number) => void;
+    onStatus: (status: SpikeEngineStatus) => void;
+  } | null = null;
+  let sourceState: { started: boolean; paused: boolean; stopped: boolean };
+
+  const buildStreamingEngine = () => {
+    const transportCalls: ProctoringBatchPayload[] = [];
+    sourceState = { started: false, paused: false, stopped: false };
+    const makeFakeSource = (received: NonNullable<typeof hooks>): ProctoringFrameLoop => ({
+      async start() { sourceState.started = true; received.onStatus('running'); },
+      pause() { sourceState.paused = true; received.onStatus('paused'); },
+      async resume() { sourceState.paused = false; received.onStatus('running'); },
+      async stop() { sourceState.stopped = true; received.onStatus('stopped'); },
+      get status(): SpikeEngineStatus {
+        return sourceState.stopped ? 'stopped' : sourceState.paused ? 'paused' : 'running';
+      },
+    });
+    const engine = new ProctoringEngine({
+      session: { quizId: 'q1', attemptId: 'a1', sessionId: 's1' },
+      policy: { facePresence: { minAbsentMs: 4000 }, multipleFaces: { minDurationMs: 3000 } },
+      frameSource: (received) => {
+        hooks = received;
+        return makeFakeSource(received);
+      },
+      transport: async (payload) => {
+        transportCalls.push(payload);
+        return { kind: 'accepted', duplicates: 0 };
+      },
+      heartbeatIntervalMs: 0,
+      episodeThresholdOverrides: {
+        FACE_NOT_DETECTED: { enterMs: 150, exitMs: 50, cooldownMs: 100 },
+      },
+    });
+    return {
+      engine, transportCalls,
+      pushObservation: (faceCount: number) => hooks!.onFrame(
+        // classifyFrame output shape from a real observation — the streaming
+        // source maps observations to frames; here the frames arrive ready.
+        { ...({} as SpikeFrameResult), faceCountClass: faceCount === 0 ? 'none' : 'one' } as SpikeFrameResult
+      ),
+    };
+  };
+
+  afterEach(async () => {
+    if (harness) {
+      await harness.engine.stop();
+      harness = null;
+    }
+    hooks = null;
+  });
+
+  it('drives the provided source on start and emits SESSION_STARTED', async () => {
+    const rig = buildStreamingEngine();
+    harness = { engine: rig.engine, transportCalls: rig.transportCalls } as unknown as Harness;
+    await rig.engine.start();
+    expect(sourceState.started).toBe(true);
+    await waitFor(() => eventTypes(rig.transportCalls).includes('SESSION_STARTED'));
+  });
+
+  it('pause/resume delegate to the streaming source', async () => {
+    const rig = buildStreamingEngine();
+    harness = { engine: rig.engine, transportCalls: rig.transportCalls } as unknown as Harness;
+    await rig.engine.start();
+    rig.engine.pause();
+    expect(sourceState.paused).toBe(true);
+    rig.engine.resume();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(sourceState.paused).toBe(false);
+  });
+
+  it('routes source detector errors to MODEL_UNAVAILABLE (ERR_DETECT taxonomy)', async () => {
+    const rig = buildStreamingEngine();
+    harness = { engine: rig.engine, transportCalls: rig.transportCalls } as unknown as Harness;
+    await rig.engine.start();
+    await waitFor(() => eventTypes(rig.transportCalls).includes('SESSION_STARTED'));
+    hooks!.onError(new Error('ERR_DETECT: ML Kit face detection failed'), 1);
+    hooks!.onError(new Error('ERR_DETECT: ML Kit face detection failed'), 2);
+    hooks!.onError(new Error('ERR_DETECT: ML Kit face detection failed'), 3);
+    await rig.engine.heartbeatTick();
+    await waitFor(() => eventTypes(rig.transportCalls).includes('MODEL_UNAVAILABLE'));
+    expect(rig.engine.state.cameraIssue).toBe('model');
+  });
+
+  it('stop() closes the source and flushes once (no zombie transport)', async () => {
+    const rig = buildStreamingEngine();
+    harness = { engine: rig.engine, transportCalls: rig.transportCalls } as unknown as Harness;
+    await rig.engine.start();
+    await waitFor(() => rig.transportCalls.length > 0);
+    await rig.engine.stop();
+    expect(sourceState.stopped).toBe(true);
+    const callsAtStop = rig.transportCalls.length;
+    hooks!.onError(new Error('late error'), 1);
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(rig.transportCalls.length).toBe(callsAtStop);
+  });
+});

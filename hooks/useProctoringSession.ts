@@ -30,6 +30,8 @@ import {
   type ProctoringCameraIssue,
   type ProctoringEngineState,
 } from '@/services/proctoring/engine';
+import { StreamingCameraSource } from '@/services/proctoring/streamingCameraSource';
+import { getProctoringCameraView } from '@/modules/proctoring-spike/src';
 import { FocusTracker } from '@/services/proctoring/focusTracker';
 import { resolveScreenCaptureDeterrence } from '@/services/proctoring/screenCapture';
 import type { EventBufferStorage } from '@/services/proctoring/eventBuffer';
@@ -243,24 +245,38 @@ export function useProctoringSession({
       }
       if (cancelled) return;
 
+      // Track 2 — the streaming frame source (CameraX ImageAnalysis via the
+      // native view the PiP renders): preview + analysis are ONE camera
+      // session, no still-photo polling, inference fully on-device, and only
+      // sanitized observations cross the bridge. Falls back to the snapshot
+      // path when the native view is unavailable (non-Android; precheck
+      // reports camera UNSUPPORTED there, so this is defensive).
+      const useStreamingSource = Platform.OS === 'android' && getProctoringCameraView() !== null;
+
       const engine = new ProctoringEngine({
         session: { quizId, attemptId, sessionId },
         policy: effectivePolicy,
         detectorTier: 'headpose',
-        capture: async () => {
-          try {
-            const picture = await cameraRef.current?.takePictureAsync({
-              quality: 0.4,
-              base64: true,
-              // skipProcessing stays false so EXIF orientation is baked in
-              // (Phase 0 finding — the detector needs an upright image).
-            });
-            return { base64: picture?.base64 ?? null };
-          } catch {
-            return { base64: null };
+        ...(useStreamingSource
+          ? {
+            frameSource: (hooks) => new StreamingCameraSource(hooks),
           }
-        },
-        detectRaw: (base64) => detector.detectRaw(base64),
+          : {
+            capture: async () => {
+              try {
+                const picture = await cameraRef.current?.takePictureAsync({
+                  quality: 0.4,
+                  base64: true,
+                  // skipProcessing stays false so EXIF orientation is baked in
+                  // (Phase 0 finding — the detector needs an upright image).
+                });
+                return { base64: picture?.base64 ?? null };
+              } catch {
+                return { base64: null };
+              }
+            },
+            detectRaw: (base64) => detector.detectRaw(base64),
+          }),
         transport: (payload) => sendBatch(quizId, attemptId, payload, (signal) => {
           if (!cancelled) handleServerSignal(signal);
         }),

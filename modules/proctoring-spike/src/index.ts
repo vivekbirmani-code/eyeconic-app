@@ -10,6 +10,7 @@
  */
 
 import { requireOptionalNativeModule } from 'expo-modules-core';
+import type { ComponentType } from 'react';
 
 // Bridge contract types live in their neutral home; re-export them so
 // consumers can import everything from one place. (Type-only import added for
@@ -70,4 +71,49 @@ export async function nativeDetectFaces(
   return ProctoringSpike.detectFacesJpegBase64(base64Jpeg, {
     maxDim: options.maxDim ?? 640,
   }) as Promise<SpikeNativeDetectResult>;
+}
+
+// ===== Track 2 — the streaming camera-analysis view (ProctoringCameraView).
+// Preview + ImageAnalysis in one bind; every analyzed frame emits a sanitized
+// `onFrameObservation` with the SAME payload shape nativeDetectFaces returns.
+// Only sanitized observations cross the bridge — no pixels ever do.
+
+export interface ProctoringCameraViewProps {
+  /** View style (dimensions/aspect come from the PiP container). */
+  style?: object;
+  /** Pause analysis without unbinding the preview (AppState background). */
+  paused?: boolean;
+  /** Minimum spacing between analyzed frames in ms (default 250; 100–5000). */
+  minIntervalMs?: number;
+  /** Sanitized per-frame observation (same shape as nativeDetectFaces). */
+  onFrameObservation?: (event: { nativeEvent: SpikeNativeDetectResult }) => void;
+  /** Camera/detector trouble (codes: no_activity, bind_failed, …). */
+  onCameraError?: (event: {
+    nativeEvent: { code: string; message: string };
+  }) => void;
+}
+
+let cachedView: ComponentType<ProctoringCameraViewProps> | null | undefined;
+
+/**
+ * The streaming view component, or null when the native module is absent
+ * (web, iOS, Expo Go). Lazily required so importing this binding never
+ * throws on platforms without the module.
+ */
+export function getProctoringCameraView(): ComponentType<ProctoringCameraViewProps> | null {
+  if (cachedView !== undefined) return cachedView;
+  if (!ProctoringSpike) {
+    cachedView = null;
+    return cachedView;
+  }
+  try {
+    // Intentionally lazy: requiring the view manager eagerly would throw at
+    // import time on platforms without the module (web, iOS, Expo Go).
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { requireNativeViewManager } = require('expo-modules-core');
+    cachedView = requireNativeViewManager('ProctoringSpike') as ComponentType<ProctoringCameraViewProps>;
+  } catch {
+    cachedView = null;
+  }
+  return cachedView;
 }

@@ -119,9 +119,22 @@ export interface ProctoringEngineOptions {
   session: { quizId: string; attemptId: string; sessionId: string };
   policy?: ProctoringPolicy;
   /** Camera capture (expo-camera snapshot) — returns null base64 on failure. */
-  capture: () => Promise<{ base64: string | null }>;
+  capture?: () => Promise<{ base64: string | null }>;
   /** Raw detector call (native ML Kit binding via the Phase 2 boundary). */
-  detectRaw: (base64: string) => Promise<SpikeNativeDetectResult>;
+  detectRaw?: (base64: string) => Promise<SpikeNativeDetectResult>;
+  /**
+   * Track 2 — the streaming frame source (CameraX ImageAnalysis via the local
+   * native view). When provided it REPLACES the snapshot CameraLoop entirely:
+   * frames arrive as already-sanitized observations and capture/detectRaw are
+   * unused. Everything downstream (tracker/buffer/transport) is identical.
+   * A factory so the engine wires its own frame/error/status handlers,
+   * exactly as it constructs the CameraLoop.
+   */
+  frameSource?: (hooks: {
+    onFrame: (frame: import('../proctoringSpike/types').SpikeFrameResult) => void;
+    onError: (error: Error, consecutiveFailures: number) => void;
+    onStatus: (status: import('../proctoringSpike/types').SpikeEngineStatus) => void;
+  }) => ProctoringFrameLoop;
   /** Batched transport to the server events endpoint. */
   transport: (payload: ProctoringBatchPayload) => Promise<ProctoringSendOutcome>;
   storage?: EventBufferStorage;
@@ -145,11 +158,26 @@ export interface ProctoringEngineOptions {
   onStateChange?: (state: ProctoringEngineState) => void;
 }
 
+/**
+ * The minimal frame-source contract the engine drives — satisfied by the
+ * snapshot CameraLoop and by StreamingCameraSource alike. This is the Track 2
+ * seam: swapping transports changes ONLY what produces frames, never how
+ * episodes, buffers, or transport behave.
+ */
+export interface ProctoringFrameLoop {
+  start(): Promise<void>;
+  pause(): void;
+  /** CameraLoop's resume/stop return void; the streaming source is async. */
+  resume(): void | Promise<void>;
+  stop(): void | Promise<void>;
+  readonly status: import('../proctoringSpike/types').SpikeEngineStatus;
+}
+
 export class ProctoringEngine {
   private readonly options: ProctoringEngineOptions;
   private readonly tracker: EpisodeTracker;
   private readonly buffer: ProctoringEventBuffer;
-  private readonly loop: CameraLoop;
+  private readonly loop: ProctoringFrameLoop;
   private readonly now: () => number;
 
   private engineState: ProctoringEngineState = { status: 'idle', cameraIssue: null };
@@ -172,12 +200,23 @@ export class ProctoringEngine {
       thresholdOverrides: options.episodeThresholdOverrides,
     });
     this.buffer = new ProctoringEventBuffer({ storage: options.storage });
-    this.loop = new CameraLoop({
+    this.loop = options.frameSource ? options.frameSource({
+      onFrame: (frame) => this.handleFrame(frame),
+      onError: (error, consecutive) => this.handleLoopError(error, consecutive),
+      onStatus: () => this.recomputeState(),
+    }) : new CameraLoop({
       capture: async () => {
-        const captured = await options.capture();
-        return { base64: captured.base64, captureMs: 0 };
+        const captured = await options.capture?.();
+        return { base64: captured?.base64 ?? null, captureMs: 0 };
       },
-      detect: options.detectRaw,
+      detect: (base64) => {
+        if (!options.detectRaw) {
+          // Neither transport provided — surfaces through the loop's failure
+          // path exactly like a broken detector (degrade, never crash).
+          return Promise.reject(new Error('ERR_DETECT: no snapshot detector provided'));
+        }
+        return options.detectRaw(base64);
+      },
       onFrame: (frame) => this.handleFrame(frame),
       onError: (error, consecutive) => this.handleLoopError(error, consecutive),
       onStatus: () => this.recomputeState(),

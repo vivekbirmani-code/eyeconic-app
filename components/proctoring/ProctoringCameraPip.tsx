@@ -1,36 +1,59 @@
 /**
- * ProctoringCameraPip — the student-visible picture-in-picture front-camera
- * preview during proctored attempts (Phase 3, plan §10.1: "student-visible
- * PiP preview with an active indicator"). The SAME CameraView doubles as the
- * engine's capture source — the ref is shared with the hook, so the preview
- * and the analysis frames are one stream (no second camera session).
+ * ProctoringCameraPip — the student-visible camera preview during a proctored
+ * attempt (plan §10.1: student-visible preview with an active indicator).
  *
- * The preview is never recorded, transmitted or stored: frames are analyzed
- * on-device and only structured episodes leave the device (plan §4.4).
+ * Track 2: on Android the preview is the NATIVE streaming view
+ * (ProctoringCameraView) — preview and analysis frames are ONE camera session
+ * (CameraX Preview + ImageAnalysis in a single bind). The sanitized
+ * observations it emits are forwarded to the engine's StreamingCameraSource
+ * through the module bus; nothing is ever recorded or stored. The expo-camera
+ * snapshot fallback remains only as a defensive branch for platforms where
+ * the native view is unavailable (precheck reports camera UNSUPPORTED there —
+ * a proctored attempt cannot be in flight in that state).
  */
 
-import React, { forwardRef } from 'react';
-import { View, Text, StyleSheet } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { View, Text, StyleSheet, Platform } from 'react-native';
 import { CameraView } from 'expo-camera';
 import { PROCTORING_COPY } from '@/utils/proctoringCopy';
+import { getProctoringCameraView } from '@/modules/proctoring-spike/src';
+import {
+  emitProctoringObservation,
+  emitProctoringCameraError,
+  subscribeProctoringAnalysisPaused,
+} from '@/services/proctoring/streamingCameraSource';
+
+const NativeCameraView = Platform.OS === 'android' ? getProctoringCameraView() : null;
 
 interface ProctoringCameraPipProps {
-  /** Dim while the engine is paused/degraded — an honest status indicator. */
   dimmed?: boolean;
 }
 
-export const ProctoringCameraPip = forwardRef<CameraView, ProctoringCameraPipProps>(
-  function ProctoringCameraPip({ dimmed = false }, ref) {
+export const ProctoringCameraPip = React.forwardRef<CameraView, ProctoringCameraPipProps>(
+  function ProctoringCameraPip({ dimmed }, ref) {
+    // The engine's pause/resume drives the native analysis pause through the
+    // bus (the view lives in React, the engine does not).
+    const [analysisPaused, setAnalysisPaused] = useState(false);
+    useEffect(() => subscribeProctoringAnalysisPaused(setAnalysisPaused), []);
+
     return (
-      <View style={styles.wrap} accessibilityLabel={PROCTORING_COPY.monitoring.active}>
-        <View style={[styles.cameraWrap, dimmed ? styles.cameraWrapDimmed : null]}>
+      <View style={[styles.wrap, dimmed && styles.dimmed]} pointerEvents="none">
+        {NativeCameraView ? (
+          <NativeCameraView
+            style={styles.camera}
+            paused={analysisPaused}
+            minIntervalMs={250}
+            onFrameObservation={(event) => emitProctoringObservation(event.nativeEvent)}
+            onCameraError={(event) => emitProctoringCameraError(event.nativeEvent)}
+          />
+        ) : (
+          // Defensive fallback only — unreachable for an armed proctored
+          // attempt (precheck requires the native module on Android).
           <CameraView ref={ref} style={styles.camera} facing="front" mode="picture" />
-        </View>
-        <View style={styles.captionWrap}>
-          <View style={[styles.dot, dimmed ? styles.dotDimmed : null]} />
-          <Text style={styles.caption} numberOfLines={1}>
-            {PROCTORING_COPY.monitoring.active}
-          </Text>
+        )}
+        <View style={styles.statusRow}>
+          <View style={[styles.dot, dimmed ? styles.dotIdle : styles.dotLive]} />
+          <Text style={styles.caption}>{PROCTORING_COPY.monitoring.active}</Text>
         </View>
       </View>
     );
@@ -44,34 +67,34 @@ const styles = StyleSheet.create({
     right: 12,
     width: 104,
     borderRadius: 12,
-    backgroundColor: 'rgba(15, 23, 42, 0.85)',
-    padding: 4,
-    // Elevated above question content; Android elevation is required for
-    // overlays to stack above elevated cards (repo-wide finding).
+    backgroundColor: '#000',
+    overflow: 'hidden',
     elevation: 6,
     zIndex: 20,
   },
-  cameraWrap: {
-    height: 120,
-    borderRadius: 8,
-    overflow: 'hidden',
-    backgroundColor: '#0F172A',
+  dimmed: { opacity: 0.45 },
+  camera: {
+    width: '100%',
+    aspectRatio: 3 / 4,
   },
-  cameraWrapDimmed: { opacity: 0.45 },
-  camera: { flex: 1 },
-  captionWrap: {
+  statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 4,
+    paddingVertical: 3,
+    backgroundColor: 'rgba(0,0,0,0.55)',
   },
   dot: {
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: '#22C55E',
     marginRight: 5,
   },
-  dotDimmed: { backgroundColor: '#94A3B8' },
-  caption: { fontSize: 9, color: '#E2E8F0', fontWeight: '600' },
+  dotLive: { backgroundColor: '#22C55E' },
+  dotIdle: { backgroundColor: '#9CA3AF' },
+  caption: {
+    color: '#FFFFFF',
+    fontSize: 9,
+    fontWeight: '600',
+  },
 });

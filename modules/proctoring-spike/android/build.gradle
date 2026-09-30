@@ -23,4 +23,16 @@ dependencies {
   // variant com.google.android.gms:play-services-mlkit-face-detection would
   // download the model via Play Services — a production decision, not a spike one).
   implementation 'com.google.mlkit:face-detection:16.1.7'
+
+  // CameraX for the streaming analysis view (ProctoringCameraView). Pinned to
+  // expo-camera's EXACT version (node_modules/expo-camera/android/build.gradle
+  // camerax_version) — the runtime classes are already in the app graph, but
+  // sibling modules cannot see another module's dependencies, so we declare
+  // our own at the same version and compile against what the runtime resolves.
+  // Caveat: the shared version rides expo-camera's pin across SDK upgrades.
+  def camerax_version = "1.5.0-rc01"
+  implementation "androidx.camera:camera-core:${camerax_version}"
+  implementation "androidx.camera:camera-camera2:${camerax_version}"
+  implementation "androidx.camera:camera-lifecycle:${camerax_version}"
+  implementation "androidx.camera:camera-view:${camerax_version}"
 }

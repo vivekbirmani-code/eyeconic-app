@@ -51,6 +51,11 @@ export interface SpikeNativeDetectResult {
    * Null when the native side could not compute it (older builds / failure).
    */
   meanLuma?: number | null;
+  /**
+   * Streaming-only (Track 2): native capture timestamp of the analyzed frame.
+   * Absent on the still-image path (the call timestamp is used there).
+   */
+  frameTimestampMs?: number;
 }
 
 /** Overall engine status surfaced by the spike screen. */

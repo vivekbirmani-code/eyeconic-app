@@ -10,14 +10,11 @@ package eyeconic.proctoringspike
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.RectF
 import android.util.Base64
 import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetector
 import com.google.mlkit.vision.face.FaceDetectorOptions
-import com.google.mlkit.vision.face.FaceLandmark
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -46,21 +43,8 @@ class ProctoringSpikeModule : Module() {
   private val decodeExecutor: ExecutorService =
     Executors.newSingleThreadExecutor { r -> Thread(r, "proctoring-spike-decode") }
 
-  // Landmark types reported back to JS (position only, no pixels). The full
-  // LANDMARK_MODE_ALL set is enabled on the detector; we forward a stable subset
-  // to keep the bridge payload small. Null entries mean "landmark not detected".
-  private val reportedLandmarks = mapOf(
-    "leftEye" to FaceLandmark.LEFT_EYE,
-    "rightEye" to FaceLandmark.RIGHT_EYE,
-    "noseBase" to FaceLandmark.NOSE_BASE,
-    "mouthLeft" to FaceLandmark.MOUTH_LEFT,
-    "mouthRight" to FaceLandmark.MOUTH_RIGHT,
-    "mouthBottom" to FaceLandmark.MOUTH_BOTTOM,
-    "leftEar" to FaceLandmark.LEFT_EAR,
-    "rightEar" to FaceLandmark.RIGHT_EAR,
-    "leftCheek" to FaceLandmark.LEFT_CHEEK,
-    "rightCheek" to FaceLandmark.RIGHT_CHEEK,
-  )
+  // Landmark types reported back to JS live in FacePayload.kt (shared with
+  // ProctoringCameraView so the two detector entry points can never drift).
 
   override fun definition() = ModuleDefinition {
     Name("ProctoringSpike")
@@ -110,7 +94,16 @@ class ProctoringSpikeModule : Module() {
             .addOnSuccessListener { faces ->
               val inferenceMs = System.currentTimeMillis() - t1
               try {
-                val payload = buildPayload(bitmap, faces, decodeMs, inferenceMs, startedAt)
+                val payload = buildObservationPayload(
+                  faces = faces,
+                  imageWidth = bitmap.width,
+                  imageHeight = bitmap.height,
+                  decodeMs = decodeMs,
+                  inferenceMs = inferenceMs,
+                  startedAt = startedAt,
+                  meanLuma = computeMeanLuma(bitmap),
+                  frameTimestampMs = startedAt
+                )
                 bitmap.recycle()
                 promise.resolve(payload)
               } catch (e: Exception) {
@@ -127,6 +120,21 @@ class ProctoringSpikeModule : Module() {
         } catch (e: Exception) {
           promise.reject("ERR_DECODE", "Unexpected decode error: ${e.message}", e)
         }
+      }
+    }
+
+    // ===== Track 2 — the streaming camera-analysis view (production taking
+    // screen; plan §5.2/§29.1). One camera owner: Preview + ImageAnalysis in
+    // a single bind. Only sanitized observations cross the bridge. =====
+    View(ProctoringCameraView::class) {
+      Events("onFrameObservation", "onCameraError")
+
+      Prop("paused") { view: ProctoringCameraView, paused: Boolean? ->
+        view.analysisPaused = paused ?: false
+      }
+
+      Prop("minIntervalMs") { view: ProctoringCameraView, minIntervalMs: Double? ->
+        view.minIntervalMs = (minIntervalMs ?: 250.0).toLong().coerceIn(100L, 5000L)
       }
     }
   }
@@ -158,51 +166,6 @@ class ProctoringSpikeModule : Module() {
     }
     val options = BitmapFactory.Options().apply { inSampleSize = sample }
     return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-  }
-
-  private fun buildPayload(
-    bitmap: Bitmap,
-    faces: List<Face>,
-    decodeMs: Long,
-    inferenceMs: Long,
-    startedAt: Long
-  ): Map<String, Any?> {
-    val facePayloads = faces.map { face ->
-      val box = RectF(face.boundingBox)
-      mapOf(
-        "box" to mapOf(
-          "left" to box.left, "top" to box.top,
-          "right" to box.right, "bottom" to box.bottom
-        ),
-        "eulerX" to face.headEulerAngleX,
-        "eulerY" to face.headEulerAngleY,
-        "eulerZ" to face.headEulerAngleZ,
-        "trackingId" to face.trackingId,
-        "leftEyeOpenProbability" to face.leftEyeOpenProbability,
-        "rightEyeOpenProbability" to face.rightEyeOpenProbability,
-        "smilingProbability" to face.smilingProbability,
-        "landmarks" to reportedLandmarks.mapValues { (_, type) ->
-          face.getLandmark(type)?.position?.let { pos ->
-            mapOf("x" to pos.x, "y" to pos.y)
-          }
-        }
-      )
-    }
-    return mapOf(
-      "tier" to SPIKE_TIER,
-      "imageWidth" to bitmap.width,
-      "imageHeight" to bitmap.height,
-      "faceCount" to faces.size,
-      "faces" to facePayloads,
-      "decodeMs" to decodeMs,
-      "inferenceMs" to inferenceMs,
-      "totalNativeMs" to (System.currentTimeMillis() - startedAt),
-      // Mean Rec.601 luma of the downscaled analysis bitmap (0..255) — the
-      // camera-health darkness signal (plan §10.2 CAMERA_FEED_DARK). Computed
-      // AFTER the timed decode/inference stages so spike latency metrics are
-      // unaffected; a few ms on a ≤640px bitmap.
-      "meanLuma" to computeMeanLuma(bitmap)
-    )
   }
 
   // Mean luma over the (already ≤maxDim) bitmap. Batch-reads pixels once via
