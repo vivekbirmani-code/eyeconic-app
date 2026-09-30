@@ -39,7 +39,7 @@ const FEATURE_AVAILABILITY = {
   // AppSettings.proctoringEnabled kill switch (utils/appSettings.js) and the
   // per-quiz opt-in (Quiz.proctoring.enabled, default false — D15), all three
   // gates must be on before any quiz is proctored.
-  aiProctoring: true, // TEMP: §40.4 device-acceptance rerun — restored after
+  aiProctoring: false,
 };
 
 /**
