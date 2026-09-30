@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useAuth } from './AuthContext';
 import { api } from '@/services/api';
 import { getSocketURL } from '@/services/config';
@@ -66,56 +67,69 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
       setUnseenQuizCount(user.unseenQuizzes?.length || 0);
       refreshUnreadCounts();
 
-      const newSocket = io(getSocketURL());
-      socketRef.current = newSocket;
-      setSocket(newSocket);
+      let cancelled = false;
+      let newSocket: Socket | null = null;
 
-      newSocket.on('connect', () => {
-        console.log('Notification socket connected');
-        // Register user so server can emit targeted events
-        newSocket.emit('register_user', user._id);
-        // Also join rooms for all user's groups (for message notifications)
-        user.groups?.forEach((groupId: string) => {
-          newSocket.emit('join_room', groupId);
+      // The server verifies socket registration against this JWT (the same
+      // one the HTTP client sends) — targeted events only ever reach a socket
+      // that proved whose it is, so it must travel with the connection.
+      (async () => {
+        const token = await AsyncStorage.getItem('authToken');
+        if (cancelled) return;
+
+        newSocket = io(getSocketURL(), token ? { auth: { token } } : undefined);
+        socketRef.current = newSocket;
+        setSocket(newSocket);
+
+        newSocket.on('connect', () => {
+          console.log('Notification socket connected');
+          // Register user so server can emit targeted events. Registration is
+          // verified against the handshake token; the id is a legacy echo.
+          newSocket!.emit('register_user', user._id);
+          // Also join rooms for all user's groups (for message notifications)
+          user.groups?.forEach((groupId: string) => {
+            newSocket!.emit('join_room', groupId);
+          });
         });
-      });
 
-      newSocket.on('receive_message', (data: any) => {
-        // If message is from someone else, increment unread count for that group
-        if (data.sender._id !== user._id) {
-          setUnreadCounts(prev => ({
-            ...prev,
-            [data.group]: (prev[data.group] || 0) + 1
-          }));
-        }
-      });
-
-      newSocket.on('new_quiz_assigned', (data: any) => {
-        if (data.assignedStudents) {
-          const studentIds = data.assignedStudents.map((id: any) => id.toString());
-          if (studentIds.includes(user._id.toString())) {
-            setUnseenQuizCount(prev => prev + 1);
+        newSocket.on('receive_message', (data: any) => {
+          // If message is from someone else, increment unread count for that group
+          if (data.sender._id !== user._id) {
+            setUnreadCounts(prev => ({
+              ...prev,
+              [data.group]: (prev[data.group] || 0) + 1
+            }));
           }
-        }
-      });
+        });
 
-      // When this user is added to a new group — join the socket room
-      newSocket.on('group_added', (data: { groupId: string; groupName: string }) => {
-        console.log('group_added event received:', data.groupName);
-        newSocket.emit('join_room', data.groupId);
-        // Refresh unread counts to include the new group
-        refreshUnreadCounts();
-      });
+        newSocket.on('new_quiz_assigned', (data: any) => {
+          if (data.assignedStudents) {
+            const studentIds = data.assignedStudents.map((id: any) => id.toString());
+            if (studentIds.includes(user._id.toString())) {
+              setUnseenQuizCount(prev => prev + 1);
+            }
+          }
+        });
 
-      // When this user is removed from a group — leave the socket room
-      newSocket.on('group_removed', (data: { groupId: string }) => {
-        console.log('group_removed event received:', data.groupId);
-        newSocket.emit('leave_room', data.groupId);
-        refreshUnreadCounts();
-      });
+        // When this user is added to a new group — join the socket room
+        newSocket.on('group_added', (data: { groupId: string; groupName: string }) => {
+          console.log('group_added event received:', data.groupName);
+          newSocket!.emit('join_room', data.groupId);
+          // Refresh unread counts to include the new group
+          refreshUnreadCounts();
+        });
+
+        // When this user is removed from a group — leave the socket room
+        newSocket.on('group_removed', (data: { groupId: string }) => {
+          console.log('group_removed event received:', data.groupId);
+          newSocket!.emit('leave_room', data.groupId);
+          refreshUnreadCounts();
+        });
+      })();
 
       return () => {
-        newSocket.disconnect();
+        cancelled = true;
+        newSocket?.disconnect();
         socketRef.current = null;
       };
     } else {

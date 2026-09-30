@@ -177,9 +177,20 @@ async function main() {
   const leaderboardUrl = `/quizzes/analytics/test/${quiz._id}/leaderboard`;
 
   // ---- Viewer sockets ----
-  const adminSocket = io(`http://127.0.0.1:${port}`, { transports: ['websocket'] });
-  const mentorSocket = io(`http://127.0.0.1:${port}`, { transports: ['websocket'] });
-  const studentSocket = io(`http://127.0.0.1:${port}`, { transports: ['websocket'] });
+  // Socket registration is verified against the user JWT (handshake auth) —
+  // same identity discipline as every HTTP route.
+  const adminSocket = io(`http://127.0.0.1:${port}`, {
+    transports: ['websocket'],
+    auth: { token: adminToken },
+  });
+  const mentorSocket = io(`http://127.0.0.1:${port}`, {
+    transports: ['websocket'],
+    auth: { token: mentorToken },
+  });
+  const studentSocket = io(`http://127.0.0.1:${port}`, {
+    transports: ['websocket'],
+    auth: { token: tokenFor(students[0]) },
+  });
 
   await waitFor(adminSocket, 'connect');
   await waitFor(mentorSocket, 'connect');
@@ -195,6 +206,23 @@ async function main() {
   const studentJoin = waitFor(studentSocket, 'leaderboard_error', 4000);
   studentSocket.emit('join_leaderboard', quiz._id.toString());
   await studentJoin;
+
+  // An UNVERIFIED socket claiming the admin's id must be refused outright —
+  // claimed ids no longer register a socket, only proven tokens do.
+  const impostorSocket = io(`http://127.0.0.1:${port}`, { transports: ['websocket'] });
+  await waitFor(impostorSocket, 'connect');
+  const impostorRejected = waitFor(impostorSocket, 'register_rejected', 4000);
+  impostorSocket.emit('register_user', admin._id.toString());
+  await impostorRejected;
+  const impostorNudge = waitFor(impostorSocket, 'quiz_leaderboard_updated', 1500).then(
+    () => 'received',
+    () => 'silent'
+  );
+  impostorSocket.disconnect();
+  if ((await impostorNudge) !== 'silent') {
+    throw new Error('impostor socket received leaderboard events without a valid token');
+  }
+  log('token-less socket claiming the admin id refused (registration rejected)');
   log('student socket correctly refused leaderboard room');
 
   // Admin + mentor viewers join.

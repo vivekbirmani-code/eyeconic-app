@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useRef, useEffect, ReactNode } from 'react';
 import { Platform, Vibration, AppState } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import WakeUpModule from '@/modules/WakeUpModule';
 import { io, Socket } from 'socket.io-client';
 import { getSocketURL } from '@/services/config';
@@ -185,13 +186,19 @@ export function CallProvider({ children }: { children: ReactNode }) {
     };
   }, [user?._id]);
 
-  const setupSocket = () => {
-    socketRef.current = io(getSocketURL());
+  const setupSocket = async () => {
+    // The server verifies socket registration against this JWT (the same one
+    // the HTTP client sends) — targeted events and call signaling only ever
+    // reach a socket that proved whose it is.
+    const token = await AsyncStorage.getItem('authToken');
+
+    socketRef.current = io(getSocketURL(), token ? { auth: { token } } : undefined);
 
     socketRef.current.on('connect', () => {
       console.log('Call socket connected');
       setDebugStats(prev => ({ ...prev, socketConnected: true }));
-      // Use ref to get current user (fixes stale closure)
+      // Use ref to get current user (fixes stale closure). Registration is
+      // verified against the handshake token; the id is a legacy echo.
       socketRef.current?.emit('register_user', userRef.current?._id);
     });
 
