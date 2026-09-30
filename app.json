@@ -65,6 +65,15 @@
               "scheme": "mentorship",
               "host": "quiz",
               "pathPrefix": "/"
+            },
+            {
+              "scheme": "mentorship",
+              "host": "quizzes",
+              "pathPrefix": "/"
+            },
+            {
+              "scheme": "mentorship",
+              "host": "dashboard"
             }
           ],
           "category": [

@@ -15,7 +15,8 @@ import {
 import { ScreenContainer, FullScreenContainer } from '@/components/layout';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
-import { LogOut, AlertTriangle, Check, MessageCircle, BookOpen, Users, LayoutDashboard, Menu, Sparkles, ChevronLeft } from 'lucide-react-native';
+import { LogOut, AlertTriangle, Check, MessageCircle, BookOpen, Users, LayoutDashboard, Menu, Sparkles, ChevronLeft, Globe } from 'lucide-react-native';
+import { openWebDashboard } from '@/services/webDashboard';
 import * as Haptics from '@/utils/haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useRouter } from 'expo-router';
@@ -160,6 +161,26 @@ export default function Dashboard() {
   const handleLogout = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     logout();
+  };
+
+  // App → Website: open eyeconicneetpg.com already signed in via a one-time
+  // handoff code (see services/webDashboard.ts).
+  const [openingWebsite, setOpeningWebsite] = useState(false);
+  const handleOpenWebsite = async () => {
+    if (openingWebsite) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setOpeningWebsite(true);
+    try {
+      await openWebDashboard('/dashboard');
+    } catch (error: any) {
+      const message =
+        error?.response?.data?.message ||
+        error?.message ||
+        'Could not open the website right now. Please try again.';
+      Alert.alert('Eyeconic Website', message);
+    } finally {
+      setOpeningWebsite(false);
+    }
   };
 
   // The profile-completion modal is mandatory — there is no in-app screen to
@@ -331,6 +352,16 @@ export default function Dashboard() {
               <Text style={styles.title}>{user?.isFreeUser ? 'Eyeconic Mentors' : 'Eyeconic Dashboard'}</Text>
               <Text style={styles.subtitle}>Hi, {user?.name} 👋</Text>
             </View>
+            <Pressable
+              style={styles.logoutButton}
+              onPress={handleOpenWebsite}
+              disabled={openingWebsite}
+              android_ripple={{ color: 'rgba(255, 255, 255, 0.3)' }}
+              accessibilityLabel="Open the Eyeconic website"
+              accessibilityRole="button"
+            >
+              <Globe color="#FFFFFF" size={20} />
+            </Pressable>
             <Pressable
               style={styles.logoutButton}
               onPress={handleLogout}
