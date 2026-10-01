@@ -63,7 +63,10 @@ const handleEmailDeliveryError = (error, req, res, context) => {
 
   return res.status(error.statusCode || 503).json({
     success: false,
-    message: EMAIL_DELIVERY_USER_MESSAGE,
+    // EmailDeliveryError always carries a user-safe message (delivery
+    // failures say "try again", recipient rejections say "check the
+    // spelling") — surface it instead of flattening to the generic text.
+    message: error.expose ? error.message : EMAIL_DELIVERY_USER_MESSAGE,
     code: error.code || 'EMAIL_DELIVERY_FAILED',
     requestId: req.requestId,
   });
@@ -365,7 +368,7 @@ router.post('/send-otp', requireDatabase, otpSendRateLimit, async (req, res) => 
     const otp = generateOtp();
 
     try {
-      await sendOtpMail(normalizedEmail, otp);
+      await sendOtpMail(normalizedEmail, otp, { requestId: req.requestId });
     } catch (error) {
       if (error instanceof EmailDeliveryError) {
         return handleEmailDeliveryError(error, req, res, 'Signup OTP');
@@ -526,7 +529,7 @@ router.post('/forgot-password-send-otp', requireDatabase, otpSendRateLimit, asyn
     const otp = generateOtp();
 
     try {
-      await sendPasswordResetMail(normalizedEmail, otp);
+      await sendPasswordResetMail(normalizedEmail, otp, { requestId: req.requestId });
     } catch (error) {
       if (error instanceof EmailDeliveryError) {
         return handleEmailDeliveryError(error, req, res, 'Password reset OTP');

@@ -109,7 +109,8 @@ describe('Guest lead OTP flow', () => {
     expect(mailer.sendGuestQuizOtpMail).toHaveBeenCalledWith(
       'rahul.sharma@example.com',
       expect.stringMatching(/^\d{6}$/),
-      'Lead OTP Test Quiz'
+      'Lead OTP Test Quiz',
+      { requestId: expect.any(String) }
     );
 
     // Nothing but the (hashed) OTP row exists — no lead until verification.
@@ -128,7 +129,8 @@ describe('Guest lead OTP flow', () => {
     expect(mailer.sendGuestQuizOtpMail).toHaveBeenCalledWith(
       'rahul.sharma@example.com',
       expect.any(String),
-      expect.any(String)
+      expect.any(String),
+      expect.any(Object)
     );
   });
 

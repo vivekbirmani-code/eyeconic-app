@@ -2,6 +2,7 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret';
 
 const express = require('express');
 const jwt = require('jsonwebtoken');
+const requestId = require('../../middleware/requestId');
 const User = require('../../models/User');
 const Subject = require('../../models/Subject');
 const questionBankRoutes = require('../../routes/question-bank');
@@ -25,6 +26,9 @@ const freeUserAnalyticsRoutes = require('../../routes/free-user-analytics');
  */
 function buildApp() {
   const app = express();
+  // Same middleware order as server.js: requestId before routes so every
+  // handler sees the correlation id it would have in production.
+  app.use(requestId);
   app.use(express.json({ limit: '50mb' }));
   app.use('/api/question-bank', questionBankRoutes);
   app.use('/api/quizzes', quizRoutes);

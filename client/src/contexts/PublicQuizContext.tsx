@@ -141,11 +141,19 @@ export const usePublicQuiz = (): PublicQuizContextValue => {
 
 // ---------- thin API wrappers used by the pages ----------
 
+// The backend retries transient email-provider failures (greylisting,
+// throttling, network blips) with backoff before falling back to the
+// secondary provider — the whole chain is bounded (~20s) but can outlast
+// the default 30s instance timeout in slow-provider situations. Give this
+// one call a larger ceiling so the server, not axios, decides the outcome.
+const OTP_SEND_TIMEOUT_MS = 60000;
+
 export const publicQuizApi = {
   sendOtp: (shareToken: string, payload: { name: string; email: string; phone: string; marketingConsent: boolean; source?: string }) =>
     publicApi.post<{ success: boolean; expiresInSeconds: number; resendAfterSeconds: number }>(
       `/public/quiz/${shareToken}/lead/send-otp`,
-      { ...payload, source: 'web' }
+      { ...payload, source: 'web' },
+      { timeout: OTP_SEND_TIMEOUT_MS }
     ),
 
   verifyOtp: (

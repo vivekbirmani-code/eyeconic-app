@@ -90,7 +90,7 @@ router.post('/quiz/:shareToken/lead/send-otp', guestOtpSendRateLimit, async (req
     console.log('Guest lead OTP issued in DB', { shareToken, quizId: access.quiz._id });
 
     try {
-      await sendGuestQuizOtpMail(email, otp, access.quiz.title);
+      await sendGuestQuizOtpMail(email, otp, access.quiz.title, { requestId: req.requestId });
       console.log('Guest lead OTP email sent successfully', { shareToken, quizId: access.quiz._id });
     } catch (error) {
       console.error('Guest lead OTP email delivery failed, cleaning up OTP', { shareToken, quizId: access.quiz._id, error: error.message });
