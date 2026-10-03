@@ -440,3 +440,99 @@ describe('POST /api/question-bank/bulk-import — legacy tech-team sheet', () =>
     }
   });
 });
+
+describe('POST /api/question-bank/bulk-import — duplicate guard', () => {
+  const xlsx = require('xlsx');
+
+  const mcqRow = (question, overrides = {}) => ({
+    SUBJECT: 'Pathology', TOPIC: 'Genetics', SUBTOPIC: 'Mendelian Inheritance',
+    SYSTEM: 'Genetic Disorders', QUESTION_TYPE: 'MCQ — Single Correct', DIFFICULTY: 'medium',
+    QUESTION: question, OPTION1: 'A', OPTION2: 'B', OPTION3: 'C', OPTION4: 'D', CORRECT: 'A',
+    ...overrides,
+  });
+
+  const buildWorkbook = (rows) => {
+    const sheet = xlsx.utils.json_to_sheet(rows);
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(workbook, sheet, 'Question Bank');
+    return xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+  };
+
+  const importSheet = (rows) => request(app)
+    .post('/api/question-bank/bulk-import')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .attach('file', buildWorkbook(rows), 'import.xlsx');
+
+  it('re-importing the same sheet inserts nothing and reports every row as a duplicate', async () => {
+    const first = await importSheet([mcqRow('First question?'), mcqRow('Second question?')]);
+    expect(first.status).toBe(200);
+    expect(first.body.count).toBe(2);
+    expect(first.body.duplicatesSkipped).toBe(0);
+
+    const second = await importSheet([mcqRow('First question?'), mcqRow('Second question?')]);
+    expect(second.status).toBe(200);
+    expect(second.body.count).toBe(0);
+    expect(second.body.duplicatesSkipped).toBe(2);
+    expect(second.body.duplicates.every((d) => /Row \d+: skipped/.test(d))).toBe(true);
+
+    const QuestionBank = require('../../models/QuestionBank');
+    expect(await QuestionBank.countDocuments({})).toBe(2);
+  });
+
+  it('imports only the new rows from a mixed sheet', async () => {
+    await importSheet([mcqRow('Existing question?')]);
+
+    const res = await importSheet([mcqRow('Existing question?'), mcqRow('New question?')]);
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(1);
+    expect(res.body.duplicatesSkipped).toBe(1);
+
+    const QuestionBank = require('../../models/QuestionBank');
+    expect(await QuestionBank.countDocuments({})).toBe(2);
+  });
+
+  it('matches question text case-insensitively', async () => {
+    await importSheet([mcqRow('What is the powerhouse of the cell?')]);
+
+    const res = await importSheet([mcqRow('WHAT IS THE POWERHOUSE OF THE CELL?')]);
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(0);
+    expect(res.body.duplicatesSkipped).toBe(1);
+  });
+
+  it('skips the second occurrence of a question duplicated within the same file', async () => {
+    const res = await importSheet([
+      mcqRow('Repeated question?', { TOPIC: 'Topic A' }),
+      mcqRow('Repeated question?', { TOPIC: 'Topic B' }),
+    ]);
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(1);
+    expect(res.body.duplicatesSkipped).toBe(1);
+
+    const QuestionBank = require('../../models/QuestionBank');
+    expect(await QuestionBank.countDocuments({})).toBe(1);
+  });
+
+  it('allows the same question text under a different subject', async () => {
+    await createSubject('Physiology');
+    const first = await importSheet([mcqRow('Shared question?')]);
+    expect(first.body.count).toBe(1);
+
+    const res = await importSheet([mcqRow('Shared question?', { SUBJECT: 'Physiology' })]);
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(1);
+    expect(res.body.duplicatesSkipped).toBe(0);
+
+    const QuestionBank = require('../../models/QuestionBank');
+    expect(await QuestionBank.countDocuments({})).toBe(2);
+  });
+
+  it('returns 200 with count 0 when every row is a duplicate', async () => {
+    await importSheet([mcqRow('Only question?')]);
+
+    const res = await importSheet([mcqRow('Only question?')]);
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(0);
+    expect(res.body.errors).toBeUndefined();
+  });
+});

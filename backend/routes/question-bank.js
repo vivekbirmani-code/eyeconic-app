@@ -11,6 +11,7 @@ const {
     QuestionValidationError,
     normalizeQuestionInput,
     normalizeQuestionImageFields,
+    normalizeQuestionForDedup,
     validateQuestionPayload,
 } = require('../utils/questionValidation');
 const {
@@ -29,7 +30,7 @@ const logger = require('../utils/logger');
 const DUPLICATE_QUESTION_MESSAGE = 'This question already exists in the question bank.';
 
 const findDuplicateQuestion = (subjectId, questionText, excludeId = null) => {
-    const normalizedText = String(questionText || '').trim().toLowerCase();
+    const normalizedText = normalizeQuestionForDedup(questionText);
     if (!subjectId || !normalizedText) return null;
 
     const filter = {
@@ -185,10 +186,34 @@ async function handleBulkImport(req, res, buffer) {
         subjectsMap[s.name.toLowerCase()] = s._id;
     });
 
+    // Duplicate detection, same rule the manual create/update guard enforces:
+    // same subject + same question text (case-/whitespace-insensitive), active
+    // questions only. One indexed query fetches the existing texts for just
+    // the subjects this sheet touches, and the in-memory key Set also catches
+    // duplicates WITHIN the file. Soft-deleted questions never block an
+    // import, and the same text under a different subject is not a duplicate.
+    const sheetSubjectIds = new Set(
+        parsedRows
+            .map((row) => subjectsMap[subjectLookupKey(row.subjectName)])
+            .filter(Boolean)
+            .map(String)
+    );
+    const existingQuestionKeys = new Set();
+    if (sheetSubjectIds.size > 0) {
+        const existingQuestions = await QuestionBank.find(
+            { subject: { $in: [...sheetSubjectIds] }, isActive: true },
+            { subject: 1, question: 1 }
+        );
+        existingQuestions.forEach((q) => {
+            existingQuestionKeys.add(`${q.subject.toString()}|${normalizeQuestionForDedup(q.question)}`);
+        });
+    }
+
     const errors = [...parseErrors];
     const warnings = [];
     const questions = [];
     const transferJobs = [];
+    const duplicates = [];
 
     parsedRows.forEach((row, idx) => {
         const rowLabel = `Row ${idx + 2}`;
@@ -228,6 +253,17 @@ async function handleBulkImport(req, res, buffer) {
             // Drive share-link conversion) so imports store identical shapes.
             normalizeQuestionImageFields(candidate);
             validateQuestionPayload(candidate, { rowLabel });
+
+            // Already in the bank (or earlier in this file)? Skip instead of
+            // inserting a duplicate record. Runs before the image-transfer
+            // stage so skipped rows never trigger Cloudinary work.
+            const dedupKey = `${subjectId}|${normalizeQuestionForDedup(candidate.question)}`;
+            if (existingQuestionKeys.has(dedupKey)) {
+                duplicates.push(`${rowLabel}: skipped — this question already exists in the question bank.`);
+                return;
+            }
+            existingQuestionKeys.add(dedupKey);
+
             questions.push(candidate);
 
             // Remote images (Google Drive links etc.) are transferred to the
@@ -274,7 +310,9 @@ async function handleBulkImport(req, res, buffer) {
         await Promise.all([worker(), worker(), worker(), worker()]);
     }
 
-    if (questions.length === 0) {
+    // A sheet where every row was invalid is a validation failure; a sheet
+    // where every valid row was a duplicate is a successful no-op (count 0).
+    if (questions.length === 0 && duplicates.length === 0) {
         const { buildImportValidationPayload } = require('../utils/importErrors');
         return res.status(400).json({
             ...buildImportValidationPayload(errors.slice(0, 50), { totalErrors: errors.length }),
@@ -298,6 +336,7 @@ async function handleBulkImport(req, res, buffer) {
 
     logger.info('Question bank import complete', {
         inserted: inserted.length,
+        duplicateCount: duplicates.length,
         errorCount: errors.length,
         warningCount: warnings.length,
         userId: req.user._id.toString(),
@@ -307,6 +346,10 @@ async function handleBulkImport(req, res, buffer) {
         message: 'Questions imported successfully',
         count: inserted.length,
         totalRows: parsedRows.length + parseErrors.length,
+        duplicatesSkipped: duplicates.length,
+        // Rows skipped because the same question text already exists under
+        // the same subject — surfaced so the admin understands the counts.
+        duplicates: duplicates.length > 0 ? duplicates.slice(0, 50) : undefined,
         errors: errors.length > 0 ? errors.slice(0, 50) : undefined,
         // Non-fatal image-transfer outcomes (direct URL kept); surfaced so
         // the admin knows which images to re-check in the Question Bank.

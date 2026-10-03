@@ -982,18 +982,14 @@ const styles = StyleSheet.create({
     color: 'rgba(255, 255, 255, 0.9)',
     letterSpacing: 0.2,
   },
+  // Icon buttons sit directly on the header gradient — no background fill
+  // (the old rgba white box read as a grey chip) and no shadow, which would
+  // outline a transparent view on iOS. Touch feedback still comes from the
+  // white android_ripple / activeOpacity on each button.
   logoutButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.25)',
+    backgroundColor: 'transparent',
     borderRadius: 12,
     padding: 12,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-    elevation: 2,
   },
   // Content
   scrollContent: {

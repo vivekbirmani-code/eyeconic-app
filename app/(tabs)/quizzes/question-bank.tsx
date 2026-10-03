@@ -545,10 +545,12 @@ export default function QuestionBankManagement() {
       const errorPreview = Array.isArray(apiResponse.data?.errors) && apiResponse.data.errors.length > 0
         ? `\n\n${apiResponse.data.errors.slice(0, 5).join('\n')}${apiResponse.data.errors.length > 5 ? '\n...' : ''}`
         : '';
+      const dupCount = Number(apiResponse.data?.duplicatesSkipped) || 0;
+      const duplicateNote = dupCount > 0 ? `\n${dupCount} skipped as duplicates (already in the bank).` : '';
 
       Alert.alert(
         'Import Complete',
-        `Imported ${apiResponse.data.count} questions.${errorPreview}`,
+        `Imported ${apiResponse.data.count} questions.${duplicateNote}${errorPreview}`,
         [{ text: 'OK', onPress: () => { fetchQuestions(); fetchStats(); fetchSubjects(); } }]
       );
     } catch (error: unknown) {

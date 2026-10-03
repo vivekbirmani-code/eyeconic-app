@@ -9,7 +9,7 @@ export default function ImportQuiz() {
   const navigate = useNavigate();
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [success, setSuccess] = useState<{ count: number } | null>(null);
+  const [success, setSuccess] = useState<{ count: number; skipped: number } | null>(null);
   const [guidelinesOpen, setGuidelinesOpen] = useState(false);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -33,7 +33,7 @@ export default function ImportQuiz() {
             filename: file.name,
             data: base64Data
           });
-          setSuccess({ count: res.data.count });
+          setSuccess({ count: res.data.count, skipped: Number(res.data.duplicatesSkipped) || 0 });
           setFile(null);
         } catch (err: any) {
           alert('Failed to import: ' + (err.response?.data?.message || err.message));
@@ -95,7 +95,10 @@ export default function ImportQuiz() {
           {success && (
             <div className="bg-emerald-50 border border-emerald-200 text-emerald-700 px-4 py-3 rounded-xl mb-6 flex items-center gap-3 animate-fade-in">
               <CheckCircle className="w-5 h-5 flex-shrink-0" />
-              <p className="font-semibold text-sm">Successfully imported {success.count} questions into the bank!</p>
+              <p className="font-semibold text-sm">
+                Successfully imported {success.count} questions into the bank!
+                {success.skipped > 0 && ` ${success.skipped} skipped as duplicates (already in the bank).`}
+              </p>
             </div>
           )}
 

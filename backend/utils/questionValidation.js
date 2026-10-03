@@ -25,6 +25,15 @@ class QuestionValidationError extends Error {
 
 const isNonEmptyString = (value) => typeof value === 'string' && value.trim().length > 0;
 
+/**
+ * Canonical normalization for question-duplicate detection: case- and
+ * surrounding-whitespace-insensitive comparison of the question text within
+ * a subject. Single source of truth for the manual create/update duplicate
+ * guard AND the Excel bulk import — both must always agree on what counts
+ * as "the same question".
+ */
+const normalizeQuestionForDedup = (text) => String(text || '').trim().toLowerCase();
+
 // ---- Image URL handling ----
 //
 // Question images are stored as absolute https URLs (Cloudinary in
@@ -375,6 +384,7 @@ module.exports = {
     QuestionValidationError,
     normalizeQuestionInput,
     normalizeQuestionImageFields,
+    normalizeQuestionForDedup,
     normalizeTags,
     validateQuestionMetadata,
     validateQuestionStructure,
