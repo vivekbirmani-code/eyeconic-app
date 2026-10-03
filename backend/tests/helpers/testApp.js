@@ -16,7 +16,7 @@ const userRoutes = require('../../routes/users');
 const publicQuizRoutes = require('../../routes/public-quiz');
 const publicLeadRoutes = require('../../routes/public-lead');
 const dailyPyqRoutes = require('../../routes/daily-pyq');
-const miniCctRoutes = require('../../routes/mini-cct');
+const miniGtRoutes = require('../../routes/mini-gt');
 const freeUserAnalyticsRoutes = require('../../routes/free-user-analytics');
 
 /**
@@ -41,7 +41,7 @@ function buildApp() {
   app.use('/api/public', publicQuizRoutes);
   app.use('/api/public', publicLeadRoutes);
   app.use('/api/daily-pyq', dailyPyqRoutes);
-  app.use('/api/mini-cct', miniCctRoutes);
+  app.use('/api/mini-gt', miniGtRoutes);
   app.use('/api/free-user-analytics', freeUserAnalyticsRoutes);
   return app;
 }

@@ -4,7 +4,7 @@ const { buildApp, createUser, createSubject } = require('../helpers/testApp');
 const Quiz = require('../../models/Quiz');
 const QuestionBank = require('../../models/QuestionBank');
 const QuizAttempt = require('../../models/QuizAttempt');
-const { MIN_COMPARISON_COHORT } = require('../../utils/miniCct');
+const { MIN_COMPARISON_COHORT } = require('../../utils/miniGt');
 
 let app;
 
@@ -109,11 +109,11 @@ beforeEach(async () => {
   await freeStudent.user.updateOne({ isFreeUser: true });
 });
 
-describe('POST /api/mini-cct/generate', () => {
+describe('POST /api/mini-gt/generate', () => {
   it('rejects unauthenticated and non-admin callers', async () => {
-    expect((await request(app).post('/api/mini-cct/generate')).status).toBe(401);
+    expect((await request(app).post('/api/mini-gt/generate')).status).toBe(401);
     expect(
-      (await request(app).post('/api/mini-cct/generate').set('Authorization', `Bearer ${paidStudent.token}`)).status
+      (await request(app).post('/api/mini-gt/generate').set('Authorization', `Bearer ${paidStudent.token}`)).status
     ).toBe(403);
   });
 
@@ -121,7 +121,7 @@ describe('POST /api/mini-cct/generate', () => {
     await seedBank();
 
     const res = await request(app)
-      .post('/api/mini-cct/generate')
+      .post('/api/mini-gt/generate')
       .set('Authorization', `Bearer ${admin.token}`)
       .send({});
     expect(res.status).toBe(201);
@@ -147,7 +147,7 @@ describe('POST /api/mini-cct/generate', () => {
   it('refuses when the bank cannot field 10 single-best-answer questions per subject', async () => {
     await seedBank(3);
     const res = await request(app)
-      .post('/api/mini-cct/generate')
+      .post('/api/mini-gt/generate')
       .set('Authorization', `Bearer ${admin.token}`)
       .send({});
     expect(res.status).toBe(400);
@@ -158,40 +158,40 @@ describe('POST /api/mini-cct/generate', () => {
   it('refuses duplicate titles', async () => {
     await seedBank();
     const first = await request(app)
-      .post('/api/mini-cct/generate')
+      .post('/api/mini-gt/generate')
       .set('Authorization', `Bearer ${admin.token}`)
-      .send({ title: 'My Mini CCT' });
+      .send({ title: 'My Mini GT' });
     expect(first.status).toBe(201);
 
     const second = await request(app)
-      .post('/api/mini-cct/generate')
+      .post('/api/mini-gt/generate')
       .set('Authorization', `Bearer ${admin.token}`)
-      .send({ title: 'My Mini CCT' });
+      .send({ title: 'My Mini GT' });
     expect(second.status).toBe(400);
     expect(second.body.code).toBe('DUPLICATE_TITLE');
   });
 });
 
-describe('GET /api/mini-cct/latest', () => {
+describe('GET /api/mini-gt/latest', () => {
   it('requires a student session', async () => {
-    expect((await request(app).get('/api/mini-cct/latest')).status).toBe(401);
+    expect((await request(app).get('/api/mini-gt/latest')).status).toBe(401);
     expect(
-      (await request(app).get('/api/mini-cct/latest').set('Authorization', `Bearer ${admin.token}`)).status
+      (await request(app).get('/api/mini-gt/latest').set('Authorization', `Bearer ${admin.token}`)).status
     ).toBe(403);
   });
 
-  it('returns quiz null when no Mini CCT exists', async () => {
+  it('returns quiz null when no Mini GT exists', async () => {
     const res = await request(app)
-      .get('/api/mini-cct/latest')
+      .get('/api/mini-gt/latest')
       .set('Authorization', `Bearer ${paidStudent.token}`);
     expect(res.status).toBe(200);
     expect(res.body.quiz).toBeNull();
   });
 
-  it('shows the Mini CCT to a free user who is NOT in assignedStudents', async () => {
+  it('shows the Mini GT to a free user who is NOT in assignedStudents', async () => {
     await seedBank();
     const gen = await request(app)
-      .post('/api/mini-cct/generate')
+      .post('/api/mini-gt/generate')
       .set('Authorization', `Bearer ${admin.token}`)
       .send({});
     // A free user who signed up AFTER generation: not in assignedStudents.
@@ -199,7 +199,7 @@ describe('GET /api/mini-cct/latest', () => {
     await lateFreeUser.user.updateOne({ isFreeUser: true });
 
     const res = await request(app)
-      .get('/api/mini-cct/latest')
+      .get('/api/mini-gt/latest')
       .set('Authorization', `Bearer ${lateFreeUser.token}`);
     expect(res.status).toBe(200);
     expect(res.body.quiz._id).toBe(gen.body.quizId);
@@ -208,15 +208,15 @@ describe('GET /api/mini-cct/latest', () => {
     expect(res.body.quiz.attemptStatus.hasAttempted).toBe(false);
   });
 
-  it('shows the Mini CCT to a paid student who is NOT assigned (self-serve)', async () => {
+  it('shows the Mini GT to a paid student who is NOT assigned (self-serve)', async () => {
     await seedBank();
     const gen = await request(app)
-      .post('/api/mini-cct/generate')
+      .post('/api/mini-gt/generate')
       .set('Authorization', `Bearer ${admin.token}`)
       .send({});
 
     const res = await request(app)
-      .get('/api/mini-cct/latest')
+      .get('/api/mini-gt/latest')
       .set('Authorization', `Bearer ${paidStudent.token}`);
     expect(res.status).toBe(200);
     expect(res.body.quiz._id).toBe(gen.body.quizId);
@@ -235,7 +235,7 @@ describe('free-user access to assignToAllFreeUsers quizzes (engine parity)', () 
   it('lets a late-signup free user load the detail and start the quiz', async () => {
     await seedBank();
     const gen = await request(app)
-      .post('/api/mini-cct/generate')
+      .post('/api/mini-gt/generate')
       .set('Authorization', `Bearer ${admin.token}`)
       .send({});
     const lateFreeUser = await createUser({ role: 'student' });
@@ -260,7 +260,7 @@ describe('free-user access to assignToAllFreeUsers quizzes (engine parity)', () 
   it('lets an unassigned paid student start the SELF-SERVE mini quiz, but not a non-mini free-for-all quiz', async () => {
     await seedBank();
     const gen = await request(app)
-      .post('/api/mini-cct/generate')
+      .post('/api/mini-gt/generate')
       .set('Authorization', `Bearer ${admin.token}`)
       .send({});
 
@@ -300,7 +300,7 @@ describe('free-user access to assignToAllFreeUsers quizzes (engine parity)', () 
   });
 });
 
-describe('GET /api/mini-cct/attempts/:attemptId/analysis', () => {
+describe('GET /api/mini-gt/attempts/:attemptId/analysis', () => {
   let quiz;
   let questions;
 
@@ -308,7 +308,7 @@ describe('GET /api/mini-cct/attempts/:attemptId/analysis', () => {
     const bySubject = await seedBank();
     questions = [...bySubject.Psychiatry, ...bySubject.Dermatology, ...bySubject.Orthopaedics];
     quiz = await Quiz.create({
-      title: 'Mini CCT Test',
+      title: 'Mini GT Test',
       subject: subjects.Psychiatry._id,
       testType: 'mini',
       duration: 30,
@@ -330,14 +330,14 @@ describe('GET /api/mini-cct/attempts/:attemptId/analysis', () => {
 
   it('rejects invalid ids, foreign attempts and non-mini attempts', async () => {
     const bad = await request(app)
-      .get('/api/mini-cct/attempts/not-an-id/analysis')
+      .get('/api/mini-gt/attempts/not-an-id/analysis')
       .set('Authorization', `Bearer ${paidStudent.token}`);
     expect(bad.status).toBe(400);
 
     const other = await createUser({ role: 'student' });
     const attempt = await finalizedAttempt(quiz, paidStudent, outcomesFor([6, 5, 4]), questions);
     const foreign = await request(app)
-      .get(`/api/mini-cct/attempts/${attempt._id}/analysis`)
+      .get(`/api/mini-gt/attempts/${attempt._id}/analysis`)
       .set('Authorization', `Bearer ${other.token}`);
     expect(foreign.status).toBe(404);
 
@@ -352,10 +352,10 @@ describe('GET /api/mini-cct/attempts/:attemptId/analysis', () => {
     });
     const grandAttempt = await finalizedAttempt(grandQuiz, paidStudent, [1, 0, 1, null, 1], questions.slice(0, 5));
     const notMini = await request(app)
-      .get(`/api/mini-cct/attempts/${grandAttempt._id}/analysis`)
+      .get(`/api/mini-gt/attempts/${grandAttempt._id}/analysis`)
       .set('Authorization', `Bearer ${paidStudent.token}`);
     expect(notMini.status).toBe(404);
-    expect(notMini.body.code).toBe('NOT_MINI_CCT');
+    expect(notMini.body.code).toBe('NOT_MINI_GT');
   });
 
   it('refuses in-progress attempts', async () => {
@@ -368,7 +368,7 @@ describe('GET /api/mini-cct/attempts/:attemptId/analysis', () => {
       answers: [],
     });
     const res = await request(app)
-      .get(`/api/mini-cct/attempts/${attempt._id}/analysis`)
+      .get(`/api/mini-gt/attempts/${attempt._id}/analysis`)
       .set('Authorization', `Bearer ${paidStudent.token}`);
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('ATTEMPT_NOT_COMPLETED');
@@ -384,7 +384,7 @@ describe('GET /api/mini-cct/attempts/:attemptId/analysis', () => {
     const mine = await finalizedAttempt(quiz, paidStudent, outcomesFor([6, 5, 4]), questions);
 
     const res = await request(app)
-      .get(`/api/mini-cct/attempts/${mine._id}/analysis`)
+      .get(`/api/mini-gt/attempts/${mine._id}/analysis`)
       .set('Authorization', `Bearer ${paidStudent.token}`);
     expect(res.status).toBe(200);
     expect(res.body.access.level).toBe('full');
@@ -422,7 +422,7 @@ describe('GET /api/mini-cct/attempts/:attemptId/analysis', () => {
     const mine = await finalizedAttempt(quiz, freeStudent, outcomesFor([6, 5, 4]), questions);
 
     const res = await request(app)
-      .get(`/api/mini-cct/attempts/${mine._id}/analysis`)
+      .get(`/api/mini-gt/attempts/${mine._id}/analysis`)
       .set('Authorization', `Bearer ${freeStudent.token}`);
     expect(res.status).toBe(200);
     expect(res.body.access.level).toBe('limited');
@@ -445,7 +445,7 @@ describe('GET /api/mini-cct/attempts/:attemptId/analysis', () => {
   it('marks small cohorts insufficient instead of leaking averages', async () => {
     const mine = await finalizedAttempt(quiz, paidStudent, outcomesFor([6, 5, 4]), questions);
     const res = await request(app)
-      .get(`/api/mini-cct/attempts/${mine._id}/analysis`)
+      .get(`/api/mini-gt/attempts/${mine._id}/analysis`)
       .set('Authorization', `Bearer ${paidStudent.token}`);
     expect(res.status).toBe(200);
     expect(res.body.cohort.sufficient).toBe(false);
@@ -456,12 +456,12 @@ describe('GET /api/mini-cct/attempts/:attemptId/analysis', () => {
   });
 });
 
-describe('GET /api/mini-cct/attempts', () => {
-  it('lists only finalized Mini CCT attempts of the caller, newest first', async () => {
+describe('GET /api/mini-gt/attempts', () => {
+  it('lists only finalized Mini GT attempts of the caller, newest first', async () => {
     const bySubject = await seedBank();
     const questions = [...bySubject.Psychiatry, ...bySubject.Dermatology, ...bySubject.Orthopaedics];
     const quiz = await Quiz.create({
-      title: 'Mini CCT History',
+      title: 'Mini GT History',
       subject: subjects.Psychiatry._id,
       testType: 'mini',
       duration: 30,
@@ -498,12 +498,12 @@ describe('GET /api/mini-cct/attempts', () => {
     await finalizedAttempt(grandQuiz, paidStudent, [1, 0, 1, null, 1], questions.slice(0, 5));
 
     const res = await request(app)
-      .get('/api/mini-cct/attempts?limit=10')
+      .get('/api/mini-gt/attempts?limit=10')
       .set('Authorization', `Bearer ${paidStudent.token}`);
     expect(res.status).toBe(200);
     expect(res.body.total).toBe(2);
     expect(res.body.attempts.map((a) => a._id)).toEqual([String(newer._id), String(older._id)]);
-    expect(res.body.attempts[0].quizTitle).toBe('Mini CCT History');
+    expect(res.body.attempts[0].quizTitle).toBe('Mini GT History');
   });
 
   function outcomes(correctCount) {

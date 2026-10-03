@@ -4,14 +4,14 @@ const { auth, authorize } = require('../middleware/auth');
 const Quiz = require('../models/Quiz');
 const QuizAttempt = require('../models/QuizAttempt');
 const QuestionBank = require('../models/QuestionBank');
-const miniCct = require('../utils/miniCct');
+const miniGt = require('../utils/miniGt');
 const { dedupeLatestAttemptPerStudent } = require('../utils/cohortComparison');
 const { roundTo2 } = require('../utils/analytics');
 
 const router = express.Router();
 
 /**
- * Mini CCT (Mini Grand Test) — 30 questions, 10 each from Psychiatry,
+ * Mini GT (Mini Grand Test) — 30 questions, 10 each from Psychiatry,
  * Dermatology and Orthopaedics, generated from the Question Bank as a shared
  * `testType: 'mini'` Quiz and taken through the NORMAL quiz engine
  * (POST /api/quizzes/:id/start → autosave → submit). A fixed shared test is
@@ -19,11 +19,11 @@ const router = express.Router();
  *
  * This router adds only what the engine does not have:
  *  - GET  /latest                      dashboard card payload
- *  - GET  /attempts                    own Mini CCT attempt history
+ *  - GET  /attempts                    own Mini GT attempt history
  *  - GET  /attempts/:attemptId/analysis  the post-submission analysis
  *    dashboard (subject radar/comparison vs the database average, percentile,
  *    tier, topic & concept-tag breakdowns; gated server-side for free users)
- *  - POST /generate                    admin: assemble the next Mini CCT
+ *  - POST /generate                    admin: assemble the next Mini GT
  *
  * Mounted ungated like /api/quizzes and /api/daily-pyq: part of the quiz
  * ecosystem (featureAvailability `quizzes: true`), standard JWT auth per
@@ -57,7 +57,7 @@ function parseHistoryQuery(query) {
 }
 
 /**
- * Mini CCTs are SELF-SERVE: every authenticated student sees the latest one
+ * Mini GTs are SELF-SERVE: every authenticated student sees the latest one
  * from the dashboard — individual assignment is never required (mirrors the
  * `testType === 'mini'` clause in the quizzes list/detail/start routes).
  */
@@ -89,9 +89,9 @@ async function attemptStatusFor(quizId, studentId) {
 
 router.get('/latest', auth, authorize('student'), async (req, res) => {
   try {
-    // Newest active Mini CCT — visible to every student (self-serve).
+    // Newest active Mini GT — visible to every student (self-serve).
     const quiz = await Quiz.findOne({
-      testType: miniCct.MINI_CCT_TEST_TYPE,
+      testType: miniGt.MINI_GT_TEST_TYPE,
       isActive: true,
       isDeleted: { $ne: true },
     })
@@ -112,7 +112,7 @@ router.get('/latest', auth, authorize('student'), async (req, res) => {
     const seen = new Set();
     quiz.questions.forEach((id) => {
       const subject = subjectByQuestion.get(id.toString());
-      const name = subject && subject.name ? miniCct.normalizeLabel(subject.name) : null;
+      const name = subject && subject.name ? miniGt.normalizeLabel(subject.name) : null;
       if (name && !seen.has(name)) {
         seen.add(name);
         subjectNames.push(name);
@@ -137,26 +137,26 @@ router.get('/latest', auth, authorize('student'), async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('[mini-cct] GET /latest error:', error);
+    console.error('[mini-gt] GET /latest error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-// ── GET /attempts — own finalized Mini CCT history ──────────────────────────
+// ── GET /attempts — own finalized Mini GT history ──────────────────────────
 
 router.get('/attempts', auth, authorize('student'), async (req, res) => {
   try {
     const { page, limit } = parseHistoryQuery(req.query);
 
     const miniQuizzes = await Quiz.find({
-      testType: miniCct.MINI_CCT_TEST_TYPE,
+      testType: miniGt.MINI_GT_TEST_TYPE,
       isDeleted: { $ne: true },
     }).select('_id title');
     const quizById = new Map(miniQuizzes.map((q) => [q._id.toString(), q]));
 
     const filter = {
       student: req.user._id,
-      status: { $in: miniCct.FINALIZED_STATUSES },
+      status: { $in: miniGt.FINALIZED_STATUSES },
       quiz: { $in: [...quizById.keys()].map((id) => new mongoose.Types.ObjectId(id)) },
     };
 
@@ -173,7 +173,7 @@ router.get('/attempts', auth, authorize('student'), async (req, res) => {
       attempts: attempts.map((attempt) => ({
         _id: attempt._id,
         quizId: attempt.quiz,
-        quizTitle: (quizById.get(String(attempt.quiz)) || {}).title || 'Mini CCT',
+        quizTitle: (quizById.get(String(attempt.quiz)) || {}).title || 'Mini GT',
         status: attempt.status,
         score: attempt.score,
         correct: attempt.score,
@@ -187,7 +187,7 @@ router.get('/attempts', auth, authorize('student'), async (req, res) => {
       pages: Math.max(1, Math.ceil(total / limit)),
     });
   } catch (error) {
-    console.error('[mini-cct] GET /attempts error:', error);
+    console.error('[mini-gt] GET /attempts error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -210,10 +210,10 @@ router.get('/attempts/:attemptId/analysis', auth, authorize('student'), async (r
     }
 
     const quiz = await Quiz.findById(attempt.quiz);
-    if (!quiz || quiz.testType !== miniCct.MINI_CCT_TEST_TYPE) {
-      return res.status(404).json({ message: 'Not a Mini CCT attempt', code: 'NOT_MINI_CCT' });
+    if (!quiz || quiz.testType !== miniGt.MINI_GT_TEST_TYPE) {
+      return res.status(404).json({ message: 'Not a Mini GT attempt', code: 'NOT_MINI_GT' });
     }
-    if (!miniCct.FINALIZED_STATUSES.includes(attempt.status)) {
+    if (!miniGt.FINALIZED_STATUSES.includes(attempt.status)) {
       return res.status(400).json({
         message: 'Analysis is available after you submit the test.',
         code: 'ATTEMPT_NOT_COMPLETED',
@@ -230,34 +230,34 @@ router.get('/attempts/:attemptId/analysis', auth, authorize('student'), async (r
       .filter(Boolean);
 
     // The "database average": every student's latest finalized attempt on THIS
-    // Mini CCT, deduped per student (approved retests never double-weight).
+    // Mini GT, deduped per student (approved retests never double-weight).
     const cohortAttempts = await QuizAttempt.find({
       quiz: quiz._id,
-      status: { $in: miniCct.FINALIZED_STATUSES },
+      status: { $in: miniGt.FINALIZED_STATUSES },
     }).select(COHORT_PROJECTION);
     const cohort = dedupeLatestAttemptPerStudent(cohortAttempts);
 
-    const analysis = miniCct.buildMiniCctAnalysis({
+    const analysis = miniGt.buildMiniGtAnalysis({
       attempt,
       quiz,
       questions: orderedQuestions,
       cohort,
     });
 
-    res.json(miniCct.applyAnalysisAccess(analysis, { isFreeUser: req.user.isFreeUser === true }));
+    res.json(miniGt.applyAnalysisAccess(analysis, { isFreeUser: req.user.isFreeUser === true }));
   } catch (error) {
-    console.error('[mini-cct] GET /attempts/:id/analysis error:', error);
+    console.error('[mini-gt] GET /attempts/:id/analysis error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
 
-// ── POST /generate — admin: assemble the next Mini CCT from the bank ───────
+// ── POST /generate — admin: assemble the next Mini GT from the bank ───────
 
 router.post('/generate', auth, authorize('admin'), async (req, res) => {
   try {
     const { title, duration, scheduledDate, expiryDate } = req.body || {};
 
-    const result = await miniCct.createMiniCctQuiz({
+    const result = await miniGt.createMiniGtQuiz({
       adminId: req.user._id,
       title,
       duration,
@@ -285,7 +285,7 @@ router.post('/generate', auth, authorize('admin'), async (req, res) => {
             sendPushToUser({
               expoPushToken: student.pushToken,
               fcmToken: student.fcmToken,
-              title: 'New Mini CCT',
+              title: 'New Mini GT',
               body: `${quiz.title} is ready — 30 questions, 3 subjects`,
               data: {
                 type: 'quiz_assigned',
@@ -305,14 +305,14 @@ router.post('/generate', auth, authorize('admin'), async (req, res) => {
     }
 
     res.status(201).json({
-      message: 'Mini CCT created successfully',
+      message: 'Mini GT created successfully',
       quizId: result.quiz._id,
       title: result.quiz.title,
       questionCount: result.questionCount,
       perSubject: result.perSubject,
     });
   } catch (error) {
-    console.error('[mini-cct] POST /generate error:', error);
+    console.error('[mini-gt] POST /generate error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

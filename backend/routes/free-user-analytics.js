@@ -20,10 +20,10 @@ const { roundTo2 } = require('../utils/analytics');
  * Metric definitions (single source of truth, reused by the website merge):
  *  - Free user            role === 'student' && isFreeUser === true (set at
  *                         signup; admins/mentors/paid students excluded).
- *  - Mini CCT attempt     a finalized QuizAttempt (completed/auto_submitted)
+ *  - Mini GT attempt     a finalized QuizAttempt (completed/auto_submitted)
  *                         by a free user — the tests free users see (assigned
  *                         to all free users or individually).
- *  - Mini CCT score       marksObtained / totalMarks * 100 (the canonical
+ *  - Mini GT score       marksObtained / totalMarks * 100 (the canonical
  *                         scorePercentage); attempts with totalMarks 0 are
  *                         excluded from averages, never counted as 0.
  *  - Active user (DAU/WAU/MAU) a free user with >= 1 activity event inside a
@@ -271,7 +271,7 @@ router.get('/overview', async (_req, res) => {
         freeUsersThisMonth,
       },
       activeUserIds, // website unions these with predictor-side activity
-      miniCct: {
+      miniGt: {
         attemptsTotal: quizRow.total,
         attemptingUsers: quizRow.students.length,
       },
@@ -370,7 +370,7 @@ router.get('/users', async (req, res) => {
         isProfileComplete: user.isProfileComplete === true,
         year: user.freeUserProfile && user.freeUserProfile.year ? user.freeUserProfile.year : null,
         platforms: (user.freeUserProfile && user.freeUserProfile.resources) || [],
-        miniCct: {
+        miniGt: {
           attempts: quizRow.attempts,
           avgScorePercentage: quizRow.avgScorePercentage,
           lastAttemptAt: quizRow.lastAttemptAt,
@@ -479,7 +479,7 @@ router.get('/users/:id', async (req, res) => {
         isProfileComplete: user.isProfileComplete === true,
         freeUserProfile: user.freeUserProfile || null,
       },
-      miniCct: {
+      miniGt: {
         attempts: attemptRows,
         // Recent attempts are capped at DRILLDOWN_ATTEMPT_CAP; the summary
         // covers the user's FULL history (totalQuizAttempts is exact).
@@ -518,7 +518,7 @@ router.get('/performance', async (req, res) => {
     const freeIds = await freeUserIds();
     const freeIdSet = new Set(freeIds.map(String));
 
-    // Subject-wise + overall Mini CCT aggregates in one pass per quiz.
+    // Subject-wise + overall Mini GT aggregates in one pass per quiz.
     const [byQuiz, pyqByStudent, freeUsersTotal, pyqTodayCount] = await Promise.all([
       QuizAttempt.aggregate([
         { $match: { student: { $in: freeIds }, status: { $in: FINALIZED_STATUSES } } },
@@ -653,7 +653,7 @@ router.get('/performance', async (req, res) => {
       neverActive: !lastActive.get(String(u._id)),
     }));
 
-    // Feature usage: Mini CCT + Daily PYQ per IST-week bucket. $bucket needs
+    // Feature usage: Mini GT + Daily PYQ per IST-week bucket. $bucket needs
     // boundaries [start0 … startN-1, endOfLastBucket) — without the final
     // edge the newest week would fall into `default` and be dropped.
     const buckets = weekBuckets(today);
@@ -678,13 +678,13 @@ router.get('/performance', async (req, res) => {
     };
 
     const usageFloor = buckets[0].from;
-    const [miniCctUsage, dailyPyqUsage] = await Promise.all([
+    const [miniGtUsage, dailyPyqUsage] = await Promise.all([
       countByBucket(QuizAttempt, { student: { $in: freeIds }, status: { $in: FINALIZED_STATUSES }, endTime: { $gte: usageFloor } }, 'endTime'),
       countByBucket(DailyPyqAttempt, { student: { $in: freeIds }, submittedAt: { $gte: usageFloor } }, 'submittedAt'),
     ]);
 
     return res.json({
-      miniCct: {
+      miniGt: {
         totalAttempts,
         avgScorePercentage: countPct > 0 ? roundTo2(sumPct / countPct) : null,
         subjectWise: subjectRows,
@@ -704,7 +704,7 @@ router.get('/performance', async (req, res) => {
       featureUsage: {
         weekLabels: buckets.map((b) => b.startKey),
         rows: [
-          { feature: 'Mini CCT', counts: miniCctUsage },
+          { feature: 'Mini GT', counts: miniGtUsage },
           { feature: 'Daily PYQ', counts: dailyPyqUsage },
         ],
       },

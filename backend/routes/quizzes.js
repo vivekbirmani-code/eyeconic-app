@@ -802,7 +802,7 @@ router.get('/', auth, async (req, res) => {
       });
     } else {
       // Student sees only quizzes assigned to them (or free quizzes for free
-      // users). Mini CCTs are self-serve: visible to every student without
+      // users). Mini GTs are self-serve: visible to every student without
       // individual assignment.
       const studentQuery = {
         isActive: true,
@@ -2765,7 +2765,7 @@ router.get('/:id', auth, async (req, res) => {
     if (req.user.role === 'student') {
       // Same visibility rule as the list route: an assignToAllFreeUsers quiz
       // belongs to EVERY free user (including those who signed up after the
-      // quiz was created), and Mini CCTs are self-serve — every student can
+      // quiz was created), and Mini GTs are self-serve — every student can
       // open one, assigned or not.
       const isAssignedOrFreeForAll =
         quiz.assignedStudents.includes(req.user._id) ||
@@ -2869,7 +2869,7 @@ router.post('/:id/start', auth, authorize('student'), async (req, res) => {
     // Mirrors the list/detail visibility rule: free users may start any
     // assignToAllFreeUsers quiz even when they signed up after it was created
     // (assignedStudents is only expanded to the free users who existed then),
-    // and Mini CCTs are self-serve for every student.
+    // and Mini GTs are self-serve for every student.
     const isAssignedOrFreeForAll =
       quiz.assignedStudents.includes(req.user._id) ||
       (quiz.assignToAllFreeUsers === true && req.user.isFreeUser === true) ||

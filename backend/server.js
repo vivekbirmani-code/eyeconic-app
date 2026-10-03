@@ -23,7 +23,7 @@ const messageRoutes = require('./routes/messages');
 const quizRoutes = require('./routes/quizzes');
 const questionBankRoutes = require('./routes/question-bank');
 const dailyPyqRoutes = require('./routes/daily-pyq');
-const miniCctRoutes = require('./routes/mini-cct');
+const miniGtRoutes = require('./routes/mini-gt');
 const freeUserAnalyticsRoutes = require('./routes/free-user-analytics');
 const subjectRoutes = require('./routes/subjects');
 const studentSubjectRoutes = require('./routes/student-subjects');
@@ -227,7 +227,7 @@ app.use('/api/groups', authMiddleware, featureGate('chat', 'groups'), groupRoute
 app.use('/api/messages', authMiddleware, featureGate('chat'), messageRoutes);
 app.use('/api/quizzes', quizRoutes);
 app.use('/api/daily-pyq', dailyPyqRoutes);
-app.use('/api/mini-cct', miniCctRoutes);
+app.use('/api/mini-gt', miniGtRoutes);
 app.use('/api/question-bank', questionBankRoutes);
 app.use('/api/subjects', subjectRoutes);
 app.use('/api/student-subjects', authMiddleware, featureGate('mentorship'), studentSubjectRoutes);

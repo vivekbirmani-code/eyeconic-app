@@ -1,16 +1,16 @@
 /**
- * Local-dev seed for the Mini CCT feature (run once, manually; never used in
+ * Local-dev seed for the Mini GT feature (run once, manually; never used in
  * production or tests):
  *
- *  1. ensures the three Mini CCT subjects exist (Psychiatry, Dermatology,
+ *  1. ensures the three Mini GT subjects exist (Psychiatry, Dermatology,
  *     Orthopaedics — created uppercase to match the seeded bank);
  *  2. tops up each subject's single-best-answer pool with curated clinical
  *     MCQs (topic + 1–3 concept tags) when the bank is thin — idempotent via
  *     stable `qid`s;
- *  3. generates one Mini CCT via the same createMiniCctQuiz the admin API
+ *  3. generates one Mini GT via the same createMiniGtQuiz the admin API
  *     uses.
  *
- * Usage: node scripts/seed-mini-cct.js [--no-generate]
+ * Usage: node scripts/seed-mini-gt.js [--no-generate]
  */
 process.env.NODE_ENV = process.env.NODE_ENV || 'development';
 require('dotenv').config();
@@ -20,7 +20,7 @@ const Subject = require('../models/Subject');
 const QuestionBank = require('../models/QuestionBank');
 const User = require('../models/User');
 const { getMongoUri } = require('../utils/mongoUri');
-const miniCct = require('../utils/miniCct');
+const miniGt = require('../utils/miniGt');
 
 // Enough tagged single-best-answer questions per subject that generation
 // always has headroom (10 needed + slack for other quizzes' usage).
@@ -179,7 +179,7 @@ const CURATED = {
 
   // 1 ── ensure subjects (uppercase names match the existing seeded bank)
   const subjectByName = new Map();
-  for (const canonical of miniCct.MINI_CCT_SUBJECT_NAMES) {
+  for (const canonical of miniGt.MINI_GT_SUBJECT_NAMES) {
     let subject = await Subject.findOne({
       name: new RegExp(`^${canonical}$`, 'i'),
     });
@@ -200,7 +200,7 @@ const CURATED = {
     const existing = await QuestionBank.countDocuments({
       subject: subject._id,
       isActive: true,
-      questionType: { $in: miniCct.MINI_CCT_QUESTION_TYPES },
+      questionType: { $in: miniGt.MINI_GT_QUESTION_TYPES },
     });
     let inserted = 0;
     if (existing < TARGET_POOL_PER_SUBJECT) {
@@ -215,12 +215,12 @@ const CURATED = {
     console.log(`${canonical}: pool ${existing} → ${existing + inserted} curated questions (inserted ${inserted})`);
   }
 
-  // 3 ── generate one Mini CCT through the same code path as the admin API
+  // 3 ── generate one Mini GT through the same code path as the admin API
   if (!process.argv.includes('--no-generate')) {
     let admin = await User.findOne({ role: 'admin' });
     if (!admin) {
       admin = await User.create({
-        name: 'Mini CCT Seed Admin',
+        name: 'Mini GT Seed Admin',
         email: 'dev-mini-cct-admin@example.com',
         password: 'MiniCctSeed!2026',
         role: 'admin',
@@ -228,7 +228,7 @@ const CURATED = {
       console.log('Created seed admin dev-mini-cct-admin@example.com (password MiniCctSeed!2026)');
     }
 
-    const result = await miniCct.createMiniCctQuiz({ adminId: admin._id });
+    const result = await miniGt.createMiniGtQuiz({ adminId: admin._id });
     if (result.error) {
       console.error('Generation failed:', result.error.message);
       process.exitCode = 1;

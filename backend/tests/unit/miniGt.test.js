@@ -1,12 +1,12 @@
 const {
   conceptTagsOf,
   normalizeLabel,
-  buildMiniCctAnalysis,
+  buildMiniGtAnalysis,
   applyAnalysisAccess,
   resolveTier,
   tagStatus,
   MIN_COMPARISON_COHORT,
-} = require('../../utils/miniCct');
+} = require('../../utils/miniGt');
 const { roundTo2 } = require('../../utils/analytics');
 
 // ── conceptTagsOf ─────────────────────────────────────────────────────────────
@@ -81,7 +81,7 @@ describe('tagStatus', () => {
   });
 });
 
-// ── buildMiniCctAnalysis ──────────────────────────────────────────────────────
+// ── buildMiniGtAnalysis ──────────────────────────────────────────────────────
 
 const POSITIVE = 4;
 const NEGATIVE = 1;
@@ -149,7 +149,7 @@ function buildAttempt(quizId, studentId, outcomes, questions) {
 function analysisFixture({ outcomes, cohortOutcomes = [], cohortSize = 0 }) {
   const quiz = {
     _id: 'quiz1',
-    title: 'Mini CCT #1',
+    title: 'Mini GT #1',
     testType: 'mini',
     totalMarks: 120,
     positiveMarks: POSITIVE,
@@ -165,10 +165,10 @@ function analysisFixture({ outcomes, cohortOutcomes = [], cohortSize = 0 }) {
     cohort.push(buildAttempt('quiz1', `student${i}`, cohortOutcomes.length ? cohortOutcomes : outcomes, questions));
   }
 
-  return buildMiniCctAnalysis({ attempt, quiz, questions, cohort });
+  return buildMiniGtAnalysis({ attempt, quiz, questions, cohort });
 }
 
-describe('buildMiniCctAnalysis', () => {
+describe('buildMiniGtAnalysis', () => {
   it('computes summary, subjects, heatmap and topics from one attempt', () => {
     // 30 questions: Q0-9 Psychiatry, 10-19 Dermatology, 20-29 Orthopaedics.
     // Psychiatry 6✓ 2✗ 2 skipped; Dermatology 5✓ 4✗ 1 skip; Ortho 4✓ 5✗ 1✗...

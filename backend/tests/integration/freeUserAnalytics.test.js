@@ -77,7 +77,7 @@ beforeAll(async () => {
   subject = await Subject.create({ name: 'Psychiatry', year: '4th', displayOrder: 1 });
   const admin = await User.findOne({ role: 'admin' });
   quiz = await Quiz.create({
-    title: 'Mini CCT Psychiatry #1',
+    title: 'Mini GT Psychiatry #1',
     subject: subject._id,
     testType: 'daily',
     duration: 15,
@@ -145,8 +145,8 @@ describe('Free-user analytics', () => {
 
       // 3 seeded free users here (paid student excluded).
       expect(res.body.totals.freeUsers).toBeGreaterThanOrEqual(3);
-      expect(res.body.miniCct.attemptsTotal).toBeGreaterThanOrEqual(2);
-      expect(res.body.miniCct.attemptingUsers).toBeGreaterThanOrEqual(1);
+      expect(res.body.miniGt.attemptsTotal).toBeGreaterThanOrEqual(2);
+      expect(res.body.miniGt.attemptingUsers).toBeGreaterThanOrEqual(1);
       expect(res.body.dailyPyq.attemptsTotal).toBeGreaterThanOrEqual(3);
       expect(res.body.dailyPyq.attemptsToday).toBeGreaterThanOrEqual(1);
 
@@ -174,8 +174,8 @@ describe('Free-user analytics', () => {
 
       const row = res.body.users.find((u) => u._id === String(activeFree._id));
       if (row) {
-        expect(row.miniCct.attempts).toBe(2);
-        expect(row.miniCct.avgScorePercentage).toBe(60);
+        expect(row.miniGt.attempts).toBe(2);
+        expect(row.miniGt.avgScorePercentage).toBe(60);
         expect(row.dailyPyq.currentStreak).toBe(2);
         expect(row.platforms).toEqual(['Marrow', 'PrepLadder']);
         expect(row.lastActiveAt).toBeTruthy();
@@ -223,10 +223,10 @@ describe('Free-user analytics', () => {
 
       expect(res.body.user.name).toBe('Active Free');
       expect(res.body.user.freeUserProfile.resources).toEqual(['Marrow', 'PrepLadder']);
-      expect(res.body.miniCct.summary.totalAttempts).toBe(2);
-      expect(res.body.miniCct.summary.avgScorePercentage).toBe(60);
-      expect(res.body.miniCct.summary.bestScorePercentage).toBe(80);
-      expect(res.body.miniCct.attempts[0].subjectName).toBe('Psychiatry');
+      expect(res.body.miniGt.summary.totalAttempts).toBe(2);
+      expect(res.body.miniGt.summary.avgScorePercentage).toBe(60);
+      expect(res.body.miniGt.summary.bestScorePercentage).toBe(80);
+      expect(res.body.miniGt.attempts[0].subjectName).toBe('Psychiatry');
       expect(res.body.dailyPyq.streaks.current).toBe(2);
       expect(res.body.dailyPyq.totalAttempts).toBe(2);
     });
@@ -246,9 +246,9 @@ describe('Free-user analytics', () => {
       const res = await request(app).get('/api/free-user-analytics/performance').set(authHeader(adminToken));
       expect(res.status).toBe(200);
 
-      expect(res.body.miniCct.totalAttempts).toBeGreaterThanOrEqual(2);
-      expect(res.body.miniCct.avgScorePercentage).toBe(60);
-      const psychiatry = res.body.miniCct.subjectWise.find((s) => s.subjectName === 'Psychiatry');
+      expect(res.body.miniGt.totalAttempts).toBeGreaterThanOrEqual(2);
+      expect(res.body.miniGt.avgScorePercentage).toBe(60);
+      const psychiatry = res.body.miniGt.subjectWise.find((s) => s.subjectName === 'Psychiatry');
       expect(psychiatry.attempts).toBeGreaterThanOrEqual(2);
       expect(psychiatry.avgScorePercentage).toBe(60);
 
@@ -267,7 +267,7 @@ describe('Free-user analytics', () => {
 
       // Weekly usage buckets: last bucket holds this week's events.
       const lastIdx = res.body.featureUsage.weekLabels.length - 1;
-      expect(res.body.featureUsage.rows[0].counts[lastIdx]).toBeGreaterThanOrEqual(2); // Mini CCT
+      expect(res.body.featureUsage.rows[0].counts[lastIdx]).toBeGreaterThanOrEqual(2); // Mini GT
       expect(res.body.featureUsage.rows[1].counts[lastIdx]).toBeGreaterThanOrEqual(3); // Daily PYQ
     });
   });

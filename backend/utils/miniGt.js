@@ -16,10 +16,10 @@ const {
 const { computeTimeTakenSeconds } = require('./questionHistory');
 
 /**
- * Mini CCT (Mini Grand Test) — a fixed 30-question test, 10 each from
+ * Mini GT (Mini Grand Test) — a fixed 30-question test, 10 each from
  * Psychiatry, Dermatology and Orthopaedics, generated from the Question Bank
  * and taken through the normal quiz engine (Quiz + QuizAttempt). This module
- * owns everything Mini-CCT-specific and nothing the engine already does:
+ * owns everything Mini-GT-specific and nothing the engine already does:
  *
  *  - generation: resolve the three subjects, sample single-best-answer
  *    questions, assemble the shared Quiz (assignToAllFreeUsers);
@@ -27,20 +27,20 @@ const { computeTimeTakenSeconds } = require('./questionHistory');
  *    database average, percentile, tier, topic & concept-tag breakdowns)
  *    computed purely from finalized attempts.
  *
- * A Mini CCT is identified by `quiz.testType === MINI_CCT_TEST_TYPE`.
+ * A Mini GT is identified by `quiz.testType === MINI_GT_TEST_TYPE`.
  */
 
-const MINI_CCT_TEST_TYPE = 'mini';
-const MINI_CCT_TEST_TYPE_LABEL = 'Mini CCT';
-const MINI_CCT_SUBJECT_NAMES = Object.freeze(['Psychiatry', 'Dermatology', 'Orthopaedics']);
+const MINI_GT_TEST_TYPE = 'mini';
+const MINI_GT_TEST_TYPE_LABEL = 'Mini GT';
+const MINI_GT_SUBJECT_NAMES = Object.freeze(['Psychiatry', 'Dermatology', 'Orthopaedics']);
 const QUESTIONS_PER_SUBJECT = 10;
-const MINI_CCT_TOTAL_QUESTIONS = QUESTIONS_PER_SUBJECT * MINI_CCT_SUBJECT_NAMES.length;
+const MINI_GT_TOTAL_QUESTIONS = QUESTIONS_PER_SUBJECT * MINI_GT_SUBJECT_NAMES.length;
 const DEFAULT_DURATION_MINUTES = 30;
 const DEFAULT_POSITIVE_MARKS = 4;
 const DEFAULT_NEGATIVE_MARKS = 1;
 
 // Question types the web/app single-best-answer player renders cleanly.
-const MINI_CCT_QUESTION_TYPES = Object.freeze(['mcq_single', 'image_based', 'assertion_reason']);
+const MINI_GT_QUESTION_TYPES = Object.freeze(['mcq_single', 'image_based', 'assertion_reason']);
 
 // Concept tags: the 1–3 human-meaningful tags a question carries. QuestionBank
 // tags also hold provenance markers appended by the Excel import path
@@ -172,18 +172,18 @@ function marksFor(entry, positiveMarks, negativeMarks) {
 // ── the analysis builder (pure) ─────────────────────────────────────────────
 
 /**
- * Build the full Mini CCT analysis payload for one finalized attempt.
+ * Build the full Mini GT analysis payload for one finalized attempt.
  *
  * @param {object} params
  * @param {object} params.attempt   finalized QuizAttempt (own answers/snapshots)
- * @param {object} params.quiz      the Mini CCT Quiz doc (title, marking)
+ * @param {object} params.quiz      the Mini GT Quiz doc (title, marking)
  * @param {object[]} params.questions populated quiz.questions (subject → name)
  * @param {object[]} params.cohort  DEDUPED (latest per student) finalized
  *   attempts on the same quiz, INCLUDING the caller's own attempt — the
  *   "database average" convention. Percentile excludes self.
  * @returns the analysis payload (ungated — applyAnalysisAccess strips later)
  */
-function buildMiniCctAnalysis({ attempt, quiz, questions, cohort }) {
+function buildMiniGtAnalysis({ attempt, quiz, questions, cohort }) {
   const positiveMarks = Number.isFinite(Number(quiz.positiveMarks))
     ? Number(quiz.positiveMarks) : DEFAULT_POSITIVE_MARKS;
   const negativeMarks = Math.abs(
@@ -449,7 +449,7 @@ function tagStatus(accuracy, overallAccuracy, attempted) {
 
 function buildInsightMessage({ tier, strongest, needsImprovement, attempted }) {
   if (attempted < 1) {
-    return 'No questions were attempted — take the next Mini CCT to see your strengths.';
+    return 'No questions were attempted — take the next Mini GT to see your strengths.';
   }
   const parts = [];
   if (tier) parts.push(`Overall performance: ${tier.label}.`);
@@ -502,15 +502,15 @@ function applyAnalysisAccess(analysis, { isFreeUser }) {
     access: {
       level: 'limited',
       gatedSections: GATED_SECTIONS,
-      message: 'Full Mini CCT analysis — comparison with the database average, question heatmap and topic/tag deep-dive — is part of the Eyeconic Mentorship program.',
+      message: 'Full Mini GT analysis — comparison with the database average, question heatmap and topic/tag deep-dive — is part of the Eyeconic Mentorship program.',
     },
   };
 }
 
 // ── generation (DB helpers shared by the admin route and the seed script) ──
 
-const MINI_CCT_INSTRUCTIONS = Object.freeze([
-  `This Mini CCT has ${MINI_CCT_TOTAL_QUESTIONS} questions: 10 each from ${MINI_CCT_SUBJECT_NAMES.join(', ')}.`,
+const MINI_GT_INSTRUCTIONS = Object.freeze([
+  `This Mini GT has ${MINI_GT_TOTAL_QUESTIONS} questions: 10 each from ${MINI_GT_SUBJECT_NAMES.join(', ')}.`,
   `Each correct answer earns +${DEFAULT_POSITIVE_MARKS} marks; each incorrect answer loses ${DEFAULT_NEGATIVE_MARKS} mark. Unattempted questions score zero.`,
   `The test runs for ${DEFAULT_DURATION_MINUTES} minutes and submits automatically when the timer ends.`,
   'Your answers save as you go — you can resume exactly where you left off.',
@@ -521,14 +521,14 @@ const MINI_CCT_INSTRUCTIONS = Object.freeze([
  * uses uppercase names). Returns { subjects, missing } where `subjects` is in
  * canonical order with nulls for anything not found.
  */
-async function resolveMiniCctSubjects() {
+async function resolveMiniGtSubjects() {
   const all = await Subject.find({ isActive: true }).lean();
-  const subjects = MINI_CCT_SUBJECT_NAMES.map((name) =>
+  const subjects = MINI_GT_SUBJECT_NAMES.map((name) =>
     all.find((s) => normalizeLabel(s.name).toLowerCase() === name.toLowerCase()) || null
   );
   return {
     subjects,
-    missing: MINI_CCT_SUBJECT_NAMES.filter((_name, i) => !subjects[i]),
+    missing: MINI_GT_SUBJECT_NAMES.filter((_name, i) => !subjects[i]),
   };
 }
 
@@ -537,11 +537,11 @@ async function resolveMiniCctSubjects() {
  * questions that carry at least one concept tag. Never samples a question
  * twice; returns plain docs in sampled order.
  */
-async function sampleMiniCctQuestions(subjectId, count) {
+async function sampleMiniGtQuestions(subjectId, count) {
   const baseMatch = {
     subject: new mongoose.Types.ObjectId(subjectId),
     isActive: true,
-    questionType: { $in: MINI_CCT_QUESTION_TYPES },
+    questionType: { $in: MINI_GT_QUESTION_TYPES },
   };
 
   const tagged = await QuestionBank.aggregate([
@@ -566,17 +566,17 @@ async function sampleMiniCctQuestions(subjectId, count) {
 }
 
 /**
- * Create one Mini CCT Quiz from the bank. Returns
+ * Create one Mini GT Quiz from the bank. Returns
  * { quiz, perSubject, questionCount } or { error: { status, message, code } }.
  *
  * @param {object} [options]
- * @param {string} [options.title]  defaults to "Mini CCT #<n>"
+ * @param {string} [options.title]  defaults to "Mini GT #<n>"
  * @param {number} [options.duration] minutes (default 30)
  * @param {Date} [options.scheduledDate], [options.expiryDate]
  * @param {Function} [options.onCreated] async callback ({ quiz, studentIds })
  *   fired after creation — the admin route uses it for notifications.
  */
-async function createMiniCctQuiz(options = {}) {
+async function createMiniGtQuiz(options = {}) {
   const {
     title,
     duration = DEFAULT_DURATION_MINUTES,
@@ -593,12 +593,12 @@ async function createMiniCctQuiz(options = {}) {
     return { error: { status: 400, message: 'End date must be after start date', code: 'VALIDATION_ERROR' } };
   }
 
-  const { subjects, missing } = await resolveMiniCctSubjects();
+  const { subjects, missing } = await resolveMiniGtSubjects();
   if (missing.length > 0) {
     return {
       error: {
         status: 400,
-        message: `Mini CCT subjects missing from the subject list: ${missing.join(', ')}`,
+        message: `Mini GT subjects missing from the subject list: ${missing.join(', ')}`,
         code: 'SUBJECTS_MISSING',
       },
     };
@@ -609,13 +609,13 @@ async function createMiniCctQuiz(options = {}) {
   const sampled = [];
   const perSubject = [];
   for (const subject of subjects) {
-    const { questions, availability } = await sampleMiniCctQuestions(subject._id, QUESTIONS_PER_SUBJECT);
+    const { questions, availability } = await sampleMiniGtQuestions(subject._id, QUESTIONS_PER_SUBJECT);
     perSubject.push({ subjectName: subject.name, picked: questions.length, availability });
     sampled.push(...questions);
   }
 
   const shortfall = perSubject.filter((row) => row.picked < QUESTIONS_PER_SUBJECT);
-  if (shortfall.length > 0 || sampled.length < MINI_CCT_TOTAL_QUESTIONS) {
+  if (shortfall.length > 0 || sampled.length < MINI_GT_TOTAL_QUESTIONS) {
     return {
       error: {
         status: 400,
@@ -630,8 +630,8 @@ async function createMiniCctQuiz(options = {}) {
 
   let finalTitle = title && String(title).trim();
   if (!finalTitle) {
-    const existing = await Quiz.countDocuments({ testType: MINI_CCT_TEST_TYPE });
-    finalTitle = `${MINI_CCT_TEST_TYPE_LABEL} #${existing + 1}`;
+    const existing = await Quiz.countDocuments({ testType: MINI_GT_TEST_TYPE });
+    finalTitle = `${MINI_GT_TEST_TYPE_LABEL} #${existing + 1}`;
   }
   const titleTaken = await Quiz.exists({
     title: finalTitle,
@@ -643,7 +643,7 @@ async function createMiniCctQuiz(options = {}) {
   }
 
   // assignToAllFreeUsers is the product rule: every free user sees the Mini
-  // CCT in their list (and may start it) even if they signed up after this
+  // GT in their list (and may start it) even if they signed up after this
   // moment. Current free users are also written into assignedStudents for
   // parity with the admin create-from-bank flow (notifications, analytics).
   const freeUsers = await User.find({ role: 'student', isFreeUser: true }).select('_id');
@@ -652,9 +652,9 @@ async function createMiniCctQuiz(options = {}) {
   const quiz = await Quiz.create({
     title: finalTitle,
     subject: subjects[0]._id, // single-ref schema; real per-question subjects drive all analytics
-    testType: MINI_CCT_TEST_TYPE,
+    testType: MINI_GT_TEST_TYPE,
     duration: parsedDuration,
-    instructions: MINI_CCT_INSTRUCTIONS,
+    instructions: MINI_GT_INSTRUCTIONS,
     questions: sampled.map((q) => q._id),
     totalMarks: sampled.length * DEFAULT_POSITIVE_MARKS,
     positiveMarks: DEFAULT_POSITIVE_MARKS,
@@ -679,7 +679,7 @@ async function createMiniCctQuiz(options = {}) {
     try {
       await onCreated({ quiz, studentIds: assignedStudents });
     } catch (error) {
-      console.error('[mini-cct] onCreated callback failed:', error && error.message);
+      console.error('[mini-gt] onCreated callback failed:', error && error.message);
     }
   }
 
@@ -688,30 +688,30 @@ async function createMiniCctQuiz(options = {}) {
 
 module.exports = {
   // constants
-  MINI_CCT_TEST_TYPE,
-  MINI_CCT_TEST_TYPE_LABEL,
-  MINI_CCT_SUBJECT_NAMES,
+  MINI_GT_TEST_TYPE,
+  MINI_GT_TEST_TYPE_LABEL,
+  MINI_GT_SUBJECT_NAMES,
   QUESTIONS_PER_SUBJECT,
-  MINI_CCT_TOTAL_QUESTIONS,
+  MINI_GT_TOTAL_QUESTIONS,
   DEFAULT_DURATION_MINUTES,
-  MINI_CCT_QUESTION_TYPES,
+  MINI_GT_QUESTION_TYPES,
   MAX_CONCEPT_TAGS,
   MIN_COMPARISON_COHORT,
   GATED_SECTIONS,
   FINALIZED_STATUSES,
-  MINI_CCT_INSTRUCTIONS,
+  MINI_GT_INSTRUCTIONS,
   // pure helpers
   normalizeLabel,
   conceptTagsOf,
   classificationFor,
   subjectCountsForAttempt,
-  buildMiniCctAnalysis,
+  buildMiniGtAnalysis,
   applyAnalysisAccess,
   resolveTier,
   tagStatus,
   buildInsightMessage,
   // generation
-  resolveMiniCctSubjects,
-  sampleMiniCctQuestions,
-  createMiniCctQuiz,
+  resolveMiniGtSubjects,
+  sampleMiniGtQuestions,
+  createMiniGtQuiz,
 };
