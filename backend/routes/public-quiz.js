@@ -215,6 +215,16 @@ const findOwnedGuestAttempt = (attemptId, quizId, guestId, guest) => {
     return GuestAttempt.findOne({ _id: attemptId, ...quizClause, guestId });
 };
 
+// Verified-lead block attached to /start responses (create AND resume) so
+// the web client can scope its per-device attempt pointer to the student
+// that actually owns the attempt.
+const leadSummary = (guest) => ({
+    _id: guest._id,
+    name: guest.name,
+    email: guest.email,
+    phoneMasked: maskPhone(guest.phone),
+});
+
 // ============ PUBLIC ROUTES (No Authentication Required) ============
 
 /**
@@ -296,9 +306,9 @@ router.get('/quiz/:shareToken', async (req, res) => {
 /**
  * POST /api/public/quiz/:shareToken/start
  * Start a guest quiz attempt. With a verified guest token (web OTP flow)
- * the attempt is stamped with the lead ref + name/phone snapshot and can be
- * resumed from any device tied to that lead; without one (legacy mobile
- * flow) the device guestId behaves exactly as before.
+ * the attempt is stamped with the lead ref + name/email/phone snapshot and
+ * can be resumed from any device tied to that lead; without one (legacy
+ * mobile flow) the device guestId behaves exactly as before.
  */
 router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
     try {
@@ -330,12 +340,12 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
         // One attempt per identified guest (web OTP flow only — anonymous
         // device-keyed requests carry no identity and skip this check).
         // Runs BEFORE the in-progress resume lookup: if the same person
-        // already finished this quiz — via this lead, a prior phone number
-        // on it, or any lead sharing the OTP-verified email — no new
-        // attempt may be created and a leftover duplicate in-progress
-        // attempt must not be resumed either. Re-verification itself stays
-        // possible (the lead/result routes never come through here), so a
-        // finished guest can still reach their own result.
+        // already finished this quiz — via this lead, or any lead sharing
+        // the OTP-verified email — no new attempt may be created and a
+        // leftover duplicate in-progress attempt must not be resumed
+        // either. Re-verification itself stays possible (the lead/result
+        // routes never come through here), so a finished guest can still
+        // reach their own result.
         if (req.guest) {
             const duplicate = await findCompletedAttemptByIdentity(
                 quiz._id,
@@ -349,16 +359,22 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
             }
         }
 
-        // Check for existing in-progress attempt — same device first, then
-        // (OTP flow) any device under the verified lead. Both lookups sort
-        // OLDEST-first: if duplicate live attempts exist (the pre-fix
-        // concurrent-start race could leave them), every observer resolves
-        // the same survivor instead of an arbitrary one, and the prune below
-        // removes the doomed duplicates so the race is self-healing.
+        // Check for existing in-progress attempt. With a verified lead
+        // (req.guest), ONLY that lead's own attempts — on any device — plus
+        // anonymous (guest:null) attempts on THIS device (legacy mobile flow,
+        // or a web attempt created while the guest token was expired and then
+        // rescued by re-verification) are resumable: a shared browser must
+        // never hand one student another student's live attempt. Anonymous
+        // requests keep the plain device-keyed behavior (legacy mobile flow).
+        // All lookups sort OLDEST-first: if duplicate live attempts exist,
+        // every observer resolves the same survivor instead of an arbitrary
+        // one, and the prune below removes the doomed duplicates so the race
+        // is self-healing.
         const ownerSort = { createdAt: 1, _id: 1 };
         let attempt = await GuestAttempt.findOne({
             quiz: quiz._id,
             guestId,
+            ...(req.guest ? { guest: null } : {}),
             status: 'in_progress'
         }).sort(ownerSort);
 
@@ -370,15 +386,21 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
             }).sort(ownerSort);
 
             // Self-heal duplicates under the lead: keep the oldest live
-            // attempt, delete the rest. Safe against concurrent observers —
-            // everyone sorts the same way, so no observer can be holding a
-            // duplicate this loop deletes (they'd have the oldest too).
+            // attempt, delete the rest. Scoped to the lead's own attempts
+            // (plus anonymous ones on this device) so a second student on a
+            // shared browser can never delete the first student's live work.
+            // Safe against concurrent observers — everyone sorts the same
+            // way, so no observer can be holding a duplicate this loop
+            // deletes (they'd have the oldest too).
             if (attempt) {
                 await GuestAttempt.deleteMany({
                     quiz: quiz._id,
                     status: 'in_progress',
                     _id: { $ne: attempt._id },
-                    $or: [{ guestId: attempt.guestId }, { guest: req.guest._id }],
+                    $or: [
+                        { guestId: attempt.guestId, guest: null },
+                        { guest: req.guest._id },
+                    ],
                 });
             }
         }
@@ -404,13 +426,18 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
                         success: true,
                         message: 'This quiz attempt has ended and has been submitted',
                         attemptFinalized: true,
-                        status: synced.attempt?.status || 'auto_submitted'
+                        status: synced.attempt?.status || 'auto_submitted',
+                        // The finalized attempt's own id — the client routes
+                        // to its result page without guessing from storage.
+                        attemptId: synced.attempt?._id || attempt._id,
+                        ...(req.guest ? { lead: leadSummary(req.guest) } : {}),
                     });
                 }
 
                 return res.json({
                     success: true,
                     message: 'Resuming existing attempt',
+                    ...(req.guest ? { lead: leadSummary(req.guest) } : {}),
                     attempt: {
                         _id: synced.attempt._id,
                         startTime: synced.attempt.startTime,
@@ -447,6 +474,7 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
             return res.json({
                 success: true,
                 message: 'Resuming existing attempt',
+                ...(req.guest ? { lead: leadSummary(req.guest) } : {}),
                 attempt: {
                     _id: attempt._id,
                     startTime: attempt.startTime,
@@ -516,11 +544,16 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
         // resume-findOne lands between another racer's save and its
         // self-delete can observe the doomed duplicate — every observer now
         // sorts oldest-first, so it resolves the survivor on its next
-        // request.)
+        // request.) Scoped to the caller's OWN attempts (lead's, plus
+        // anonymous ones on this device) so two different students starting
+        // on one shared browser never delete or adopt each other's work.
         const liveIds = await GuestAttempt.find({
             quiz: quiz._id,
             status: 'in_progress',
-            $or: [{ guestId }, ...(req.guest ? [{ guest: req.guest._id }] : [])],
+            $or: [
+                { guestId, ...(req.guest ? { guest: null } : {}) },
+                ...(req.guest ? [{ guest: req.guest._id }] : []),
+            ],
         })
             .select('_id')
             .sort({ createdAt: 1, _id: 1 })
@@ -541,14 +574,7 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
         res.status(201).json({
             success: true,
             message: 'Quiz started',
-            ...(req.guest ? {
-                lead: {
-                    _id: req.guest._id,
-                    name: req.guest.name,
-                    email: req.guest.email,
-                    phoneMasked: maskPhone(req.guest.phone)
-                }
-            } : {}),
+            ...(req.guest ? { lead: leadSummary(req.guest) } : {}),
             attempt: {
                 _id: attempt._id,
                 startTime: attempt.startTime,

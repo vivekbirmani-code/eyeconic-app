@@ -167,10 +167,97 @@ const migrateGuestOtpCollection = async () => {
   }
 };
 
+// One-time migration for the guest-identity fix: leads used to be deduped by
+// their (unverified) phone, which fused household members sharing a number
+// into one identity. Identity is now the OTP-verified email. On existing
+// deployments this migration (a) merges legacy duplicate-email leads into
+// their oldest representative — re-pointing GuestAttempt.guest refs and
+// merging quizzesTaken/consent — and (b) swaps the legacy indexes
+// (unique `phone_1`, non-unique `email_1`) for the new named ones the
+// schema builds (`guest_email_unique_1` unique, `guest_phone_lookup_1`).
+// Idempotent: guarded on what actually exists, so later boots no-op.
+const migrateGuestIdentityIndexes = async () => {
+  try {
+    const collection = mongoose.connection.collection('guests');
+
+    // (a) Merge duplicate-email leads BEFORE the unique index exists —
+    // otherwise the index build fails and every verify 500s.
+    const duplicates = await collection.aggregate([
+      { $match: { email: { $nin: [null, ''] } } },
+      { $group: { _id: '$email', ids: { $push: '$_id' }, count: { $sum: 1 } } },
+      { $match: { count: { $gt: 1 } } },
+    ]).toArray();
+
+    for (const group of duplicates) {
+      // Oldest doc wins (first-verified identity; keeps firstQuiz semantics).
+      const docs = await collection
+        .find({ _id: { $in: group.ids } })
+        .sort({ createdAt: 1, _id: 1 })
+        .toArray();
+      const keeper = docs[0];
+      const dupes = docs.slice(1).map((d) => d._id);
+
+      // Re-point attempt ownership from the merged-away duplicates to the
+      // keeper — on the ATTEMPTS collection, not the leads collection.
+      await mongoose.connection.collection('guestattempts').updateMany(
+        { guest: { $in: dupes } },
+        { $set: { guest: keeper._id } }
+      );
+
+      // Dedupe by string key but keep the ORIGINAL ObjectIds — quizzesTaken
+      // is an ObjectId ref array and must not gain string entries.
+      const mergedQuizzes = [
+        ...docs.flatMap((d) => (Array.isArray(d.quizzesTaken) ? d.quizzesTaken : []))
+          .reduce((byValue, id) => byValue.set(String(id), id), new Map())
+          .values(),
+      ];
+      const anyConsent = docs.some((d) => d.marketingConsent?.granted === true);
+      await collection.updateOne(
+        { _id: keeper._id },
+        {
+          $set: {
+            ...(anyConsent && keeper.marketingConsent?.granted !== true
+              ? { 'marketingConsent.granted': true, 'marketingConsent.updatedAt': new Date() }
+              : {}),
+            ...(keeper.firstQuiz ? {} : { firstQuiz: docs.find((d) => d.firstQuiz)?.firstQuiz ?? null }),
+          },
+          ...(mergedQuizzes.length > 0
+            ? { $addToSet: { quizzesTaken: { $each: mergedQuizzes } } }
+            : {}),
+        }
+      );
+
+      await collection.deleteMany({ _id: { $in: dupes } });
+      logger.info('Merged duplicate-email guest leads', {
+        email: group._id,
+        kept: String(keeper._id),
+        mergedAway: dupes.map(String),
+      });
+    }
+
+    // (b) Index swap. Mongoose builds the new named indexes itself; here we
+    // only drop the legacy ones and make sure the unique email index landed
+    // (its auto-build can fail if it raced this migration's merge).
+    for (const name of ['phone_1', 'email_1']) {
+      if (await collection.indexExists(name)) {
+        await collection.dropIndex(name);
+        logger.info('Dropped legacy guest index', { index: name });
+      }
+    }
+    await collection.createIndex(
+      { email: 1 },
+      { unique: true, name: 'guest_email_unique_1' }
+    );
+  } catch (error) {
+    logger.warn('Guest identity-index migration skipped', { errorMessage: error.message });
+  }
+};
+
 const startDatabase = async () => {
   try {
     await connectDatabase(async () => {
       await migrateGuestOtpCollection();
+      await migrateGuestIdentityIndexes();
       cleanupExpiredMedia();
       setInterval(cleanupExpiredMedia, 24 * 60 * 60 * 1000);
     });

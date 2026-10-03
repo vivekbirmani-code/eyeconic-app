@@ -302,7 +302,7 @@ describe('Guest lead OTP flow', () => {
     expect(lead.marketingConsent.granted).toBe(false);
   });
 
-  it('one phone on two quizzes (with a new email) resolves to ONE lead with the latest verified email', async () => {
+  it('one EMAIL on two quizzes (with a new phone) resolves to ONE lead with the latest contact info', async () => {
     const { quiz: otherQuiz } = await setupPublicQuiz(admin, subject, 'Second Public Quiz');
     // Verify on quiz A.
     await sendOtp(quiz.shareToken, leadPayload({ marketingConsent: false }));
@@ -311,25 +311,50 @@ describe('Guest lead OTP flow', () => {
     const resA = await verifyOtp(quiz.shareToken, { ...leadPayload({ marketingConsent: false }), otp: otpA });
     expect(resA.status).toBe(200);
 
-    // Verify on quiz B (fresh challenge, same phone, updated email).
+    // Verify on quiz B (fresh challenge, same verified email, updated phone).
     resetGuestOtpRateLimits();
-    await sendOtp(otherQuiz.shareToken, leadPayload({ name: 'Rahul S.', email: 'rahul.updated@example.com', marketingConsent: true }));
+    await sendOtp(otherQuiz.shareToken, leadPayload({ name: 'Rahul S.', phone: '+919812345678', marketingConsent: true }));
     const otpB = sentOtps[sentOtps.length - 1].otp;
     const resB = await verifyOtp(otherQuiz.shareToken, {
-      ...leadPayload({ name: 'Rahul S.', email: 'rahul.updated@example.com', marketingConsent: true }),
+      ...leadPayload({ name: 'Rahul S.', phone: '+919812345678', marketingConsent: true }),
       otp: otpB,
     });
     expect(resB.status).toBe(200);
 
-    const leads = await Guest.find({ phone: '+919876543210' });
+    const leads = await Guest.find({ email: 'rahul.sharma@example.com' });
     expect(leads).toHaveLength(1);
     expect(leads[0].name).toBe('Rahul S.'); // latest info wins
-    expect(leads[0].email).toBe('rahul.updated@example.com'); // latest verified email wins
+    expect(leads[0].phone).toBe('+919812345678'); // latest contact number wins
     expect(leads[0].marketingConsent.granted).toBe(true); // latest consent wins
     expect(leads[0].quizzesTaken.map(String)).toHaveLength(2);
     expect(leads[0].quizzesTaken.map(String).sort()).toEqual(
       [String(quiz._id), String(otherQuiz._id)].sort()
     );
+  });
+
+  it('does NOT fuse two people sharing one phone (household number) into one lead', async () => {
+    // The phone is unverified contact metadata — two students in one family
+    // share it but verify their OWN email addresses: two separate leads.
+    await sendOtp(quiz.shareToken, leadPayload({ name: 'Elder Sibling', email: 'elder.sibling@example.com' }));
+    const otpElder = sentOtps[sentOtps.length - 1].otp;
+    const elder = await verifyOtp(quiz.shareToken, {
+      ...leadPayload({ name: 'Elder Sibling', email: 'elder.sibling@example.com' }),
+      otp: otpElder,
+    });
+    expect(elder.status).toBe(200);
+
+    resetGuestOtpRateLimits();
+    await sendOtp(quiz.shareToken, leadPayload({ name: 'Younger Sibling', email: 'younger.sibling@example.com' }));
+    const otpYounger = sentOtps[sentOtps.length - 1].otp;
+    const younger = await verifyOtp(quiz.shareToken, {
+      ...leadPayload({ name: 'Younger Sibling', email: 'younger.sibling@example.com' }),
+      otp: otpYounger,
+    });
+    expect(younger.status).toBe(200);
+
+    expect(String(younger.body.guest._id)).not.toBe(String(elder.body.guest._id));
+    const leads = await Guest.find({ phone: '+919876543210' });
+    expect(leads).toHaveLength(2);
   });
 
   it('enforces the per-email send rate limit (3 / 10 min) and resend cooldown', async () => {

@@ -171,6 +171,9 @@ export interface StartAttemptResponse {
   success: boolean;
   message: string;
   attemptFinalized?: boolean;
+  // Present on attemptFinalized responses: the finalized attempt's own id,
+  // so the client routes to THIS guest's result without guessing.
+  attemptId?: string;
   status?: string;
   lead?: { _id: string; name: string; email: string | null; phoneMasked: string };
   attempt: {
@@ -201,24 +204,37 @@ export interface GuestLead {
 
 // ---------- attempt pointer (localStorage) ----------
 // Kept so a refresh mid-quiz — or an attempt finalized while away — can
-// still find the attemptId for the result page.
+// still find the attemptId for the result page. The pointer is SCOPED to the
+// verified guest that owns the attempt (`guestRef`): this browser's storage
+// is shared by every student who uses it, and an unscoped pointer let the
+// second student get routed to the first student's result. Pointers written
+// before the guestRef existed (or by the anonymous legacy flow, which has no
+// lead) carry none and stay readable — the entry page drops the pointer on
+// every fresh verification, which is the real gate; this scoping is defense
+// in depth on top of the server's lead-scoped routing.
 
 const ATTEMPT_STORAGE_KEY = 'eyeconic_public_attempt';
 
-export const rememberAttempt = (shareToken: string, attemptId: string): void => {
+export const rememberAttempt = (shareToken: string, attemptId: string, guestRef?: string | null): void => {
   try {
-    localStorage.setItem(ATTEMPT_STORAGE_KEY, JSON.stringify({ shareToken, attemptId }));
+    localStorage.setItem(
+      ATTEMPT_STORAGE_KEY,
+      JSON.stringify({ shareToken, attemptId, guestRef: guestRef ?? null })
+    );
   } catch {
     /* storage unavailable — resume still works via the server */
   }
 };
 
-export const recallAttemptId = (shareToken: string): string | null => {
+export const recallAttemptId = (shareToken: string, guestRef?: string | null): string | null => {
   try {
     const raw = localStorage.getItem(ATTEMPT_STORAGE_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as { shareToken: string; attemptId: string };
-    return parsed.shareToken === shareToken ? parsed.attemptId : null;
+    const parsed = JSON.parse(raw) as { shareToken: string; attemptId: string; guestRef?: string | null };
+    if (parsed.shareToken !== shareToken) return null;
+    // A pointer owned by a DIFFERENT verified guest is not ours to use.
+    if (guestRef && parsed.guestRef && parsed.guestRef !== guestRef) return null;
+    return parsed.attemptId;
   } catch {
     return null;
   }

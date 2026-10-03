@@ -162,25 +162,51 @@ describe('Public quiz one-attempt-per-person restriction', () => {
     expect(resume.body.attempt._id).toBe(start.body.attempt._id);
   });
 
-  it('blocks a repeat under a DIFFERENT lead when the OTP-verified email matches (case-insensitive)', async () => {
+  it('blocks a repeat when the OTP-verified email matches (case-insensitive) — same lead keeps its own result', async () => {
     const { quiz, questions } = await setupPublicQuiz(admin, subject);
     const { guestToken } = await verifyLead(quiz);
     const start = await startAttempt(quiz, guestToken);
     await submitAttempt(quiz, guestToken, start.body.attempt._id, questions);
 
-    // Same person, new phone number -> a brand-new lead document, but the
-    // same (verified) email in a different case must still be recognized.
+    // Same person, new phone number, tweaked name, different email case —
+    // the email-keyed verify resolves to the SAME lead, and the restriction
+    // still holds. sameLead => the attempt id is exposed so the client can
+    // route them to their own result.
     const second = await verifyLead(quiz, {
       name: 'Rahul S', // tweaked name must not matter
       email: 'RAHUL.SHARMA@example.com',
       phone: '+919812345678',
     });
+    expect(String(second.lead._id)).toBe(String((await Guest.findOne({ email: 'rahul.sharma@example.com' }))._id));
 
     const restart = await startAttempt(quiz, second.guestToken, 'second-device');
     expect(restart.status).toBe(409);
     expect(restart.body.code).toBe('QUIZ_ALREADY_ATTEMPTED');
-    // Cross-lead match: the existing attempt belongs to another lead, so its
-    // id is NOT exposed to this caller (the result route is lead-scoped).
+    expect(restart.body.attemptId).toBe(start.body.attempt._id);
+  });
+
+  it('cross-lead email matches (legacy rows) block WITHOUT exposing the other lead\'s attempt id', async () => {
+    const { quiz, questions } = await setupPublicQuiz(admin, subject);
+    const { guestToken } = await verifyLead(quiz);
+    const start = await startAttempt(quiz, guestToken);
+    await submitAttempt(quiz, guestToken, start.body.attempt._id, questions);
+
+    // Legacy shape: a finalized attempt whose snapshot matches this email
+    // but belongs to a DIFFERENT lead (pre-email-keying data). The
+    // restriction applies; the id stays private (result route is
+    // lead-scoped, so it would be useless to the caller anyway).
+    const legacyLead = await Guest.create({
+      name: 'Legacy Lead', email: 'legacy.someone@example.com', phone: '+919800000001',
+    });
+    await GuestAttempt.updateOne(
+      { _id: start.body.attempt._id },
+      { $set: { guest: legacyLead._id } }
+    );
+    void questions;
+
+    const second = await verifyLead(quiz, { email: 'rahul.sharma@example.com', phone: '+919899999999' });
+    const restart = await startAttempt(quiz, second.guestToken);
+    expect(restart.status).toBe(409);
     expect(restart.body.attemptId).toBeUndefined();
   });
 
@@ -202,20 +228,27 @@ describe('Public quiz one-attempt-per-person restriction', () => {
     expect(restart.status).toBe(409);
   });
 
-  it('matches a lead that changed its email but kept the phone (lead ref / phone keys)', async () => {
+  it('does NOT fuse household members: same phone, different verified email => a separate person', async () => {
     const { quiz, questions } = await setupPublicQuiz(admin, subject);
-    const first = await verifyLead(quiz, { email: 'old-mail@example.com', phone: '+919876500001' });
+    const first = await verifyLead(quiz, { email: 'elder.sibling@example.com', phone: '+919876500001' });
     const start = await startAttempt(quiz, first.guestToken);
     await submitAttempt(quiz, first.guestToken, start.body.attempt._id, questions);
 
-    // Same phone -> the verify upsert resolves to the SAME lead, now with a
-    // new verified email; the restriction must survive the email change.
-    const second = await verifyLead(quiz, { email: 'new-mail@example.com', phone: '+919876500001' });
-    expect(String(second.lead._id)).toBe(String(first.lead._id));
+    // The younger sibling shares the family phone but has their own verified
+    // email — a DIFFERENT person with their own attempt and result. (The
+    // phone is unverified contact metadata, never identity.)
+    const second = await verifyLead(quiz, { name: 'Younger Sibling', email: 'younger.sibling@example.com', phone: '+919876500001' });
+    expect(String(second.lead._id)).not.toBe(String(first.lead._id));
 
-    const restart = await startAttempt(quiz, second.guestToken);
-    expect(restart.status).toBe(409);
-    expect(restart.body.attemptId).toBe(start.body.attempt._id);
+    const fresh = await startAttempt(quiz, second.guestToken);
+    expect(fresh.status).toBe(201);
+    expect(fresh.body.attempt._id).not.toBe(start.body.attempt._id);
+
+    // And the sibling's token cannot see the first student's result.
+    const cross = await request(app)
+      .get(`/api/public/quiz/${quiz.shareToken}/attempt/${start.body.attempt._id}/result`)
+      .set('Authorization', `Bearer ${second.guestToken}`);
+    expect(cross.status).toBe(404);
   });
 
   it('does NOT block a namesake: same name, different email and phone', async () => {
@@ -251,32 +284,41 @@ describe('Public quiz one-attempt-per-person restriction', () => {
   it('refuses the loser of two concurrently-started attempts at submit time', async () => {
     const { quiz, questions } = await setupPublicQuiz(admin, subject);
 
-    // Two leads sharing one OTP-verified email (family mailbox / fraud
-    // shape). Both start BEFORE either finishes — the start gate sees no
-    // finalized attempt yet, so two live attempts exist (the documented
-    // residual race this defense closes).
-    const leadA = await verifyLead(quiz, { email: 'shared@example.com', phone: '+919876111111' });
-    const leadB = await verifyLead(quiz, { email: 'shared@example.com', phone: '+919876222222' });
-    const attemptA = await startAttempt(quiz, leadA.guestToken, 'device-a');
-    const attemptB = await startAttempt(quiz, leadB.guestToken, 'device-b');
+    // The same person can end up with two LIVE attempts when both starts
+    // land before either saves (double tab / two tabs / the pre-fix
+    // concurrent-start race residue). The email-keyed verify can no longer
+    // produce two leads for one mailbox, so the duplicate live attempt is
+    // seeded directly — exactly the state this submit-time defense closes.
+    const lead = await verifyLead(quiz, { email: 'shared@example.com', phone: '+919876111111' });
+    const attemptA = await startAttempt(quiz, lead.guestToken, 'device-a');
     expect(attemptA.status).toBe(201);
-    expect(attemptB.status).toBe(201);
+    const attemptB = await GuestAttempt.create({
+      quiz: quiz._id,
+      guestId: 'device-b',
+      guest: lead.lead._id,
+      guestName: lead.lead.name,
+      guestEmail: lead.lead.email,
+      guestPhone: lead.lead.phone,
+      totalQuestions: questions.length,
+      totalMarks: 12,
+      answers: questions.map((q, i) => ({ questionIndex: i, questionId: q._id, selectedAnswer: -1 })),
+    });
 
     // A finalizes first and wins.
-    const submitA = await submitAttempt(quiz, leadA.guestToken, attemptA.body.attempt._id, questions, 'device-a');
+    const submitA = await submitAttempt(quiz, lead.guestToken, attemptA.body.attempt._id, questions, 'device-a');
     expect(submitA.status).toBe(200);
 
-    // B's submit is refused instead of producing a second graded result.
-    const submitB = await submitAttempt(quiz, leadB.guestToken, attemptB.body.attempt._id, questions, 'device-b');
+    // The duplicate's submit is refused instead of producing a second graded result.
+    const submitB = await submitAttempt(quiz, lead.guestToken, attemptB._id, questions, 'device-b');
     expect(submitB.status).toBe(409);
     expect(submitB.body.code).toBe('QUIZ_ALREADY_ATTEMPTED');
 
-    // Exactly one finalized attempt exists; B's duplicate stays ungraded.
+    // Exactly one finalized attempt exists; the duplicate stays ungraded.
     const finalized = await GuestAttempt.countDocuments({ quiz: quiz._id, status: { $in: ['completed', 'auto_submitted'] } });
     expect(finalized).toBe(1);
 
-    // B cannot start yet another attempt either.
-    const restartB = await startAttempt(quiz, leadB.guestToken, 'device-b2');
+    // The same person cannot start yet another attempt either.
+    const restartB = await startAttempt(quiz, lead.guestToken, 'device-b2');
     expect(restartB.status).toBe(409);
   });
 
@@ -358,15 +400,33 @@ describe('Public quiz one-attempt-per-person restriction', () => {
   it('refuses a section submit on an in-progress duplicate once the same person finalized elsewhere', async () => {
     const { quiz, questions } = await setupPublicQuiz(admin, subject, { sections: true });
 
-    const leadA = await verifyLead(quiz, { email: 'shared@example.com', phone: '+919876111111' });
-    const leadB = await verifyLead(quiz, { email: 'shared@example.com', phone: '+919876222222' });
+    const lead = await verifyLead(quiz, { email: 'shared@example.com', phone: '+919876111111' });
 
-    // Both start while nothing is finalized yet (the residual concurrent
-    // window the start gate cannot see).
-    const attemptA = await startAttempt(quiz, leadA.guestToken, 'device-a');
-    const attemptB = await startAttempt(quiz, leadB.guestToken, 'device-b');
+    // Live attempt A via the API, plus a seeded duplicate under the SAME
+    // person (the concurrent-start residue this defense closes — the
+    // email-keyed verify can no longer construct it through two leads).
+    const attemptA = await startAttempt(quiz, lead.guestToken, 'device-a');
     expect(attemptA.status).toBe(201);
-    expect(attemptB.status).toBe(201);
+    const attemptB = await GuestAttempt.create({
+      quiz: quiz._id,
+      guestId: 'device-b',
+      guest: lead.lead._id,
+      guestName: lead.lead.name,
+      guestEmail: lead.lead.email,
+      guestPhone: lead.lead.phone,
+      totalQuestions: questions.length,
+      totalMarks: 12,
+      sectionLockEnabled: true,
+      sectionDefinitions: [
+        { index: 0, name: 'Section A', duration: 5, questionIds: [questions[0]._id, questions[1]._id] },
+        { index: 1, name: 'Section B', duration: 5, questionIds: [questions[2]._id] },
+      ],
+      sectionStates: [
+        { index: 0, status: 'in_progress', startedAt: new Date(), endsAt: new Date(Date.now() + 5 * 60 * 1000) },
+        { index: 1, status: 'in_progress', startedAt: null, endsAt: null },
+      ],
+      answers: questions.map((q, i) => ({ questionIndex: i, questionId: q._id, selectedAnswer: -1 })),
+    });
 
     // A completes the whole quiz section-by-section.
     for (const [index, answers] of [
@@ -375,17 +435,18 @@ describe('Public quiz one-attempt-per-person restriction', () => {
     ]) {
       const res = await request(app)
         .post(`/api/public/quiz/${quiz.shareToken}/sections/${index}/submit`)
-        .set('Authorization', `Bearer ${leadA.guestToken}`)
+        .set('Authorization', `Bearer ${lead.guestToken}`)
         .send({ guestId: 'device-a', attemptId: attemptA.body.attempt._id, answers });
       expect(res.status).toBe(200);
     }
 
-    // B was mid-quiz the whole time (started before A finished); their next
-    // section submit must be refused, not graded into a second result.
+    // The duplicate was mid-quiz the whole time (started before the other
+    // finished); its next section submit must be refused, not graded into a
+    // second result.
     const res = await request(app)
       .post(`/api/public/quiz/${quiz.shareToken}/sections/0/submit`)
-      .set('Authorization', `Bearer ${leadB.guestToken}`)
-      .send({ guestId: 'device-b', attemptId: attemptB.body.attempt._id, answers: [] });
+      .set('Authorization', `Bearer ${lead.guestToken}`)
+      .send({ guestId: 'device-b', attemptId: attemptB._id, answers: [] });
     expect(res.status).toBe(409);
     expect(res.body.code).toBe('QUIZ_ALREADY_ATTEMPTED');
 

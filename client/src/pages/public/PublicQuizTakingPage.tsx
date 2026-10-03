@@ -77,6 +77,10 @@ export default function PublicQuizTakingPage() {
   const lastAutoSubmitRef = useRef(0);
   const questionStartRef = useRef<number>(Date.now());
   const currentRef = useRef(0);
+  // The verified lead owning this attempt (null for the anonymous legacy
+  // flow). Scopes the localStorage attempt pointer so a second student on
+  // this shared browser is never routed to the first student's result.
+  const leadIdRef = useRef<string | null>(null);
   answersRef.current = answers;
   markedRef.current = markedForReview;
   currentRef.current = current;
@@ -100,13 +104,24 @@ export default function PublicQuizTakingPage() {
         const response = await publicQuizApi.start(token, guestId);
         if (cancelled) return;
         const data = response.data;
+        // The web flow is always OTP-identified — /start responses carry the
+        // verified lead. If we hold a stored token but got no lead back, the
+        // token no longer authenticates: end the session and re-verify rather
+        // than silently continuing anonymous/device-keyed (which on a shared
+        // browser could mean touching the previous student's attempt).
+        if (!data.lead && getGuestToken()) {
+          handleSessionExpired();
+          navigate(`/public-quiz/${token}`, { replace: true });
+          return;
+        }
+        leadIdRef.current = data.lead?._id ?? null;
         if (data.attemptFinalized) {
-          // Prefer the localStorage pointer; fall back to the server-returned
-          // attempt ID so we always route to the result even if forgetAttempt()
-          // cleared the pointer (e.g. the student re-verified after session
-          // expiry on the result page, came back here, and the localStorage
-          // key was already cleared by the previous result page visit).
-          const attemptId = recallAttemptId(token) || data.attempt?._id;
+          // Prefer the server-returned attempt ID (the server just resolved
+          // WHICH attempt finalized — always this guest's own); fall back to
+          // this guest's scoped localStorage pointer. An unscoped pointer
+          // must never be used: on a shared browser it can belong to a
+          // previous, different student.
+          const attemptId = data.attemptId || data.attempt?._id || recallAttemptId(token, leadIdRef.current);
           if (attemptId) {
             navigate(`/public-quiz/${token}/result/${attemptId}`, { replace: true });
           } else {
@@ -123,7 +138,7 @@ export default function PublicQuizTakingPage() {
           return;
         }
 
-        rememberAttempt(token, data.attempt._id);
+        rememberAttempt(token, data.attempt._id, leadIdRef.current);
         if (data.attempt.serverNow) {
           setServerClockOffset(Date.now() - new Date(data.attempt.serverNow).getTime());
         }
@@ -169,7 +184,7 @@ export default function PublicQuizTakingPage() {
         // same lead, or this device's stored pointer); otherwise surface
         // the message.
         if (extracted?.code === 'QUIZ_ALREADY_ATTEMPTED') {
-          const existingId = extracted.attemptId || recallAttemptId(token);
+          const existingId = extracted.attemptId || recallAttemptId(token, leadIdRef.current);
           if (existingId) {
             navigate(`/public-quiz/${token}/result/${existingId}`, {
               replace: true,
@@ -418,11 +433,11 @@ export default function PublicQuizTakingPage() {
   // Duplicate-attempt resolution: the server refused a submit because the
   // same person already finalized an attempt on this quiz. Their first
   // submission stands — route to it when we can resolve its ID (the server
-  // returns it for the same lead; this device's stored pointer otherwise),
-  // or just explain.
+  // returns it for the same lead; this guest's scoped stored pointer
+  // otherwise — never another student's unscoped pointer), or just explain.
   const handleAlreadyAttempted = useCallback(
     (extracted: { attemptId?: string; message?: string } | undefined): void => {
-      const existingId = extracted?.attemptId || recallAttemptId(token);
+      const existingId = extracted?.attemptId || recallAttemptId(token, leadIdRef.current);
       if (existingId) {
         goToResult(existingId, { alreadyAttempted: true });
         return;

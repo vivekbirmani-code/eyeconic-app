@@ -373,7 +373,7 @@ describe('Guest attempts with verified leads', () => {
       const { quiz } = await setupPublicQuiz(admin, subject);
       const { guestToken: tokenA } = await verifyLead(quiz, { phone: '+919876543210' });
       resetGuestOtpRateLimits();
-      const { guestToken: tokenB } = await verifyLead(quiz, { phone: '+919876543211' });
+      const { guestToken: tokenB } = await verifyLead(quiz, { name: 'Amit Kumar', email: 'amit.kumar@example.com', phone: '+919876543211' });
 
       const start = await request(app)
         .post(`/api/public/quiz/${quiz.shareToken}/start`)

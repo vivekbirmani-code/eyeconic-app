@@ -126,8 +126,8 @@ router.post('/quiz/:shareToken/lead/send-otp', guestOtpSendRateLimit, async (req
 /**
  * POST /api/public/quiz/:shareToken/lead/verify-otp
  * Step 2 — verifies the code against the SAME (email, link) challenge it
- * was issued for, then upserts the lead keyed by phone and issues a guest
- * session token. Failed verifications never create a lead.
+ * was issued for, then upserts the lead keyed by the verified email and
+ * issues a guest session token. Failed verifications never create a lead.
  */
 router.post('/quiz/:shareToken/lead/verify-otp', guestOtpVerifyRateLimit, async (req, res) => {
   try {
@@ -178,13 +178,17 @@ router.post('/quiz/:shareToken/lead/verify-otp', guestOtpVerifyRateLimit, async 
     });
     clearGuestVerifyAttempts(email);
 
-    // Upsert the lead keyed by the verified contact's phone — the same
-    // person on a new quiz resolves to the same document, with the latest
-    // verified email recorded on it.
+    // Upsert the lead keyed by the OTP-VERIFIED email — the same person on a
+    // new quiz (or a new device) resolves to the same document, with the
+    // latest verified name/phone recorded on it. The phone is deliberately
+    // NOT the key: it is unverified contact metadata, and households commonly
+    // share one number — keying by it fused two different students into a
+    // single identity (the shared-lead session-isolation bug: the second
+    // student was treated as the first and routed to their result).
     const leadUpdate = {
       $set: {
         name,
-        email,
+        phone,
         emailVerifiedAt: new Date(),
         lastActiveAt: new Date(),
         'marketingConsent.granted': marketingConsent,
@@ -196,15 +200,15 @@ router.post('/quiz/:shareToken/lead/verify-otp', guestOtpVerifyRateLimit, async 
 
     let guest;
     try {
-      guest = await Guest.findOneAndUpdate({ phone }, leadUpdate, {
+      guest = await Guest.findOneAndUpdate({ email }, leadUpdate, {
         upsert: true,
         new: true,
         setDefaultsOnInsert: true,
       });
     } catch (upsertError) {
-      // Two concurrent first-time verifies can race the unique phone index.
+      // Two concurrent first-time verifies can race the unique email index.
       if (upsertError?.code === 11000 || upsertError?.message?.includes('duplicate key')) {
-        guest = await Guest.findOneAndUpdate({ phone }, leadUpdate, { new: true });
+        guest = await Guest.findOneAndUpdate({ email }, leadUpdate, { new: true });
       } else {
         throw upsertError;
       }

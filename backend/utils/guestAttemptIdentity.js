@@ -2,26 +2,26 @@ const GuestAttempt = require('../models/GuestAttempt');
 
 // One-attempt-per-person enforcement for PUBLIC quizzes.
 //
-// Identity model: a guest is recognised by their verified contact keys —
+// Identity model: a guest is recognised by their OTP-VERIFIED identity —
 //   • the lead ref (`guest`) — the Guest document, deduped by its unique
-//     E.164 phone, so "same phone" already means "same lead" app-wide;
+//     verified email, so "same email" already means "same lead" app-wide;
 //   • the OTP-verified email (matched case/whitespace-insensitively so
-//     "John@Gmail.com " cannot dodge "john@gmail.com");
-//   • the normalized E.164 phone.
-// Matching ANY one of them means the same person for restriction purposes:
-// the same student re-entering their details (even with a new phone number
-// or a tweaked name) is still caught by the email, and a lead that merely
-// changed its email is still caught by the phone / lead ref.
+//     "John@Gmail.com " cannot dodge "john@gmail.com").
+// Matching either means the same person for restriction purposes: the same
+// student re-entering their details (even with a new phone number or a
+// tweaked name) is still caught by the verified email / lead ref.
 //
-// The NAME is deliberately NOT a standalone match key: distinct students
-// commonly share a name, so name-only matching would block legitimate
-// first attempts (false positives). Wherever a name participates in a
-// comparison it must be trimmed + case/collapse-whitespace normalized —
-// a name difference never overrides a contact-key match.
+// The PHONE is deliberately NOT a match key: it is unverified contact
+// metadata since the email-OTP switch, and households commonly share one
+// number — phone matching fused two different students (brothers on a
+// family number) into one identity and routed the second student to the
+// first's result. The NAME is likewise not a standalone match key: distinct
+// students commonly share a name, so name-only matching would block
+// legitimate first attempts (false positives).
 //
-// Legacy anonymous attempts (no lead ref, no name/email/phone snapshot)
-// contribute no clauses and therefore never match — the device-keyed
-// mobile flow keeps working exactly as before.
+// Legacy anonymous attempts (no lead ref, no email snapshot) contribute no
+// clauses and therefore never match — the device-keyed mobile flow keeps
+// working exactly as before.
 
 const FINALIZED_STATUSES = ['completed', 'auto_submitted'];
 
@@ -41,20 +41,17 @@ const caseInsensitiveExact = (value) => new RegExp(`^\\s*${escapeRegex(value)}\\
 const identityFromLead = (lead) => ({
   guestId: lead ? lead._id : null,
   email: typeof lead?.email === 'string' ? lead.email.trim() : null,
-  phone: typeof lead?.phone === 'string' ? lead.phone.trim() : null,
 });
 
 const identityFromAttempt = (attempt) => ({
   guestId: attempt?.guest || null,
   email: typeof attempt?.guestEmail === 'string' ? attempt.guestEmail.trim() : null,
-  phone: typeof attempt?.guestPhone === 'string' ? attempt.guestPhone.trim() : null,
 });
 
 const buildIdentityClauses = (identity) => {
   const clauses = [];
   if (identity.guestId) clauses.push({ guest: identity.guestId });
   if (identity.email) clauses.push({ guestEmail: caseInsensitiveExact(identity.email) });
-  if (identity.phone) clauses.push({ guestPhone: identity.phone });
   return clauses;
 };
 

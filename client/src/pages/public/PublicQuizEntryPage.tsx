@@ -14,7 +14,7 @@ import {
   Users,
 } from 'lucide-react';
 import { publicQuizApi, usePublicQuiz } from '../../contexts/PublicQuizContext';
-import { setGuestToken, getPublicApiError } from '../../services/publicApi';
+import { setGuestToken, forgetAttempt, getPublicApiError } from '../../services/publicApi';
 
 const RESEND_COOLDOWN_SECONDS = 60;
 
@@ -145,6 +145,13 @@ export default function PublicQuizEntryPage() {
       });
       setGuestToken(response.data.guestToken);
       setLead(response.data.guest);
+      // localStorage on this browser is shared by every student who uses it.
+      // A freshly verified guest — especially a SECOND student following a
+      // sibling on the same device — must not inherit the previous
+      // student's attempt pointer: it is only a result-page redirect aid,
+      // and every redirect decision below is re-derived from THIS guest's
+      // server responses. Mid-quiz resume stays server-authoritative.
+      forgetAttempt();
 
       // One attempt per person: this lead already finished THIS quiz. With
       // a viewable attempt (same lead) go straight to its result; otherwise
