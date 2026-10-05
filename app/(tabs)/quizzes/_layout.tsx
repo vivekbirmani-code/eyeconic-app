@@ -15,6 +15,7 @@ export default function QuizzesLayout() {
                 server's predictor API (student CTA on the dashboard). */}
             <Stack.Screen name="rank-predictor" />
             <Stack.Screen name="rank-predictor-history" />
+            <Stack.Screen name="rank-predictor-history/[id]" />
             <Stack.Screen name="retest-requests" />
             <Stack.Screen name="student-analytics" />
             {/* Phase 0 CV/ML feasibility spike — isolated test surface, no production entry point. */}

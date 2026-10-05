@@ -6,6 +6,7 @@ import type { PredictionResult } from '@/types/predictor';
 import RangeCards from './RangeCards';
 import MethodologyCard from './MethodologyCard';
 import BranchResults from './BranchResults';
+import OutcomeCard from './OutcomeCard';
 import { DISCLAIMER_NOTE, WARNING_SHORT, isBranchSummary } from '@/utils/predictor/constants';
 import { buildShareText, type NonCategoryBranchSummary } from '@/utils/predictor/summary';
 
@@ -187,6 +188,10 @@ export default function PredictResult({
           )}
         </View>
       )}
+
+      {/* Outcome capture (§15): renders wherever a stored predictionId exists —
+          fresh results and history details share the same endpoints. */}
+      {predictionId ? <OutcomeCard predictionId={predictionId} result={result} /> : null}
     </View>
   );
 }

@@ -9,7 +9,7 @@ import {
 } from 'react-native';
 import { ScreenContainer } from '@/components/layout';
 import { useRouter } from 'expo-router';
-import { ChevronLeft, RefreshCw } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react-native';
 import { withFeatureGate } from '@/components/withFeatureGate';
 import { predictorEndpoints, predictorErrorMessage } from '@/services/predictor';
 import type { PredictionHistoryItem } from '@/types/predictor';
@@ -17,11 +17,13 @@ import { EXAM_LABELS } from '@/utils/predictor/constants';
 import { fmtPct, fmtRank } from '@/utils/predictor/format';
 
 /**
- * Rank & Branch Predictor — prediction history.
+ * Rank & Branch Predictor — prediction history list.
  *
  * Same server-side records the website's /predictor/history lists (every
- * served prediction is persisted before it is served); Phase 6 of the app
- * integration adds the full detail view on top of this list.
+ * served prediction is persisted before it is served). Tapping a record
+ * opens the full detail ([id].tsx) — the stored result re-rendered exactly
+ * as it was served, integrity-checked, with branch browsing and outcome
+ * capture still live off the stored predictionId.
  */
 
 const PAGE_SIZE = 10;
@@ -122,14 +124,25 @@ function PredictorHistoryScreen() {
           <>
             <Text style={styles.countText}>{items.length} prediction{items.length === 1 ? '' : 's'} loaded</Text>
             {items.map((item) => (
-              <View key={item.id} style={styles.historyCard}>
+              <TouchableOpacity
+                key={item.id}
+                style={styles.historyCard}
+                onPress={() =>
+                  router.push(`/(tabs)/quizzes/rank-predictor-history/${item.id}`)
+                }
+                activeOpacity={0.8}
+                accessibilityLabel={`Open prediction from ${formatDate(item.createdAt)}`}
+              >
                 <View style={styles.historyTop}>
                   <View style={styles.examChip}>
                     <Text style={styles.examChipText}>
                       {EXAM_LABELS[item.exam] ?? item.exam}
                     </Text>
                   </View>
-                  <Text style={styles.historyDate}>{formatDate(item.createdAt)}</Text>
+                  <View style={styles.historyDateRow}>
+                    <Text style={styles.historyDate}>{formatDate(item.createdAt)}</Text>
+                    <ChevronRight size={16} color="#9CA3AF" />
+                  </View>
                 </View>
                 <Text style={styles.historyRange}>{rangeLabel(item) || 'Rank range unavailable'}</Text>
                 <View style={styles.historyMeta}>
@@ -142,7 +155,7 @@ function PredictorHistoryScreen() {
                       : 'No category selected — rank only'}
                   </Text>
                 </View>
-              </View>
+              </TouchableOpacity>
             ))}
 
             {page < totalPages && (
@@ -264,6 +277,11 @@ const styles = StyleSheet.create({
   historyDate: {
     fontSize: 12.5,
     color: '#6B7280',
+  },
+  historyDateRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
   },
   historyRange: {
     fontSize: 15,

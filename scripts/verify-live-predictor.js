@@ -200,6 +200,80 @@ async function main() {
       unknown.data?.code === 'UNKNOWN_BRANCH' && Array.isArray(unknown.data?.suggestions),
       unknown.data
     );
+
+    // ---- 7. outcome capture + history detail (Phase 6) ----------------------------
+    const predict = await call('POST', '/predict', {
+      body: {
+        exam: 'NEET_PG',
+        gts: [{ provenance: 'self-reported', attempts: [{ corrects: 150, status: 'completed' }] }],
+        category: 'UR',
+      },
+    });
+    check('predict responds 201 for the outcome flow', predict.status === 201, predict.status);
+    const predictionId = predict.data?.predictionId;
+    check('predict persisted an id', typeof predictionId === 'string' && predictionId.length > 0);
+
+    const empty = await call('GET', `/predictions/${predictionId}/outcome`);
+    check(
+      'outcome status starts unrecorded (routine 200, not 404)',
+      empty.status === 200 && empty.data?.recorded === false,
+      { status: empty.status, body: empty.data }
+    );
+
+    const saved = await call('PUT', `/predictions/${predictionId}/outcome`, {
+      body: {
+        consent: true,
+        score: 480,
+        percentile: 90.5,
+        rank: 42000,
+        counselling: { status: 'ALLOTTED', allottedBranch: 'Radiodiagnosis', round: 'R2' },
+      },
+    });
+    check(
+      'outcome PUT saves values + counselling',
+      saved.status === 200 && saved.data?.outcome?.rank === 42000 && saved.data?.counselling?.allottedBranch === 'Radiodiagnosis',
+      { status: saved.status, body: saved.data }
+    );
+
+    const recorded = await call('GET', `/predictions/${predictionId}/outcome`);
+    check(
+      'outcome status now recorded, linkage matches, summary echoed',
+      recorded.data?.recorded === true &&
+        recorded.data?.outcomeRecord?.linkageCheck?.matches === true &&
+        recorded.data?.predictionSummary?.rankRange != null,
+      recorded.data
+    );
+
+    const edited = await call('PUT', `/predictions/${predictionId}/outcome`, {
+      body: { consent: true, rank: 41000, counselling: { status: 'NOT_ALLOTTED' } },
+    });
+    check(
+      'outcome PUT edit REPLACES the record (omitted fields clear)',
+      edited.status === 200 &&
+        edited.data?.outcome?.rank === 41000 &&
+        edited.data?.outcome?.score === null &&
+        edited.data?.counselling?.status === 'NOT_ALLOTTED',
+      { status: edited.status, body: edited.data }
+    );
+
+    const detail = await call('GET', `/predictions/${predictionId}`);
+    check(
+      'history detail returns the stored record, integrity intact',
+      detail.status === 200 &&
+        detail.data?.integrity?.matches === true &&
+        detail.data?.prediction?.rank?.bestRank != null,
+      { status: detail.status, integrity: detail.data?.integrity }
+    );
+
+    const withdrawn = await call('DELETE', `/predictions/${predictionId}/outcome`);
+    check(
+      'outcome withdraw deletes',
+      withdrawn.status === 200 && withdrawn.data?.deleted === true,
+      { status: withdrawn.status, body: withdrawn.data }
+    );
+
+    const after = await call('GET', `/predictions/${predictionId}/outcome`);
+    check('outcome status back to unrecorded after withdraw', after.data?.recorded === false, after.data?.recorded);
   } finally {
     await new Promise((resolve) => websiteServer.close(resolve));
     await websiteMongoose.connection.dropDatabase().catch(() => {});
