@@ -15,7 +15,7 @@ import {
 import { ScreenContainer, FullScreenContainer } from '@/components/layout';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
-import { LogOut, AlertTriangle, Check, MessageCircle, BookOpen, Users, LayoutDashboard, Menu, Sparkles, ChevronLeft, Globe } from 'lucide-react-native';
+import { LogOut, AlertTriangle, Check, MessageCircle, BookOpen, Users, LayoutDashboard, Menu, Sparkles, ChevronLeft, ChevronRight, TrendingUp, Globe } from 'lucide-react-native';
 import { openWebDashboard } from '@/services/webDashboard';
 import * as Haptics from '@/utils/haptics';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -453,6 +453,47 @@ export default function Dashboard() {
             )}
           </Pressable>
         </Animated.View>
+
+        {/* Rank & Branch Predictor — student CTA (free and paid alike, the
+            predictor makes no distinction). Native screens under the Tests
+            tab; the same engine that powers eyeconicneetpg.com/predictor. */}
+        {user?.role === 'student' && isFeatureEnabled('rankPredictor') && (
+          <Animated.View
+            style={[
+              {
+                opacity: card2Opacity,
+                transform: [{ translateY: card2TranslateY }],
+              },
+            ]}
+          >
+            <TouchableOpacity
+              style={styles.predictorCard}
+              activeOpacity={0.9}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                router.push('/(tabs)/quizzes/rank-predictor');
+              }}
+            >
+              <LinearGradient
+                colors={['#01b4ae', '#009d99']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={styles.predictorGradient}
+              >
+                <View style={styles.predictorIconCircle}>
+                  <TrendingUp color="#FFFFFF" size={24} />
+                </View>
+                <View style={styles.predictorTextWrap}>
+                  <Text style={styles.predictorTitle}>Rank &amp; Branch Predictor</Text>
+                  <Text style={styles.predictorSubtitle}>
+                    Predict your NEET PG / INI-CET rank and possible branches from your Grand Tests
+                  </Text>
+                </View>
+                <ChevronRight color="rgba(255, 255, 255, 0.85)" size={22} />
+              </LinearGradient>
+            </TouchableOpacity>
+          </Animated.View>
+        )}
 
         {/* Enhanced Quick Actions Card */}
         {!user?.isFreeUser && (
@@ -1028,6 +1069,50 @@ const styles = StyleSheet.create({
     color: '#01b4ae',
     marginBottom: 16,
     letterSpacing: 0.3,
+  },
+  // Rank & Branch Predictor CTA (students) — gradient hero card, sits above
+  // Quick Actions. Same radius/shadow language as styles.card.
+  predictorCard: {
+    borderRadius: 20,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 3,
+    },
+    shadowOpacity: 0.12,
+    shadowRadius: 8,
+    elevation: 5,
+    overflow: 'hidden',
+  },
+  predictorGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 20,
+    gap: 14,
+  },
+  predictorIconCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255, 255, 255, 0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  predictorTextWrap: {
+    flex: 1,
+  },
+  predictorTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#FFFFFF',
+    letterSpacing: 0.2,
+  },
+  predictorSubtitle: {
+    fontSize: 12.5,
+    fontWeight: '400',
+    color: 'rgba(255, 255, 255, 0.92)',
+    marginTop: 3,
+    lineHeight: 17,
   },
   welcomeCardContent: {
     flexDirection: 'row',

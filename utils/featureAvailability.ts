@@ -25,11 +25,19 @@ export type FeatureKey =
   | 'userManagement'
   | 'adminOverview'
   | 'freeUserContent'
+  | 'rankPredictor'
   | 'aiProctoring';
 
 export const FEATURE_AVAILABILITY: Record<FeatureKey, boolean> = {
   // Quiz ecosystem — fully enabled.
   quizzes: true,
+
+  // Rank & Branch Predictor — enabled. Native predictor screens over the
+  // live website predictor API (services/predictor.ts); mobile-only flag
+  // (like freeUserContent): the backend serves it no routes of its own and
+  // the web console has no predictor surface, so the other mirrors
+  // intentionally do not carry this key.
+  rankPredictor: true,
 
   // Temporarily disabled features — flip to true to re-enable.
   chat: false, // groups, chat screens, calls, group management modals
@@ -56,5 +64,6 @@ export const FEATURE_LABELS: Record<FeatureKey, string> = {
   userManagement: 'User Management',
   adminOverview: 'Overview',
   freeUserContent: 'Learning Tools',
+  rankPredictor: 'Rank Predictor',
   aiProctoring: 'Proctoring',
 };
