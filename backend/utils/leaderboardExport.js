@@ -1,16 +1,24 @@
-// Styled single-sheet Excel workbook for the live leaderboard export, plus
-// the column spec the CSV export renders from. One spec drives BOTH formats,
-// so the .xlsx and .csv can never disagree about which leaderboard fields
+// Styled single-sheet Excel workbooks for the leaderboard exports, plus
+// the column specs the CSV exports render from. One spec drives BOTH formats
+// per cohort, so the .xlsx and .csv can never disagree about which fields
 // they carry.
 //
-// Data comes verbatim from rankStudentAttempts — the same output
-// GET /analytics/test/:testId/leaderboard serves the live board — so the
-// file always matches what the viewer sees. This module only owns
-// presentation. Styling mirrors utils/testReportExcel.js (Analytics UI
-// palette: teal primary #01B4AE, gray text/borders, restrained fills).
+// Two cohorts share this module:
+//  - Internal ("Leaderboard"): registered students. Data comes verbatim from
+//    rankStudentAttempts — the same output GET /analytics/test/:testId/leaderboard
+//    serves the live board — so the file always matches what the viewer sees.
+//  - External ("External Leaderboard"): public-quiz guest leads
+//    (fetchGuestParticipants rows), admin-only, ranked by the same
+//    score-then-accuracy tie-break order in a separate file so guests never
+//    mix into the student leaderboard.
+//
+// This module only owns presentation. Styling mirrors utils/testReportExcel.js
+// (Analytics UI palette: teal primary #01B4AE, gray text/borders, restrained
+// fills).
 const Excel = require('exceljs');
 
 const LEADERBOARD_SHEET_NAME = 'Leaderboard';
+const GUEST_LEADERBOARD_SHEET_NAME = 'External Leaderboard';
 
 // Analytics UI palette (see components/analytics/* + student-analytics.tsx).
 const COLORS = {
@@ -64,6 +72,41 @@ const LEADERBOARD_EXPORT_COLUMNS = [
 ];
 
 /**
+ * Columns for the external (public-quiz guest) leaderboard export — the
+ * admin-only counterpart of LEADERBOARD_EXPORT_COLUMNS. Rows come from
+ * toGuestExportRows(fetchGuestParticipants(..., { fullPhone: true })) so the
+ * lead columns (raw phone, verified/consent flags) are admin-export-only by
+ * construction. `phoneVerified` is deliberately omitted — phone is
+ * unverified contact metadata since the email-OTP switch. `email` and
+ * `accuracy` are nullable on legacy/all-skipped rows and render blank.
+ */
+const GUEST_LEADERBOARD_EXPORT_COLUMNS = [
+  { header: 'Position', width: 9, value: (r) => r.position, numFmt: '0', align: 'center' },
+  { header: 'Name', width: 24, value: (r) => r.name, bold: true, color: COLORS.DARK },
+  { header: 'Email', width: 28, value: (r) => r.email ?? '' },
+  { header: 'Phone', width: 16, value: (r) => r.phone || r.phoneMasked || '' },
+  { header: 'Email Verified', width: 12, value: (r) => (r.emailVerified ? 'Yes' : 'No'), align: 'center' },
+  { header: 'Marketing Consent', width: 14, value: (r) => (r.marketingConsent ? 'Yes' : 'No'), align: 'center' },
+  { header: 'Score (%)', width: 10, value: (r) => r.scorePercentage, numFmt: PERCENT_FORMAT, bold: true, color: COLORS.TEAL },
+  { header: 'Marks Obtained', width: 12, value: (r) => r.marksObtained },
+  { header: 'Total Marks', width: 11, value: (r) => r.totalMarks },
+  { header: 'Correct', width: 9, value: (r) => r.correct, numFmt: '0' },
+  { header: 'Incorrect', width: 9, value: (r) => r.incorrect, numFmt: '0' },
+  { header: 'Skipped', width: 8, value: (r) => r.skipped, numFmt: '0' },
+  { header: 'Accuracy (%)', width: 10, value: (r) => r.accuracy, numFmt: PERCENT_FORMAT },
+  { header: 'Time (min)', width: 9, value: (r) => r.timeSpent, numFmt: '0.00' },
+  { header: 'Tab Switches', width: 9, value: (r) => r.tabSwitchCount, numFmt: '0' },
+  {
+    header: 'Completed At (UTC)',
+    width: 17,
+    value: (r) => (r.submittedAt ? new Date(r.submittedAt).toISOString() : ''),
+    cell: (r) => (r.submittedAt ? new Date(r.submittedAt) : null),
+    numFmt: DATETIME_FORMAT,
+  },
+  { header: 'Attempt ID', width: 26, value: (r) => r.attemptId },
+];
+
+/**
  * Adds the UI-equivalent rank to each ranked row. Callers pass the
  * leaderboard array exactly as returned by rankStudentAttempts; the spread
  * copy keeps the original response objects untouched.
@@ -75,24 +118,65 @@ function toExportRows(leaderboard) {
   }));
 }
 
+/**
+ * Ranks guest participant rows for the external export: fetchGuestParticipants
+ * returns them unranked (recency order) because guests never enter student
+ * rankings — this file ranks them standalone, mirroring rankStudentAttempts'
+ * tie-break order (score % desc → accuracy desc → marks desc → earlier
+ * submission first), with attemptId as the deterministic final tie-break.
+ * The sort runs on a copy, so the caller's array is never mutated.
+ *
+ * Also derives `timeSpent` (minutes, 2dp) from `timeTakenSeconds` so the
+ * column spec stays uniform with the internal one.
+ */
+function toGuestExportRows(participants) {
+  return (Array.isArray(participants) ? participants : [])
+    .slice()
+    .sort((a, b) => {
+      const scoreA = a.scorePercentage ?? -1;
+      const scoreB = b.scorePercentage ?? -1;
+      if (scoreB !== scoreA) return scoreB - scoreA;
+      const accA = a.accuracy ?? -1;
+      const accB = b.accuracy ?? -1;
+      if (accB !== accA) return accB - accA;
+      const marksA = a.marksObtained ?? -1;
+      const marksB = b.marksObtained ?? -1;
+      if (marksB !== marksA) return marksB - marksA;
+      const timeA = a.submittedAt ? new Date(a.submittedAt).getTime() : Infinity;
+      const timeB = b.submittedAt ? new Date(b.submittedAt).getTime() : Infinity;
+      if (timeA !== timeB) return timeA - timeB;
+      return String(a.attemptId ?? '').localeCompare(String(b.attemptId ?? ''));
+    })
+    .map((participant, index) => ({
+      ...participant,
+      position: index + 1,
+      timeSpent: Math.round(((participant.timeTakenSeconds || 0) / 60) * 100) / 100,
+    }));
+}
+
 const TITLE_ROW = 1;
 const META_ROW = 2;
 const GENERATED_ROW = 3;
 const HEADER_ROW = 5;
 
-function buildLeaderboardSheet(workbook, data) {
-  const sheet = workbook.addWorksheet(LEADERBOARD_SHEET_NAME, {
+/**
+ * Shared single-sheet builder for both cohorts. `spec` picks the surface:
+ * { columns, sheetName, title, emptyNote } — everything else (header block,
+ * teal band, zebra rows, freeze, autoFilter) is identical by construction.
+ */
+function buildSheet(workbook, data, spec) {
+  const sheet = workbook.addWorksheet(spec.sheetName, {
     properties: { tabColor: { argb: COLORS.TEAL } },
   });
 
-  LEADERBOARD_EXPORT_COLUMNS.forEach((col, i) => {
+  spec.columns.forEach((col, i) => {
     sheet.getColumn(i + 1).width = col.width;
   });
 
   // Report header block — plain overflow text, no fills, like the screen's
   // title area.
   const title = sheet.getCell(TITLE_ROW, 1);
-  title.value = `Leaderboard — ${data.test.title || 'Test'}`;
+  title.value = spec.title;
   title.font = { name: FONT, size: 14, bold: true, color: COLORS.DARK };
   sheet.getRow(TITLE_ROW).height = 22;
 
@@ -115,7 +199,7 @@ function buildLeaderboardSheet(workbook, data) {
   // Table header — solid teal band with white bold labels.
   const headerRow = sheet.getRow(HEADER_ROW);
   headerRow.height = 30;
-  LEADERBOARD_EXPORT_COLUMNS.forEach((col, i) => {
+  spec.columns.forEach((col, i) => {
     const cell = headerRow.getCell(i + 1);
     cell.value = col.header;
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.TEAL } };
@@ -127,7 +211,7 @@ function buildLeaderboardSheet(workbook, data) {
     const excelRow = sheet.getRow(HEADER_ROW + 1 + idx);
     const isLast = idx === data.rows.length - 1;
 
-    LEADERBOARD_EXPORT_COLUMNS.forEach((col, i) => {
+    spec.columns.forEach((col, i) => {
       const cell = excelRow.getCell(i + 1);
       cell.value = col.cell ? col.cell(row) : col.value(row);
       cell.font = {
@@ -147,7 +231,7 @@ function buildLeaderboardSheet(workbook, data) {
 
   if (data.rows.length === 0) {
     const noteCell = sheet.getCell(HEADER_ROW + 1, 1);
-    noteCell.value = 'No submissions yet.';
+    noteCell.value = spec.emptyNote;
     noteCell.font = { name: FONT, size: 10, italic: true, color: COLORS.MUTED };
     noteCell.alignment = { horizontal: 'left', vertical: 'middle' };
     sheet.mergeCells(HEADER_ROW + 1, 1, HEADER_ROW + 1, 4);
@@ -162,14 +246,15 @@ function buildLeaderboardSheet(workbook, data) {
   }];
   sheet.autoFilter = {
     from: { row: HEADER_ROW, column: 1 },
-    to: { row: lastDataRow, column: LEADERBOARD_EXPORT_COLUMNS.length },
+    to: { row: lastDataRow, column: spec.columns.length },
   };
 
   return sheet;
 }
 
 /**
- * Builds the one-sheet leaderboard workbook.
+ * Builds the one-sheet leaderboard workbook (internal cohort — registered
+ * students).
  *
  * @param {object} data
  *   { test: { title, subjectName, testType, totalQuestions, totalMarks },
@@ -182,14 +267,43 @@ function buildLeaderboardWorkbook(data) {
   workbook.creator = 'Eyeconic';
   workbook.created = data.generatedAt instanceof Date ? data.generatedAt : new Date();
 
-  buildLeaderboardSheet(workbook, data);
+  buildSheet(workbook, data, {
+    columns: LEADERBOARD_EXPORT_COLUMNS,
+    sheetName: LEADERBOARD_SHEET_NAME,
+    title: `Leaderboard — ${data.test.title || 'Test'}`,
+    emptyNote: 'No submissions yet.',
+  });
+
+  return workbook;
+}
+
+/**
+ * Builds the one-sheet external leaderboard workbook (public-quiz guest
+ * leads, admin-only). Same data contract as buildLeaderboardWorkbook, but
+ * rows come from toGuestExportRows(fetchGuestParticipants(...)).
+ */
+function buildGuestLeaderboardWorkbook(data) {
+  const workbook = new Excel.Workbook();
+  workbook.creator = 'Eyeconic';
+  workbook.created = data.generatedAt instanceof Date ? data.generatedAt : new Date();
+
+  buildSheet(workbook, data, {
+    columns: GUEST_LEADERBOARD_EXPORT_COLUMNS,
+    sheetName: GUEST_LEADERBOARD_SHEET_NAME,
+    title: `External Leaderboard — ${data.test.title || 'Test'}`,
+    emptyNote: 'No public participants yet.',
+  });
 
   return workbook;
 }
 
 module.exports = {
   buildLeaderboardWorkbook,
+  buildGuestLeaderboardWorkbook,
   toExportRows,
+  toGuestExportRows,
   LEADERBOARD_EXPORT_COLUMNS,
+  GUEST_LEADERBOARD_EXPORT_COLUMNS,
   LEADERBOARD_SHEET_NAME,
+  GUEST_LEADERBOARD_SHEET_NAME,
 };

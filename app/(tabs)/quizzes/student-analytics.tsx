@@ -442,6 +442,8 @@ export default function Analytics() {
                   <LiveLeaderboard
                     testId={selectedTest._id}
                     onStudentClick={handleStudentAttemptClick}
+                    userRole={user?.role}
+                    guestParticipantCount={testAnalytics.guestParticipants?.length ?? 0}
                   />
                   {user?.role === 'admin' && (
                     <GuestParticipantList

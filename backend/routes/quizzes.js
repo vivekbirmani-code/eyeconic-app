@@ -63,8 +63,11 @@ const { collectTestReportData } = require('../utils/testReportData');
 const { buildTestReportWorkbook } = require('../utils/testReportExcel');
 const {
   buildLeaderboardWorkbook,
+  buildGuestLeaderboardWorkbook,
   toExportRows,
+  toGuestExportRows,
   LEADERBOARD_EXPORT_COLUMNS,
+  GUEST_LEADERBOARD_EXPORT_COLUMNS,
 } = require('../utils/leaderboardExport');
 const { buildPublicQuizUrl } = require('../utils/publicWebUrl');
 const {
@@ -4005,6 +4008,25 @@ async function loadRankedLeaderboard(user, quiz) {
   return rankStudentAttempts(attempts, quiz.questions);
 }
 
+// Cohort selector shared by both leaderboard export formats. Default (absent
+// param) is 'internal' so pre-dialog callers — older app builds, the verify
+// script, bookmarked URLs — stay byte-identical. 'external' selects the
+// public-quiz guest leads, which are admin-only data everywhere else in this
+// codebase (same policy as guestParticipants), so mentors are refused here
+// even though the route itself admits them.
+function resolveExportCohort(req, res) {
+  const cohort = req.query.cohort === undefined ? 'internal' : String(req.query.cohort);
+  if (cohort !== 'internal' && cohort !== 'external') {
+    res.status(400).json({ message: 'Invalid cohort. Use "internal" or "external".' });
+    return null;
+  }
+  if (cohort === 'external' && req.user.role !== 'admin') {
+    res.status(403).json({ message: 'External participants are available to admins only.' });
+    return null;
+  }
+  return cohort;
+}
+
 // Live leaderboard (admin, mentor) — the ranked participant list the Test
 // Analytics screen updates in real time. Deliberately returns ONLY
 // rankStudentAttempts output: the realtime refresh path stays light (no
@@ -4032,6 +4054,8 @@ router.get('/analytics/test/:testId/leaderboard', auth, authorize('admin', 'ment
 // Same loader as the leaderboard endpoint, so participants, order and mentor
 // scoping are identical to what the app shows; column headers/values come
 // from the shared spec the Excel export also renders.
+// ?cohort=internal|external — default internal (registered students);
+// external (public-quiz guest leads, admin-only) renders the guest spec.
 router.get('/analytics/test/:testId/leaderboard/export/csv', auth, authorize('admin', 'mentor'), async (req, res) => {
   try {
     const quiz = await Quiz.findById(req.params.testId)
@@ -4042,11 +4066,18 @@ router.get('/analytics/test/:testId/leaderboard/export/csv', auth, authorize('ad
       return res.status(404).json({ message: 'Test not found' });
     }
 
-    const rows = toExportRows(await loadRankedLeaderboard(req.user, quiz));
+    const cohort = resolveExportCohort(req, res);
+    if (!cohort) return;
+
+    const isExternal = cohort === 'external';
+    const columns = isExternal ? GUEST_LEADERBOARD_EXPORT_COLUMNS : LEADERBOARD_EXPORT_COLUMNS;
+    const rows = isExternal
+      ? toGuestExportRows(await fetchGuestParticipants(req.params.testId, { fullPhone: true }))
+      : toExportRows(await loadRankedLeaderboard(req.user, quiz));
     const generatedAt = new Date();
 
     const csvLines = [];
-    csvLines.push(toCsvRow(['Leaderboard']));
+    csvLines.push(toCsvRow([isExternal ? 'External Leaderboard' : 'Leaderboard']));
     csvLines.push(toCsvRow(['Exported At', generatedAt.toISOString()]));
     csvLines.push('');
     csvLines.push(toCsvRow(['Test Details']));
@@ -4063,16 +4094,21 @@ router.get('/analytics/test/:testId/leaderboard/export/csv', auth, authorize('ad
     csvLines.push('');
     csvLines.push(toCsvRow(['Participants']));
 
-    csvLines.push(toCsvRow(LEADERBOARD_EXPORT_COLUMNS.map((col) => col.header)));
+    csvLines.push(toCsvRow(columns.map((col) => col.header)));
     rows.forEach((row) => {
-      csvLines.push(toCsvRow(LEADERBOARD_EXPORT_COLUMNS.map((col) => col.value(row))));
+      csvLines.push(toCsvRow(columns.map((col) => col.value(row))));
     });
 
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader(
       'Content-Disposition',
-      contentDispositionAttachment(quiz.title, 'leaderboard', '_leaderboard', 'csv')
+      contentDispositionAttachment(
+        quiz.title,
+        'leaderboard',
+        isExternal ? '_leaderboard_external' : '_leaderboard',
+        'csv'
+      )
     );
     res.send(csvLines.join('\n'));
   } catch (error) {
@@ -4083,6 +4119,8 @@ router.get('/analytics/test/:testId/leaderboard/export/csv', auth, authorize('ad
 
 // Leaderboard Excel (.xlsx) export (admin, mentor) — same loader and column
 // spec as the CSV; this route only changes presentation.
+// ?cohort=internal|external — default internal (registered students);
+// external (public-quiz guest leads, admin-only) renders the guest workbook.
 router.get('/analytics/test/:testId/leaderboard/export/excel', auth, authorize('admin', 'mentor'), async (req, res) => {
   try {
     const quiz = await Quiz.findById(req.params.testId)
@@ -4093,10 +4131,16 @@ router.get('/analytics/test/:testId/leaderboard/export/excel', auth, authorize('
       return res.status(404).json({ message: 'Test not found' });
     }
 
-    const rows = toExportRows(await loadRankedLeaderboard(req.user, quiz));
+    const cohort = resolveExportCohort(req, res);
+    if (!cohort) return;
+
+    const isExternal = cohort === 'external';
+    const rows = isExternal
+      ? toGuestExportRows(await fetchGuestParticipants(req.params.testId, { fullPhone: true }))
+      : toExportRows(await loadRankedLeaderboard(req.user, quiz));
     const generatedAt = new Date();
 
-    const workbook = buildLeaderboardWorkbook({
+    const testData = {
       test: {
         title: quiz.title,
         subjectName: quiz.subject?.name || '',
@@ -4106,14 +4150,22 @@ router.get('/analytics/test/:testId/leaderboard/export/excel', auth, authorize('
       },
       rows,
       generatedAt,
-    });
+    };
+    const workbook = isExternal
+      ? buildGuestLeaderboardWorkbook(testData)
+      : buildLeaderboardWorkbook(testData);
     const buffer = await workbook.xlsx.writeBuffer();
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader(
       'Content-Disposition',
-      contentDispositionAttachment(quiz.title, 'leaderboard', '_leaderboard', 'xlsx')
+      contentDispositionAttachment(
+        quiz.title,
+        'leaderboard',
+        isExternal ? '_leaderboard_external' : '_leaderboard',
+        'xlsx'
+      )
     );
     res.send(buffer);
   } catch (error) {

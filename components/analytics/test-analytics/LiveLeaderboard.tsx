@@ -10,10 +10,11 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Clock, Download, FileSpreadsheet, FileText, Radio, RefreshCw, Trophy } from 'lucide-react-native';
+import { Check, Clock, Download, FileSpreadsheet, FileText, Globe, Radio, RefreshCw, Trophy, Users } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { downloadApiReport, getReportDownloadErrorMessage } from '@/services/downloads';
 import { useNotifications } from '@/context/NotificationContext';
+import { KeyboardAvoidingDialog } from '@/components/KeyboardAvoidingDialog';
 import { formatPercent, LeaderboardEntry, LeaderboardResponse } from '@/types/analytics';
 
 // Bursts of submissions collapse into one refetch: events arriving inside
@@ -31,6 +32,7 @@ const MEDAL_COLORS = ['#F59E0B', '#94A3B8', '#CD7F32'] as const;
 type FetchStatus = 'loading' | 'ready' | 'error';
 
 type ExportFormat = 'excel' | 'csv';
+type ExportAudience = 'internal' | 'external';
 
 function formatMarks(value: number): string {
   const num = Number(value);
@@ -210,6 +212,43 @@ function Podium({ entries }: PodiumProps) {
 interface LiveLeaderboardProps {
   testId: string;
   onStudentClick: (attemptId: string) => void;
+  /** Viewer's role — 'admin' unlocks the External (public-quiz guest) audience. */
+  userRole?: string;
+  /** Completed public-quiz guests for this test, from the admin analytics payload. */
+  guestParticipantCount?: number;
+}
+
+interface OptionRowProps {
+  icon: React.ReactNode;
+  label: string;
+  description?: string;
+  selected: boolean;
+  onPress: () => void;
+}
+
+/**
+ * Radio-style option card for the export dialog's audience/format sections.
+ * Selected state mirrors the app's teal selection convention (teal border +
+ * pale teal fill + check).
+ */
+function OptionRow({ icon, label, description, selected, onPress }: OptionRowProps) {
+  return (
+    <TouchableOpacity
+      style={[styles.optionRow, selected && styles.optionRowSelected]}
+      onPress={onPress}
+      activeOpacity={0.7}
+      accessibilityRole="radio"
+      accessibilityState={{ checked: selected }}
+      accessibilityLabel={label}
+    >
+      {icon}
+      <View style={styles.optionText}>
+        <Text style={styles.optionLabel}>{label}</Text>
+        {description ? <Text style={styles.optionDescription}>{description}</Text> : null}
+      </View>
+      {selected ? <Check color="#01b4ae" size={18} /> : null}
+    </TouchableOpacity>
+  );
 }
 
 /**
@@ -223,7 +262,12 @@ interface LiveLeaderboardProps {
  * trailing refetch (plus one resync refetch on socket reconnect, which covers
  * anything missed while offline).
  */
-export default function LiveLeaderboard({ testId, onStudentClick }: LiveLeaderboardProps) {
+export default function LiveLeaderboard({
+  testId,
+  onStudentClick,
+  userRole,
+  guestParticipantCount,
+}: LiveLeaderboardProps) {
   const { socket } = useNotifications();
 
   const [rows, setRows] = useState<LeaderboardEntry[]>([]);
@@ -234,10 +278,16 @@ export default function LiveLeaderboard({ testId, onStudentClick }: LiveLeaderbo
   const [refreshing, setRefreshing] = useState(false);
   const [highlights, setHighlights] = useState<Set<string>>(new Set());
   const [updateId, setUpdateId] = useState(0);
-  // Export format chooser (rendered in flow under the header — Alert.alert is
-  // a no-op on react-native-web, so a chooser dialog would silently fail there).
-  const [exportOpen, setExportOpen] = useState(false);
-  const [exporting, setExporting] = useState<ExportFormat | null>(null);
+  // Export dialog — picks the audience (internal registered students /
+  // external public-quiz guests, admin-only) and the file format. Rendered
+  // with the in-tree KeyboardAvoidingDialog overlay so it behaves the same on
+  // iOS, Android and react-native-web (Alert.alert is a no-op on web, and RN
+  // Modal gets no keyboard resize on Android edge-to-edge).
+  const [dialogVisible, setDialogVisible] = useState(false);
+  const [exportAudience, setExportAudience] = useState<ExportAudience>('internal');
+  const [exportFormat, setExportFormat] = useState<ExportFormat>('excel');
+  const [exporting, setExporting] = useState<{ audience: ExportAudience; format: ExportFormat } | null>(null);
+  const isAdmin = userRole === 'admin';
 
   // Latest-response guard: a slow response for a previous test (or a response
   // overtaken by a live refresh) must never overwrite newer state.
@@ -333,7 +383,7 @@ export default function LiveLeaderboard({ testId, onStudentClick }: LiveLeaderbo
     setHighlights(new Set());
     setLastUpdatedAt(null);
     setStatus('loading');
-    setExportOpen(false);
+    setDialogVisible(false);
     fetchRef.current();
   }, [testId]);
 
@@ -420,33 +470,39 @@ export default function LiveLeaderboard({ testId, onStudentClick }: LiveLeaderbo
   // Export taps the same server-side ranking the board renders (the export
   // routes reuse the leaderboard endpoint's loader), so the file always
   // matches the live board — the rows on screen are only used to decide
-  // whether there is anything to export.
+  // whether there is anything to export. The empty check runs per audience at
+  // Export-press time: an admin can have zero internal rows but guests to
+  // export, or the reverse.
   const handleExportPress = useCallback(() => {
     if (exporting) return;
-    if (rows.length === 0) {
+    setDialogVisible(true);
+  }, [exporting]);
+
+  const handleExport = useCallback(async () => {
+    if (exporting) return;
+    const count = exportAudience === 'internal' ? rows.length : (guestParticipantCount ?? 0);
+    if (count === 0) {
       Alert.alert(
         'Nothing to export',
-        'No students have submitted this test yet, so there is no leaderboard to export.'
+        exportAudience === 'internal'
+          ? 'No students have submitted this test yet, so there is no leaderboard to export.'
+          : 'No public-quiz guests have completed this test yet, so there is no list to export.'
       );
       return;
     }
-    setExportOpen((open) => !open);
-  }, [exporting, rows.length]);
-
-  const handleExportFormat = useCallback(
-    async (format: ExportFormat) => {
-      setExportOpen(false);
-      setExporting(format);
-      try {
-        await downloadApiReport(`/quizzes/analytics/test/${testId}/leaderboard/export/${format}`);
-      } catch (error) {
-        Alert.alert('Export failed', getReportDownloadErrorMessage(error));
-      } finally {
-        setExporting(null);
-      }
-    },
-    [testId]
-  );
+    setDialogVisible(false);
+    setExporting({ audience: exportAudience, format: exportFormat });
+    try {
+      await downloadApiReport(
+        `/quizzes/analytics/test/${testId}/leaderboard/export/${exportFormat}` +
+          (exportAudience === 'external' ? '?cohort=external' : '')
+      );
+    } catch (error) {
+      Alert.alert('Export failed', getReportDownloadErrorMessage(error));
+    } finally {
+      setExporting(null);
+    }
+  }, [exporting, exportAudience, exportFormat, rows.length, guestParticipantCount, testId]);
 
   const topThree = useMemo(() => rows.slice(0, 3), [rows]);
   const renderRow = useCallback(
@@ -517,32 +573,6 @@ export default function LiveLeaderboard({ testId, onStudentClick }: LiveLeaderbo
           </View>
         </View>
 
-        {exportOpen && (
-          <View style={styles.exportBar}>
-            <Text style={styles.exportBarLabel}>Export as</Text>
-            <TouchableOpacity
-              style={styles.exportOptionPrimary}
-              onPress={() => handleExportFormat('excel')}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel="Export leaderboard as Excel"
-            >
-              <FileSpreadsheet color="#FFFFFF" size={14} />
-              <Text style={styles.exportOptionPrimaryText}>Excel (.xlsx)</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.exportOptionSecondary}
-              onPress={() => handleExportFormat('csv')}
-              activeOpacity={0.7}
-              accessibilityRole="button"
-              accessibilityLabel="Export leaderboard as CSV"
-            >
-              <FileText color="#374151" size={14} />
-              <Text style={styles.exportOptionSecondaryText}>CSV (.csv)</Text>
-            </TouchableOpacity>
-          </View>
-        )}
-
         {updatedLabel !== '' && <Text style={styles.updatedLabel}>{updatedLabel}</Text>}
 
         {status === 'loading' && rows.length === 0 ? (
@@ -581,6 +611,80 @@ export default function LiveLeaderboard({ testId, onStudentClick }: LiveLeaderbo
           </>
         )}
       </View>
+
+      {/* Export chooser — audience + format. In-tree overlay (not RN Modal)
+          so it behaves identically on iOS, Android edge-to-edge and web. */}
+      <KeyboardAvoidingDialog
+        visible={dialogVisible}
+        onClose={() => {
+          if (!exporting) setDialogVisible(false);
+        }}
+        cardStyle={styles.dialogCard}
+      >
+        <Text style={styles.dialogTitle}>Export Leaderboard</Text>
+
+        <Text style={styles.dialogSectionLabel}>Audience</Text>
+        <OptionRow
+          icon={<Users color={exportAudience === 'internal' ? '#0F766E' : '#374151'} size={16} />}
+          label="Internal Students"
+          description="Registered app users in the leaderboard"
+          selected={exportAudience === 'internal'}
+          onPress={() => setExportAudience('internal')}
+        />
+        {isAdmin && (
+          <OptionRow
+            icon={<Globe color={exportAudience === 'external' ? '#0F766E' : '#374151'} size={16} />}
+            label="External Students"
+            description="Public-quiz guests (unregistered, verified leads)"
+            selected={exportAudience === 'external'}
+            onPress={() => setExportAudience('external')}
+          />
+        )}
+
+        <Text style={styles.dialogSectionLabel}>Format</Text>
+        <OptionRow
+          icon={<FileSpreadsheet color={exportFormat === 'excel' ? '#0F766E' : '#374151'} size={16} />}
+          label="Excel (.xlsx)"
+          selected={exportFormat === 'excel'}
+          onPress={() => setExportFormat('excel')}
+        />
+        <OptionRow
+          icon={<FileText color={exportFormat === 'csv' ? '#0F766E' : '#374151'} size={16} />}
+          label="CSV (.csv)"
+          selected={exportFormat === 'csv'}
+          onPress={() => setExportFormat('csv')}
+        />
+
+        <View style={styles.dialogActions}>
+          <TouchableOpacity
+            style={styles.dialogCancel}
+            onPress={() => setDialogVisible(false)}
+            activeOpacity={0.7}
+            disabled={!!exporting}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel export"
+          >
+            <Text style={styles.dialogCancelText}>Cancel</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.dialogExportButton}
+            onPress={handleExport}
+            activeOpacity={0.7}
+            disabled={!!exporting}
+            accessibilityRole="button"
+            accessibilityLabel="Export leaderboard"
+          >
+            {exporting ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <Download color="#FFFFFF" size={16} />
+            )}
+            <Text style={styles.dialogExportButtonText}>
+              {exporting ? 'Exporting…' : 'Export'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingDialog>
     </View>
   );
 }
@@ -648,50 +752,89 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  // Format chooser — rendered in flow (no overlay/modal), so it behaves the
-  // same on iOS, Android and web.
-  exportBar: {
+  // ---- Export dialog ----
+  dialogCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 20,
+    width: 360,
+    maxWidth: '100%',
+  },
+  dialogTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#1F2937',
+    marginBottom: 12,
+  },
+  dialogSectionLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#6B7280',
+    marginBottom: 8,
+    marginTop: 6,
+  },
+  optionRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    flexWrap: 'wrap',
-    paddingHorizontal: 16,
-    paddingTop: 4,
-    paddingBottom: 10,
-    gap: 8,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 8,
+    backgroundColor: '#FFFFFF',
   },
-  exportBarLabel: {
+  optionRowSelected: {
+    borderColor: '#01b4ae',
+    backgroundColor: '#E0FBF9',
+  },
+  optionText: {
+    flex: 1,
+    minWidth: 0,
+  },
+  optionLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1F2937',
+  },
+  optionDescription: {
     fontSize: 12,
     color: '#6B7280',
-    marginRight: 4,
+    marginTop: 1,
   },
-  exportOptionPrimary: {
+  dialogActions: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#01b4ae',
-    borderRadius: 8,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginTop: 10,
   },
-  exportOptionPrimaryText: {
-    color: '#FFFFFF',
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  exportOptionSecondary: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: '#FFFFFF',
+  dialogCancel: {
     borderRadius: 8,
     borderWidth: 1,
     borderColor: '#D1D5DB',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
   },
-  exportOptionSecondaryText: {
+  dialogCancelText: {
+    fontSize: 14,
+    fontWeight: '600',
     color: '#374151',
-    fontSize: 13,
+  },
+  dialogExportButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    borderRadius: 8,
+    backgroundColor: '#01b4ae',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  dialogExportButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
     fontWeight: '600',
   },
   livePill: {

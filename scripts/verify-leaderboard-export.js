@@ -14,6 +14,10 @@
  *      asserts participants, order, ranks and values match the endpoint.
  *   5. Re-checks after a late submission (server recomputes at export time)
  *      and checks mentor scoping + student rejection.
+ *   6. External cohort (?cohort=external): seeds verified guest leads and
+ *      downloads the guest CSV/.xlsx (admin-only, ranked with lead columns);
+ *      asserts registered students and anonymous attempts stay out, mentors
+ *      get 403, and bogus cohort values get 400.
  *
  * Run from the repo root:  node scripts/verify-leaderboard-export.js
  */
@@ -105,6 +109,8 @@ async function main() {
   const Quiz = requireBackend('models/Quiz');
   const QuizAttempt = requireBackend('models/QuizAttempt');
   const MentorStudentAssignment = requireBackend('models/MentorStudentAssignment');
+  const Guest = requireBackend('models/Guest');
+  const GuestAttempt = requireBackend('models/GuestAttempt');
 
   await new Promise((resolve) => server.listen(0, resolve));
   const port = server.address().port;
@@ -280,9 +286,98 @@ async function main() {
   const mentorNames = mentorCsv.buffer.toString('utf-8').split('\n').filter((l) => /^\d+,/.test(l)).map((l) => l.split(',')[1]);
   check('mentor export scoped to own students', JSON.stringify(mentorNames) === JSON.stringify(['Ann First']), JSON.stringify(mentorNames));
 
+  // ---- 7. External cohort (public-quiz guests, admin-only) ----
+  // Seed one verified lead per completed guest attempt plus one legacy
+  // anonymous attempt that must never appear.
+  let leadSeed = 0;
+  async function guestAttempt(name, outcomes, marksObtained, { anonymous = false } = {}) {
+    leadSeed += 1;
+    let lead = null;
+    let snapshots = {};
+    if (!anonymous) {
+      lead = await Guest.create({
+        name,
+        email: `${name.toLowerCase().replace(/\s+/g, '.')}-${Date.now()}-${leadSeed}@verify.test`,
+        emailVerifiedAt: new Date(),
+        phone: `+9198765${String(100000 + leadSeed).slice(1)}`,
+        marketingConsent: { granted: true, updatedAt: new Date() },
+        quizzesTaken: [quiz._id],
+      });
+      snapshots = { guest: lead._id, guestName: name, guestEmail: lead.email, guestPhone: lead.phone };
+    }
+    return GuestAttempt.create({
+      quiz: quiz._id,
+      guestId: `verify-device-${leadSeed}-${Math.random().toString(36).slice(2)}`,
+      ...snapshots,
+      status: 'completed',
+      startTime: new Date(Date.now() - 20 * 60 * 1000),
+      endTime: new Date(),
+      score: outcomes.filter((o) => o === 'correct').length,
+      totalQuestions: 4,
+      marksObtained,
+      totalMarks: 16,
+      answers: outcomes.map((outcome, i) => ({
+        questionIndex: i,
+        questionId: questions[i]._id,
+        selectedAnswer: outcome === 'correct' ? 1 : outcome === 'wrong' ? 0 : -1,
+        isCorrect: outcome === 'correct',
+        metadataSnapshot: { questionType: 'mcq_single', subjectName: 'Verify Pathology' },
+      })),
+    });
+  }
+
+  await guestAttempt('Gita Guest', ['correct', 'correct', 'correct', 'correct'], 16);
+  await guestAttempt('Ravi Ranker', ['correct', 'correct', 'wrong', 'wrong'], 6);
+  await guestAttempt('Anon Visitor', ['correct', 'correct', 'wrong', 'wrong'], 6, { anonymous: true });
+
+  const extCsv = await api('GET', `${exportBase}/export/csv?cohort=external`, { token: adminToken, asQueryToken: true });
+  check('external csv 200 (admin query token)', extCsv.status === 200, `status ${extCsv.status}`);
+  check('external csv filename suffix', /_leaderboard_external\.csv/.test(extCsv.headers['content-disposition'] || ''));
+
+  const extCsvPath = path.join(outDir, 'leaderboard-external.csv');
+  fs.writeFileSync(extCsvPath, extCsv.buffer);
+
+  const extCsvText = extCsv.buffer.toString('utf-8');
+  const extCsvLines = extCsvText.split('\n');
+  check('external csv titled "External Leaderboard"', extCsvLines[0] === 'External Leaderboard');
+  const extHeaderIdx = extCsvLines.findIndex((l) => l.startsWith('Position,'));
+  check('external csv header is the guest spec', extHeaderIdx > 0 && extCsvLines[extHeaderIdx].includes('Email Verified') && extCsvLines[extHeaderIdx].includes('Marketing Consent'));
+  const extRows = extCsvLines.slice(extHeaderIdx + 1).filter((l) => l.trim() !== '');
+  check('external csv ranks Gita > Ravi with dense positions',
+    JSON.stringify(extRows.map((l) => [l.split(',')[0], l.split(',')[1]])) === JSON.stringify([['1', 'Gita Guest'], ['2', 'Ravi Ranker']]),
+    JSON.stringify(extRows.map((l) => l.split(',').slice(0, 2))));
+  check('external csv excludes registered students', !extCsvText.includes('Ann First') && !extCsvText.includes('Cy Third'));
+  check('external csv excludes anonymous legacy attempt', !extCsvText.includes('Anon Visitor'));
+  check('external csv carries lead columns', extRows[0].includes('Yes') && extRows[0].includes('+91'));
+
+  const extXlsx = await api('GET', `${exportBase}/export/excel?cohort=external`, { token: adminToken, asQueryToken: true });
+  check('external excel 200', extXlsx.status === 200, `status ${extXlsx.status}`);
+  check('external excel filename suffix', /_leaderboard_external\.xlsx/.test(extXlsx.headers['content-disposition'] || ''));
+
+  const extXlsxPath = path.join(outDir, 'leaderboard-external.xlsx');
+  fs.writeFileSync(extXlsxPath, extXlsx.buffer);
+
+  const extWorkbook = new Excel.Workbook();
+  await extWorkbook.xlsx.load(extXlsx.buffer);
+  const extSheet = extWorkbook.getWorksheet('External Leaderboard');
+  check('external excel sheet named "External Leaderboard"', Boolean(extSheet));
+  check('external excel title names the quiz', String(extSheet.getCell(1, 1).value) === 'External Leaderboard — Export Verify Test');
+  check('external excel ranks Gita > Ravi',
+    extSheet.getCell(6, 1).value === 1 && String(extSheet.getCell(6, 2).value) === 'Gita Guest'
+      && extSheet.getCell(7, 1).value === 2 && String(extSheet.getCell(7, 2).value) === 'Ravi Ranker');
+
+  const mentorExtCsv = await api('GET', `${exportBase}/export/csv?cohort=external`, { token: mentorToken, asQueryToken: true });
+  const mentorExtXlsx = await api('GET', `${exportBase}/export/excel?cohort=external`, { token: mentorToken, asQueryToken: true });
+  check('mentor rejected on external cohort (403)', mentorExtCsv.status === 403 && mentorExtXlsx.status === 403, `${mentorExtCsv.status}/${mentorExtXlsx.status}`);
+
+  const bogusCsv = await api('GET', `${exportBase}/export/csv?cohort=guests`, { token: adminToken, asQueryToken: true });
+  check('bogus cohort rejected (400)', bogusCsv.status === 400, `status ${bogusCsv.status}`);
+
   console.log('\n[verify] files written for manual inspection:');
   console.log(`[verify]   ${csvPath}`);
   console.log(`[verify]   ${xlsxPath}`);
+  console.log(`[verify]   ${extCsvPath}`);
+  console.log(`[verify]   ${extXlsxPath}`);
 
   if (failures > 0) {
     console.error(`\n[verify] FAILED with ${failures} check(s)`);

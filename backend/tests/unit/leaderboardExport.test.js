@@ -1,9 +1,13 @@
 const Excel = require('exceljs');
 const {
   buildLeaderboardWorkbook,
+  buildGuestLeaderboardWorkbook,
   toExportRows,
+  toGuestExportRows,
   LEADERBOARD_EXPORT_COLUMNS,
+  GUEST_LEADERBOARD_EXPORT_COLUMNS,
   LEADERBOARD_SHEET_NAME,
+  GUEST_LEADERBOARD_SHEET_NAME,
 } = require('../../utils/leaderboardExport');
 
 // Mirrors the shape rankStudentAttempts returns (utils/analytics) plus the
@@ -256,5 +260,268 @@ describe('buildLeaderboardWorkbook', () => {
 
     const scorePctCol = headersOf(sheet, headerRow).indexOf('Score (%)') + 1;
     expect(sheet.getCell(headerRow + 1, scorePctCol).numFmt).toBe('0.0"%"');
+  });
+});
+
+// Mirrors the shape fetchGuestParticipants returns (utils/guestAnalytics),
+// including the nullable cases the doc comment calls out: legacy pre-email
+// leads carry email null, and an all-skipped attempt reports accuracy null.
+function buildGuestParticipants() {
+  return [
+    {
+      attemptId: 'gatt3',
+      guestId: 'lead3',
+      name: 'Late Lead',
+      email: 'late@example.com',
+      phone: '+9198765000003',
+      phoneMasked: '+91 ••••• 00003',
+      score: 1,
+      totalQuestions: 4,
+      marksObtained: 4,
+      totalMarks: 16,
+      scorePercentage: 25,
+      accuracy: 25,
+      correct: 1,
+      incorrect: 3,
+      skipped: 0,
+      attempted: 4,
+      timeTakenSeconds: 420,
+      tabSwitchCount: 1,
+      status: 'completed',
+      startedAt: new Date('2026-10-01T09:00:00Z'),
+      submittedAt: new Date('2026-10-01T09:30:00Z'),
+      emailVerified: true,
+      phoneVerified: false,
+      marketingConsent: false,
+    },
+    {
+      // Legacy pre-email lead: verified-by-phone era, no email on file.
+      attemptId: 'gatt2',
+      guestId: 'lead2',
+      name: 'Legacy Emailless',
+      email: null,
+      phone: '+9198765000002',
+      phoneMasked: '+91 ••••• 00002',
+      score: 4,
+      totalQuestions: 4,
+      marksObtained: 16,
+      totalMarks: 16,
+      scorePercentage: 100,
+      accuracy: 50,
+      correct: 4,
+      incorrect: 0,
+      skipped: 0,
+      attempted: 4,
+      timeTakenSeconds: 750,
+      tabSwitchCount: 0,
+      status: 'completed',
+      startedAt: new Date('2026-10-01T08:00:00Z'),
+      submittedAt: new Date('2026-10-01T08:30:00Z'),
+      emailVerified: false,
+      phoneVerified: true,
+      marketingConsent: true,
+    },
+    {
+      attemptId: 'gatt1',
+      guestId: 'lead1',
+      name: 'Grace Guest',
+      email: 'grace@example.com',
+      phone: '+9198765000001',
+      phoneMasked: '+91 ••••• 00001',
+      score: 4,
+      totalQuestions: 4,
+      marksObtained: 16,
+      totalMarks: 16,
+      scorePercentage: 100,
+      accuracy: 100,
+      correct: 4,
+      incorrect: 0,
+      skipped: 0,
+      attempted: 4,
+      timeTakenSeconds: 600,
+      tabSwitchCount: 2,
+      status: 'completed',
+      startedAt: new Date('2026-10-01T07:00:00Z'),
+      submittedAt: new Date('2026-10-01T07:20:00Z'),
+      emailVerified: true,
+      phoneVerified: false,
+      marketingConsent: true,
+    },
+  ];
+}
+
+function buildGuestData(overrides = {}) {
+  return {
+    test: {
+      title: 'NEET Grand Test 04',
+      subjectName: 'Pathology',
+      testType: 'grand',
+      totalQuestions: 4,
+      totalMarks: 16,
+    },
+    rows: toGuestExportRows(buildGuestParticipants()),
+    generatedAt: new Date('2026-10-06T12:00:00Z'),
+    ...overrides,
+  };
+}
+
+describe('GUEST_LEADERBOARD_EXPORT_COLUMNS', () => {
+  it('carries the guest participant + lead columns in a stable order', () => {
+    expect(GUEST_LEADERBOARD_EXPORT_COLUMNS.map((c) => c.header)).toEqual([
+      'Position',
+      'Name',
+      'Email',
+      'Phone',
+      'Email Verified',
+      'Marketing Consent',
+      'Score (%)',
+      'Marks Obtained',
+      'Total Marks',
+      'Correct',
+      'Incorrect',
+      'Skipped',
+      'Accuracy (%)',
+      'Time (min)',
+      'Tab Switches',
+      'Completed At (UTC)',
+      'Attempt ID',
+    ]);
+  });
+
+  it('gives every column a CSV-safe value extractor', () => {
+    GUEST_LEADERBOARD_EXPORT_COLUMNS.forEach((col) => {
+      expect(typeof col.value).toBe('function');
+    });
+  });
+});
+
+describe('toGuestExportRows', () => {
+  it('ranks by score desc with dense positions and derives timeSpent, without mutating the input', () => {
+    const participants = buildGuestParticipants();
+    const rows = toGuestExportRows(participants);
+
+    // Grace (100%, acc 100) beats Legacy Emailless (100%, acc 50) on the
+    // accuracy tie-break; Late Lead (25%) is last.
+    expect(rows.map((r) => r.name)).toEqual(['Grace Guest', 'Legacy Emailless', 'Late Lead']);
+    expect(rows.map((r) => r.position)).toEqual([1, 2, 3]);
+    // 750s → 12.5 min, mirroring the internal Time (min) column.
+    expect(rows[1].timeSpent).toBe(12.5);
+    expect(rows[0].timeSpent).toBe(10);
+
+    // The caller's array and objects stay untouched.
+    expect(participants[0].position).toBeUndefined();
+    expect(participants[0].timeSpent).toBeUndefined();
+    expect(participants.map((p) => p.attemptId)).toEqual(['gatt3', 'gatt2', 'gatt1']);
+  });
+
+  it('breaks full ties by earlier submission, then deterministically by attempt id', () => {
+    const tied = [
+      { attemptId: 'b', scorePercentage: 50, accuracy: 50, marksObtained: 8, submittedAt: new Date('2026-10-01T10:00:00Z') },
+      { attemptId: 'a', scorePercentage: 50, accuracy: 50, marksObtained: 8, submittedAt: new Date('2026-10-01T09:00:00Z') },
+      { attemptId: 'c', scorePercentage: 50, accuracy: 50, marksObtained: 8, submittedAt: new Date('2026-10-01T09:00:00Z') },
+    ];
+
+    const rows = toGuestExportRows(tied);
+    // a and c tie everywhere → earlier submission first, then attempt id.
+    expect(rows.map((r) => r.attemptId)).toEqual(['a', 'c', 'b']);
+  });
+
+  it('sorts marks as the third tie-break and treats null accuracy as last', () => {
+    const rows = toGuestExportRows([
+      { attemptId: 'null-acc', scorePercentage: 50, accuracy: null, marksObtained: 8, submittedAt: new Date('2026-10-01T09:00:00Z') },
+      { attemptId: 'fewer-marks', scorePercentage: 50, accuracy: 80, marksObtained: 6, submittedAt: new Date('2026-10-01T09:00:00Z') },
+      { attemptId: 'more-marks', scorePercentage: 50, accuracy: 80, marksObtained: 8, submittedAt: new Date('2026-10-01T09:00:00Z') },
+    ]);
+
+    expect(rows.map((r) => r.attemptId)).toEqual(['more-marks', 'fewer-marks', 'null-acc']);
+  });
+
+  it('degrades empty and non-array inputs to an empty list', () => {
+    expect(toGuestExportRows([])).toEqual([]);
+    expect(toGuestExportRows(undefined)).toEqual([]);
+    expect(toGuestExportRows(null)).toEqual([]);
+  });
+});
+
+describe('buildGuestLeaderboardWorkbook', () => {
+  it('creates a single worksheet explicitly named for the external cohort', () => {
+    const workbook = buildGuestLeaderboardWorkbook(buildGuestData());
+
+    expect(workbook.worksheets).toHaveLength(1);
+    expect(workbook.worksheets[0].name).toBe(GUEST_LEADERBOARD_SHEET_NAME);
+    expect(GUEST_LEADERBOARD_SHEET_NAME).toBe('External Leaderboard');
+  });
+
+  it('carries the report title, participant count and export timestamp', () => {
+    const workbook = buildGuestLeaderboardWorkbook(buildGuestData());
+    const sheet = workbook.getWorksheet(GUEST_LEADERBOARD_SHEET_NAME);
+
+    expect(sheet.getCell(1, 1).value).toBe('External Leaderboard — NEET Grand Test 04');
+    expect(String(sheet.getCell(2, 1).value)).toContain('Pathology');
+    expect(String(sheet.getCell(2, 1).value)).toContain('3 participants');
+    expect(String(sheet.getCell(3, 1).value)).toContain('2026-10-06 12:00');
+  });
+
+  it('renders the guest column spec with the same styling contract as the internal sheet', () => {
+    const workbook = buildGuestLeaderboardWorkbook(buildGuestData());
+    const sheet = workbook.getWorksheet(GUEST_LEADERBOARD_SHEET_NAME);
+    const headerRow = headerRowOf(sheet, 'Position');
+
+    expect(headersOf(sheet, headerRow)).toEqual(GUEST_LEADERBOARD_EXPORT_COLUMNS.map((c) => c.header));
+
+    const headerCell = sheet.getCell(headerRow, 1);
+    expect(argbOf(headerCell.style.fill.fgColor).toUpperCase()).toBe('FF01B4AE');
+    expect(argbOf(headerCell.style.font.color).toUpperCase()).toBe('FFFFFFFF');
+    expect(headerCell.style.font.bold).toBe(true);
+
+    const view = sheet.views[0];
+    expect(view.state).toBe('frozen');
+    expect(view.ySplit).toBe(headerRow);
+    expect(sheet.autoFilter).toBeDefined();
+  });
+
+  it('writes typed, ranked guest rows with lead flags and blank nullable fields', () => {
+    const workbook = buildGuestLeaderboardWorkbook(buildGuestData());
+    const sheet = workbook.getWorksheet(GUEST_LEADERBOARD_SHEET_NAME);
+    const headerRow = headerRowOf(sheet, 'Position');
+
+    const firstRow = headerRow + 1;
+    const secondRow = headerRow + 2;
+
+    expect(cellValue(sheet, headerRow, firstRow, 'Name')).toBe('Grace Guest');
+    expect(cellValue(sheet, headerRow, firstRow, 'Position')).toBe(1);
+    expect(cellValue(sheet, headerRow, firstRow, 'Email')).toBe('grace@example.com');
+    expect(cellValue(sheet, headerRow, firstRow, 'Phone')).toBe('+9198765000001');
+    expect(cellValue(sheet, headerRow, firstRow, 'Email Verified')).toBe('Yes');
+    expect(cellValue(sheet, headerRow, firstRow, 'Marketing Consent')).toBe('Yes');
+    expect(cellValue(sheet, headerRow, firstRow, 'Score (%)')).toBe(100);
+    expect(cellValue(sheet, headerRow, firstRow, 'Time (min)')).toBe(10);
+    expect(cellValue(sheet, headerRow, firstRow, 'Tab Switches')).toBe(2);
+    expect(cellValue(sheet, headerRow, firstRow, 'Attempt ID')).toBe('gatt1');
+
+    // Legacy lead: null email renders blank, not the string "null".
+    expect(cellValue(sheet, headerRow, secondRow, 'Name')).toBe('Legacy Emailless');
+    expect(cellValue(sheet, headerRow, secondRow, 'Email')).toBe('');
+    expect(cellValue(sheet, headerRow, secondRow, 'Email Verified')).toBe('No');
+
+    const completedCol = headersOf(sheet, headerRow).indexOf('Completed At (UTC)') + 1;
+    expect(sheet.getCell(firstRow, completedCol).value).toBeInstanceOf(Date);
+    expect(sheet.getCell(firstRow, completedCol).numFmt).toBe('yyyy-mm-dd hh:mm');
+
+    const scorePctCol = headersOf(sheet, headerRow).indexOf('Score (%)') + 1;
+    expect(sheet.getCell(firstRow, scorePctCol).numFmt).toBe('0.0"%"');
+  });
+
+  it('handles an empty guest list gracefully', () => {
+    const workbook = buildGuestLeaderboardWorkbook(buildGuestData({ rows: [] }));
+    const sheet = workbook.getWorksheet(GUEST_LEADERBOARD_SHEET_NAME);
+    const headerRow = headerRowOf(sheet, 'Position');
+
+    const noteCell = sheet.getCell(headerRow + 1, 1);
+    expect(String(noteCell.value)).toBe('No public participants yet.');
+    expect(String(sheet.getCell(2, 1).value)).toContain('0 participants');
+
+    // The workbook still serializes cleanly.
+    return expect(workbook.xlsx.writeBuffer()).resolves.toBeDefined();
   });
 });
