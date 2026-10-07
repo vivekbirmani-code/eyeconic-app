@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, ActivityIndicator, Switch, StyleSheet } from 'react-native';
+import { colors } from '@/utils/theme';
 import type { PredictResponse, PredictorExam, PredictorExamId } from '@/types/predictor';
 import {
   predictorEndpoints,
@@ -9,6 +10,7 @@ import {
 } from '@/services/predictor';
 import { useGtInput } from '@/hooks/useGtInput';
 import GtInputSection from '@/components/predictor/GtInputSection';
+import shared from '@/components/predictor/shared';
 import { CATEGORIES, DISCLAIMER_NOTE, EXAM_LABELS, maxCorrectsFor } from '@/utils/predictor/constants';
 import * as Haptics from '@/utils/haptics';
 
@@ -18,6 +20,9 @@ import * as Haptics from '@/utils/haptics';
  * Behavior is unchanged: exam → REQUIRED Grand Tests → optional category/PwD
  * (never defaulted, §3.6) → POST /predict. The screen owns the exam list and
  * renders it above this form for both modes.
+ *
+ * Workflow reads top-to-bottom: Grand Tests → category → the single primary
+ * action. One disclaimer line, at the bottom, once.
  */
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -81,33 +86,32 @@ export default function PredictorForm({ exams, selectedExam, onPredicted }: Prop
       <GtInputSection
         gt={gt}
         title="Your Grand Test scores"
-        subtitle={`Correct answers in full-length ${EXAM_LABELS[selectedExam] ?? selectedExam} pattern Grand Tests — one row per test.`}
+        subtitle={`Correct answers in full-length ${EXAM_LABELS[selectedExam] ?? selectedExam} Grand Tests — one row per test.`}
       />
 
       {/* Category & quota (§3.6): optional for the rank, REQUIRED for
           branches, never defaulted. PwD appears only with a category. */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Category</Text>
+      <View style={shared.card}>
+        <View style={styles.categoryHeader}>
+          <Text style={shared.cardTitle}>Category</Text>
+          <Text style={styles.categoryOptional}>optional</Text>
+        </View>
         <View style={styles.categoryRow}>
           {CATEGORIES.map((c) => {
             const active = category === c;
             return (
               <TouchableOpacity
                 key={c}
-                style={[styles.categoryChip, active ? styles.categoryChipActive : null]}
+                style={[shared.chip, active ? shared.chipActive : null]}
                 onPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   setCategory((prev) => (prev === c ? '' : c));
                 }}
                 activeOpacity={0.7}
                 accessibilityLabel={CATEGORY_LABELS[c]}
+                accessibilityState={{ selected: active }}
               >
-                <Text
-                  style={[
-                    styles.categoryChipText,
-                    active ? styles.categoryChipTextActive : null,
-                  ]}
-                >
+                <Text style={[shared.chipText, active ? shared.chipTextActive : null]}>
                   {CATEGORY_LABELS[c]}
                 </Text>
               </TouchableOpacity>
@@ -116,37 +120,35 @@ export default function PredictorForm({ exams, selectedExam, onPredicted }: Prop
         </View>
         <Text style={styles.categoryHint}>
           {category
-            ? 'Needed to match counselling closing ranks.'
-            : 'Optional for the rank range — needed to see possible branches.'}
+            ? 'Used to match counselling closing ranks.'
+            : 'Optional for your rank range — needed to see possible branches.'}
         </Text>
 
         {category ? (
           <View style={styles.pwdRow}>
-            <Text style={styles.pwdText}>PwD (person with benchmark disability)</Text>
+            <Text style={styles.pwdText}>PwD (benchmark disability)</Text>
             <Switch
               value={pwd}
               onValueChange={setPwd}
-              trackColor={{ false: '#E5E7EB', true: 'rgba(1, 180, 174, 0.4)' }}
-              thumbColor={pwd ? '#01b4ae' : '#9CA3AF'}
+              trackColor={{ false: colors.border, true: 'rgba(1, 180, 174, 0.4)' }}
+              thumbColor={pwd ? colors.primary : colors.textMuted}
             />
           </View>
         ) : null}
 
-        <View style={styles.quotaRow}>
-          <Text style={styles.quotaText}>
-            {isIniCet ? 'Single counselling pool (all INIs)' : 'Quota: All India Quota'}
-          </Text>
-        </View>
+        <Text style={styles.quotaText}>
+          {isIniCet ? 'Single counselling pool (all INIs)' : 'Quota: All India Quota'}
+        </Text>
       </View>
 
       {formError ? (
-        <View style={styles.formErrorBox}>
-          <Text style={styles.formErrorText}>{formError}</Text>
+        <View style={shared.formErrorBox}>
+          <Text style={shared.formErrorText}>{formError}</Text>
         </View>
       ) : null}
 
       <TouchableOpacity
-        style={[styles.submitButton, (predicting || !gt.validation.valid) ? styles.submitDisabled : null]}
+        style={[shared.primaryButton, (predicting || !gt.validation.valid) ? shared.primaryButtonDisabled : null]}
         onPress={handlePredict}
         disabled={predicting || !gt.validation.valid}
         activeOpacity={0.8}
@@ -154,61 +156,38 @@ export default function PredictorForm({ exams, selectedExam, onPredicted }: Prop
         {predicting ? (
           <>
             <ActivityIndicator color="#FFF" size="small" />
-            <Text style={styles.submitText}>Predicting…</Text>
+            <Text style={shared.primaryButtonText}>Predicting…</Text>
           </>
         ) : (
-          <Text style={styles.submitText}>Predict my range</Text>
+          <Text style={shared.primaryButtonText}>Predict my range</Text>
         )}
       </TouchableOpacity>
 
-      <Text style={styles.footerDisclaimer}>{DISCLAIMER_NOTE}</Text>
+      <Text style={shared.footnote}>{DISCLAIMER_NOTE}</Text>
     </>
   );
 }
 
 const styles = StyleSheet.create({
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#111827',
+  categoryHeader: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 8,
     marginBottom: 12,
+  },
+  categoryOptional: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textMuted,
   },
   categoryRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
   },
-  categoryChip: {
-    borderRadius: 99,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#F9FAFB',
-    paddingVertical: 7,
-    paddingHorizontal: 13,
-  },
-  categoryChipActive: {
-    borderColor: '#01b4ae',
-    backgroundColor: 'rgba(1, 180, 174, 0.1)',
-  },
-  categoryChipText: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#374151',
-  },
-  categoryChipTextActive: {
-    color: '#0d7a76',
-    fontWeight: '700',
-  },
   categoryHint: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
     marginTop: 10,
     lineHeight: 16,
   },
@@ -220,62 +199,16 @@ const styles = StyleSheet.create({
     marginTop: 12,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
+    borderTopColor: colors.bg,
   },
   pwdText: {
     fontSize: 13.5,
-    color: '#374151',
+    color: colors.textBody,
     flex: 1,
   },
-  quotaRow: {
-    marginTop: 12,
-    backgroundColor: '#F9FAFB',
-    borderRadius: 10,
-    padding: 10,
-  },
   quotaText: {
-    fontSize: 12.5,
-    color: '#6B7280',
-  },
-  formErrorBox: {
-    backgroundColor: '#FEF2F2',
-    borderWidth: 1,
-    borderColor: 'rgba(220, 38, 38, 0.25)',
-    borderRadius: 12,
-    padding: 12,
-  },
-  formErrorText: {
-    fontSize: 13,
-    color: '#DC2626',
-    textAlign: 'center',
-  },
-  submitButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#01b4ae',
-    borderRadius: 14,
-    paddingVertical: 15,
-    shadowColor: '#01b4ae',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  submitDisabled: {
-    opacity: 0.5,
-    elevation: 0,
-  },
-  submitText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  footerDisclaimer: {
-    fontSize: 11.5,
-    color: '#9CA3AF',
-    textAlign: 'center',
-    marginTop: 2,
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 10,
   },
 });

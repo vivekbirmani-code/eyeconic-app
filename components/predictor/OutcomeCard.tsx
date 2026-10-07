@@ -6,6 +6,7 @@ import {
   TouchableOpacity,
   StyleSheet,
 } from 'react-native';
+import { colors } from '@/utils/theme';
 import { CheckCircle2, Plus, Trash2, Check, AlertTriangle } from 'lucide-react-native';
 import type {
   OutcomeRecordResponse,
@@ -28,6 +29,7 @@ import {
 } from '@/utils/predictor/outcome';
 import { fmtRank } from '@/utils/predictor/format';
 import * as Haptics from '@/utils/haptics';
+import shared from './shared';
 
 /**
  * Outcome capture (§15, §18 Phases 10a+10b) — native port of the website's
@@ -227,7 +229,7 @@ export default function OutcomeCard({ predictionId, result }: Props) {
             onChangeText={setScore}
             maxLength={4}
             placeholder={result.exam === 'INI_CET' ? 'e.g. 118' : 'e.g. 480'}
-            placeholderTextColor="#9CA3AF"
+            placeholderTextColor={colors.textMuted}
             accessibilityLabel={`Actual score out of ${maxScore}`}
           />
           {fieldErrors.score ? <Text style={styles.fieldError}>{fieldErrors.score}</Text> : null}
@@ -241,7 +243,7 @@ export default function OutcomeCard({ predictionId, result }: Props) {
             onChangeText={setPercentile}
             maxLength={6}
             placeholder="e.g. 81.2"
-            placeholderTextColor="#9CA3AF"
+            placeholderTextColor={colors.textMuted}
             accessibilityLabel="Actual percentile"
           />
           {fieldErrors.percentile ? (
@@ -257,7 +259,7 @@ export default function OutcomeCard({ predictionId, result }: Props) {
             onChangeText={setRank}
             maxLength={7}
             placeholder="e.g. 42000"
-            placeholderTextColor="#9CA3AF"
+            placeholderTextColor={colors.textMuted}
             accessibilityLabel="Actual All India Rank"
           />
           {fieldErrors.rank ? <Text style={styles.fieldError}>{fieldErrors.rank}</Text> : null}
@@ -275,15 +277,16 @@ export default function OutcomeCard({ predictionId, result }: Props) {
             return (
               <TouchableOpacity
                 key={s}
-                style={[styles.statusChip, active ? styles.statusChipActive : null]}
+                style={[shared.chip, active ? shared.chipActive : null]}
                 onPress={() => {
                   Haptics.selectionAsync();
                   setCounsellingStatus((prev) => (prev === s ? '' : s));
                 }}
                 activeOpacity={0.7}
                 accessibilityLabel={s === 'ALLOTTED' ? 'Allotted a seat' : 'Not allotted'}
+                accessibilityState={{ selected: active }}
               >
-                <Text style={[styles.statusChipText, active ? styles.statusChipTextActive : null]}>
+                <Text style={[shared.chipText, active ? shared.chipTextActive : null]}>
                   {s === 'ALLOTTED' ? 'Allotted a seat' : 'Not allotted'}
                 </Text>
               </TouchableOpacity>
@@ -304,7 +307,7 @@ export default function OutcomeCard({ predictionId, result }: Props) {
                 onChangeText={setAllottedInstitute}
                 maxLength={COUNSELLING_TEXT_MAX}
                 placeholder="e.g. AIIMS New Delhi"
-                placeholderTextColor="#9CA3AF"
+                placeholderTextColor={colors.textMuted}
               />
               {fieldErrors.allottedInstitute ? (
                 <Text style={styles.fieldError}>{fieldErrors.allottedInstitute}</Text>
@@ -318,7 +321,7 @@ export default function OutcomeCard({ predictionId, result }: Props) {
                 onChangeText={setAllottedBranch}
                 maxLength={COUNSELLING_TEXT_MAX}
                 placeholder="e.g. Radiodiagnosis"
-                placeholderTextColor="#9CA3AF"
+                placeholderTextColor={colors.textMuted}
               />
               {fieldErrors.allottedBranch ? (
                 <Text style={styles.fieldError}>{fieldErrors.allottedBranch}</Text>
@@ -332,7 +335,7 @@ export default function OutcomeCard({ predictionId, result }: Props) {
                 onChangeText={setRound}
                 maxLength={COUNSELLING_ROUND_MAX}
                 placeholder="e.g. R2 / mop-up"
-                placeholderTextColor="#9CA3AF"
+                placeholderTextColor={colors.textMuted}
               />
               {fieldErrors.round ? <Text style={styles.fieldError}>{fieldErrors.round}</Text> : null}
             </View>
@@ -370,20 +373,20 @@ export default function OutcomeCard({ predictionId, result }: Props) {
 
       {error !== null ? (
         <View style={styles.errorRow}>
-          <AlertTriangle size={13} color="#DC2626" />
+          <AlertTriangle size={13} color={colors.dangerDark} />
           <Text style={styles.errorText}>{error}</Text>
         </View>
       ) : null}
 
       <View style={styles.formActions}>
         <TouchableOpacity
-          style={[styles.saveButton, !canSubmit ? styles.saveButtonDisabled : null]}
+          style={[shared.primaryButton, !canSubmit ? shared.primaryButtonDisabled : null, styles.saveButton]}
           onPress={submit}
           disabled={!canSubmit}
           activeOpacity={0.8}
         >
           <CheckCircle2 size={14} color="#FFF" />
-          <Text style={styles.saveButtonText}>
+          <Text style={[shared.primaryButtonText, styles.saveButtonText]}>
             {editing ? 'Update result' : 'Share my result'}
           </Text>
         </TouchableOpacity>
@@ -400,10 +403,10 @@ export default function OutcomeCard({ predictionId, result }: Props) {
     const o = record.outcome;
     const c = record.counselling;
     return (
-      <View style={[styles.card, styles.cardRecorded]}>
+      <View style={[shared.card, styles.cardRecorded, { gap: 10 }]}>
         <View style={styles.cardTitleRow}>
-          <CheckCircle2 size={16} color="#01b4ae" />
-          <Text style={styles.cardTitle}>Your actual result — recorded, thank you</Text>
+          <CheckCircle2 size={16} color={colors.primary} />
+          <Text style={shared.cardTitle}>Your actual result — recorded, thank you</Text>
         </View>
         <View style={styles.recordedValues}>
           {o.score !== null ? (
@@ -482,7 +485,7 @@ export default function OutcomeCard({ predictionId, result }: Props) {
               onPress={() => setConfirmWithdraw(true)}
               activeOpacity={0.7}
             >
-              <Trash2 size={12} color="#6B7280" />
+              <Trash2 size={12} color={colors.textSecondary} />
               <Text style={styles.withdrawButtonText}>Withdraw</Text>
             </TouchableOpacity>
           )}
@@ -493,10 +496,10 @@ export default function OutcomeCard({ predictionId, result }: Props) {
 
   if (formOpen) {
     return (
-      <View style={styles.card}>
+      <View style={[shared.card, { gap: 10 }]}>
         <View style={styles.cardTitleRow}>
-          <CheckCircle2 size={16} color="#01b4ae" />
-          <Text style={styles.cardTitle}>
+          <CheckCircle2 size={16} color={colors.primary} />
+          <Text style={shared.cardTitle}>
             {editing ? 'Edit your actual result' : 'Share your actual result (optional)'}
           </Text>
         </View>
@@ -508,10 +511,10 @@ export default function OutcomeCard({ predictionId, result }: Props) {
   // ---- collapsed intro (nothing recorded yet) -------------------------------------
 
   return (
-    <View style={styles.card}>
+    <View style={[shared.card, { gap: 10 }]}>
       <View style={styles.cardTitleRow}>
-        <CheckCircle2 size={16} color="#01b4ae" />
-        <Text style={styles.cardTitle}>Result out? Make the next prediction better</Text>
+        <CheckCircle2 size={16} color={colors.primary} />
+        <Text style={shared.cardTitle}>Result out? Make the next prediction better</Text>
       </View>
       <Text style={styles.hint}>{outcomeIntroNote(result.exam)}</Text>
       <TouchableOpacity
@@ -519,7 +522,7 @@ export default function OutcomeCard({ predictionId, result }: Props) {
         onPress={() => openForm()}
         activeOpacity={0.7}
       >
-        <Plus size={14} color="#374151" />
+        <Plus size={14} color={colors.textBody} />
         <Text style={styles.outlineButtonText}>Add my actual result</Text>
       </TouchableOpacity>
     </View>
@@ -527,16 +530,8 @@ export default function OutcomeCard({ predictionId, result }: Props) {
 }
 
 const styles = StyleSheet.create({
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    gap: 10,
-  },
   cardRecorded: {
-    borderColor: 'rgba(1, 180, 174, 0.35)',
+    borderColor: colors.primaryTintBorder,
     backgroundColor: '#F0FBFA',
   },
   cardTitleRow: {
@@ -544,15 +539,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
-  cardTitle: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#111827',
-    flex: 1,
-  },
   hint: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
     lineHeight: 16,
   },
   // form fields
@@ -567,32 +556,32 @@ const styles = StyleSheet.create({
   inputLabel: {
     fontSize: 11.5,
     fontWeight: '600',
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   input: {
     borderWidth: 1.5,
-    borderColor: '#E5E7EB',
-    borderRadius: 12,
-    backgroundColor: '#F9FAFB',
+    borderColor: colors.border,
+    borderRadius: 10,
+    backgroundColor: colors.surfaceMuted,
     paddingHorizontal: 12,
     paddingVertical: 9,
     fontSize: 14.5,
-    color: '#111827',
+    color: colors.text,
   },
   inputError: {
-    borderColor: '#DC2626',
+    borderColor: colors.dangerDark,
     backgroundColor: '#FEF2F2',
   },
   fieldError: {
     fontSize: 11.5,
-    color: '#DC2626',
+    color: colors.dangerDark,
     marginTop: 2,
   },
   counsellingBox: {
-    backgroundColor: '#F9FAFB',
+    backgroundColor: colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 12,
+    borderColor: colors.border,
+    borderRadius: 10,
     padding: 12,
     gap: 8,
   },
@@ -601,35 +590,14 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
   },
-  statusChip: {
-    borderRadius: 99,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
-    paddingVertical: 7,
-    paddingHorizontal: 13,
-  },
-  statusChipActive: {
-    borderColor: '#01b4ae',
-    backgroundColor: 'rgba(1, 180, 174, 0.1)',
-  },
-  statusChipText: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#374151',
-  },
-  statusChipTextActive: {
-    color: '#0d7a76',
-    fontWeight: '700',
-  },
   consentRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 10,
-    backgroundColor: '#F9FAFB',
+    backgroundColor: colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 12,
+    borderColor: colors.border,
+    borderRadius: 10,
     padding: 12,
   },
   consentRowError: {
@@ -640,24 +608,24 @@ const styles = StyleSheet.create({
     height: 20,
     borderRadius: 6,
     borderWidth: 1.5,
-    borderColor: '#9CA3AF',
-    backgroundColor: '#FFFFFF',
+    borderColor: colors.textMuted,
+    backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
     marginTop: 1,
   },
   consentBoxChecked: {
-    backgroundColor: '#01b4ae',
-    borderColor: '#01b4ae',
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   consentText: {
     fontSize: 12,
-    color: '#374151',
+    color: colors.textBody,
     lineHeight: 16,
   },
   consentReask: {
     fontSize: 11,
-    color: '#6B7280',
+    color: colors.textSecondary,
     marginTop: 4,
   },
   errorRow: {
@@ -668,7 +636,7 @@ const styles = StyleSheet.create({
   errorText: {
     flex: 1,
     fontSize: 12,
-    color: '#DC2626',
+    color: colors.dangerDark,
     lineHeight: 16,
   },
   formActions: {
@@ -677,27 +645,16 @@ const styles = StyleSheet.create({
     gap: 14,
   },
   saveButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 7,
-    backgroundColor: '#01b4ae',
-    borderRadius: 12,
     paddingVertical: 11,
     paddingHorizontal: 18,
   },
-  saveButtonDisabled: {
-    opacity: 0.5,
-  },
   saveButtonText: {
     fontSize: 14,
-    fontWeight: '700',
-    color: '#FFFFFF',
   },
   cancelText: {
     fontSize: 12.5,
     fontWeight: '600',
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   // recorded view
   recordedValues: {
@@ -708,21 +665,21 @@ const styles = StyleSheet.create({
   },
   recordedValue: {
     fontSize: 14,
-    color: '#111827',
+    color: colors.text,
   },
   recordedStrong: {
     fontWeight: '700',
   },
   counsellingRecorded: {
     borderTopWidth: 1,
-    borderTopColor: 'rgba(1, 180, 174, 0.2)',
+    borderTopColor: colors.primaryTintBorder,
     paddingTop: 10,
     gap: 3,
   },
   counsellingLabel: {
     fontSize: 10,
     fontWeight: '700',
-    color: '#6B7280',
+    color: colors.textSecondary,
     letterSpacing: 0.8,
   },
   recordedActions: {
@@ -739,15 +696,16 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
-    paddingVertical: 8,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingVertical: 9,
     paddingHorizontal: 14,
+    minHeight: 40,
   },
   outlineButtonText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#374151',
+    color: colors.textBody,
   },
   withdrawButton: {
     flexDirection: 'row',
@@ -756,7 +714,7 @@ const styles = StyleSheet.create({
   },
   withdrawButtonText: {
     fontSize: 12.5,
-    color: '#6B7280',
+    color: colors.textSecondary,
     fontWeight: '600',
   },
   withdrawRow: {
@@ -774,7 +732,7 @@ const styles = StyleSheet.create({
   },
   withdrawConfirmText: {
     fontSize: 12.5,
-    color: '#DC2626',
+    color: colors.dangerDark,
     fontWeight: '600',
   },
 });

@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
+import { colors } from '@/utils/theme';
 import { ChevronDown, Layers, Info } from 'lucide-react-native';
 import type { PredictionResult } from '@/types/predictor';
 import { EXAM_LABELS, isBranchSummary } from '@/utils/predictor/constants';
@@ -39,12 +40,12 @@ export default function MethodologyCard({ result }: { result: PredictionResult }
         accessibilityState={{ expanded: open }}
       >
         <View style={styles.headerRow}>
-          <Layers size={15} color="#01b4ae" />
+          <Layers size={15} color={colors.primary} />
           <Text style={styles.headerText}>How this estimate works</Text>
         </View>
         <ChevronDown
           size={16}
-          color="#6B7280"
+          color={colors.textSecondary}
           style={{ transform: [{ rotate: open ? '180deg' : '0deg' }] }}
         />
       </TouchableOpacity>
@@ -66,12 +67,12 @@ export default function MethodologyCard({ result }: { result: PredictionResult }
           <View style={styles.section}>
             <Text style={styles.sectionLabel}>DATA THIS RAN AGAINST</Text>
               <View style={styles.bulletRow}>
-              <Text style={styles.bullet}>•</Text>
-              <Text style={styles.sectionText}>
-                Rank mapping: official {isIniCet ? 'AIIMS' : 'NBEMS'}{' '}
-                {isIniCet && rank.session ? rank.session.replace('-', ' ') : rank.examYear}{' '}
-                result data.
-              </Text>
+                <Text style={styles.bullet}>•</Text>
+                <Text style={styles.sectionText}>
+                  Rank mapping: official {isIniCet ? 'AIIMS' : 'NBEMS'}{' '}
+                  {isIniCet && rank.session ? rank.session.replace('-', ' ') : rank.examYear}{' '}
+                  result data.
+                </Text>
             </View>
             <View style={styles.bulletRow}>
               <Text style={styles.bullet}>•</Text>
@@ -95,7 +96,7 @@ export default function MethodologyCard({ result }: { result: PredictionResult }
               <Text style={styles.sectionLabel}>NOTES &amp; LIMITATIONS</Text>
               {notes.map((note) => (
                 <View key={note} style={styles.bulletRow}>
-                  <Info size={12} color="#01b4ae" />
+                  <Info size={12} color={colors.primary} />
                   <Text style={styles.sectionText}>{note}</Text>
                 </View>
               ))}
@@ -114,10 +115,10 @@ export default function MethodologyCard({ result }: { result: PredictionResult }
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#F9FAFB',
-    borderRadius: 16,
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     overflow: 'hidden',
   },
   headerButton: {
@@ -126,6 +127,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     padding: 16,
     gap: 10,
+    minHeight: 52,
   },
   headerRow: {
     flexDirection: 'row',
@@ -135,14 +137,14 @@ const styles = StyleSheet.create({
   headerText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#374151',
+    color: colors.textBody,
   },
   body: {
     paddingHorizontal: 16,
     paddingBottom: 16,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
+    borderTopColor: colors.border,
     gap: 14,
   },
   section: {
@@ -151,7 +153,7 @@ const styles = StyleSheet.create({
   sectionLabel: {
     fontSize: 10.5,
     fontWeight: '700',
-    color: '#9CA3AF',
+    color: colors.textMuted,
     letterSpacing: 0.8,
     marginBottom: 2,
   },
@@ -162,21 +164,21 @@ const styles = StyleSheet.create({
   },
   bullet: {
     fontSize: 12,
-    color: '#01b4ae',
+    color: colors.primary,
     lineHeight: 16,
   },
   sectionText: {
     flex: 1,
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
     lineHeight: 16,
   },
   footerText: {
     fontSize: 11,
-    color: '#9CA3AF',
+    color: colors.textMuted,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
+    borderTopColor: colors.border,
     lineHeight: 15,
   },
 });

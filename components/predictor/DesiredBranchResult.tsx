@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { View, Text, TouchableOpacity, Share, StyleSheet } from 'react-native';
 import type { StyleProp, TextStyle, ViewStyle } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
+import { colors } from '@/utils/theme';
 import {
   ArrowLeft,
   Award,
@@ -31,6 +32,7 @@ import {
 } from '@/utils/predictor/constants';
 import { buildDesiredShareText } from '@/utils/predictor/summary';
 import { fmtRank, yearFilterLabel } from '@/utils/predictor/format';
+import shared from './shared';
 
 /**
  * Desired Branch Predictor result — native port of the website's
@@ -76,9 +78,9 @@ function TargetRankCard({ result }: { result: DesiredResultData }) {
     loose === null ? null : Math.max(tightShown ?? 1, Math.round(loose));
 
   return (
-    <View style={styles.card}>
+    <View style={shared.card}>
       <View style={styles.cardTopRow}>
-        <Text style={styles.cardLabel}>The rank it historically took</Text>
+        <Text style={shared.sectionLabel}>The rank it historically took</Text>
         <View style={styles.sourceChip}>
           <Text style={styles.sourceChipText}>{source}</Text>
         </View>
@@ -113,7 +115,7 @@ function TargetRankCard({ result }: { result: DesiredResultData }) {
         ) : null}
       </View>
       <View style={styles.coverageRow}>
-        <Info size={13} color="#01b4ae" />
+        <Info size={13} color={colors.primary} />
         <Text style={styles.coverageText}>
           {TARGET_COVERAGE_TEXT[t.coverage] ?? ''} Final state of counselling (end of all rounds).
         </Text>
@@ -143,9 +145,9 @@ function RequiredCard({ result }: { result: DesiredResultData }) {
     : 'Official NBEMS score↔rank data';
 
   return (
-    <View style={styles.card}>
+    <View style={shared.card}>
       <View style={styles.cardTopRow}>
-        <Text style={styles.cardLabel}>Corrects to aim for</Text>
+        <Text style={shared.sectionLabel}>Corrects to aim for</Text>
         <View style={styles.sourceChip}>
           <Text style={styles.sourceChipText}>{source}</Text>
         </View>
@@ -180,7 +182,7 @@ function RequiredCard({ result }: { result: DesiredResultData }) {
         <Text style={styles.axisLabelText}>{total}</Text>
       </View>
       <View style={styles.coverageRow}>
-        <Info size={13} color="#01b4ae" />
+        <Info size={13} color={colors.primary} />
         <Text style={styles.coverageText}>
           The safe end clears even the tightest closing on record; the likely end cleared the
           loosest. Rounding is always upward — fractional corrects are never shown as achievable.
@@ -193,7 +195,7 @@ function RequiredCard({ result }: { result: DesiredResultData }) {
         .filter(({ e }) => e.note)
         .map(({ e, i }) => (
           <View key={i} style={styles.boundedNoteBox}>
-            <AlertTriangle size={12} color="#F59E0B" />
+            <AlertTriangle size={12} color={colors.warning} />
             <Text style={styles.boundedNoteText}>{e.note}</Text>
           </View>
         ))}
@@ -276,7 +278,7 @@ function GapPanel({ result, onBack }: { result: DesiredResultData; onBack: () =>
       <Text style={[styles.gapHint, panel.text]}>{meta.hint}</Text>
       {gap.status === 'NO_CURRENT_DATA' ? (
         <TouchableOpacity style={styles.gapBackButton} onPress={onBack} activeOpacity={0.7}>
-          <ArrowLeft size={12} color="#374151" />
+          <ArrowLeft size={12} color={colors.textBody} />
           <Text style={styles.gapBackButtonText}>Add your Grand Tests</Text>
         </TouchableOpacity>
       ) : null}
@@ -292,9 +294,9 @@ function CycleTable({ result }: { result: DesiredResultData }) {
   const cycleWord = isIniCet ? 'Session' : 'Year';
 
   return (
-    <View style={styles.card}>
+    <View style={shared.card}>
       <View style={styles.cycleHeaderRow}>
-        <Text style={styles.cycleTitle}>Closing ranks by {cycleWord.toLowerCase()}</Text>
+        <Text style={shared.cardTitle}>Closing ranks by {cycleWord.toLowerCase()}</Text>
         <Text style={styles.cycleHeaderChip}>Final state of counselling</Text>
       </View>
       <Text style={styles.cycleExplainer}>
@@ -364,12 +366,12 @@ function DesiredMethodology({ result }: { result: DesiredResultData }) {
         accessibilityState={{ expanded: open }}
       >
         <View style={styles.methodologyHeaderRow}>
-          <Layers size={15} color="#01b4ae" />
+          <Layers size={15} color={colors.primary} />
           <Text style={styles.methodologyHeaderText}>How this target was worked out</Text>
         </View>
         <ChevronDown
           size={16}
-          color="#6B7280"
+          color={colors.textSecondary}
           style={{ transform: [{ rotate: open ? '180deg' : '0deg' }] }}
         />
       </TouchableOpacity>
@@ -432,7 +434,7 @@ function DesiredMethodology({ result }: { result: DesiredResultData }) {
               <Text style={styles.sectionLabel}>NOTES &amp; LIMITATIONS</Text>
               {notes.map((note) => (
                 <View key={note} style={styles.bulletRow}>
-                  <Info size={12} color="#01b4ae" />
+                  <Info size={12} color={colors.primary} />
                   <Text style={styles.sectionText}>{note}</Text>
                 </View>
               ))}
@@ -487,15 +489,15 @@ export default function DesiredBranchResult({
   // §9 case 2: branch exists but nothing closed for this category × PwD.
   if (result.target.coverage === 'NO_DATA_FOR_FILTER') {
     return (
-      <View style={{ gap: 14 }}>
+      <View style={{ gap: 12 }}>
         <View style={styles.topRow}>
           <TouchableOpacity style={styles.topButton} onPress={onBack} activeOpacity={0.7}>
-            <ArrowLeft size={14} color="#374151" />
+            <ArrowLeft size={14} color={colors.textBody} />
             <Text style={styles.topButtonText}>Pick another branch</Text>
           </TouchableOpacity>
         </View>
         <View style={styles.noDataCard}>
-          <AlertTriangle size={22} color="#F59E0B" style={styles.inviteIcon} />
+          <AlertTriangle size={22} color={colors.warning} style={styles.inviteIcon} />
           <Text style={styles.noDataTitle}>{result.input.branch.display}</Text>
           <Text style={styles.noDataBody}>
             This branch appears in the counselling records, but nothing closed under{' '}
@@ -512,7 +514,7 @@ export default function DesiredBranchResult({
             onPress={onBack}
             activeOpacity={0.7}
           >
-            <ArrowLeft size={14} color="#374151" />
+            <ArrowLeft size={14} color={colors.textBody} />
             <Text style={styles.topButtonText}>Back to inputs</Text>
           </TouchableOpacity>
         </View>
@@ -521,21 +523,21 @@ export default function DesiredBranchResult({
   }
 
   return (
-    <View style={{ gap: 14 }}>
+    <View style={{ gap: 12 }}>
       <View style={styles.topRow}>
         <TouchableOpacity style={styles.topButton} onPress={onBack} activeOpacity={0.7}>
-          <ArrowLeft size={14} color="#374151" />
+          <ArrowLeft size={14} color={colors.textBody} />
           <Text style={styles.topButtonText}>Pick another branch</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.topButton} onPress={share} activeOpacity={0.7}>
           {copied ? (
             <>
-              <Check size={14} color="#01b4ae" />
-              <Text style={styles.topButtonText}>Copied</Text>
+              <Check size={14} color={colors.primaryDark} />
+              <Text style={[styles.topButtonText, styles.topButtonTextTeal]}>Copied</Text>
             </>
           ) : (
             <>
-              <Copy size={14} color="#374151" />
+              <Copy size={14} color={colors.textBody} />
               <Text style={styles.topButtonText}>Share target</Text>
             </>
           )}
@@ -559,7 +561,7 @@ export default function DesiredBranchResult({
 
       {/* §14: the disclaimer, visible with the results — exactly once */}
       <View style={styles.disclaimerRow}>
-        <Info size={13} color="#01b4ae" />
+        <Info size={13} color={colors.primary} />
         <Text style={styles.disclaimerText}>
           Historical closing ranks move every year — this is a planning target, not a promise.{' '}
           {DISCLAIMER_NOTE}
@@ -568,7 +570,7 @@ export default function DesiredBranchResult({
 
       {skippedWarning ? (
         <View style={styles.warningBox}>
-          <AlertTriangle size={14} color="#F59E0B" />
+          <AlertTriangle size={14} color={colors.warning} />
           <Text style={styles.warningTextAmber}>{skippedWarning.note}</Text>
         </View>
       ) : null}
@@ -576,7 +578,7 @@ export default function DesiredBranchResult({
       {/* short, in-context cautions (full text lives in Methodology) */}
       {inlineWarnings.map((w) => (
         <View key={w.code} style={styles.inlineWarningBox}>
-          <Sparkles size={13} color="#01b4ae" />
+          <Sparkles size={13} color={colors.primary} />
           <Text style={styles.inlineWarningText}>{DESIRED_WARNING_SHORT[w.code] ?? w.note}</Text>
         </View>
       ))}
@@ -585,15 +587,15 @@ export default function DesiredBranchResult({
 
       {/* current GTs, provenance-tagged (mirrors the forward "What went in") */}
       {result.current ? (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Where you are now</Text>
+        <View style={shared.card}>
+          <Text style={[shared.sectionLabel, { marginBottom: 12 }]}>Where you are now</Text>
           <View style={styles.gtChips}>
             {result.current.gts.map((gt, i) => {
               const isAuto = gt.provenance === 'auto-captured';
               return (
                 <View key={i} style={[styles.gtChip, isAuto ? styles.gtChipAuto : styles.gtChipManual]}>
-                  {isAuto ? <Zap size={11} color="#01b4ae" /> : <User size={11} color="#6B7280" />}
-                  <Text style={[styles.gtChipText, { color: isAuto ? '#0d7a76' : '#374151' }]}>
+                  {isAuto ? <Zap size={11} color={colors.primary} /> : <User size={11} color={colors.textSecondary} />}
+                  <Text style={[styles.gtChipText, { color: isAuto ? colors.primaryDark : colors.textBody }]}>
                     GT {i + 1}: <Text style={styles.gtChipStrong}>{gt.selected?.corrects ?? '—'}</Text>{' '}
                     corrects
                   </Text>
@@ -609,15 +611,15 @@ export default function DesiredBranchResult({
           </Text>
         </View>
       ) : (
-        <View style={styles.card}>
-          <Award size={22} color="#01b4ae" style={styles.inviteIcon} />
+        <View style={shared.card}>
+          <Award size={22} color={colors.primary} style={styles.inviteIcon} />
           <Text style={styles.inviteTitle}>Want the gap to this target?</Text>
           <Text style={styles.inviteBody}>
             Add your recent Grand Test corrects and run this again — you will see how far the safe
             and likely ends are from your current average.
           </Text>
           <TouchableOpacity style={styles.inviteButton} onPress={onBack} activeOpacity={0.7}>
-            <ArrowLeft size={14} color="#374151" />
+            <ArrowLeft size={14} color={colors.textBody} />
             <Text style={styles.topButtonText}>Add your Grand Tests</Text>
           </TouchableOpacity>
         </View>
@@ -642,38 +644,29 @@ const styles = StyleSheet.create({
     gap: 6,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
-    paddingVertical: 8,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingVertical: 9,
     paddingHorizontal: 14,
+    minHeight: 40,
   },
   topButtonText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#374151',
+    color: colors.textBody,
+  },
+  topButtonTextTeal: {
+    color: colors.primaryDark,
   },
   heading: {
     fontSize: 22,
     fontWeight: '700',
-    color: '#111827',
+    color: colors.text,
   },
   headingSub: {
     fontSize: 13,
-    color: '#6B7280',
+    color: colors.textSecondary,
     marginTop: 3,
-  },
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  cardTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 12,
   },
   cardTopRow: {
     flexDirection: 'row',
@@ -682,24 +675,16 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 10,
   },
-  cardLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#6B7280',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-    flex: 1,
-  },
   sourceChip: {
     borderRadius: 99,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     paddingVertical: 3,
     paddingHorizontal: 8,
   },
   sourceChipText: {
     fontSize: 10,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   bigNumberRow: {
     flexDirection: 'row',
@@ -710,38 +695,38 @@ const styles = StyleSheet.create({
   bigNumber: {
     fontSize: 30,
     fontWeight: '700',
-    color: '#111827',
+    color: colors.text,
     fontVariant: ['tabular-nums'],
   },
   bigNumberDash: {
     fontSize: 24,
     fontWeight: '600',
-    color: '#01b4ae',
+    color: colors.primary,
   },
   bigNumberBeyond: {
     fontSize: 24,
     fontWeight: '700',
-    color: '#111827',
+    color: colors.text,
   },
   bigNumberSuffix: {
     fontSize: 16,
     fontWeight: '500',
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   likelyLine: {
     fontSize: 14,
-    color: '#374151',
+    color: colors.textBody,
     marginTop: 4,
     fontVariant: ['tabular-nums'],
   },
   likelySuffix: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   track: {
     height: 10,
     borderRadius: 99,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
     marginTop: 16,
     overflow: 'hidden',
   },
@@ -749,7 +734,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0,
     bottom: 0,
-    backgroundColor: '#01b4ae',
+    backgroundColor: colors.primary,
     borderRadius: 99,
   },
   trackSegmentFade: {
@@ -770,7 +755,7 @@ const styles = StyleSheet.create({
     height: 16,
     width: 3,
     borderRadius: 99,
-    backgroundColor: '#111827',
+    backgroundColor: colors.text,
     marginLeft: -1.5,
   },
   axisLabels: {
@@ -780,7 +765,7 @@ const styles = StyleSheet.create({
   },
   axisLabelText: {
     fontSize: 10.5,
-    color: '#9CA3AF',
+    color: colors.textMuted,
   },
   instituteLines: {
     marginTop: 8,
@@ -788,7 +773,7 @@ const styles = StyleSheet.create({
   },
   instituteLine: {
     fontSize: 11,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   coverageRow: {
     flexDirection: 'row',
@@ -799,7 +784,7 @@ const styles = StyleSheet.create({
   coverageText: {
     flex: 1,
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
     lineHeight: 16,
   },
   boundedNoteBox: {
@@ -809,7 +794,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(245, 158, 11, 0.07)',
     borderWidth: 1,
     borderColor: 'rgba(245, 158, 11, 0.2)',
-    borderRadius: 12,
+    borderRadius: 10,
     paddingHorizontal: 12,
     paddingVertical: 8,
     marginTop: 8,
@@ -817,14 +802,14 @@ const styles = StyleSheet.create({
   boundedNoteText: {
     flex: 1,
     fontSize: 11,
-    color: '#92600A',
+    color: '#92400E',
     lineHeight: 15,
   },
   // gap panel (D7) — status-tinted boxes following the band color convention
   gapPanel: {
-    borderRadius: 16,
+    borderRadius: 12,
     borderWidth: 1,
-    paddingHorizontal: 18,
+    paddingHorizontal: 16,
     paddingVertical: 14,
     gap: 6,
   },
@@ -841,8 +826,8 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(220, 38, 38, 0.25)',
   },
   gapPanelNoData: {
-    backgroundColor: '#F9FAFB',
-    borderColor: '#E5E7EB',
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
   },
   gapLabelRow: {
     flexDirection: 'row',
@@ -864,8 +849,8 @@ const styles = StyleSheet.create({
   gapStrongWithinReach: { color: '#92600A', fontSize: 14, fontWeight: '700' },
   gapTextBelowTarget: { color: '#991B1B', fontSize: 12, lineHeight: 16 },
   gapStrongBelowTarget: { color: '#991B1B', fontSize: 14, fontWeight: '700' },
-  gapTextNoData: { color: '#6B7280', fontSize: 12, lineHeight: 16 },
-  gapStrongNoData: { color: '#374151', fontSize: 14, fontWeight: '700' },
+  gapTextNoData: { color: colors.textSecondary, fontSize: 12, lineHeight: 16 },
+  gapStrongNoData: { color: colors.textBody, fontSize: 14, fontWeight: '700' },
   gapHint: {
     fontSize: 11,
     opacity: 0.85,
@@ -878,16 +863,17 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
-    paddingVertical: 7,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingVertical: 8,
     paddingHorizontal: 12,
     marginTop: 6,
+    minHeight: 38,
   },
   gapBackButtonText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#374151',
+    color: colors.textBody,
   },
   disclaimerRow: {
     flexDirection: 'row',
@@ -897,7 +883,7 @@ const styles = StyleSheet.create({
   disclaimerText: {
     flex: 1,
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
     lineHeight: 16,
   },
   warningBox: {
@@ -907,29 +893,29 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(245, 158, 11, 0.08)',
     borderWidth: 1,
     borderColor: 'rgba(245, 158, 11, 0.3)',
-    borderRadius: 12,
+    borderRadius: 10,
     padding: 12,
   },
   warningTextAmber: {
     flex: 1,
     fontSize: 12,
-    color: '#92600A',
+    color: '#92400E',
     lineHeight: 16,
   },
   inlineWarningBox: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 8,
-    backgroundColor: '#F9FAFB',
+    backgroundColor: colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 12,
+    borderColor: colors.border,
+    borderRadius: 10,
     padding: 12,
   },
   inlineWarningText: {
     flex: 1,
     fontSize: 12,
-    color: '#374151',
+    color: colors.textBody,
     lineHeight: 16,
   },
   // cycle table
@@ -940,26 +926,21 @@ const styles = StyleSheet.create({
     gap: 8,
     flexWrap: 'wrap',
   },
-  cycleTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#111827',
-  },
   cycleHeaderChip: {
     fontSize: 11,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   cycleExplainer: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
     lineHeight: 16,
     marginVertical: 10,
   },
   cycleRow: {
-    backgroundColor: '#F9FAFB',
+    backgroundColor: colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: '#F3F4F6',
-    borderRadius: 12,
+    borderColor: colors.bg,
+    borderRadius: 10,
     padding: 12,
   },
   cycleRowTop: {
@@ -971,19 +952,19 @@ const styles = StyleSheet.create({
   cycleRowLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#374151',
+    color: colors.textBody,
   },
   cycleRowValue: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#111827',
+    color: colors.text,
     fontVariant: ['tabular-nums'],
     flexShrink: 1,
     textAlign: 'right',
   },
   cycleRowTightest: {
     fontSize: 11,
-    color: '#6B7280',
+    color: colors.textSecondary,
     marginTop: 4,
   },
   // current / invite cards
@@ -1003,12 +984,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 11,
   },
   gtChipAuto: {
-    backgroundColor: 'rgba(1, 180, 174, 0.1)',
-    borderColor: 'rgba(1, 180, 174, 0.35)',
+    backgroundColor: colors.primaryTint,
+    borderColor: colors.primaryTintBorder,
   },
   gtChipManual: {
-    backgroundColor: '#F9FAFB',
-    borderColor: '#E5E7EB',
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
   },
   gtChipText: {
     fontSize: 12,
@@ -1018,11 +999,11 @@ const styles = StyleSheet.create({
   },
   averageText: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   averageStrong: {
     fontWeight: '700',
-    color: '#374151',
+    color: colors.textBody,
   },
   inviteIcon: {
     alignSelf: 'center',
@@ -1031,13 +1012,13 @@ const styles = StyleSheet.create({
   inviteTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#111827',
+    color: colors.text,
     textAlign: 'center',
     marginBottom: 6,
   },
   inviteBody: {
     fontSize: 13,
-    color: '#6B7280',
+    color: colors.textSecondary,
     textAlign: 'center',
     lineHeight: 18,
     marginBottom: 14,
@@ -1050,44 +1031,45 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#F9FAFB',
-    paddingVertical: 8,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceMuted,
+    paddingVertical: 9,
     paddingHorizontal: 14,
+    minHeight: 40,
   },
   // no-data-for-filter state
   noDataCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    backgroundColor: colors.surface,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     padding: 22,
     alignItems: 'center',
   },
   noDataTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#111827',
+    color: colors.text,
     marginBottom: 6,
   },
   noDataBody: {
     fontSize: 13,
-    color: '#6B7280',
+    color: colors.textSecondary,
     textAlign: 'center',
     lineHeight: 18,
     marginBottom: 12,
   },
   noDataCoverage: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
     marginBottom: 14,
   },
   // methodology
   methodologyCard: {
-    backgroundColor: '#F9FAFB',
-    borderRadius: 16,
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     overflow: 'hidden',
   },
   methodologyHeader: {
@@ -1096,6 +1078,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     padding: 16,
     gap: 10,
+    minHeight: 52,
   },
   methodologyHeaderRow: {
     flexDirection: 'row',
@@ -1105,14 +1088,14 @@ const styles = StyleSheet.create({
   methodologyHeaderText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#374151',
+    color: colors.textBody,
   },
   methodologyBody: {
     paddingHorizontal: 16,
     paddingBottom: 16,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
+    borderTopColor: colors.border,
     gap: 14,
   },
   methodologySection: {
@@ -1121,7 +1104,7 @@ const styles = StyleSheet.create({
   sectionLabel: {
     fontSize: 10.5,
     fontWeight: '700',
-    color: '#9CA3AF',
+    color: colors.textMuted,
     letterSpacing: 0.8,
     marginBottom: 2,
   },
@@ -1132,21 +1115,21 @@ const styles = StyleSheet.create({
   },
   bullet: {
     fontSize: 12,
-    color: '#01b4ae',
+    color: colors.primary,
     lineHeight: 16,
   },
   sectionText: {
     flex: 1,
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
     lineHeight: 16,
   },
   methodologyFooter: {
     fontSize: 11,
-    color: '#9CA3AF',
+    color: colors.textMuted,
     paddingTop: 10,
     borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
+    borderTopColor: colors.border,
     lineHeight: 15,
   },
 });

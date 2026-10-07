@@ -13,6 +13,7 @@ import {
   StyleSheet,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { colors } from '@/utils/theme';
 import { Target, ChevronDown, Search, X, Check } from 'lucide-react-native';
 import type {
   BranchCatalog,
@@ -30,6 +31,7 @@ import {
 } from '@/services/predictor';
 import { useGtInput } from '@/hooks/useGtInput';
 import GtInputSection from '@/components/predictor/GtInputSection';
+import shared from '@/components/predictor/shared';
 import { CATEGORIES, maxCorrectsFor } from '@/utils/predictor/constants';
 import * as Haptics from '@/utils/haptics';
 
@@ -43,6 +45,8 @@ import * as Haptics from '@/utils/haptics';
  *
  * The screen owns the exam list and renders it above this form for both
  * modes; the branch catalog follows the selected exam and resets on switch.
+ * Reads as a short planning flow: branch → category → current level → one
+ * primary action.
  */
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -163,15 +167,11 @@ export default function DesiredBranchForm({ exams, selectedExam, onResult }: Pro
   return (
     <>
       {/* desired branch (D2: branch-only — no institute scoping in V1) */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>The branch you want</Text>
-        <Text style={styles.cardSubtitle}>
-          Pick the specialty you are aiming for. You will get the rank it historically took — and
-          roughly how many corrects that means.
-        </Text>
+      <View style={shared.card}>
+        <Text style={[shared.cardTitle, { marginBottom: 4 }]}>The branch you want</Text>
         {catalogLoading ? (
           <View style={styles.catalogLoadingRow}>
-            <ActivityIndicator size="small" color="#2563EB" />
+            <ActivityIndicator size="small" color={colors.primary} />
             <Text style={styles.catalogLoadingText}>Loading branches…</Text>
           </View>
         ) : catalogError ? (
@@ -204,7 +204,7 @@ export default function DesiredBranchForm({ exams, selectedExam, onResult }: Pro
             >
               {selectedBranch ? selectedBranch.display : 'Select a branch…'}
             </Text>
-            <ChevronDown size={20} color="#6B7280" />
+            <ChevronDown size={20} color={colors.textSecondary} />
           </TouchableOpacity>
         )}
         {branchContext ? <Text style={styles.branchContext}>{branchContext}</Text> : null}
@@ -231,31 +231,27 @@ export default function DesiredBranchForm({ exams, selectedExam, onResult }: Pro
       </View>
 
       {/* category & quota — REQUIRED here (closing ranks are category-specific) */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>Your category</Text>
-        <Text style={styles.cardSubtitle}>
-          Closing ranks differ a lot by category, so this is required — it is never assumed for you.
-        </Text>
+      <View style={shared.card}>
+        <View style={styles.categoryHeader}>
+          <Text style={shared.cardTitle}>Your category</Text>
+          <Text style={styles.categoryRequired}>required</Text>
+        </View>
         <View style={styles.categoryRow}>
           {CATEGORIES.map((c) => {
             const active = category === c;
             return (
               <TouchableOpacity
                 key={c}
-                style={[styles.categoryChip, active ? styles.categoryChipActive : null]}
+                style={[shared.chip, active ? shared.chipActive : null]}
                 onPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                   setCategory((prev) => (prev === c ? '' : c));
                 }}
                 activeOpacity={0.7}
                 accessibilityLabel={CATEGORY_LABELS[c]}
+                accessibilityState={{ selected: active }}
               >
-                <Text
-                  style={[
-                    styles.categoryChipText,
-                    active ? styles.categoryChipTextActive : null,
-                  ]}
-                >
+                <Text style={[shared.chipText, active ? shared.chipTextActive : null]}>
                   {CATEGORY_LABELS[c]}
                 </Text>
               </TouchableOpacity>
@@ -265,37 +261,36 @@ export default function DesiredBranchForm({ exams, selectedExam, onResult }: Pro
 
         {category ? (
           <View style={styles.pwdRow}>
-            <Text style={styles.pwdText}>PwD (person with benchmark disability)</Text>
+            <Text style={styles.pwdText}>PwD (benchmark disability)</Text>
             <Switch
               value={pwd}
               onValueChange={setPwd}
-              trackColor={{ false: '#E5E7EB', true: 'rgba(1, 180, 174, 0.4)' }}
-              thumbColor={pwd ? '#01b4ae' : '#9CA3AF'}
+              trackColor={{ false: colors.border, true: 'rgba(1, 180, 174, 0.4)' }}
+              thumbColor={pwd ? colors.primary : colors.textMuted}
             />
           </View>
         ) : null}
 
-        <View style={styles.quotaRow}>
-          <Text style={styles.quotaText}>
-            {isIniCet ? 'Single counselling pool (all INIs)' : 'Quota: All India Quota'}
-          </Text>
-        </View>
+        <Text style={styles.quotaText}>
+          {isIniCet ? 'Single counselling pool (all INIs)' : 'Quota: All India Quota'} · closing
+          ranks are category-specific
+        </Text>
       </View>
 
       <GtInputSection
         gt={gt}
-        title="Where you are now (optional)"
-        subtitle={`Add your recent Grand Test corrects (out of ${maxCorrects}) to see the gap to the target. Leave this empty to see just the target.`}
+        title="Your Grand Tests"
+        subtitle={`Add recent corrects (out of ${maxCorrects}) to see the gap to the target — optional.`}
       />
 
       {formError ? (
-        <View style={styles.formErrorBox}>
-          <Text style={styles.formErrorText}>{formError}</Text>
+        <View style={shared.formErrorBox}>
+          <Text style={shared.formErrorText}>{formError}</Text>
         </View>
       ) : null}
 
       <TouchableOpacity
-        style={[styles.submitButton, (!canSubmit || submitting) ? styles.submitDisabled : null]}
+        style={[shared.primaryButton, (!canSubmit || submitting) ? shared.primaryButtonDisabled : null]}
         onPress={submit}
         disabled={!canSubmit || submitting}
         activeOpacity={0.8}
@@ -303,17 +298,19 @@ export default function DesiredBranchForm({ exams, selectedExam, onResult }: Pro
         {submitting ? (
           <>
             <ActivityIndicator color="#FFF" size="small" />
-            <Text style={styles.submitText}>Working out the target…</Text>
+            <Text style={shared.primaryButtonText}>Working out the target…</Text>
           </>
         ) : (
           <>
             <Target size={16} color="#FFF" />
-            <Text style={styles.submitText}>What do I need?</Text>
+            <Text style={shared.primaryButtonText}>Show my target</Text>
           </>
         )}
       </TouchableOpacity>
 
-      <Text style={styles.footerNote}>Historical closing ranks as a range — actual cutoffs move every year.</Text>
+      <Text style={shared.footnote}>
+        Historical closing ranks as a range — actual cutoffs move every year.
+      </Text>
 
       <BranchPickerModal
         visible={pickerVisible}
@@ -332,7 +329,8 @@ export default function DesiredBranchForm({ exams, selectedExam, onResult }: Pro
 
 /**
  * Single-select branch picker — the app's bottom-sheet dropdown idiom (same
- * pattern as TestDropdown): fixed-height sheet, search field, FlatList.
+ * pattern as Analytics' TestDropdown): fixed-height sheet, search field,
+ * FlatList.
  */
 function BranchPickerModal({
   visible,
@@ -381,16 +379,16 @@ function BranchPickerModal({
           <View style={styles.pickerHeader}>
             <Text style={styles.pickerTitle}>Select a branch</Text>
             <TouchableOpacity onPress={onClose} hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
-              <X color="#1F2937" size={24} />
+              <X color={colors.text} size={24} />
             </TouchableOpacity>
           </View>
 
           <View style={styles.pickerSearchRow}>
-            <Search color="#6B7280" size={20} />
+            <Search color={colors.textSecondary} size={20} />
             <TextInput
               style={styles.pickerSearchInput}
               placeholder="Search branches…"
-              placeholderTextColor="#9CA3AF"
+              placeholderTextColor={colors.textMuted}
               value={searchQuery}
               onChangeText={setSearchQuery}
             />
@@ -410,7 +408,7 @@ function BranchPickerModal({
                   <Text style={[styles.pickerItemText, selected && styles.pickerItemTextSelected]}>
                     {item.display}
                   </Text>
-                  {selected ? <Check size={18} color="#01b4ae" /> : null}
+                  {selected ? <Check size={18} color={colors.primary} /> : null}
                 </TouchableOpacity>
               );
             }}
@@ -426,53 +424,35 @@ function BranchPickerModal({
 }
 
 const styles = StyleSheet.create({
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  cardTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 4,
-  },
-  cardSubtitle: {
-    fontSize: 12.5,
-    color: '#6B7280',
-    marginBottom: 14,
-    lineHeight: 17,
-  },
   catalogLoadingRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingVertical: 8,
+    paddingVertical: 12,
   },
   catalogLoadingText: {
     fontSize: 12.5,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   catalogErrorRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 10,
-    backgroundColor: '#FEF2F2',
+    backgroundColor: colors.dangerTint,
     borderWidth: 1,
     borderColor: 'rgba(220, 38, 38, 0.2)',
-    borderRadius: 12,
+    borderRadius: 10,
     padding: 12,
+    marginTop: 6,
   },
   catalogErrorText: {
     flex: 1,
     fontSize: 12.5,
-    color: '#DC2626',
+    color: colors.dangerDark,
   },
   catalogRetryButton: {
-    backgroundColor: '#DC2626',
+    backgroundColor: colors.dangerDark,
     borderRadius: 8,
     paddingVertical: 7,
     paddingHorizontal: 14,
@@ -482,6 +462,7 @@ const styles = StyleSheet.create({
     fontSize: 12.5,
     fontWeight: '600',
   },
+  // Trigger — Analytics' TestDropdown selector treatment (white, r12, p16).
   pickerTrigger: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -489,24 +470,25 @@ const styles = StyleSheet.create({
     gap: 10,
     borderRadius: 12,
     borderWidth: 1.5,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#F9FAFB',
-    paddingHorizontal: 14,
-    paddingVertical: 12,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    minHeight: 52,
   },
   pickerTriggerText: {
     flex: 1,
-    fontSize: 15,
+    fontSize: 16,
     fontWeight: '600',
-    color: '#111827',
+    color: colors.text,
   },
   pickerPlaceholder: {
-    color: '#9CA3AF',
+    color: colors.textMuted,
     fontWeight: '500',
   },
   branchContext: {
     fontSize: 11.5,
-    color: '#6B7280',
+    color: colors.textSecondary,
     marginTop: 8,
   },
   suggestionRow: {
@@ -518,46 +500,36 @@ const styles = StyleSheet.create({
   },
   suggestionLabel: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   suggestionChip: {
     borderRadius: 99,
     borderWidth: 1,
-    borderColor: 'rgba(1, 180, 174, 0.35)',
+    borderColor: colors.primaryTintBorder,
     paddingVertical: 6,
     paddingHorizontal: 12,
-    backgroundColor: 'rgba(1, 180, 174, 0.07)',
+    backgroundColor: colors.primaryTint,
   },
   suggestionChipText: {
     fontSize: 12,
-    color: '#0d7a76',
+    color: colors.primaryDark,
     fontWeight: '600',
+  },
+  categoryHeader: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 8,
+    marginBottom: 12,
+  },
+  categoryRequired: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.primaryDark,
   },
   categoryRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: 8,
-  },
-  categoryChip: {
-    borderRadius: 99,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#F9FAFB',
-    paddingVertical: 7,
-    paddingHorizontal: 13,
-  },
-  categoryChipActive: {
-    borderColor: '#01b4ae',
-    backgroundColor: 'rgba(1, 180, 174, 0.1)',
-  },
-  categoryChipText: {
-    fontSize: 13,
-    fontWeight: '500',
-    color: '#374151',
-  },
-  categoryChipTextActive: {
-    color: '#0d7a76',
-    fontWeight: '700',
   },
   pwdRow: {
     flexDirection: 'row',
@@ -567,63 +539,17 @@ const styles = StyleSheet.create({
     marginTop: 12,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: '#F3F4F6',
+    borderTopColor: colors.bg,
   },
   pwdText: {
     fontSize: 13.5,
-    color: '#374151',
+    color: colors.textBody,
     flex: 1,
   },
-  quotaRow: {
-    marginTop: 12,
-    backgroundColor: '#F9FAFB',
-    borderRadius: 10,
-    padding: 10,
-  },
   quotaText: {
-    fontSize: 12.5,
-    color: '#6B7280',
-  },
-  formErrorBox: {
-    backgroundColor: '#FEF2F2',
-    borderWidth: 1,
-    borderColor: 'rgba(220, 38, 38, 0.25)',
-    borderRadius: 12,
-    padding: 12,
-  },
-  formErrorText: {
-    fontSize: 13,
-    color: '#DC2626',
-    textAlign: 'center',
-  },
-  submitButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
-    backgroundColor: '#01b4ae',
-    borderRadius: 14,
-    paddingVertical: 15,
-    shadowColor: '#01b4ae',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 8,
-    elevation: 3,
-  },
-  submitDisabled: {
-    opacity: 0.5,
-    elevation: 0,
-  },
-  submitText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#FFFFFF',
-  },
-  footerNote: {
-    fontSize: 11.5,
-    color: '#9CA3AF',
-    textAlign: 'center',
-    marginTop: 2,
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 10,
   },
   pickerOverlay: {
     flex: 1,
@@ -631,7 +557,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   pickerSheet: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surface,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingTop: 20,
@@ -647,17 +573,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
     paddingBottom: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: colors.border,
   },
   pickerTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '700',
-    color: '#1F2937',
+    color: colors.text,
   },
   pickerSearchRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
     margin: 16,
     padding: 12,
     borderRadius: 12,
@@ -665,8 +591,8 @@ const styles = StyleSheet.create({
   },
   pickerSearchInput: {
     flex: 1,
-    fontSize: 15,
-    color: '#111827',
+    fontSize: 16,
+    color: colors.text,
     paddingVertical: 0,
   },
   pickerList: {
@@ -679,24 +605,25 @@ const styles = StyleSheet.create({
     gap: 10,
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: colors.bg,
+    minHeight: 52,
   },
   pickerItemSelected: {
-    backgroundColor: 'rgba(1, 180, 174, 0.07)',
+    backgroundColor: colors.primaryTint,
   },
   pickerItemText: {
     flex: 1,
     fontSize: 15,
     fontWeight: '500',
-    color: '#1F2937',
+    color: colors.text,
   },
   pickerItemTextSelected: {
-    color: '#0d7a76',
+    color: colors.primaryDark,
     fontWeight: '700',
   },
   pickerEmpty: {
     textAlign: 'center',
-    color: '#9CA3AF',
+    color: colors.textMuted,
     padding: 20,
   },
 });

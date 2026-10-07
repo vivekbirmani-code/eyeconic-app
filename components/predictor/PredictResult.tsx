@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import { View, Text, TouchableOpacity, Share, StyleSheet } from 'react-native';
 import * as Clipboard from 'expo-clipboard';
+import { colors } from '@/utils/theme';
 import { ArrowLeft, Award, Copy, Check, Info, AlertTriangle, Sparkles, Zap, User } from 'lucide-react-native';
 import type { PredictionResult } from '@/types/predictor';
 import RangeCards from './RangeCards';
 import MethodologyCard from './MethodologyCard';
 import BranchResults from './BranchResults';
 import OutcomeCard from './OutcomeCard';
+import shared from './shared';
 import { DISCLAIMER_NOTE, WARNING_SHORT, isBranchSummary } from '@/utils/predictor/constants';
 import { buildShareText, type NonCategoryBranchSummary } from '@/utils/predictor/summary';
 
@@ -68,21 +70,21 @@ export default function PredictResult({
   };
 
   return (
-    <View style={{ gap: 14 }}>
+    <View style={{ gap: 12 }}>
       <View style={styles.topRow}>
         <TouchableOpacity style={styles.topButton} onPress={onBack} activeOpacity={0.7}>
-          <ArrowLeft size={14} color="#374151" />
+          <ArrowLeft size={14} color={colors.textBody} />
           <Text style={styles.topButtonText}>{backLabel}</Text>
         </TouchableOpacity>
         <TouchableOpacity style={styles.topButton} onPress={share} activeOpacity={0.7}>
           {copied ? (
             <>
-              <Check size={14} color="#01b4ae" />
-              <Text style={styles.topButtonText}>Copied</Text>
+              <Check size={14} color={colors.primaryDark} />
+              <Text style={[styles.topButtonText, styles.topButtonTextTeal]}>Copied</Text>
             </>
           ) : (
             <>
-              <Copy size={14} color="#374151" />
+              <Copy size={14} color={colors.textBody} />
               <Text style={styles.topButtonText}>Share result</Text>
             </>
           )}
@@ -95,13 +97,13 @@ export default function PredictResult({
 
       {/* §14: the disclaimer, visible with the results — exactly once */}
       <View style={styles.disclaimerRow}>
-        <Info size={13} color="#01b4ae" />
+        <Info size={13} color={colors.primary} />
         <Text style={styles.disclaimerText}>{DISCLAIMER_NOTE}</Text>
       </View>
 
       {integrityWarning ? (
         <View style={styles.warningBox}>
-          <AlertTriangle size={14} color="#F59E0B" />
+          <AlertTriangle size={14} color={colors.warning} />
           <Text style={styles.warningTextAmber}>
             This stored prediction failed its integrity check — the numbers below are what was
             served, but the record has changed since. Please treat it with caution.
@@ -111,7 +113,7 @@ export default function PredictResult({
 
       {skippedWarning ? (
         <View style={styles.warningBox}>
-          <AlertTriangle size={14} color="#F59E0B" />
+          <AlertTriangle size={14} color={colors.warning} />
           <Text style={styles.warningTextAmber}>{skippedWarning.note}</Text>
         </View>
       ) : null}
@@ -119,14 +121,14 @@ export default function PredictResult({
       {/* short, in-context cautions (full text lives in Methodology) */}
       {inlineWarnings.map((w) => (
         <View key={w.code} style={styles.inlineWarningBox}>
-          <Sparkles size={13} color="#01b4ae" />
+          <Sparkles size={13} color={colors.primary} />
           <Text style={styles.inlineWarningText}>{WARNING_SHORT[w.code] ?? w.note}</Text>
         </View>
       ))}
 
       {/* §13 aggregation summary: the individual GTs, provenance-tagged */}
-      <View style={styles.card}>
-        <Text style={styles.cardTitle}>What went in</Text>
+      <View style={shared.card}>
+        <Text style={[shared.sectionLabel, { marginBottom: 12 }]}>What went in</Text>
         <View style={styles.gtChips}>
           {result.input.gts.map((gt, i) => {
             const isAuto = gt.provenance === 'auto-captured';
@@ -135,8 +137,8 @@ export default function PredictResult({
                 key={i}
                 style={[styles.gtChip, isAuto ? styles.gtChipAuto : styles.gtChipManual]}
               >
-                {isAuto ? <Zap size={11} color="#01b4ae" /> : <User size={11} color="#6B7280" />}
-                <Text style={[styles.gtChipText, { color: isAuto ? '#0d7a76' : '#374151' }]}>
+                {isAuto ? <Zap size={11} color={colors.primary} /> : <User size={11} color={colors.textSecondary} />}
+                <Text style={[styles.gtChipText, { color: isAuto ? colors.primaryDark : colors.textBody }]}>
                   GT {i + 1}: <Text style={styles.gtChipStrong}>{gt.selected?.corrects ?? '—'}</Text>{' '}
                   corrects
                   {gt.excluded.length ? (
@@ -159,15 +161,15 @@ export default function PredictResult({
         predictionId ? (
           <BranchResults predictionId={predictionId} summary={branchSummary} result={result} />
         ) : (
-          <View style={styles.card}>
+          <View style={shared.card}>
             <Text style={styles.unavailableText}>
               Branch results for this stored prediction are not available.
             </Text>
           </View>
         )
       ) : (
-        <View style={styles.card}>
-          <Award size={22} color="#01b4ae" style={styles.inviteIcon} />
+        <View style={shared.card}>
+          <Award size={22} color={colors.primary} style={styles.inviteIcon} />
           <Text style={styles.inviteTitle}>Want possible branches too?</Text>
           {readonly ? (
             <Text style={styles.inviteBody}>
@@ -177,11 +179,11 @@ export default function PredictResult({
           ) : (
             <>
               <Text style={styles.inviteBody}>
-                Category is needed to match counselling cutoffs — it is never assumed. Tap
-                “{backLabel}” above, pick your category, and run the prediction once more.
+                Pick your category to match counselling cutoffs — it is never assumed. Tap
+                “{backLabel}” above and run the prediction once more.
               </Text>
               <TouchableOpacity style={styles.inviteButton} onPress={onBack} activeOpacity={0.7}>
-                <ArrowLeft size={14} color="#374151" />
+                <ArrowLeft size={14} color={colors.textBody} />
                 <Text style={styles.topButtonText}>Back to inputs</Text>
               </TouchableOpacity>
             </>
@@ -210,20 +212,24 @@ const styles = StyleSheet.create({
     gap: 6,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
-    paddingVertical: 8,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingVertical: 9,
     paddingHorizontal: 14,
+    minHeight: 40,
   },
   topButtonText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#374151',
+    color: colors.textBody,
+  },
+  topButtonTextTeal: {
+    color: colors.primaryDark,
   },
   heading: {
     fontSize: 22,
     fontWeight: '700',
-    color: '#111827',
+    color: colors.text,
   },
   disclaimerRow: {
     flexDirection: 'row',
@@ -233,7 +239,7 @@ const styles = StyleSheet.create({
   disclaimerText: {
     flex: 1,
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
     lineHeight: 16,
   },
   warningBox: {
@@ -243,43 +249,30 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(245, 158, 11, 0.08)',
     borderWidth: 1,
     borderColor: 'rgba(245, 158, 11, 0.3)',
-    borderRadius: 12,
+    borderRadius: 10,
     padding: 12,
   },
   warningTextAmber: {
     flex: 1,
     fontSize: 12,
-    color: '#92600A',
+    color: '#92400E',
     lineHeight: 16,
   },
   inlineWarningBox: {
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 8,
-    backgroundColor: '#F9FAFB',
+    backgroundColor: colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 12,
+    borderColor: colors.border,
+    borderRadius: 10,
     padding: 12,
   },
   inlineWarningText: {
     flex: 1,
     fontSize: 12,
-    color: '#374151',
+    color: colors.textBody,
     lineHeight: 16,
-  },
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    padding: 18,
-  },
-  cardTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: '#111827',
-    marginBottom: 12,
   },
   gtChips: {
     flexDirection: 'row',
@@ -297,12 +290,12 @@ const styles = StyleSheet.create({
     paddingHorizontal: 11,
   },
   gtChipAuto: {
-    backgroundColor: 'rgba(1, 180, 174, 0.1)',
-    borderColor: 'rgba(1, 180, 174, 0.35)',
+    backgroundColor: colors.primaryTint,
+    borderColor: colors.primaryTintBorder,
   },
   gtChipManual: {
-    backgroundColor: '#F9FAFB',
-    borderColor: '#E5E7EB',
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.border,
   },
   gtChipText: {
     fontSize: 12,
@@ -311,19 +304,19 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   gtChipMuted: {
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   averageText: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   averageStrong: {
     fontWeight: '700',
-    color: '#374151',
+    color: colors.textBody,
   },
   unavailableText: {
     fontSize: 13.5,
-    color: '#6B7280',
+    color: colors.textSecondary,
     textAlign: 'center',
   },
   inviteIcon: {
@@ -333,13 +326,13 @@ const styles = StyleSheet.create({
   inviteTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#111827',
+    color: colors.text,
     textAlign: 'center',
     marginBottom: 6,
   },
   inviteBody: {
     fontSize: 13,
-    color: '#6B7280',
+    color: colors.textSecondary,
     textAlign: 'center',
     lineHeight: 18,
     marginBottom: 14,
@@ -352,9 +345,10 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#F9FAFB',
-    paddingVertical: 8,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceMuted,
+    paddingVertical: 9,
     paddingHorizontal: 14,
+    minHeight: 40,
   },
 });

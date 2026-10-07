@@ -7,6 +7,7 @@ import {
   StyleSheet,
   ScrollView as RSScrollView,
 } from 'react-native';
+import { colors } from '@/utils/theme';
 import { Award, ChevronLeft, ChevronRight } from 'lucide-react-native';
 import { predictorEndpoints, predictorErrorMessage } from '@/services/predictor';
 import type { BranchBand, BranchesResponse, PredictionResult } from '@/types/predictor';
@@ -84,7 +85,7 @@ export default function BranchResults({ predictionId, summary, result }: Props) 
       {/* constant context — stated once here, not on every row */}
       <View style={styles.contextBox}>
         <View style={styles.contextTitleRow}>
-          <Award size={14} color="#01b4ae" />
+          <Award size={14} color={colors.primary} />
           <Text style={styles.contextTitle}>Possible branches &amp; colleges</Text>
         </View>
         <Text style={styles.contextRanges}>
@@ -122,11 +123,11 @@ export default function BranchResults({ predictionId, summary, result }: Props) 
           contentContainerStyle={styles.filterRow}
         >
           <TouchableOpacity
-            style={[styles.chip, band === '' ? styles.chipActive : null]}
+            style={[styles.chip, band === '' ? styles.chipAllActive : null]}
             onPress={() => setBand('')}
             activeOpacity={0.7}
           >
-            <Text style={[styles.chipText, band === '' ? styles.chipTextActive : null]}>
+            <Text style={[styles.chipText, band === '' ? styles.chipAllTextActive : null]}>
               All bands ({counts.total ?? 0})
             </Text>
           </TouchableOpacity>
@@ -158,11 +159,11 @@ export default function BranchResults({ predictionId, summary, result }: Props) 
           contentContainerStyle={styles.filterRow}
         >
           <TouchableOpacity
-            style={[styles.chip, year === '' ? styles.chipActive : null]}
+            style={[styles.chip, year === '' ? styles.chipAllActive : null]}
             onPress={() => setYear('')}
             activeOpacity={0.7}
           >
-            <Text style={[styles.chipText, year === '' ? styles.chipTextActive : null]}>
+            <Text style={[styles.chipText, year === '' ? styles.chipAllTextActive : null]}>
               All {isIniCet ? 'sessions' : 'years'}
             </Text>
           </TouchableOpacity>
@@ -171,11 +172,11 @@ export default function BranchResults({ predictionId, summary, result }: Props) 
             return (
               <TouchableOpacity
                 key={y}
-                style={[styles.chip, active ? styles.chipActive : null]}
+                style={[styles.chip, active ? styles.chipAllActive : null]}
                 onPress={() => setFilterYear(y)}
                 activeOpacity={0.7}
               >
-                <Text style={[styles.chipText, active ? styles.chipTextActive : null]}>
+                <Text style={[styles.chipText, active ? styles.chipAllTextActive : null]}>
                   {yearFilterLabel(y)}
                 </Text>
               </TouchableOpacity>
@@ -185,7 +186,7 @@ export default function BranchResults({ predictionId, summary, result }: Props) 
 
         {loading ? (
           <View style={styles.loadingBox}>
-            <ActivityIndicator color="#2563EB" />
+            <ActivityIndicator color={colors.primary} />
             <Text style={styles.loadingText}>Loading branch results…</Text>
           </View>
         ) : error ? (
@@ -247,7 +248,7 @@ export default function BranchResults({ predictionId, summary, result }: Props) 
                   onPress={() => setPage(page - 1)}
                   accessibilityLabel="Previous page"
                 >
-                  <ChevronLeft size={16} color={page <= 1 ? '#D1D5DB' : '#374151'} />
+                  <ChevronLeft size={16} color={page <= 1 ? colors.borderStrong : colors.textBody} />
                 </TouchableOpacity>
                 <TouchableOpacity
                   style={[
@@ -258,7 +259,7 @@ export default function BranchResults({ predictionId, summary, result }: Props) 
                   onPress={() => setPage(page + 1)}
                   accessibilityLabel="Next page"
                 >
-                  <ChevronRight size={16} color={page >= (data?.totalPages ?? 1) ? '#D1D5DB' : '#374151'} />
+                  <ChevronRight size={16} color={page >= (data?.totalPages ?? 1) ? colors.borderStrong : colors.textBody} />
                 </TouchableOpacity>
               </View>
             </View>
@@ -277,16 +278,16 @@ export default function BranchResults({ predictionId, summary, result }: Props) 
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    backgroundColor: colors.surface,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     overflow: 'hidden',
   },
   contextBox: {
-    backgroundColor: '#F9FAFB',
+    backgroundColor: colors.surfaceMuted,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: colors.border,
     padding: 14,
     gap: 3,
   },
@@ -299,30 +300,30 @@ const styles = StyleSheet.create({
   contextTitle: {
     fontSize: 13.5,
     fontWeight: '700',
-    color: '#374151',
+    color: colors.textBody,
   },
   contextRanges: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   contextCategory: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   coverageText: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
     lineHeight: 16,
   },
   coverageStrong: {
-    color: '#374151',
+    color: colors.textBody,
     fontWeight: '600',
   },
   aboveAllBox: {
     backgroundColor: 'rgba(16, 185, 129, 0.08)',
     borderWidth: 1,
     borderColor: 'rgba(16, 185, 129, 0.3)',
-    borderRadius: 12,
+    borderRadius: 10,
     padding: 11,
     marginTop: 10,
   },
@@ -341,22 +342,24 @@ const styles = StyleSheet.create({
   chip: {
     borderRadius: 99,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
-    paddingVertical: 6,
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingVertical: 7,
     paddingHorizontal: 12,
   },
-  chipActive: {
-    borderColor: '#374151',
-    backgroundColor: '#F3F4F6',
+  // "All …" chips take the Analytics active-filter treatment (teal); band
+  // chips stay band-colored when active — semantic colors stay semantic.
+  chipAllActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryTint,
   },
   chipText: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
     fontWeight: '500',
   },
-  chipTextActive: {
-    color: '#111827',
+  chipAllTextActive: {
+    color: colors.primaryDark,
     fontWeight: '600',
   },
   loadingBox: {
@@ -366,7 +369,7 @@ const styles = StyleSheet.create({
   },
   loadingText: {
     fontSize: 13,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   errorBox: {
     alignItems: 'center',
@@ -375,12 +378,12 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 13,
-    color: '#DC2626',
+    color: colors.dangerDark,
     textAlign: 'center',
   },
   retryButton: {
     borderRadius: 10,
-    backgroundColor: '#DC2626',
+    backgroundColor: colors.dangerDark,
     paddingVertical: 7,
     paddingHorizontal: 16,
   },
@@ -391,15 +394,15 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 13,
-    color: '#6B7280',
+    color: colors.textSecondary,
     textAlign: 'center',
     paddingVertical: 28,
   },
   rowCard: {
-    backgroundColor: '#F9FAFB',
-    borderRadius: 12,
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     padding: 12,
     gap: 8,
   },
@@ -412,12 +415,12 @@ const styles = StyleSheet.create({
   rowInstitute: {
     fontSize: 13.5,
     fontWeight: '600',
-    color: '#111827',
+    color: colors.text,
     lineHeight: 18,
   },
   rowBranch: {
     fontSize: 12,
-    color: '#01b4ae',
+    color: colors.primary,
     fontWeight: '600',
   },
   bandBadge: {
@@ -433,10 +436,10 @@ const styles = StyleSheet.create({
   },
   rowMeta: {
     fontSize: 11.5,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   rowMetaStrong: {
-    color: '#374151',
+    color: colors.textBody,
     fontWeight: '600',
   },
   paginationRow: {
@@ -448,7 +451,7 @@ const styles = StyleSheet.create({
   },
   paginationText: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
     flex: 1,
   },
   paginationButtons: {
@@ -458,20 +461,24 @@ const styles = StyleSheet.create({
   pageButton: {
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
     padding: 7,
+    minWidth: 38,
+    minHeight: 38,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   pageButtonDisabled: {
     opacity: 0.5,
   },
   framingText: {
     fontSize: 11,
-    color: '#9CA3AF',
+    color: colors.textMuted,
     marginTop: 14,
     paddingTop: 12,
     borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
+    borderTopColor: colors.border,
     lineHeight: 15,
   },
 });

@@ -10,6 +10,7 @@ import {
 import { ScreenContainer } from '@/components/layout';
 import { useRouter } from 'expo-router';
 import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react-native';
+import { colors } from '@/utils/theme';
 import { withFeatureGate } from '@/components/withFeatureGate';
 import { predictorEndpoints, predictorErrorMessage } from '@/services/predictor';
 import type { PredictionHistoryItem } from '@/types/predictor';
@@ -81,11 +82,12 @@ function PredictorHistoryScreen() {
 
   return (
     <ScreenContainer style={styles.container}>
-      {/* Header */}
+      {/* Header — the Analytics module-header treatment */}
       <View style={styles.header}>
         <TouchableOpacity
           onPress={() => router.back()}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityLabel="Go back"
         >
           <ChevronLeft color="#FFF" size={24} />
         </TouchableOpacity>
@@ -96,7 +98,7 @@ function PredictorHistoryScreen() {
       <ScrollView contentContainerStyle={styles.content}>
         {loading && (
           <View style={styles.stateCard}>
-            <ActivityIndicator color="#2563EB" />
+            <ActivityIndicator color={colors.primary} />
             <Text style={styles.stateText}>Loading your predictions…</Text>
           </View>
         )}
@@ -141,7 +143,7 @@ function PredictorHistoryScreen() {
                   </View>
                   <View style={styles.historyDateRow}>
                     <Text style={styles.historyDate}>{formatDate(item.createdAt)}</Text>
-                    <ChevronRight size={16} color="#9CA3AF" />
+                    <ChevronRight size={16} color={colors.textMuted} />
                   </View>
                 </View>
                 <Text style={styles.historyRange}>{rangeLabel(item) || 'Rank range unavailable'}</Text>
@@ -166,7 +168,7 @@ function PredictorHistoryScreen() {
                 activeOpacity={0.8}
               >
                 {loadingMore ? (
-                  <ActivityIndicator color="#2563EB" size="small" />
+                  <ActivityIndicator color={colors.primary} size="small" />
                 ) : (
                   <Text style={styles.loadMoreText}>Load more</Text>
                 )}
@@ -182,17 +184,17 @@ function PredictorHistoryScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: 16,
-    backgroundColor: '#2563EB',
+    backgroundColor: colors.primary,
   },
   headerTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#FFF',
   },
@@ -202,25 +204,25 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   stateCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    backgroundColor: colors.surface,
+    borderRadius: 12,
     padding: 28,
     alignItems: 'center',
     gap: 8,
   },
   stateText: {
     fontSize: 13.5,
-    color: '#6B7280',
+    color: colors.textSecondary,
     textAlign: 'center',
   },
   emptyTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#111827',
+    color: colors.text,
   },
   errorCard: {
-    backgroundColor: '#FEF2F2',
-    borderRadius: 16,
+    backgroundColor: colors.dangerTint,
+    borderRadius: 12,
     padding: 18,
     borderWidth: 1,
     borderColor: 'rgba(220, 38, 38, 0.2)',
@@ -229,14 +231,14 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 14,
-    color: '#DC2626',
+    color: colors.dangerDark,
     textAlign: 'center',
   },
   retryButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#DC2626',
+    backgroundColor: colors.dangerDark,
     borderRadius: 10,
     paddingVertical: 8,
     paddingHorizontal: 16,
@@ -248,14 +250,14 @@ const styles = StyleSheet.create({
   },
   countText: {
     fontSize: 13,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   historyCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    backgroundColor: colors.surface,
+    borderRadius: 12,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     gap: 10,
   },
   historyTop: {
@@ -264,7 +266,7 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   examChip: {
-    backgroundColor: 'rgba(1, 180, 174, 0.1)',
+    backgroundColor: colors.primaryTint,
     borderRadius: 8,
     paddingVertical: 3,
     paddingHorizontal: 10,
@@ -272,11 +274,11 @@ const styles = StyleSheet.create({
   examChipText: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#01b4ae',
+    color: colors.primaryDark,
   },
   historyDate: {
     fontSize: 12.5,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   historyDateRow: {
     flexDirection: 'row',
@@ -286,7 +288,7 @@ const styles = StyleSheet.create({
   historyRange: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#111827',
+    color: colors.text,
   },
   historyMeta: {
     flexDirection: 'row',
@@ -295,27 +297,29 @@ const styles = StyleSheet.create({
   },
   historyMetaText: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
     flex: 1,
   },
   historyMetaTextRight: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
     flex: 1,
     textAlign: 'right',
   },
   loadMoreButton: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surface,
     borderRadius: 12,
     paddingVertical: 12,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
+    minHeight: 46,
+    justifyContent: 'center',
   },
   loadMoreText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#2563EB',
+    color: colors.primaryDark,
   },
 });
 

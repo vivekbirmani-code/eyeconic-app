@@ -10,6 +10,7 @@ import {
 import { ScreenContainer } from '@/components/layout';
 import { useRouter } from 'expo-router';
 import { ChevronLeft, History, RefreshCw, CircleCheck, Sparkles, Target } from 'lucide-react-native';
+import { colors } from '@/utils/theme';
 import { withFeatureGate } from '@/components/withFeatureGate';
 import { predictorEndpoints, predictorErrorMessage } from '@/services/predictor';
 import type {
@@ -22,7 +23,7 @@ import PredictorForm from '@/components/predictor/PredictorForm';
 import DesiredBranchForm from '@/components/predictor/DesiredBranchForm';
 import PredictResult from '@/components/predictor/PredictResult';
 import DesiredBranchResult from '@/components/predictor/DesiredBranchResult';
-import { DISCLAIMER_NOTE, EXAM_LABELS, EXAM_PATTERN_LABELS } from '@/utils/predictor/constants';
+import { EXAM_LABELS, EXAM_PATTERN_LABELS } from '@/utils/predictor/constants';
 import * as Haptics from '@/utils/haptics';
 
 /**
@@ -44,6 +45,10 @@ import * as Haptics from '@/utils/haptics';
  * Thin orchestrator (mirrors the website's Predictor page): the exam list is
  * loaded once and shared by both modes; the input forms and result views are
  * components; switching modes resets whichever result was showing.
+ *
+ * Visual system: the Analytics teal language (utils/theme.ts tokens) — teal
+ * module header, Analytics-style segmented mode control, compact exam
+ * selector card.
  */
 
 type PredictorMode = 'predict' | 'desired';
@@ -107,13 +112,19 @@ function RankPredictorScreen() {
     return EXAM_PATTERN_LABELS[exam.id] ?? '';
   };
 
+  const tabs: { key: PredictorMode; label: string; icon: typeof Sparkles }[] = [
+    { key: 'predict', label: 'Predict outcome', icon: Sparkles },
+    { key: 'desired', label: 'Plan a branch', icon: Target },
+  ];
+
   return (
     <ScreenContainer style={styles.container}>
-      {/* Header */}
+      {/* Header — the Analytics module-header treatment (teal, white 20/700) */}
       <View style={styles.header}>
         <TouchableOpacity
           onPress={() => router.back()}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityLabel="Go back"
         >
           <ChevronLeft color="#FFF" size={24} />
         </TouchableOpacity>
@@ -127,32 +138,28 @@ function RankPredictorScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* mode toggle (D3): the two directions of the same counselling data */}
+      {/* Mode toggle (D3) — the Analytics segmented-control treatment. The two
+          directions of the same counselling data; tab labels carry the
+          explanation, so no intro paragraph is needed above the form. */}
       <View style={styles.modeToggle}>
-        <TouchableOpacity
-          style={[styles.modeButton, mode === 'predict' ? styles.modeButtonActive : null]}
-          onPress={() => switchMode('predict')}
-          activeOpacity={0.8}
-          accessibilityRole="button"
-          accessibilityState={{ selected: mode === 'predict' }}
-        >
-          <Sparkles size={15} color={mode === 'predict' ? '#0d7a76' : '#6B7280'} />
-          <Text style={[styles.modeButtonText, mode === 'predict' ? styles.modeButtonTextActive : null]}>
-            Predict my outcome
-          </Text>
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={[styles.modeButton, mode === 'desired' ? styles.modeButtonActive : null]}
-          onPress={() => switchMode('desired')}
-          activeOpacity={0.8}
-          accessibilityRole="button"
-          accessibilityState={{ selected: mode === 'desired' }}
-        >
-          <Target size={15} color={mode === 'desired' ? '#0d7a76' : '#6B7280'} />
-          <Text style={[styles.modeButtonText, mode === 'desired' ? styles.modeButtonTextActive : null]}>
-            Plan for a branch
-          </Text>
-        </TouchableOpacity>
+        {tabs.map(({ key, label, icon: Icon }) => {
+          const active = mode === key;
+          return (
+            <TouchableOpacity
+              key={key}
+              style={[styles.modeButton, active ? styles.modeButtonActive : null]}
+              onPress={() => switchMode(key)}
+              activeOpacity={0.7}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: active }}
+            >
+              <Icon size={15} color={active ? '#FFF' : colors.textSecondary} />
+              <Text style={[styles.modeButtonText, active ? styles.modeButtonTextActive : null]}>
+                {label}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
       <ScrollView
@@ -170,33 +177,10 @@ function RankPredictorScreen() {
           <DesiredBranchResult response={desired} onBack={() => setDesired(null)} />
         ) : (
           <>
-            <View style={styles.introCard}>
-              {mode === 'predict' ? (
-                <>
-                  <Text style={styles.introTitle}>Predict my outcome</Text>
-                  <Text style={styles.introBody}>
-                    Enter your Grand Test scores to estimate your exam percentile and All India Rank
-                    range, plus the branches they have historically corresponded to.
-                  </Text>
-                </>
-              ) : (
-                <>
-                  <Text style={styles.introTitle}>Plan for a branch</Text>
-                  <Text style={styles.introBody}>
-                    Name the branch you want — see the rank it historically took and roughly how
-                    many corrects that means. A planning target, not a promise.
-                  </Text>
-                </>
-              )}
-              <Text style={styles.introDisclaimer}>{DISCLAIMER_NOTE}</Text>
-            </View>
-
-            <Text style={styles.sectionTitle}>Choose your exam</Text>
-
             {loading && exams === null && (
-              <View style={styles.skeletonCard}>
-                <ActivityIndicator color="#2563EB" />
-                <Text style={styles.skeletonText}>Loading exams…</Text>
+              <View style={styles.stateCard}>
+                <ActivityIndicator color={colors.primary} />
+                <Text style={styles.stateText}>Loading exams…</Text>
               </View>
             )}
 
@@ -210,47 +194,55 @@ function RankPredictorScreen() {
               </View>
             )}
 
-            {exams !== null &&
-              error === null &&
-              exams.map((exam) => {
-                const selected = selectedExam === exam.id;
-                return (
-                  <TouchableOpacity
-                    key={exam.id}
-                    style={[
-                      styles.examCard,
-                      selected && styles.examCardSelected,
-                      !exam.available && styles.examCardDisabled,
-                    ]}
-                    disabled={!exam.available}
-                    activeOpacity={0.8}
-                    onPress={() => setSelectedExam(exam.id)}
-                  >
-                    <View style={styles.examCardTop}>
-                      <Text style={[styles.examLabel, !exam.available && styles.textDisabled]}>
-                        {exam.label ?? EXAM_LABELS[exam.id] ?? exam.id}
-                      </Text>
-                      {selected && exam.available ? (
-                        <CircleCheck color="#01b4ae" size={22} />
-                      ) : (
-                        <Text
-                          style={[
-                            styles.availabilityChip,
-                            exam.available ? styles.chipOn : styles.chipOff,
-                          ]}
-                        >
-                          {exam.available ? 'Available' : 'Coming soon'}
-                        </Text>
-                      )}
-                    </View>
-                    {patternLine(exam) ? (
-                      <Text style={[styles.examPattern, !exam.available && styles.textDisabled]}>
-                        {patternLine(exam)}
-                      </Text>
-                    ) : null}
-                  </TouchableOpacity>
-                );
-              })}
+            {exams !== null && error === null && (
+              <View style={styles.examCard}>
+                <Text style={styles.examCardTitle}>Exam</Text>
+                <View style={styles.examRows}>
+                  {exams.map((exam) => {
+                    const selected = selectedExam === exam.id;
+                    const label = exam.label ?? EXAM_LABELS[exam.id] ?? exam.id;
+                    return (
+                      <TouchableOpacity
+                        key={exam.id}
+                        style={[
+                          styles.examRow,
+                          selected && exam.available ? styles.examRowSelected : null,
+                          !exam.available ? styles.examRowDisabled : null,
+                        ]}
+                        disabled={!exam.available}
+                        activeOpacity={0.8}
+                        onPress={() => setSelectedExam(exam.id)}
+                        accessibilityRole="radio"
+                        accessibilityState={{ selected, disabled: !exam.available }}
+                      >
+                        <View style={styles.examRowText}>
+                          <Text style={[styles.examLabel, !exam.available && styles.textDisabled]}>
+                            {label}
+                          </Text>
+                          {patternLine(exam) ? (
+                            <Text
+                              style={[styles.examPattern, !exam.available && styles.textDisabled]}
+                              numberOfLines={1}
+                            >
+                              {patternLine(exam)}
+                            </Text>
+                          ) : null}
+                        </View>
+                        {selected && exam.available ? (
+                          <CircleCheck color={colors.primary} size={22} />
+                        ) : !exam.available ? (
+                          <View style={styles.chipOff}>
+                            <Text style={styles.chipOffText}>Coming soon</Text>
+                          </View>
+                        ) : (
+                          <View style={styles.radioRing} />
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
+                </View>
+              </View>
+            )}
 
             {mode === 'predict' ? (
               <PredictorForm
@@ -275,27 +267,28 @@ function RankPredictorScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: 16,
-    backgroundColor: '#2563EB',
+    backgroundColor: colors.primary,
   },
   headerTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#FFF',
   },
+  // Segmented control — same geometry as Analytics' TabSwitcher.
   modeToggle: {
     flexDirection: 'row',
-    gap: 4,
+    backgroundColor: colors.bg,
+    borderRadius: 12,
     padding: 4,
-    backgroundColor: '#FFFFFF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    marginHorizontal: 16,
+    marginVertical: 12,
   },
   modeButton: {
     flex: 1,
@@ -303,71 +296,45 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 7,
-    borderRadius: 12,
+    borderRadius: 8,
     paddingVertical: 10,
     paddingHorizontal: 8,
   },
   modeButtonActive: {
-    backgroundColor: 'rgba(1, 180, 174, 0.12)',
+    backgroundColor: colors.primary,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
   },
   modeButtonText: {
     fontSize: 13,
     fontWeight: '600',
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   modeButtonTextActive: {
-    color: '#0d7a76',
-    fontWeight: '700',
+    color: '#FFFFFF',
   },
   content: {
     padding: 16,
     paddingBottom: 48,
     gap: 12,
   },
-  introCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: 'rgba(1, 180, 174, 0.15)',
-  },
-  introTitle: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#01b4ae',
-    marginBottom: 6,
-  },
-  introBody: {
-    fontSize: 14,
-    color: '#374151',
-    lineHeight: 20,
-  },
-  introDisclaimer: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginTop: 10,
-  },
-  sectionTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#111827',
-    marginTop: 6,
-    marginBottom: 2,
-  },
-  skeletonCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+  stateCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 12,
     padding: 28,
     alignItems: 'center',
     gap: 10,
   },
-  skeletonText: {
+  stateText: {
     fontSize: 13,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   errorCard: {
-    backgroundColor: '#FEF2F2',
-    borderRadius: 16,
+    backgroundColor: colors.dangerTint,
+    borderRadius: 12,
     padding: 18,
     borderWidth: 1,
     borderColor: 'rgba(220, 38, 38, 0.2)',
@@ -376,14 +343,14 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 14,
-    color: '#DC2626',
+    color: colors.dangerDark,
     textAlign: 'center',
   },
   retryButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#DC2626',
+    backgroundColor: colors.dangerDark,
     borderRadius: 10,
     paddingVertical: 8,
     paddingHorizontal: 16,
@@ -393,54 +360,76 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
   },
+  // Exam selector — one card, radio-style rows (replaces the old heading +
+  // stacked exam cards: same choices and availability logic, less chrome).
   examCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 18,
-    borderWidth: 1.5,
-    borderColor: '#E5E7EB',
-  },
-  examCardSelected: {
-    borderColor: '#01b4ae',
-    backgroundColor: '#F0FBFA',
-  },
-  examCardDisabled: {
-    opacity: 0.55,
-  },
-  examCardTop: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 16,
     gap: 10,
   },
-  examLabel: {
-    fontSize: 16,
+  examCardTitle: {
+    fontSize: 15,
     fontWeight: '700',
-    color: '#111827',
+    color: colors.text,
   },
-  textDisabled: {
-    color: '#6B7280',
+  examRows: {
+    gap: 8,
+  },
+  examRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: colors.border,
+    backgroundColor: colors.surfaceMuted,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    minHeight: 56,
+  },
+  examRowSelected: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryTint,
+  },
+  examRowDisabled: {
+    opacity: 0.55,
+  },
+  examRowText: {
+    flex: 1,
+    gap: 2,
+  },
+  examLabel: {
+    fontSize: 15.5,
+    fontWeight: '700',
+    color: colors.text,
   },
   examPattern: {
-    fontSize: 13,
-    color: '#6B7280',
-    marginTop: 6,
+    fontSize: 12,
+    color: colors.textSecondary,
   },
-  availabilityChip: {
-    fontSize: 11.5,
-    fontWeight: '600',
-    borderRadius: 99,
-    paddingVertical: 3,
-    paddingHorizontal: 10,
-    overflow: 'hidden',
+  textDisabled: {
+    color: colors.textSecondary,
   },
-  chipOn: {
-    backgroundColor: 'rgba(16, 185, 129, 0.12)',
-    color: '#10B981',
+  radioRing: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: colors.borderStrong,
   },
   chipOff: {
-    backgroundColor: '#F3F4F6',
-    color: '#6B7280',
+    borderRadius: 99,
+    backgroundColor: colors.bg,
+    paddingVertical: 3,
+    paddingHorizontal: 10,
+  },
+  chipOffText: {
+    fontSize: 11.5,
+    fontWeight: '600',
+    color: colors.textSecondary,
   },
 });
 

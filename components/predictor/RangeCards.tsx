@@ -1,9 +1,11 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
+import { colors } from '@/utils/theme';
 import { Info, Sparkles } from 'lucide-react-native';
 import type { PredictionResult } from '@/types/predictor';
 import { fmtPct, fmtRank, sessionLabel } from '@/utils/predictor/format';
 import { RANK_COVERAGE_TEXT, TRANSFER_PLAIN } from '@/utils/predictor/constants';
+import shared from './shared';
 
 /**
  * The result hero — native port of the website's RangeHero: the percentile
@@ -31,9 +33,9 @@ function PercentileCard({ result }: { result: PredictionResult }) {
       : `Official NEET PG ${result.rank.examYear} results`;
 
   return (
-    <View style={styles.card}>
+    <View style={shared.card}>
       <View style={styles.cardTopRow}>
-        <Text style={styles.cardLabel}>Estimated percentile</Text>
+        <Text style={shared.sectionLabel}>Estimated percentile</Text>
         <View style={styles.sourceChip}>
           <Text style={styles.sourceChipText}>{source}</Text>
         </View>
@@ -59,7 +61,7 @@ function PercentileCard({ result }: { result: PredictionResult }) {
         <Text style={styles.axisLabelText}>100</Text>
       </View>
       <View style={styles.coverageRow}>
-        <Info size={13} color="#01b4ae" />
+        <Info size={13} color={colors.primary} />
         <Text style={styles.coverageText}>
           {RANK_COVERAGE_TEXT[result.estimate.percentile.coverage] ?? ''}
         </Text>
@@ -80,11 +82,10 @@ function RankCard({ result }: { result: PredictionResult }) {
   const segWidth = axisMax ? Math.max(2, 100 - segLeft) : 0;
 
   return (
-    <View style={styles.card}>
+    <View style={shared.card}>
       <View style={styles.cardTopRow}>
-        <Text style={styles.cardLabel}>
-          Predicted AIR ·{' '}
-          {isIniCet ? `INI-CET ${iniSessionLabel(rank)} session` : `NEET PG ${rank.examYear}`}
+        <Text style={shared.sectionLabel}>
+          Predicted AIR · {isIniCet ? `INI-CET ${iniSessionLabel(rank)} session` : `NEET PG ${rank.examYear}`}
         </Text>
         <View style={styles.sourceChip}>
           <Text style={styles.sourceChipText}>All India Rank</Text>
@@ -106,7 +107,7 @@ function RankCard({ result }: { result: PredictionResult }) {
         )}
       </View>
       <View style={styles.coverageRow}>
-        <Info size={13} color="#01b4ae" />
+        <Info size={13} color={colors.primary} />
         <Text style={styles.coverageText}>{RANK_COVERAGE_TEXT[rank.coverage] ?? ''}</Text>
       </View>
       {beyond === null ? null : (
@@ -142,7 +143,7 @@ export default function RangeCards({ result }: { result: PredictionResult }) {
         </Text>
         {lowData ? (
           <View style={styles.lowDataRow}>
-            <Sparkles size={12} color="#F59E0B" />
+            <Sparkles size={12} color={colors.warning} />
             <Text style={styles.lowDataText}>Add more GTs for a narrower, more reliable estimate.</Text>
           </View>
         ) : null}
@@ -152,13 +153,6 @@ export default function RangeCards({ result }: { result: PredictionResult }) {
 }
 
 const styles = StyleSheet.create({
-  card: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    padding: 18,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
   cardTopRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -166,24 +160,16 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 10,
   },
-  cardLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    color: '#6B7280',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
-    flex: 1,
-  },
   sourceChip: {
     borderRadius: 99,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     paddingVertical: 3,
     paddingHorizontal: 8,
   },
   sourceChipText: {
     fontSize: 10,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   bigNumberRow: {
     flexDirection: 'row',
@@ -193,18 +179,18 @@ const styles = StyleSheet.create({
   bigNumber: {
     fontSize: 30,
     fontWeight: '700',
-    color: '#111827',
+    color: colors.text,
     fontVariant: ['tabular-nums'],
   },
   bigNumberDash: {
     fontSize: 24,
     fontWeight: '600',
-    color: '#01b4ae',
+    color: colors.primary,
   },
   track: {
     height: 10,
     borderRadius: 99,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
     marginTop: 16,
     overflow: 'hidden',
   },
@@ -212,7 +198,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     top: 0,
     bottom: 0,
-    backgroundColor: '#01b4ae',
+    backgroundColor: colors.primary,
     borderRadius: 99,
   },
   trackFaded: {
@@ -227,7 +213,7 @@ const styles = StyleSheet.create({
     height: 16,
     width: 3,
     borderRadius: 99,
-    backgroundColor: '#111827',
+    backgroundColor: colors.text,
     marginLeft: -1.5,
   },
   axisLabels: {
@@ -237,7 +223,7 @@ const styles = StyleSheet.create({
   },
   axisLabelText: {
     fontSize: 10.5,
-    color: '#9CA3AF',
+    color: colors.textMuted,
   },
   coverageRow: {
     flexDirection: 'row',
@@ -248,19 +234,19 @@ const styles = StyleSheet.create({
   coverageText: {
     flex: 1,
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
     lineHeight: 16,
   },
   beyondText: {
     fontSize: 11.5,
-    color: '#6B7280',
+    color: colors.textSecondary,
     marginTop: 5,
   },
   widthStrip: {
-    borderRadius: 14,
+    borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
+    borderColor: colors.border,
+    backgroundColor: colors.surface,
     padding: 14,
     gap: 5,
   },
@@ -270,15 +256,15 @@ const styles = StyleSheet.create({
   },
   widthStripText: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
     lineHeight: 16,
   },
   widthStripTextLow: {
-    color: '#92600A',
+    color: '#92400E',
   },
   widthStripStrong: {
     fontWeight: '700',
-    color: '#111827',
+    color: colors.text,
   },
   lowDataRow: {
     flexDirection: 'row',
@@ -288,7 +274,7 @@ const styles = StyleSheet.create({
   },
   lowDataText: {
     fontSize: 12,
-    color: '#92600A',
+    color: '#92400E',
     fontWeight: '600',
   },
 });

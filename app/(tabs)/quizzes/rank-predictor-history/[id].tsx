@@ -10,6 +10,7 @@ import {
 import { ScreenContainer } from '@/components/layout';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ChevronLeft, RefreshCw } from 'lucide-react-native';
+import { colors } from '@/utils/theme';
 import { withFeatureGate } from '@/components/withFeatureGate';
 import { predictorEndpoints, predictorErrorMessage } from '@/services/predictor';
 import type { PredictionResult, StoredPredictionRecord } from '@/types/predictor';
@@ -59,11 +60,12 @@ function PredictorHistoryDetailScreen() {
 
   return (
     <ScreenContainer style={styles.container}>
-      {/* Header */}
+      {/* Header — the Analytics module-header treatment */}
       <View style={styles.header}>
         <TouchableOpacity
           onPress={() => router.back()}
           hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          accessibilityLabel="Go back"
         >
           <ChevronLeft color="#FFF" size={24} />
         </TouchableOpacity>
@@ -77,7 +79,7 @@ function PredictorHistoryDetailScreen() {
       >
         {loading && (
           <View style={styles.stateCard}>
-            <ActivityIndicator color="#2563EB" />
+            <ActivityIndicator color={colors.primary} />
             <Text style={styles.stateText}>Loading this prediction…</Text>
           </View>
         )}
@@ -110,17 +112,17 @@ function PredictorHistoryDetailScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: 16,
-    backgroundColor: '#2563EB',
+    backgroundColor: colors.primary,
   },
   headerTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#FFF',
   },
@@ -130,20 +132,20 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   stateCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
+    backgroundColor: colors.surface,
+    borderRadius: 12,
     padding: 28,
     alignItems: 'center',
     gap: 8,
   },
   stateText: {
     fontSize: 13.5,
-    color: '#6B7280',
+    color: colors.textSecondary,
     textAlign: 'center',
   },
   errorCard: {
-    backgroundColor: '#FEF2F2',
-    borderRadius: 16,
+    backgroundColor: colors.dangerTint,
+    borderRadius: 12,
     padding: 18,
     borderWidth: 1,
     borderColor: 'rgba(220, 38, 38, 0.2)',
@@ -152,14 +154,14 @@ const styles = StyleSheet.create({
   },
   errorText: {
     fontSize: 14,
-    color: '#DC2626',
+    color: colors.dangerDark,
     textAlign: 'center',
   },
   retryButton: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    backgroundColor: '#DC2626',
+    backgroundColor: colors.dangerDark,
     borderRadius: 10,
     paddingVertical: 8,
     paddingHorizontal: 16,
