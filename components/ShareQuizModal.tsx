@@ -25,6 +25,7 @@ import {
 import { api } from '@/services/api';
 import * as Clipboard from 'expo-clipboard';
 import useDebounce from '@/hooks/useDebounce';
+import { colors } from '@/utils/theme';
 
 // Minimal quiz shape the share sheet needs. Both the freshly created quiz
 // (create/import responses) and the Past Tests list rows satisfy this.
@@ -422,7 +423,7 @@ export default function ShareQuizModal({ visible, quiz, onClose, onShareComplete
                 style={[styles.shareModeTab, shareMode === 'internal' && styles.shareModeTabActive]}
                 onPress={() => setShareMode('internal')}
               >
-                <Users size={18} color={shareMode === 'internal' ? '#2563EB' : '#6B7280'} />
+                <Users size={18} color={shareMode === 'internal' ? colors.primary : '#6B7280'} />
                 <Text style={[styles.shareModeTabText, shareMode === 'internal' && styles.shareModeTabTextActive]}>
                   Internal
                 </Text>
@@ -432,7 +433,7 @@ export default function ShareQuizModal({ visible, quiz, onClose, onShareComplete
               style={[styles.shareModeTab, shareMode === 'external' && styles.shareModeTabActive]}
               onPress={() => setShareMode('external')}
             >
-              <Globe size={18} color={shareMode === 'external' ? '#2563EB' : '#6B7280'} />
+              <Globe size={18} color={shareMode === 'external' ? colors.primary : '#6B7280'} />
               <Text style={[styles.shareModeTabText, shareMode === 'external' && styles.shareModeTabTextActive]}>
                 External
               </Text>
@@ -596,9 +597,9 @@ export default function ShareQuizModal({ visible, quiz, onClose, onShareComplete
                 disabled={sharing}
               >
                 {sharing ? (
-                  <ActivityIndicator color="#FFF" />
+                  <ActivityIndicator color={colors.primary} />
                 ) : (
-                  <Text style={styles.shareConfirmText}>Share with All Free Users 🚀</Text>
+                  <Text style={[styles.shareConfirmText, styles.shareFreeConfirmText]}>Share with All Free Users 🚀</Text>
                 )}
               </TouchableOpacity>
             </>
@@ -621,7 +622,7 @@ export default function ShareQuizModal({ visible, quiz, onClose, onShareComplete
               {publicShareUrl ? (
                 <>
                   <View style={styles.linkContainer}>
-                    <Link size={18} color="#6366f1" />
+                    <Link size={18} color={colors.primary} />
                     <Text style={styles.linkText} numberOfLines={1}>
                       {publicShareUrl}
                     </Text>
@@ -723,7 +724,7 @@ const styles = StyleSheet.create({
   },
   selectedCount: {
     fontSize: 14,
-    color: '#2563EB',
+    color: colors.primary,
     fontWeight: '500',
     marginBottom: 12,
   },
@@ -741,7 +742,7 @@ const styles = StyleSheet.create({
   },
   selectAllActionText: {
     fontSize: 13,
-    color: '#2563EB',
+    color: colors.primary,
     fontWeight: '600',
   },
   selectAllActionTextDisabled: {
@@ -769,8 +770,8 @@ const styles = StyleSheet.create({
     backgroundColor: '#F9FAFB',
   },
   groupFilterChipSelected: {
-    borderColor: '#2563EB',
-    backgroundColor: '#EBF5FF',
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryTint,
   },
   groupFilterChipText: {
     fontSize: 12,
@@ -778,12 +779,12 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   groupFilterChipTextSelected: {
-    color: '#1D4ED8',
+    color: colors.primaryDark,
     fontWeight: '600',
   },
   clearFilterText: {
     fontSize: 13,
-    color: '#2563EB',
+    color: colors.primary,
     fontWeight: '600',
     marginBottom: 12,
   },
@@ -807,7 +808,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   studentItemSelected: {
-    backgroundColor: '#EBF5FF',
+    backgroundColor: colors.primaryTint,
   },
   checkbox: {
     width: 22,
@@ -819,8 +820,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   checkboxSelected: {
-    backgroundColor: '#2563EB',
-    borderColor: '#2563EB',
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   studentInfo: {
     flex: 1,
@@ -835,17 +836,23 @@ const styles = StyleSheet.create({
     color: '#6B7280',
   },
   shareConfirmButton: {
-    backgroundColor: '#2563EB',
+    backgroundColor: colors.primary,
     borderRadius: 8,
     padding: 16,
     alignItems: 'center',
   },
+  // Secondary action — teal outline so only one primary button is solid
   shareFreeConfirmButton: {
-    backgroundColor: '#01b4ae',
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.primary,
     borderRadius: 8,
     padding: 16,
     alignItems: 'center',
     marginTop: 10,
+  },
+  shareFreeConfirmText: {
+    color: colors.primary,
   },
   shareConfirmText: {
     fontSize: 16,
@@ -886,7 +893,7 @@ const styles = StyleSheet.create({
     color: '#6B7280',
   },
   shareModeTabTextActive: {
-    color: '#2563EB',
+    color: colors.primary,
   },
   // External share styles
   externalShareContainer: {
@@ -939,7 +946,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 8,
-    backgroundColor: '#6366F1',
+    backgroundColor: colors.primary,
     padding: 16,
     borderRadius: 8,
   },

@@ -21,7 +21,9 @@ import {
   Copy,
   Edit,
   Trash2,
+  FileText,
 } from 'lucide-react-native';
+import { colors, testTypeTints } from '@/utils/theme';
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
 import ShareQuizModal from '@/components/ShareQuizModal';
@@ -195,9 +197,10 @@ export default function PastTests() {
       {/* Quiz List */}
       <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
         {loading ? (
-          <ActivityIndicator color="#2563EB" style={{ marginTop: 50 }} />
+          <ActivityIndicator color={colors.primary} style={{ marginTop: 50 }} />
         ) : filteredQuizzes.length === 0 ? (
           <View style={styles.emptyContainer}>
+            <FileText color={colors.textMuted} size={48} />
             <Text style={styles.emptyText}>
               {searchQuery ? 'No tests match your search' : 'No tests created yet'}
             </Text>
@@ -258,7 +261,7 @@ export default function PastTests() {
                   style={[styles.actionButton, styles.shareBtn]}
                   onPress={() => openShareModal(quiz)}
                 >
-                  <Share2 color="#2563EB" size={20} />
+                  <Share2 color={colors.primary} size={20} />
                   <Text style={[styles.actionButtonText, styles.shareBtnText]}>Share</Text>
                 </TouchableOpacity>
 
@@ -304,30 +307,30 @@ export default function PastTests() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: 16,
-    backgroundColor: '#2563EB',
+    backgroundColor: colors.primary,
   },
   headerTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#FFF',
   },
   searchContainer: {
     padding: 16,
-    backgroundColor: '#FFF',
+    backgroundColor: colors.surface,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: colors.border,
   },
   searchInput: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
     borderRadius: 8,
     paddingHorizontal: 12,
     gap: 8,
@@ -345,21 +348,22 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     paddingTop: 50,
+    gap: 16,
   },
   emptyText: {
     fontSize: 16,
-    color: '#6B7280',
+    color: colors.textSecondary,
     textAlign: 'center',
   },
   errorText: {
     fontSize: 16,
-    color: '#EF4444',
+    color: colors.danger,
     textAlign: 'center',
     marginTop: 50,
   },
   quizCard: {
     flexDirection: 'row',
-    backgroundColor: '#FFF',
+    backgroundColor: colors.surface,
     borderRadius: 12,
     padding: 16,
     marginBottom: 12,
@@ -375,7 +379,7 @@ const styles = StyleSheet.create({
   quizTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#1F2937',
+    color: colors.text,
     marginBottom: 8,
   },
   quizMeta: {
@@ -384,30 +388,31 @@ const styles = StyleSheet.create({
     gap: 8,
     marginBottom: 8,
   },
+  // Badge geometry/tints mirror Analytics' test list (TestDropdown)
   typeBadge: {
     paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
-    backgroundColor: '#F3F4F6',
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: colors.bg,
   },
   dailyBadge: {
-    backgroundColor: '#DBEAFE',
+    backgroundColor: testTypeTints.daily,
   },
   weeklyBadge: {
-    backgroundColor: '#D1FAE5',
+    backgroundColor: testTypeTints.weekly,
   },
   grandBadge: {
-    backgroundColor: '#FEF3C7',
+    backgroundColor: testTypeTints.grand,
   },
   typeBadgeText: {
     fontSize: 11,
-    fontWeight: '600',
-    color: '#374151',
+    fontWeight: '700',
+    color: colors.textBody,
     textTransform: 'capitalize',
   },
   subjectText: {
     fontSize: 13,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   quizStats: {
     flexDirection: 'row',
@@ -421,11 +426,11 @@ const styles = StyleSheet.create({
   },
   statText: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   dateText: {
     fontSize: 12,
-    color: '#9CA3AF',
+    color: colors.textMuted,
     marginTop: 4,
   },
   actionButtons: {
@@ -434,7 +439,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingLeft: 12,
     borderLeftWidth: 1,
-    borderLeftColor: '#F3F4F6',
+    borderLeftColor: colors.bg,
   },
   actionButton: {
     alignItems: 'center',
@@ -447,10 +452,10 @@ const styles = StyleSheet.create({
   },
   shareBtn: {},
   shareBtnText: {
-    color: '#2563EB',
+    color: colors.primary,
   },
   deleteBtn: {},
   deleteBtnText: {
-    color: '#EF4444',
+    color: colors.danger,
   },
 });

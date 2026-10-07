@@ -30,6 +30,7 @@ import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
 import { DateTimeField } from '@/components/DateTimeField';
 import { isValidQuizWindow } from '@/utils/quizDateTime';
+import { colors } from '@/utils/theme';
 
 interface Question {
   _id: string;
@@ -577,7 +578,7 @@ export default function EditQuiz() {
     return (
       <ScreenContainer style={styles.container}>
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#2563EB" />
+          <ActivityIndicator size="large" color={colors.primary} />
           <Text style={styles.loadingText}>Loading quiz...</Text>
         </View>
       </ScreenContainer>
@@ -683,7 +684,7 @@ export default function EditQuiz() {
             />
 
             {scheduledDate && expiryDate && expiryDate <= scheduledDate && (
-              <Text style={{ color: '#EF4444', fontSize: 12, marginTop: 4 }}>
+              <Text style={{ color: colors.danger, fontSize: 12, marginTop: 4 }}>
                 ⚠️ End date must be after start date
               </Text>
             )}
@@ -700,8 +701,9 @@ export default function EditQuiz() {
             <Switch
               value={shareSolution}
               onValueChange={setShareSolution}
-              trackColor={{ false: '#D1D5DB', true: '#93C5FD' }}
-              thumbColor={shareSolution ? '#2563EB' : '#9CA3AF'}
+              trackColor={{ false: '#D1D5DB', true: colors.primary }}
+              thumbColor="#FFFFFF"
+              ios_backgroundColor="#D1D5DB"
             />
           </View>
 
@@ -715,8 +717,9 @@ export default function EditQuiz() {
             <Switch
               value={lockSectionsAfterSubmission}
               onValueChange={setLockSectionsAfterSubmission}
-              trackColor={{ false: '#D1D5DB', true: '#93C5FD' }}
-              thumbColor={lockSectionsAfterSubmission ? '#2563EB' : '#9CA3AF'}
+              trackColor={{ false: '#D1D5DB', true: colors.primary }}
+              thumbColor="#FFFFFF"
+              ios_backgroundColor="#D1D5DB"
             />
           </View>
         </View>
@@ -755,7 +758,7 @@ export default function EditQuiz() {
                   <View style={styles.questionMeta}>
                     {question.questionImage && (
                       <View style={styles.imageBadge}>
-                        <ImageIcon size={12} color="#2563EB" />
+                        <ImageIcon size={12} color={colors.primary} />
                       </View>
                     )}
                     <Text style={styles.marksBadge}>{question.marks}M</Text>
@@ -964,7 +967,7 @@ export default function EditQuiz() {
 
           {loadingQuestions ? (
             <View style={styles.loadingContainer}>
-              <ActivityIndicator size="large" color="#2563EB" />
+              <ActivityIndicator size="large" color={colors.primary} />
             </View>
           ) : (
             <FlatList
@@ -997,7 +1000,7 @@ export default function EditQuiz() {
                       </Text>
                     </View>
                     {item.questionImage && (
-                      <ImageIcon size={16} color="#2563EB" />
+                      <ImageIcon size={16} color={colors.primary} />
                     )}
                   </TouchableOpacity>
                 );
@@ -1220,7 +1223,7 @@ export default function EditQuiz() {
                       )}
                     </View>
                     {isCorrect && (
-                      <Check color="#059669" size={20} />
+                      <Check color={colors.successDark} size={20} />
                     )}
                   </View>
                   );
@@ -1229,7 +1232,7 @@ export default function EditQuiz() {
               )}
 
               {previewQuestion.explanation && (
-                <View style={[styles.previewSection, { backgroundColor: '#FEF3C7' }]}>
+                <View style={[styles.previewSection, { backgroundColor: colors.warningTint }]}>
                   <Text style={styles.previewLabel}>Explanation</Text>
                   <Text style={styles.explanationText}>{previewQuestion.explanation}</Text>
                 </View>
@@ -1247,17 +1250,17 @@ export default function EditQuiz() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
   },
   // Toggle styles (same pattern as create-quiz.tsx)
   toggleContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#F9FAFB',
+    backgroundColor: colors.surfaceMuted,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     padding: 16,
     marginTop: 12,
   },
@@ -1268,11 +1271,11 @@ const styles = StyleSheet.create({
   toggleLabel: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#1F2937',
+    color: colors.text,
   },
   toggleHelperText: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
     marginTop: 4,
     lineHeight: 16,
   },
@@ -1284,36 +1287,38 @@ const styles = StyleSheet.create({
   loadingText: {
     marginTop: 12,
     fontSize: 16,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   errorText: {
     flex: 1,
     textAlign: 'center',
     marginTop: 100,
     fontSize: 16,
-    color: '#EF4444',
+    color: colors.danger,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: 16,
-    backgroundColor: '#2563EB',
+    backgroundColor: colors.primary,
   },
   backButton: {
     padding: 4,
   },
   headerTitle: {
     flex: 1,
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#FFF',
     marginLeft: 8,
   },
+  // Header action on the teal bar — translucent white, the same treatment
+  // question-bank's header buttons use.
   saveButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#10B981',
+    backgroundColor: 'rgba(255,255,255,0.2)',
     paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 8,
@@ -1332,7 +1337,7 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   card: {
-    backgroundColor: '#FFF',
+    backgroundColor: colors.surface,
     borderRadius: 12,
     padding: 16,
     marginBottom: 16,
@@ -1346,7 +1351,7 @@ const styles = StyleSheet.create({
   cardTitle: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#1F2937',
+    color: colors.text,
     marginBottom: 16,
   },
   inputGroup: {
@@ -1355,17 +1360,17 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 14,
     fontWeight: '500',
-    color: '#374151',
+    color: colors.textBody,
     marginBottom: 8,
   },
   input: {
-    backgroundColor: '#F9FAFB',
+    backgroundColor: colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     borderRadius: 8,
     padding: 12,
     fontSize: 15,
-    color: '#1F2937',
+    color: colors.text,
   },
   textArea: {
     minHeight: 100,
@@ -1374,28 +1379,28 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
   },
   readOnlyField: {
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     borderRadius: 8,
     padding: 12,
   },
   readOnlyText: {
     fontSize: 15,
-    color: '#6B7280',
+    color: colors.textSecondary,
     textTransform: 'capitalize',
   },
   infoBox: {
-    backgroundColor: '#EBF5FF',
+    backgroundColor: colors.primaryTint,
     padding: 12,
     borderRadius: 8,
     marginBottom: 16,
     borderWidth: 1,
-    borderColor: '#BFDBFE',
+    borderColor: colors.primaryTintBorder,
   },
   infoText: {
     fontSize: 14,
-    color: '#1E40AF',
+    color: colors.primaryDark,
     fontWeight: '600',
   },
   infoWarningText: {
@@ -1407,7 +1412,7 @@ const styles = StyleSheet.create({
   infoHint: {
     marginTop: 6,
     fontSize: 12,
-    color: '#1E40AF',
+    color: colors.primaryText,
   },
   sectionSetupHeader: {
     marginBottom: 12,
@@ -1421,13 +1426,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 16,
-    backgroundColor: '#FFF',
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderColor: colors.borderStrong,
   },
   smallChipActive: {
-    backgroundColor: '#2563EB',
-    borderColor: '#2563EB',
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   smallChipText: {
     fontSize: 12,
@@ -1438,12 +1443,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   sectionConfigCard: {
-    backgroundColor: '#FFF',
+    backgroundColor: colors.surface,
     borderRadius: 12,
     padding: 12,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
   },
   sectionRow: {
     flexDirection: 'row',
@@ -1453,7 +1458,7 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     padding: 8,
     borderRadius: 8,
-    backgroundColor: '#FEE2E2',
+    backgroundColor: colors.dangerTint,
   },
   sectionTypeRow: {
     flexDirection: 'row',
@@ -1465,20 +1470,20 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderColor: colors.borderStrong,
     alignItems: 'center',
-    backgroundColor: '#F9FAFB',
+    backgroundColor: colors.surfaceMuted,
   },
   typeButtonActive: {
-    borderColor: '#2563EB',
-    backgroundColor: '#EBF5FF',
+    borderColor: colors.primary,
+    backgroundColor: colors.primary,
   },
   typeButtonText: {
     fontSize: 13,
     color: '#4B5563',
   },
   typeButtonTextActive: {
-    color: '#2563EB',
+    color: '#FFF',
     fontWeight: '600',
   },
   manualHeaderRow: {
@@ -1488,13 +1493,13 @@ const styles = StyleSheet.create({
   },
   manualCountText: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   manualSelectButton: {
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
-    backgroundColor: '#2563EB',
+    backgroundColor: colors.primary,
   },
   manualSelectButtonText: {
     fontSize: 12,
@@ -1505,20 +1510,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
     marginRight: 6,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     maxWidth: 180,
   },
   qTinyChipText: {
     fontSize: 11,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   addButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#2563EB',
+    backgroundColor: colors.primary,
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 8,
@@ -1535,11 +1540,11 @@ const styles = StyleSheet.create({
   },
   emptyText: {
     fontSize: 15,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   emptySubtext: {
     fontSize: 13,
-    color: '#9CA3AF',
+    color: colors.textMuted,
     marginTop: 4,
   },
   questionItem: {
@@ -1547,28 +1552,28 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: colors.border,
     gap: 12,
   },
   questionNumber: {
     width: 28,
     height: 28,
     borderRadius: 14,
-    backgroundColor: '#EBF5FF',
+    backgroundColor: colors.primaryTint,
     justifyContent: 'center',
     alignItems: 'center',
   },
   questionNumberText: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#2563EB',
+    color: colors.primary,
   },
   questionContent: {
     flex: 1,
   },
   questionText: {
     fontSize: 14,
-    color: '#1F2937',
+    color: colors.text,
     lineHeight: 20,
   },
   questionMeta: {
@@ -1579,12 +1584,12 @@ const styles = StyleSheet.create({
   },
   imageBadge: {
     padding: 4,
-    backgroundColor: '#EBF5FF',
+    backgroundColor: colors.primaryTint,
     borderRadius: 4,
   },
   marksBadge: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
     fontWeight: '500',
   },
   questionActions: {
@@ -1593,14 +1598,14 @@ const styles = StyleSheet.create({
   },
   modalContainer: {
     flex: 1,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 16,
-    backgroundColor: '#2563EB',
+    backgroundColor: colors.primary,
   },
   modalTitle: {
     fontSize: 18,
@@ -1610,19 +1615,19 @@ const styles = StyleSheet.create({
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFF',
+    backgroundColor: colors.surface,
     margin: 16,
     paddingHorizontal: 12,
     borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     gap: 8,
   },
   searchInput: {
     flex: 1,
     paddingVertical: 12,
     fontSize: 15,
-    color: '#1F2937',
+    color: colors.text,
   },
   listContent: {
     padding: 16,
@@ -1631,30 +1636,30 @@ const styles = StyleSheet.create({
   pickerItem: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    backgroundColor: '#FFF',
+    backgroundColor: colors.surface,
     padding: 12,
     borderRadius: 8,
     marginBottom: 8,
     gap: 12,
   },
   pickerItemSelected: {
-    backgroundColor: '#EBF5FF',
+    backgroundColor: colors.primaryTint,
     borderWidth: 1,
-    borderColor: '#2563EB',
+    borderColor: colors.primary,
   },
   pickerCheckbox: {
     width: 22,
     height: 22,
     borderRadius: 4,
     borderWidth: 2,
-    borderColor: '#D1D5DB',
+    borderColor: colors.borderStrong,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#FFF',
+    backgroundColor: colors.surface,
   },
   pickerCheckboxSelected: {
-    backgroundColor: '#2563EB',
-    borderColor: '#2563EB',
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   pickerSaveBar: {
     position: 'absolute',
@@ -1664,11 +1669,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#FFF',
+    backgroundColor: colors.surface,
     paddingHorizontal: 16,
     paddingVertical: 12,
     borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
+    borderTopColor: colors.border,
     elevation: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: -2 },
@@ -1677,13 +1682,13 @@ const styles = StyleSheet.create({
   },
   pickerSelectionCount: {
     fontSize: 14,
-    color: '#374151',
+    color: colors.textBody,
     fontWeight: '500',
   },
   pickerSaveButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#10B981',
+    backgroundColor: colors.primary,
     paddingHorizontal: 20,
     paddingVertical: 10,
     borderRadius: 8,
@@ -1696,12 +1701,12 @@ const styles = StyleSheet.create({
   },
   pickerQuestionText: {
     fontSize: 14,
-    color: '#1F2937',
+    color: colors.text,
     lineHeight: 20,
   },
   pickerMeta: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
     marginTop: 4,
   },
   previewContent: {
@@ -1709,7 +1714,7 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   previewSection: {
-    backgroundColor: '#FFF',
+    backgroundColor: colors.surface,
     padding: 16,
     borderRadius: 12,
     marginBottom: 16,
@@ -1717,13 +1722,13 @@ const styles = StyleSheet.create({
   previewLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#6B7280',
+    color: colors.textSecondary,
     marginBottom: 8,
     textTransform: 'uppercase',
   },
   previewText: {
     fontSize: 16,
-    color: '#1F2937',
+    color: colors.text,
     lineHeight: 24,
   },
   previewImage: {
@@ -1737,28 +1742,28 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     padding: 12,
     borderRadius: 8,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
     marginBottom: 8,
     gap: 12,
   },
   correctOption: {
-    backgroundColor: '#D1FAE5',
+    backgroundColor: colors.successTint,
     borderWidth: 1,
-    borderColor: '#10B981',
+    borderColor: colors.success,
   },
   previewOptionLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#374151',
+    color: colors.textBody,
     width: 24,
   },
   previewOptionText: {
     fontSize: 14,
-    color: '#374151',
+    color: colors.textBody,
     lineHeight: 20,
   },
   correctText: {
-    color: '#059669',
+    color: colors.successDark,
   },
   previewOptionImage: {
     width: '100%',
@@ -1773,9 +1778,9 @@ const styles = StyleSheet.create({
   },
   subjectFilterContainer: {
     maxHeight: 48,
-    backgroundColor: '#FFF',
+    backgroundColor: colors.surface,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: colors.border,
   },
   subjectFilterContent: {
     paddingHorizontal: 12,
@@ -1785,12 +1790,12 @@ const styles = StyleSheet.create({
   subjectChip: {
     paddingHorizontal: 14,
     paddingVertical: 6,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
     borderRadius: 16,
     marginRight: 8,
   },
   subjectChipActive: {
-    backgroundColor: '#2563EB',
+    backgroundColor: colors.primary,
   },
   subjectChipText: {
     fontSize: 13,

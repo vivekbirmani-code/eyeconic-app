@@ -3,6 +3,7 @@ import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { Check, Clock } from 'lucide-react-native';
 import { combineDateAndTime, startOfMinute } from '@/utils/quizDateTime';
+import { colors } from '@/utils/theme';
 
 interface DateTimeFieldProps {
   label: string;
@@ -152,7 +153,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
-    backgroundColor: '#2563EB',
+    backgroundColor: colors.primary,
     borderRadius: 8,
     paddingVertical: 10,
     paddingHorizontal: 24,

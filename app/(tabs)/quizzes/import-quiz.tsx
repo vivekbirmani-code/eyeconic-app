@@ -25,6 +25,7 @@ import {
   X
 } from 'lucide-react-native';
 import * as DocumentPicker from 'expo-document-picker';
+import { colors } from '@/utils/theme';
 import { api, normalizeApiError } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
 import ShareQuizModal, { ShareQuizTarget } from '@/components/ShareQuizModal';
@@ -394,7 +395,7 @@ export default function ImportQuiz() {
 
             <View style={styles.guideCallout}>
               <View style={{ marginTop: 1 }}>
-                <AlertCircle color="#1E40AF" size={16} />
+                <AlertCircle color={colors.primaryDark} size={16} />
               </View>
               <View style={{ flex: 1 }}>
                 <Text style={styles.guideCalloutTitle}>TOPIC and TAGS</Text>
@@ -489,8 +490,9 @@ export default function ImportQuiz() {
             <Switch
               value={lockSectionsAfterSubmission}
               onValueChange={setLockSectionsAfterSubmission}
-              trackColor={{ false: '#D1D5DB', true: '#93C5FD' }}
-              thumbColor={lockSectionsAfterSubmission ? '#2563EB' : '#9CA3AF'}
+              trackColor={{ false: '#D1D5DB', true: colors.primary }}
+              thumbColor="#FFFFFF"
+              ios_backgroundColor="#D1D5DB"
             />
           </View>
 
@@ -571,7 +573,7 @@ export default function ImportQuiz() {
           />
 
           {scheduledDate && expiryDate && expiryDate <= scheduledDate && (
-            <Text style={{ color: '#EF4444', fontSize: 12, marginBottom: 8 }}>
+            <Text style={{ color: colors.danger, fontSize: 12, marginBottom: 8 }}>
               ⚠️ End date must be after start date
             </Text>
           )}
@@ -580,7 +582,7 @@ export default function ImportQuiz() {
           <TouchableOpacity style={styles.uploadBox} onPress={pickFile}>
             {file ? (
               <View style={styles.fileInfo}>
-                <FileText color="#2563EB" size={32} />
+                <FileText color={colors.primary} size={32} />
                 <Text style={styles.fileName}>{file.name}</Text>
                 <Text style={styles.fileSize}>{(file.size / 1024).toFixed(1)} KB</Text>
                 <TouchableOpacity onPress={() => setFile(null)} style={styles.removeBtn}>
@@ -596,7 +598,7 @@ export default function ImportQuiz() {
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.importButton, loading && styles.importingButton, (!file || loading) && styles.disabledButton]}
+            style={[styles.importButton, !file && styles.disabledButton, loading && styles.importingButton]}
             onPress={handleImport}
             disabled={!file || loading}
           >
@@ -628,20 +630,20 @@ export default function ImportQuiz() {
                 <Text style={styles.statValue}>{importStats.total}</Text>
                 <Text style={styles.statLabel}>Total</Text>
               </View>
-              <View style={[styles.statBox, { backgroundColor: '#D1FAE5' }]}>
-                <Text style={[styles.statValue, { color: '#059669' }]}>{importStats.questionsCreated}</Text>
+              <View style={[styles.statBox, { backgroundColor: colors.successTint }]}>
+                <Text style={[styles.statValue, { color: colors.successDark }]}>{importStats.questionsCreated}</Text>
                 <Text style={styles.statLabel}>Created</Text>
               </View>
-              <View style={[styles.statBox, { backgroundColor: '#FEF3C7' }]}>
-                <Text style={[styles.statValue, { color: '#D97706' }]}>{importStats.duplicatesUpdated}</Text>
+              <View style={[styles.statBox, { backgroundColor: colors.warningTint }]}>
+                <Text style={[styles.statValue, { color: colors.warningDark }]}>{importStats.duplicatesUpdated}</Text>
                 <Text style={styles.statLabel}>Updated</Text>
               </View>
-              <View style={[styles.statBox, { backgroundColor: '#F3E8FF' }]}>
-                <Text style={[styles.statValue, { color: '#9333EA' }]}>{importStats.duplicatesSkipped}</Text>
+              <View style={[styles.statBox, { backgroundColor: colors.purpleTint }]}>
+                <Text style={[styles.statValue, { color: colors.purple }]}>{importStats.duplicatesSkipped}</Text>
                 <Text style={styles.statLabel}>Reused</Text>
               </View>
-              <View style={[styles.statBox, { backgroundColor: '#DBEAFE' }]}>
-                <Text style={[styles.statValue, { color: '#2563EB' }]}>{importStats.questionsWithImages}</Text>
+              <View style={[styles.statBox, { backgroundColor: colors.primaryTint }]}>
+                <Text style={[styles.statValue, { color: colors.primaryDark }]}>{importStats.questionsWithImages}</Text>
                 <Text style={styles.statLabel}>With Images</Text>
               </View>
             </View>
@@ -654,16 +656,16 @@ export default function ImportQuiz() {
             renderItem={({ item, index }) => (
               <View style={[
                 styles.previewItem,
-                item.status === 'created' && { borderLeftColor: '#10B981' },
-                item.status === 'updated' && { borderLeftColor: '#F59E0B' },
-                item.status === 'skipped' && { borderLeftColor: '#9333EA' }
+                item.status === 'created' && { borderLeftColor: colors.success },
+                item.status === 'updated' && { borderLeftColor: colors.warning },
+                item.status === 'skipped' && { borderLeftColor: colors.purple }
               ]}>
                 <View style={styles.previewContent}>
                   <Text style={styles.previewNumber}>Q{index + 1}</Text>
                   <Text style={styles.previewText} numberOfLines={2}>{item.question}</Text>
                 </View>
                 <View style={styles.previewMeta}>
-                  {item.hasQuestionImage && <ImageIcon size={16} color="#2563EB" />}
+                  {item.hasQuestionImage && <ImageIcon size={16} color={colors.primary} />}
                   {item.hasOptionImages && <ImageIcon size={14} color="#6B7280" />}
                   <Text style={[
                     styles.statusBadge,
@@ -711,17 +713,17 @@ export default function ImportQuiz() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     padding: 16,
-    backgroundColor: '#2563EB',
+    backgroundColor: colors.primary,
   },
   headerTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#FFF',
   },
@@ -730,7 +732,7 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   card: {
-    backgroundColor: '#FFF',
+    backgroundColor: colors.surface,
     borderRadius: 12,
     padding: 20,
     marginBottom: 20,
@@ -738,14 +740,14 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#1F2937',
+    color: colors.text,
     marginTop: 16,
     marginBottom: 12,
   },
   guidelinesBox: {
-    backgroundColor: '#F9FAFB',
+    backgroundColor: colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     padding: 12,
     borderRadius: 12,
     marginBottom: 8,
@@ -757,7 +759,7 @@ const styles = StyleSheet.create({
   guideHeading: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#1F2937',
+    color: colors.text,
     marginBottom: 2,
   },
   guideBody: {
@@ -767,7 +769,7 @@ const styles = StyleSheet.create({
   },
   guideHint: {
     fontSize: 11,
-    color: '#6B7280',
+    color: colors.textSecondary,
     lineHeight: 15,
     marginTop: 2,
   },
@@ -779,7 +781,7 @@ const styles = StyleSheet.create({
   guideKey: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#1E40AF',
+    color: colors.primaryDark,
   },
   chipWrap: {
     flexDirection: 'row',
@@ -787,9 +789,9 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   requiredChip: {
-    backgroundColor: '#EFF6FF',
+    backgroundColor: colors.primaryTint,
     borderWidth: 1,
-    borderColor: '#BFDBFE',
+    borderColor: colors.primaryTintBorder,
     borderRadius: 6,
     paddingHorizontal: 8,
     paddingVertical: 3,
@@ -797,12 +799,12 @@ const styles = StyleSheet.create({
   requiredChipText: {
     fontSize: 11,
     fontWeight: '700',
-    color: '#1D4ED8',
+    color: colors.primaryDark,
   },
   optionalChip: {
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     borderRadius: 6,
     paddingHorizontal: 8,
     paddingVertical: 3,
@@ -822,7 +824,7 @@ const styles = StyleSheet.create({
     width: 108,
     fontSize: 11,
     fontWeight: '700',
-    color: '#2563EB',
+    color: colors.primaryDark,
   },
   exampleVal: {
     flex: 1,
@@ -833,34 +835,34 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     gap: 8,
-    backgroundColor: '#EBF5FF',
+    backgroundColor: colors.primaryTint,
     borderWidth: 1,
-    borderColor: '#BFDBFE',
+    borderColor: colors.primaryTintBorder,
     borderRadius: 8,
     padding: 10,
   },
   guideCalloutTitle: {
     fontSize: 12,
     fontWeight: '700',
-    color: '#1E40AF',
+    color: colors.primaryDark,
     marginBottom: 2,
   },
   guideCalloutText: {
     fontSize: 12,
-    color: '#1E40AF',
+    color: colors.primaryText,
     lineHeight: 17,
   },
   label: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#374151',
+    color: colors.textBody,
     marginBottom: 6,
     marginTop: 12,
   },
   input: {
-    backgroundColor: '#F9FAFB',
+    backgroundColor: colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderColor: colors.borderStrong,
     borderRadius: 8,
     padding: 12,
     fontSize: 15,
@@ -874,10 +876,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: '#F9FAFB',
+    backgroundColor: colors.surfaceMuted,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     padding: 16,
     marginBottom: 16,
   },
@@ -888,31 +890,31 @@ const styles = StyleSheet.create({
   toggleLabel: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#1F2937',
+    color: colors.text,
   },
   toggleHelperText: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
     marginTop: 4,
     lineHeight: 16,
   },
   infoBox: {
-    backgroundColor: '#EBF5FF',
+    backgroundColor: colors.primaryTint,
     borderWidth: 1,
-    borderColor: '#BFDBFE',
+    borderColor: colors.primaryTintBorder,
     borderRadius: 8,
     padding: 10,
     marginBottom: 10,
   },
   infoText: {
     fontSize: 13,
-    color: '#1E40AF',
+    color: colors.primaryDark,
     fontWeight: '600',
   },
   infoHint: {
     marginTop: 4,
     fontSize: 12,
-    color: '#1E40AF',
+    color: colors.primaryText,
   },
   quickCountRow: {
     flexDirection: 'row',
@@ -924,13 +926,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 16,
-    backgroundColor: '#FFF',
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: '#D1D5DB',
+    borderColor: colors.borderStrong,
   },
   smallChipActive: {
-    backgroundColor: '#2563EB',
-    borderColor: '#2563EB',
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   smallChipText: {
     fontSize: 12,
@@ -944,7 +946,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 6,
     borderRadius: 8,
-    backgroundColor: '#2563EB',
+    backgroundColor: colors.primary,
     marginLeft: 'auto',
   },
   addSectionButtonText: {
@@ -953,10 +955,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   sectionConfigCard: {
-    backgroundColor: '#F9FAFB',
+    backgroundColor: colors.surfaceMuted,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     padding: 10,
     marginBottom: 8,
   },
@@ -968,7 +970,7 @@ const styles = StyleSheet.create({
     marginLeft: 8,
     padding: 8,
     borderRadius: 8,
-    backgroundColor: '#FEE2E2',
+    backgroundColor: colors.dangerTint,
   },
   typeContainer: {
     flexDirection: 'row',
@@ -979,20 +981,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 20,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
   },
   typeChipActive: {
-    backgroundColor: '#EFF6FF',
-    borderColor: '#2563EB',
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   typeText: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   typeTextActive: {
-    color: '#2563EB',
+    color: '#FFF',
     fontWeight: '600',
   },
   subjectScroll: {
@@ -1003,11 +1005,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 20,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
     marginRight: 8,
   },
   subjectChipActive: {
-    backgroundColor: '#2563EB',
+    backgroundColor: colors.primary,
   },
   subjectText: {
     fontSize: 13,
@@ -1019,12 +1021,12 @@ const styles = StyleSheet.create({
   },
   uploadBox: {
     borderWidth: 2,
-    borderColor: '#D1D5DB',
+    borderColor: colors.borderStrong,
     borderStyle: 'dashed',
     borderRadius: 12,
     padding: 24,
     alignItems: 'center',
-    backgroundColor: '#F9FAFB',
+    backgroundColor: colors.surfaceMuted,
     marginTop: 8,
     marginBottom: 24,
   },
@@ -1033,7 +1035,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   uploadText: {
-    color: '#6B7280',
+    color: colors.textSecondary,
     fontSize: 15,
   },
   fileInfo: {
@@ -1043,29 +1045,29 @@ const styles = StyleSheet.create({
   fileName: {
     fontSize: 16,
     fontWeight: '600',
-    color: '#1F2937',
+    color: colors.text,
     textAlign: 'center',
   },
   fileSize: {
     fontSize: 13,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   removeBtn: {
     marginTop: 8,
     padding: 4,
   },
   removeText: {
-    color: '#EF4444',
+    color: colors.danger,
     fontSize: 13,
   },
   importButton: {
-    backgroundColor: '#2563EB',
+    backgroundColor: colors.primary,
     padding: 16,
     borderRadius: 12,
     alignItems: 'center',
   },
   disabledButton: {
-    backgroundColor: '#93C5FD',
+    opacity: 0.5,
   },
   importButtonText: {
     color: '#FFF',
@@ -1073,7 +1075,7 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
   },
   errorText: {
-    color: '#EF4444',
+    color: colors.danger,
     textAlign: 'center',
     marginTop: 20,
     fontSize: 16,
@@ -1081,14 +1083,14 @@ const styles = StyleSheet.create({
   // Preview Modal Styles
   modalContainer: {
     flex: 1,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 16,
-    backgroundColor: '#2563EB',
+    backgroundColor: colors.primary,
   },
   modalTitle: {
     fontSize: 18,
@@ -1100,12 +1102,12 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     padding: 12,
     gap: 8,
-    backgroundColor: '#FFF',
+    backgroundColor: colors.surface,
   },
   statBox: {
     flex: 1,
     minWidth: 80,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
     padding: 12,
     borderRadius: 8,
     alignItems: 'center',
@@ -1113,11 +1115,11 @@ const styles = StyleSheet.create({
   statValue: {
     fontSize: 20,
     fontWeight: 'bold',
-    color: '#1F2937',
+    color: colors.text,
   },
   statLabel: {
     fontSize: 11,
-    color: '#6B7280',
+    color: colors.textSecondary,
     marginTop: 2,
   },
   previewList: {
@@ -1125,12 +1127,12 @@ const styles = StyleSheet.create({
     padding: 12,
   },
   previewItem: {
-    backgroundColor: '#FFF',
+    backgroundColor: colors.surface,
     padding: 12,
     marginBottom: 8,
     borderRadius: 8,
     borderLeftWidth: 4,
-    borderLeftColor: '#E5E7EB',
+    borderLeftColor: colors.border,
   },
   previewContent: {
     flexDirection: 'row',
@@ -1140,12 +1142,12 @@ const styles = StyleSheet.create({
   previewNumber: {
     fontSize: 12,
     fontWeight: 'bold',
-    color: '#2563EB',
+    color: colors.primary,
   },
   previewText: {
     flex: 1,
     fontSize: 13,
-    color: '#374151',
+    color: colors.textBody,
   },
   previewMeta: {
     flexDirection: 'row',
@@ -1164,16 +1166,16 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
   },
   statusCreated: {
-    backgroundColor: '#D1FAE5',
-    color: '#059669',
+    backgroundColor: colors.successTint,
+    color: colors.successDark,
   },
   statusUpdated: {
-    backgroundColor: '#FEF3C7',
-    color: '#D97706',
+    backgroundColor: colors.warningTint,
+    color: colors.warningDark,
   },
   statusSkipped: {
-    backgroundColor: '#F3E8FF',
-    color: '#9333EA',
+    backgroundColor: colors.purpleTint,
+    color: colors.purple,
   },
   // Import Complete footer: Done (secondary) + Share Quiz (primary)
   previewActions: {
@@ -1189,11 +1191,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 1,
-    borderColor: '#2563EB',
-    backgroundColor: '#FFF',
+    borderColor: colors.primary,
+    backgroundColor: colors.surface,
   },
   doneButtonText: {
-    color: '#2563EB',
+    color: colors.primary,
     fontSize: 16,
     fontWeight: 'bold',
   },
@@ -1205,10 +1207,10 @@ const styles = StyleSheet.create({
     gap: 8,
     padding: 16,
     borderRadius: 12,
-    backgroundColor: '#2563EB',
+    backgroundColor: colors.primary,
   },
   shareButtonDisabled: {
-    backgroundColor: '#93C5FD',
+    opacity: 0.5,
   },
   shareButtonText: {
     color: '#FFF',
