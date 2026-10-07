@@ -57,6 +57,11 @@ const { buildCohortComparison } = require('../utils/cohortComparison');
 const { fetchGuestParticipants, fetchGuestAttemptDocs, countGuestAttempts } = require('../utils/guestAnalytics');
 const { collectTestReportData } = require('../utils/testReportData');
 const { buildTestReportWorkbook } = require('../utils/testReportExcel');
+const {
+  buildLeaderboardWorkbook,
+  toExportRows,
+  LEADERBOARD_EXPORT_COLUMNS,
+} = require('../utils/leaderboardExport');
 const { buildPublicQuizUrl } = require('../utils/publicWebUrl');
 const {
   toIdString,
@@ -3964,6 +3969,17 @@ async function buildTestAttemptScope(user, quiz) {
   return { attemptQuery, totalAssigned };
 }
 
+// Shared loader for the live leaderboard endpoint and its file exports: one
+// scoping pass + one rankStudentAttempts call, so an exported file can never
+// disagree with the board a viewer refetches.
+async function loadRankedLeaderboard(user, quiz) {
+  const { attemptQuery } = await buildTestAttemptScope(user, quiz);
+  const attempts = await QuizAttempt.find(attemptQuery)
+    .populate('student', 'name email profilePicture')
+    .sort({ marksObtained: -1 });
+  return rankStudentAttempts(attempts, quiz.questions);
+}
+
 // Live leaderboard (admin, mentor) — the ranked participant list the Test
 // Analytics screen updates in real time. Deliberately returns ONLY
 // rankStudentAttempts output: the realtime refresh path stays light (no
@@ -3977,17 +3993,106 @@ router.get('/analytics/test/:testId/leaderboard', auth, authorize('admin', 'ment
       return res.status(404).json({ message: 'Test not found' });
     }
 
-    const { attemptQuery } = await buildTestAttemptScope(req.user, quiz);
-    const attempts = await QuizAttempt.find(attemptQuery)
-      .populate('student', 'name email profilePicture')
-      .sort({ marksObtained: -1 });
-
     res.json({
-      leaderboard: rankStudentAttempts(attempts, quiz.questions),
+      leaderboard: await loadRankedLeaderboard(req.user, quiz),
       generatedAt: new Date().toISOString(),
     });
   } catch (error) {
     console.error('Get leaderboard error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Leaderboard CSV export (admin, mentor) — the live board as a flat file.
+// Same loader as the leaderboard endpoint, so participants, order and mentor
+// scoping are identical to what the app shows; column headers/values come
+// from the shared spec the Excel export also renders.
+router.get('/analytics/test/:testId/leaderboard/export/csv', auth, authorize('admin', 'mentor'), async (req, res) => {
+  try {
+    const quiz = await Quiz.findById(req.params.testId)
+      .populate('questions')
+      .populate('subject', 'name');
+
+    if (!quiz) {
+      return res.status(404).json({ message: 'Test not found' });
+    }
+
+    const rows = toExportRows(await loadRankedLeaderboard(req.user, quiz));
+    const generatedAt = new Date();
+
+    const csvLines = [];
+    csvLines.push(toCsvRow(['Leaderboard']));
+    csvLines.push(toCsvRow(['Exported At', generatedAt.toISOString()]));
+    csvLines.push('');
+    csvLines.push(toCsvRow(['Test Details']));
+    csvLines.push(toCsvRow(['Test ID', 'Title', 'Subject', 'Test Type', 'Total Questions', 'Total Marks', 'Participants']));
+    csvLines.push(toCsvRow([
+      quiz._id,
+      quiz.title,
+      quiz.subject?.name || '',
+      quiz.testType || '',
+      quiz.questions.length,
+      quiz.totalMarks,
+      rows.length,
+    ]));
+    csvLines.push('');
+    csvLines.push(toCsvRow(['Participants']));
+
+    csvLines.push(toCsvRow(LEADERBOARD_EXPORT_COLUMNS.map((col) => col.header)));
+    rows.forEach((row) => {
+      csvLines.push(toCsvRow(LEADERBOARD_EXPORT_COLUMNS.map((col) => col.value(row))));
+    });
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader(
+      'Content-Disposition',
+      contentDispositionAttachment(quiz.title, 'leaderboard', '_leaderboard', 'csv')
+    );
+    res.send(csvLines.join('\n'));
+  } catch (error) {
+    console.error('Leaderboard CSV export error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Leaderboard Excel (.xlsx) export (admin, mentor) — same loader and column
+// spec as the CSV; this route only changes presentation.
+router.get('/analytics/test/:testId/leaderboard/export/excel', auth, authorize('admin', 'mentor'), async (req, res) => {
+  try {
+    const quiz = await Quiz.findById(req.params.testId)
+      .populate('questions')
+      .populate('subject', 'name');
+
+    if (!quiz) {
+      return res.status(404).json({ message: 'Test not found' });
+    }
+
+    const rows = toExportRows(await loadRankedLeaderboard(req.user, quiz));
+    const generatedAt = new Date();
+
+    const workbook = buildLeaderboardWorkbook({
+      test: {
+        title: quiz.title,
+        subjectName: quiz.subject?.name || '',
+        testType: quiz.testType,
+        totalQuestions: quiz.questions.length,
+        totalMarks: quiz.totalMarks,
+      },
+      rows,
+      generatedAt,
+    });
+    const buffer = await workbook.xlsx.writeBuffer();
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader(
+      'Content-Disposition',
+      contentDispositionAttachment(quiz.title, 'leaderboard', '_leaderboard', 'xlsx')
+    );
+    res.send(buffer);
+  } catch (error) {
+    console.error('Leaderboard Excel export error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

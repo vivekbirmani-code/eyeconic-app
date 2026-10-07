@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   Easing,
   FlatList,
@@ -9,8 +10,9 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Clock, Radio, RefreshCw, Trophy } from 'lucide-react-native';
+import { Clock, Download, FileSpreadsheet, FileText, Radio, RefreshCw, Trophy } from 'lucide-react-native';
 import { api } from '@/services/api';
+import { downloadApiReport, getReportDownloadErrorMessage } from '@/services/downloads';
 import { useNotifications } from '@/context/NotificationContext';
 import { formatPercent, LeaderboardEntry, LeaderboardResponse } from '@/types/analytics';
 
@@ -27,6 +29,8 @@ const UPDATED_LABEL_TICK_MS = 30000;
 const MEDAL_COLORS = ['#F59E0B', '#94A3B8', '#CD7F32'] as const;
 
 type FetchStatus = 'loading' | 'ready' | 'error';
+
+type ExportFormat = 'excel' | 'csv';
 
 function formatMarks(value: number): string {
   const num = Number(value);
@@ -230,6 +234,10 @@ export default function LiveLeaderboard({ testId, onStudentClick }: LiveLeaderbo
   const [refreshing, setRefreshing] = useState(false);
   const [highlights, setHighlights] = useState<Set<string>>(new Set());
   const [updateId, setUpdateId] = useState(0);
+  // Export format chooser (rendered in flow under the header — Alert.alert is
+  // a no-op on react-native-web, so a chooser dialog would silently fail there).
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting] = useState<ExportFormat | null>(null);
 
   // Latest-response guard: a slow response for a previous test (or a response
   // overtaken by a live refresh) must never overwrite newer state.
@@ -325,6 +333,7 @@ export default function LiveLeaderboard({ testId, onStudentClick }: LiveLeaderbo
     setHighlights(new Set());
     setLastUpdatedAt(null);
     setStatus('loading');
+    setExportOpen(false);
     fetchRef.current();
   }, [testId]);
 
@@ -408,6 +417,37 @@ export default function LiveLeaderboard({ testId, onStudentClick }: LiveLeaderbo
     Promise.resolve(fetchRef.current()).finally(() => setRefreshing(false));
   }, [refreshing]);
 
+  // Export taps the same server-side ranking the board renders (the export
+  // routes reuse the leaderboard endpoint's loader), so the file always
+  // matches the live board — the rows on screen are only used to decide
+  // whether there is anything to export.
+  const handleExportPress = useCallback(() => {
+    if (exporting) return;
+    if (rows.length === 0) {
+      Alert.alert(
+        'Nothing to export',
+        'No students have submitted this test yet, so there is no leaderboard to export.'
+      );
+      return;
+    }
+    setExportOpen((open) => !open);
+  }, [exporting, rows.length]);
+
+  const handleExportFormat = useCallback(
+    async (format: ExportFormat) => {
+      setExportOpen(false);
+      setExporting(format);
+      try {
+        await downloadApiReport(`/quizzes/analytics/test/${testId}/leaderboard/export/${format}`);
+      } catch (error) {
+        Alert.alert('Export failed', getReportDownloadErrorMessage(error));
+      } finally {
+        setExporting(null);
+      }
+    },
+    [testId]
+  );
+
   const topThree = useMemo(() => rows.slice(0, 3), [rows]);
   const renderRow = useCallback(
     ({ item, index }: { item: LeaderboardEntry; index: number }) => (
@@ -444,22 +484,64 @@ export default function LiveLeaderboard({ testId, onStudentClick }: LiveLeaderbo
                 {live ? 'LIVE' : 'OFFLINE'}
               </Text>
             </View>
-            <TouchableOpacity
-              style={styles.refreshButton}
-              onPress={handleManualRefresh}
-              activeOpacity={0.7}
-              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-              accessibilityRole="button"
-              accessibilityLabel="Refresh leaderboard"
-            >
-              {refreshing ? (
-                <ActivityIndicator color="#6B7280" size="small" />
-              ) : (
-                <RefreshCw color="#6B7280" size={18} />
-              )}
-            </TouchableOpacity>
+            <View style={styles.headerActions}>
+              <TouchableOpacity
+                style={styles.refreshButton}
+                onPress={handleExportPress}
+                activeOpacity={0.7}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityRole="button"
+                accessibilityLabel="Export leaderboard"
+              >
+                {exporting ? (
+                  <ActivityIndicator color="#6B7280" size="small" />
+                ) : (
+                  <Download color="#6B7280" size={18} />
+                )}
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.refreshButton}
+                onPress={handleManualRefresh}
+                activeOpacity={0.7}
+                hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                accessibilityRole="button"
+                accessibilityLabel="Refresh leaderboard"
+              >
+                {refreshing ? (
+                  <ActivityIndicator color="#6B7280" size="small" />
+                ) : (
+                  <RefreshCw color="#6B7280" size={18} />
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
+
+        {exportOpen && (
+          <View style={styles.exportBar}>
+            <Text style={styles.exportBarLabel}>Export as</Text>
+            <TouchableOpacity
+              style={styles.exportOptionPrimary}
+              onPress={() => handleExportFormat('excel')}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Export leaderboard as Excel"
+            >
+              <FileSpreadsheet color="#FFFFFF" size={14} />
+              <Text style={styles.exportOptionPrimaryText}>Excel (.xlsx)</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.exportOptionSecondary}
+              onPress={() => handleExportFormat('csv')}
+              activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel="Export leaderboard as CSV"
+            >
+              <FileText color="#374151" size={14} />
+              <Text style={styles.exportOptionSecondaryText}>CSV (.csv)</Text>
+            </TouchableOpacity>
+          </View>
+        )}
 
         {updatedLabel !== '' && <Text style={styles.updatedLabel}>{updatedLabel}</Text>}
 
@@ -545,12 +627,18 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     marginTop: 1,
   },
-  // Control stack pinned to the card's right edge: LIVE pill on top, refresh
-  // button directly below it, both flush to the same right edge.
+  // Control stack pinned to the card's right edge: LIVE pill on top, export
+  // + refresh buttons in a row directly below it, all flush to the same right
+  // edge.
   headerRight: {
     flexDirection: 'column',
     alignItems: 'flex-end',
     gap: 6,
+  },
+  headerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   refreshButton: {
     width: 32,
@@ -559,6 +647,52 @@ const styles = StyleSheet.create({
     backgroundColor: '#F3F4F6',
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  // Format chooser — rendered in flow (no overlay/modal), so it behaves the
+  // same on iOS, Android and web.
+  exportBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    paddingHorizontal: 16,
+    paddingTop: 4,
+    paddingBottom: 10,
+    gap: 8,
+  },
+  exportBarLabel: {
+    fontSize: 12,
+    color: '#6B7280',
+    marginRight: 4,
+  },
+  exportOptionPrimary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#01b4ae',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  exportOptionPrimaryText: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  exportOptionSecondary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#D1D5DB',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+  },
+  exportOptionSecondaryText: {
+    color: '#374151',
+    fontSize: 13,
+    fontWeight: '600',
   },
   livePill: {
     flexDirection: 'row',
