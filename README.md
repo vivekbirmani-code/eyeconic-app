@@ -245,7 +245,7 @@ Every question in the Question Bank carries seven classification parameters:
 
 ### Bulk import
 
-Question Bank bulk import (Excel/CSV) requires all six required metadata columns plus type-specific columns. See [Format.md](Format.md) for the full column reference, accepted Question Type / Difficulty aliases, and per-type `CORRECT` formats. Invalid rows are rejected with row-numbered error messages; valid rows in the same file still import.
+Question Bank bulk import (Excel `.xlsx`/`.xls` or CSV `.csv`) requires all six required metadata columns plus type-specific columns. See [Format.md](Format.md) for the full column reference, accepted Question Type / Difficulty aliases, and per-type `CORRECT` formats. Invalid rows are rejected with row-numbered error messages; valid rows in the same file still import. Duplicate questions (same subject + same question text, ignoring case and whitespace) are skipped automatically — both repeats inside the uploaded file and rows already in the bank — and reported in the import summary; they never fail the import. Quiz import (`/api/quizzes/import-excel`) accepts Excel only.
 
 ### Resetting the Question Bank
 

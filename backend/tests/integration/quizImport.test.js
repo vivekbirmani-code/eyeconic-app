@@ -212,3 +212,95 @@ describe('POST /api/quizzes/import-excel — row-level validation parity', () =>
     expect(await QuestionBank.countDocuments({})).toBe(0);
   });
 });
+
+describe('POST /api/quizzes/import-excel — unified dedup rule (subject + text)', () => {
+  it('reuses a same-text question with DIFFERENT options instead of creating a variant', async () => {
+    const first = await importFile(adminToken, toBuffer([baseRow()]), { quizTitle: 'Rule Quiz One' });
+    expect(first.status).toBe(201);
+    expect(first.body.stats.questionsCreated).toBe(1);
+
+    const before = await QuestionBank.countDocuments({});
+    const second = await importFile(adminToken, toBuffer([
+      baseRow({ OPTION1: 'Different', OPTION2: 'Options', OPTION3: 'Entirely', OPTION4: 'Here' }),
+    ]), { quizTitle: 'Rule Quiz Two' });
+    expect(second.status).toBe(201);
+    expect(second.body.stats.questionsCreated).toBe(0);
+    expect(second.body.stats.duplicatesSkipped).toBe(1);
+    expect(await QuestionBank.countDocuments({})).toBe(before);
+  });
+
+  it('reuses a same-text question of a different questionType', async () => {
+    await importFile(adminToken, toBuffer([baseRow()]), { quizTitle: 'Type Quiz One' });
+
+    const second = await importFile(adminToken, toBuffer([
+      baseRow({ QUESTION_TYPE: 'Numerical', OPTION1: '', OPTION2: '', OPTION3: '', OPTION4: '', CORRECT: '3.14' }),
+    ]), { quizTitle: 'Type Quiz Two' });
+    expect(second.status).toBe(201);
+    expect(second.body.stats.questionsCreated).toBe(0);
+    expect(second.body.stats.duplicatesSkipped).toBe(1);
+    expect(await QuestionBank.countDocuments({})).toBe(1);
+  });
+
+  it('first occurrence wins for duplicate rows inside one sheet', async () => {
+    const res = await importFile(adminToken, toBuffer([
+      baseRow({ OPTION1: 'First' }),
+      baseRow({ OPTION1: 'Second' }),
+    ]), { quizTitle: 'In-File Dup Quiz' });
+    expect(res.status).toBe(201);
+    expect(res.body.stats.questionsCreated).toBe(1);
+    expect(res.body.stats.duplicatesSkipped).toBe(1);
+
+    expect(await QuestionBank.countDocuments({})).toBe(1);
+    const quiz = await Quiz.findOne({ title: 'In-File Dup Quiz' });
+    expect(quiz.questions).toHaveLength(2);
+    // Both quiz slots reference the first occurrence.
+    expect(String(quiz.questions[0])).toBe(String(quiz.questions[1]));
+    const stored = await QuestionBank.findById(quiz.questions[0]);
+    expect(stored.options[0]).toBe('First');
+  });
+
+  it('loads existing questions with one batched find and zero findOne calls', async () => {
+    await importFile(adminToken, toBuffer([
+      baseRow(),
+      baseRow({ QUESTION: 'Second unique question?' }),
+    ]), { quizTitle: 'Prefetch Quiz One' });
+
+    const findSpy = jest.spyOn(QuestionBank, 'find');
+    const findOneSpy = jest.spyOn(QuestionBank, 'findOne');
+    try {
+      const res = await importFile(adminToken, toBuffer([
+        baseRow({ QUESTION: 'A new question?' }),
+        baseRow({ QUESTION: 'Another new question?' }),
+        baseRow(), // duplicate of the bank
+      ]), { quizTitle: 'Prefetch Quiz Two' });
+      expect(res.status).toBe(201);
+      expect(res.body.stats.questionsCreated).toBe(2);
+      expect(res.body.stats.duplicatesSkipped).toBe(1);
+      // One prefetch query, no per-row findOne (the old N+1 shape).
+      expect(findSpy.mock.calls.length).toBe(1);
+      expect(findOneSpy.mock.calls.length).toBe(0);
+    } finally {
+      findSpy.mockRestore();
+      findOneSpy.mockRestore();
+    }
+  });
+
+  it('two concurrent imports of the same sheet create one question set and share it', async () => {
+    // Force the unique partial index to exist before the race — mongoose
+    // builds indexes in the background and does not block ops on the build.
+    await QuestionBank.init();
+    const [a, b] = await Promise.all([
+      importFile(adminToken, toBuffer([baseRow()]), { quizTitle: 'Race Quiz A' }),
+      importFile(adminToken, toBuffer([baseRow()]), { quizTitle: 'Race Quiz B' }),
+    ]);
+    expect(a.status).toBe(201);
+    expect(b.status).toBe(201);
+    expect(a.body.stats.questionsCreated + b.body.stats.questionsCreated).toBe(1);
+    expect(a.body.stats.duplicatesSkipped + b.body.stats.duplicatesSkipped).toBe(1);
+    expect(await QuestionBank.countDocuments({})).toBe(1);
+
+    const quizA = await Quiz.findOne({ title: 'Race Quiz A' });
+    const quizB = await Quiz.findOne({ title: 'Race Quiz B' });
+    expect(String(quizA.questions[0])).toBe(String(quizB.questions[0]));
+  });
+});

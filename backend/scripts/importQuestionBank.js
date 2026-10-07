@@ -8,8 +8,10 @@
  * Usage:
  *   node scripts/importQuestionBank.js [--file <path>] [--base-url <url>]
  *
- * The route is idempotent per qid: a re-run reports duplicate-key errors for
- * rows already imported and inserts only the new ones.
+ * The route is idempotent per question: a re-run skips rows whose subject +
+ * question text already exist in the bank (reported as duplicates, never as
+ * errors) and inserts only the genuinely new ones. An all-duplicate run is a
+ * success (exit 0).
  */
 const fs = require('fs');
 const path = require('path');
@@ -49,6 +51,9 @@ const baseUrl = argValue('--base-url', `http://localhost:${process.env.PORT || 3
     console.log(`status ${res.status}`);
     console.log(`message: ${body.message}`);
     console.log(`count: ${body.count} / totalRows: ${body.totalRows}`);
+    if (body.duplicatesSkipped) {
+        console.log(`duplicates skipped: ${body.duplicatesSkipped} (in file: ${body.duplicatesInFile ?? '?'} / already in bank: ${body.duplicatesExisting ?? '?'})`);
+    }
     if (Array.isArray(body.errors)) {
         console.log(`errors (${body.errors.length} shown):`);
         body.errors.forEach((e) => console.log('  ERR ', e));
@@ -58,7 +63,9 @@ const baseUrl = argValue('--base-url', `http://localhost:${process.env.PORT || 3
         body.warnings.forEach((w) => console.log('  WARN', w));
     }
 
-    process.exit(res.status === 200 && (body.count || 0) > 0 ? 0 : 1);
+    // Duplicates are not errors: any HTTP 200 (including an all-duplicate
+    // count-0 run) is a successful import.
+    process.exit(res.status === 200 ? 0 : 1);
 })().catch((err) => {
     console.error('Import failed:', err.message);
     process.exit(1);

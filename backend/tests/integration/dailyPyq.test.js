@@ -33,10 +33,13 @@ async function createQuestion({ text = 'Question', correct = 0, active = true } 
     });
 }
 
-async function seedQuestions(count) {
+async function seedQuestions(count, prefix = 'Q') {
     const questions = [];
     for (let i = 0; i < count; i++) {
-        questions.push(await createQuestion({ text: `Q${i}`, correct: i % OPTION_COUNT }));
+        // Distinct-prefix option so isolated suites can re-seed while older
+        // same-index rows still exist (deactivated rows share dedup keys —
+        // reactivating both would trip the unique index).
+        questions.push(await createQuestion({ text: `${prefix}${i}`, correct: i % OPTION_COUNT }));
     }
     return questions;
 }
@@ -385,10 +388,13 @@ describe('Daily PYQ', () => {
     describe('bank too small', () => {
         it('answers 503 when fewer than 10 active questions exist', async () => {
             // Isolate: drop sets/attempts, deactivate everything, seed 3.
+            // Distinct prefix: the restore step below reactivates the whole
+            // bank, so these must not share question text with earlier rows
+            // (same subject + same text = same dedupKey once both active).
             await DailyPyqSet.deleteMany({});
             await DailyPyqAttempt.deleteMany({});
             await QuestionBank.updateMany({}, { $set: { isActive: false } });
-            await seedQuestions(3);
+            await seedQuestions(3, 'Small');
 
             const res = await request(app).get('/api/daily-pyq/today').set(authHeader(studentToken));
             expect(res.status).toBe(503);

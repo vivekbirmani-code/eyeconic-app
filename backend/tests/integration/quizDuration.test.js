@@ -29,8 +29,14 @@ afterAll(async () => {
 
 const GRACE = DURATION_GRACE_MS;
 
+// Bumped per makeQuestions() call so tests that build several quizzes in one
+// body under the same subject never reuse a question text (same subject +
+// same text is a duplicate the unique dedup index rejects).
+let questionSeedRun = 0;
+
 async function makeQuestions(subject, count = 2) {
   const questions = [];
+  questionSeedRun += 1;
   for (let i = 0; i < count; i++) {
     questions.push(await QuestionBank.create({
       subject: subject._id,
@@ -39,7 +45,7 @@ async function makeQuestions(subject, count = 2) {
       system: 'Genetic Disorders',
       questionType: 'mcq_single',
       difficulty: 'medium',
-      question: `Question ${i}`,
+      question: `Question ${i} (seed ${questionSeedRun})`,
       options: ['A', 'B', 'C', 'D'],
       correctAnswer: 1,
     }));

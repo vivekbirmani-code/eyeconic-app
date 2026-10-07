@@ -9,7 +9,7 @@ export default function ImportQuiz() {
   const navigate = useNavigate();
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [success, setSuccess] = useState<{ count: number; skipped: number } | null>(null);
+  const [success, setSuccess] = useState<{ count: number; skipped: number; inFile: number; existing: number } | null>(null);
   const [guidelinesOpen, setGuidelinesOpen] = useState(false);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -33,7 +33,12 @@ export default function ImportQuiz() {
             filename: file.name,
             data: base64Data
           });
-          setSuccess({ count: res.data.count, skipped: Number(res.data.duplicatesSkipped) || 0 });
+          setSuccess({
+            count: res.data.count,
+            skipped: Number(res.data.duplicatesSkipped) || 0,
+            inFile: Number(res.data.duplicatesInFile) || 0,
+            existing: Number(res.data.duplicatesExisting) || 0,
+          });
           setFile(null);
         } catch (err: any) {
           alert('Failed to import: ' + (err.response?.data?.message || err.message));
@@ -73,21 +78,21 @@ export default function ImportQuiz() {
             <FileSpreadsheet className="w-10 h-10 text-blue-600" />
           </div>
 
-          <h2 className="text-xl md:text-2xl font-bold text-gray-900 mb-2">Upload Questions — Excel</h2>
+          <h2 className="text-xl md:text-2xl font-bold text-gray-900 mb-2">Upload Questions — Excel or CSV</h2>
           <p className="text-sm text-gray-500 mb-8 max-w-md mx-auto leading-relaxed">
-            Upload an <strong>.xlsx</strong> or <strong>.xls</strong> file. Every row is one question.
+            Upload an <strong>.xlsx</strong>, <strong>.xls</strong>, or <strong>.csv</strong> file. Every row is one question.
             Expand the <em>Upload Guidelines</em> below for column names, accepted values, and type-specific fields.
           </p>
 
           <label className="border-2 border-dashed border-gray-300 rounded-2xl p-8 block cursor-pointer hover:border-blue-500 hover:bg-blue-50/50 transition-all mb-6">
-            <input type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFileChange} />
+            <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFileChange} />
             <UploadCloud className="w-8 h-8 text-gray-400 mx-auto mb-3" />
             {file ? (
               <span className="font-bold text-blue-600">{file.name}</span>
             ) : (
               <span className="font-bold text-gray-600">
                 Click to select a file
-                <span className="font-normal text-gray-400 block mt-1">or drag and drop here — .xlsx or .xls only</span>
+                <span className="font-normal text-gray-400 block mt-1">or drag and drop here — .xlsx, .xls, or .csv</span>
               </span>
             )}
           </label>
@@ -97,7 +102,7 @@ export default function ImportQuiz() {
               <CheckCircle className="w-5 h-5 flex-shrink-0" />
               <p className="font-semibold text-sm">
                 Successfully imported {success.count} questions into the bank!
-                {success.skipped > 0 && ` ${success.skipped} skipped as duplicates (already in the bank).`}
+                {success.skipped > 0 && ` ${success.skipped} duplicate row(s) skipped (${success.inFile} repeated in this file, ${success.existing} already in the bank).`}
               </p>
             </div>
           )}

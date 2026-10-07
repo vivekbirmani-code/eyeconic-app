@@ -347,9 +347,11 @@ export default function QuestionBank() {
           const errCount = Array.isArray(res.data.errors) ? res.data.errors.length : 0;
           const warnCount = Array.isArray(res.data.warnings) ? res.data.warnings.length : 0;
           const dupCount = Number(res.data.duplicatesSkipped) || 0;
+          const dupInFile = Number(res.data.duplicatesInFile) || 0;
+          const dupExisting = Number(res.data.duplicatesExisting) || 0;
           alert(
-            `Imported ${res.data.count} questions!` +
-            (dupCount ? ` ${dupCount} skipped as duplicates — see console.` : '') +
+            `Imported ${res.data.count} of ${res.data.totalRows ?? '?'} rows.` +
+            (dupCount ? ` ${dupCount} duplicate row(s) skipped (${dupInFile} repeated in this file, ${dupExisting} already in the bank) — see console.` : '') +
             (errCount ? ` ${errCount} rows had errors — see console.` : '') +
             (warnCount ? ` ${warnCount} images kept their direct source URL — see console.` : '')
           );
@@ -419,8 +421,8 @@ export default function QuestionBank() {
           <div className="flex items-center gap-3">
             <label className="flex items-center gap-2 bg-white/20 text-white px-4 py-2.5 rounded-xl cursor-pointer hover:bg-white/30 transition-colors font-bold text-sm">
               {uploading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <Upload className="w-5 h-5" />}
-              Import CSV
-              <input type="file" accept=".xlsx,.xls" className="hidden" onChange={handleBulkImport} />
+              Import Excel/CSV
+              <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleBulkImport} />
             </label>
             <button onClick={resetForm} className="flex items-center gap-2 bg-white text-[#01b4ae] px-4 py-2.5 rounded-xl hover:bg-gray-50 transition-colors font-bold text-sm shadow-sm">
               <Plus className="w-5 h-5" /> New Question

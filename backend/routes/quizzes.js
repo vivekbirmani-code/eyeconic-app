@@ -15,6 +15,10 @@ const {
   normalizeQuestionImageFields,
   validateQuestionPayload,
 } = require('../utils/questionValidation');
+const {
+  buildDedupKey,
+  loadActiveQuestionDedupMap,
+} = require('../utils/questionDedup');
 const { buildImportValidationPayload } = require('../utils/importErrors');
 const Subject = require('../models/Subject');
 const MentorStudentAssignment = require('../models/MentorStudentAssignment');
@@ -1333,6 +1337,15 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
     let questionsWithImages = 0;
     const previewQuestions = [];
 
+    // One batched prefetch of the existing ACTIVE questions for the subjects
+    // this sheet touches — same-subject + same-normalized-text IS the
+    // duplicate, the exact rule every other Question Bank write path uses
+    // (question-bank manual guard + bulk import). Keys are recomputed from
+    // the stored raw text, and rows this import creates are added to the map
+    // as we go, so duplicates WITHIN one sheet reuse the first occurrence.
+    const touchedSubjectIds = [...new Set(validatedCandidates.map((c) => String(c.subject)))];
+    const existingByDedupKey = await loadActiveQuestionDedupMap(touchedSubjectIds);
+
     // Create Questions with duplicate detection
     for (const candidate of validatedCandidates) {
       const subId = candidate.subject;
@@ -1342,34 +1355,17 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
         firstSubjectId = subId;
       }
 
-      // Check for duplicate: same question text + same options (types without
-      // options, e.g. numerical/match_the_following, are matched on text +
-      // questionType only)
-      const normalizedQuestion = candidate.question.trim().toLowerCase();
-      const normalizedOptions = (candidate.options || []).map(o => String(o).trim().toLowerCase()).sort().join('|');
-
-      const existingQuestion = await QuestionBank.findOne({
-        subject: subId,
-        isActive: true,
-        $expr: {
-          $eq: [{ $toLower: '$question' }, normalizedQuestion]
-        }
-      });
-
-      // Check if options match (or, for optionless types, that the question type matches)
-      let isDuplicate = false;
-      if (existingQuestion) {
-        if (!candidate.options || candidate.options.length === 0) {
-          isDuplicate = existingQuestion.questionType === candidate.questionType;
-        } else {
-          const existingOptions = (existingQuestion.options || []).map(o => String(o).trim().toLowerCase()).sort().join('|');
-          isDuplicate = existingOptions === normalizedOptions;
-        }
-      }
+      // Unified duplicate rule: same subject + same normalized question text
+      // (case-/whitespace-insensitive, active only). Options, type and
+      // answers are deliberately NOT compared — a same-text row is reused
+      // (or enriches the existing row with images), never inserted as a
+      // variant.
+      const dedupKey = buildDedupKey(subId, candidate.question);
+      const existingQuestion = dedupKey ? existingByDedupKey.get(dedupKey) || null : null;
 
       const newHasImage = !!(candidate.questionImage || candidate.optionImages?.some(img => img));
 
-      if (isDuplicate) {
+      if (existingQuestion) {
         const existingHasImage = !!(existingQuestion.questionImage || existingQuestion.optionImages?.some(img => img));
 
         if (newHasImage && !existingHasImage) {
@@ -1447,7 +1443,36 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
           isActive: true
         });
 
-        await question.save();
+        try {
+          await question.save();
+        } catch (saveErr) {
+          // Lost a race: another request inserted the same subject+text
+          // between our prefetch and this save. Re-fetch and reuse it —
+          // never fail the import over a duplicate.
+          if (saveErr.code === 11000 && saveErr.keyPattern?.dedupKey && dedupKey) {
+            const racer = await QuestionBank.findOne({ dedupKey, isActive: true });
+            if (racer) {
+              existingByDedupKey.set(dedupKey, racer);
+              duplicatesSkipped++;
+              questionIds.push(racer._id);
+              if (racer.questionImage || racer.optionImages?.some(img => img)) {
+                questionsWithImages++;
+              }
+              previewQuestions.push({
+                _id: racer._id,
+                question: racer.question.substring(0, 100),
+                hasQuestionImage: !!racer.questionImage,
+                hasOptionImages: racer.optionImages?.some(img => img) || false,
+                status: 'skipped'
+              });
+              continue;
+            }
+          }
+          throw saveErr; // real failures flow to the existing rollback + error mapping
+        }
+
+        // Later rows with the same key reuse this one (first-occurrence-wins).
+        if (dedupKey) existingByDedupKey.set(dedupKey, question);
         createdQuestions.push(question);
         createdQuestionIds.push(question._id);
         questionIds.push(question._id);

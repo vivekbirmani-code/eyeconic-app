@@ -20,6 +20,7 @@ const Subject = require('../models/Subject');
 const QuestionBank = require('../models/QuestionBank');
 const User = require('../models/User');
 const { getMongoUri } = require('../utils/mongoUri');
+const { buildDedupKey } = require('../utils/questionDedup');
 const miniGt = require('../utils/miniGt');
 
 // Enough tagged single-best-answer questions per subject that generation
@@ -205,8 +206,15 @@ const CURATED = {
     let inserted = 0;
     if (existing < TARGET_POOL_PER_SUBJECT) {
       for (const { qid, ...rest } of questions) {
-        // Idempotent: stable qid marks already-seeded questions.
-        const dup = await QuestionBank.exists({ qid });
+        // Idempotent: stable qid, or the same subject+question text already
+        // active in the bank (the shared duplicate rule every write path
+        // uses — prevents re-seeding a question that was imported manually).
+        const dup = await QuestionBank.exists({
+          $or: [
+            { qid },
+            { isActive: true, dedupKey: buildDedupKey(subject._id, rest.question) },
+          ],
+        });
         if (dup) continue;
         await QuestionBank.create({ ...rest, qid, subject: subject._id });
         inserted += 1;

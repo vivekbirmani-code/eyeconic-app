@@ -1,10 +1,14 @@
-# Excel Format Reference
+# Excel / CSV Format Reference
 
 This is the single format used both by the standalone **Question Bank bulk import**
 (`POST /api/question-bank/bulk-import` / `bulk-import-base64`) and by **Import Quiz
 from Excel** (`POST /api/quizzes/import-excel`). Column headers are case-insensitive
 and ignore spaces/punctuation (e.g. `Q_IMAGE`, `Q IMAGE`, and `QImage` are all the
 same column).
+
+**Question Bank bulk import also accepts CSV (`.csv`, UTF-8)** with the same headers
+— quote fields that contain commas, and a UTF-8 BOM is handled. **Import Quiz from
+Excel remains Excel-only** (.xlsx/.xls).
 
 Every question row must specify all seven canonical classification parameters
 (Subject, Topic, Subtopic, System, Question Type, Difficulty are **required**; Tag is

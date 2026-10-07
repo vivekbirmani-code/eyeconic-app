@@ -1,11 +1,20 @@
 const mongoose = require('mongoose');
 const { QUESTION_TYPES, QUESTION_TYPE_VALUES, DIFFICULTY_VALUES } = require('../constants/question');
+const { applyDedupKey } = require('../utils/questionDedup');
 
 const questionBankSchema = new mongoose.Schema({
     qid: {
         type: String,
         unique: true,
         sparse: true // Allows multiple null values
+    },
+    // "<subjectId>|<normalized question text>" — persisted duplicate key.
+    // Server-computed only (normalizeQuestionInput never whitelists it).
+    // Unique among ACTIVE questions via the partial index declared with the
+    // other indexes below — deliberately NOT field-level `unique` here (one
+    // declaration only, same IndexKeySpecsConflict lesson as qid).
+    dedupKey: {
+        type: String
     },
     subject: {
         type: mongoose.Schema.Types.ObjectId,
@@ -127,6 +136,10 @@ const questionBankSchema = new mongoose.Schema({
     isActive: {
         type: Boolean,
         default: true
+        // Soft-deleted (isActive:false) docs drop out of the dedup partial
+        // index below, so their text can be re-imported as a fresh question.
+        // If a restore endpoint is ever added it MUST handle the E11000 that
+        // fires when an active question already holds the same dedupKey.
     },
     createdBy: {
         type: mongoose.Schema.Types.ObjectId,
@@ -134,6 +147,14 @@ const questionBankSchema = new mongoose.Schema({
     }
 }, {
     timestamps: true
+});
+
+// Recompute the dedup key on every save so subject/text edits move the key.
+// insertMany does NOT run this hook — the bulk-import path sets dedupKey
+// explicitly on each candidate before inserting.
+questionBankSchema.pre('save', function (next) {
+    applyDedupKey(this);
+    next();
 });
 
 // Indexes for efficient queries — chosen based on actual filter/query patterns
@@ -151,6 +172,20 @@ questionBankSchema.index({ system: 1, isActive: 1 });
 questionBankSchema.index({ questionType: 1, isActive: 1 });
 questionBankSchema.index({ difficulty: 1, isActive: 1 });
 questionBankSchema.index({ tags: 1 });
+// DB-level duplicate protection: one active question per dedupKey, so a
+// check-then-insert race between two concurrent imports can only produce a
+// caught E11000 (mapped to a skip/409), never a duplicate row. The partial
+// filter excludes docs without a string key, so the index builds safely on
+// live databases BEFORE the backfill script keys the existing rows (same
+// pattern as ProctoringViolation.derivationKey).
+questionBankSchema.index(
+    { dedupKey: 1 },
+    {
+        unique: true,
+        name: 'dedupKey_unique_active',
+        partialFilterExpression: { isActive: true, dedupKey: { $type: 'string' } }
+    }
+);
 
 module.exports = mongoose.model('QuestionBank', questionBankSchema);
 module.exports.QUESTION_TYPES = QUESTION_TYPES;

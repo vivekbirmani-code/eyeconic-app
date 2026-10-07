@@ -499,7 +499,15 @@ export default function QuestionBankManagement() {
   const handleBulkImport = async () => {
     try {
       const result = await DocumentPicker.getDocumentAsync({
-        type: ['application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+        type: [
+          'application/vnd.ms-excel',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          // CSV — parsed by the same backend import (SheetJS auto-detect).
+          'text/csv',
+          'application/csv',
+          'text/comma-separated-values',
+          'public.comma-separated-values-text',
+        ],
         copyToCacheDirectory: true
       });
 
@@ -546,11 +554,15 @@ export default function QuestionBankManagement() {
         ? `\n\n${apiResponse.data.errors.slice(0, 5).join('\n')}${apiResponse.data.errors.length > 5 ? '\n...' : ''}`
         : '';
       const dupCount = Number(apiResponse.data?.duplicatesSkipped) || 0;
-      const duplicateNote = dupCount > 0 ? `\n${dupCount} skipped as duplicates (already in the bank).` : '';
+      const dupInFile = Number(apiResponse.data?.duplicatesInFile) || 0;
+      const dupExisting = Number(apiResponse.data?.duplicatesExisting) || 0;
+      const duplicateNote = dupCount > 0
+        ? `\n${dupCount} duplicate row(s) skipped (${dupInFile} repeated in this file, ${dupExisting} already in the bank).`
+        : '';
 
       Alert.alert(
         'Import Complete',
-        `Imported ${apiResponse.data.count} questions.${duplicateNote}${errorPreview}`,
+        `Imported ${apiResponse.data.count} of ${apiResponse.data?.totalRows ?? '?'} rows.${duplicateNote}${errorPreview}`,
         [{ text: 'OK', onPress: () => { fetchQuestions(); fetchStats(); fetchSubjects(); } }]
       );
     } catch (error: unknown) {

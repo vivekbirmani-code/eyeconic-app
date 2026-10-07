@@ -15,6 +15,10 @@ const {
     validateQuestionPayload,
 } = require('../utils/questionValidation');
 const {
+    buildDedupKey,
+    loadExistingDedupKeySet,
+} = require('../utils/questionDedup');
+const {
     needsCloudinaryTransfer,
     transferQuestionImages,
 } = require('../utils/imageUploader');
@@ -23,9 +27,21 @@ const logger = require('../utils/logger');
 /**
  * Duplicate guard for manual question writes: the same question text within
  * the same subject (case- and whitespace-insensitive, active questions only)
- * is rejected with 409 — the same match semantics the Excel import uses for
- * reuse detection. Soft-deleted questions never block creation.
+ * is rejected with 409 — the same match semantics the import paths use for
+ * skip detection. Soft-deleted questions never block creation.
  * `excludeId` lets the update path check against every OTHER question.
+ *
+ * Matching is two-branched: (a) the persisted dedupKey (exact new rule,
+ * served by the partial unique index), and (b) a legacy $expr fallback for
+ * docs created before the backfill that have no key yet. The $expr branch
+ * compares trim+case only — MongoDB expressions cannot collapse internal
+ * whitespace — so until the backfill completes, a manual create that differs
+ * from a legacy doc only by internal whitespace slips past this precheck
+ * (and past the index, which the legacy doc is not in). That window is
+ * minutes long, is pre-scanned by the backfill dry-run, and the import
+ * paths are immune because they normalize in memory. When a race does slip
+ * through the precheck anyway, the unique index turns it into a caught
+ * E11000 → 409 in the route's error handler.
  */
 const DUPLICATE_QUESTION_MESSAGE = 'This question already exists in the question bank.';
 
@@ -36,7 +52,11 @@ const findDuplicateQuestion = (subjectId, questionText, excludeId = null) => {
     const filter = {
         subject: subjectId,
         isActive: true,
-        $expr: { $eq: [{ $toLower: '$question' }, normalizedText] },
+        $or: [
+            { dedupKey: buildDedupKey(subjectId, questionText) },
+            // {dedupKey: null} matches both "field absent" and "field null".
+            { dedupKey: null, $expr: { $eq: [{ $toLower: '$question' }, normalizedText] } },
+        ],
     };
     if (excludeId) filter._id = { $ne: excludeId };
     return QuestionBank.findOne(filter);
@@ -158,6 +178,16 @@ router.post('/', auth, authorize('admin'), async (req, res) => {
         if (error.name === 'ValidationError') {
             return res.status(400).json({ message: 'Validation failed', errors: Object.values(error.errors).map(e => e.message) });
         }
+        // The pre-save duplicate guard can lose a race against a concurrent
+        // write; the unique partial index is the authority. Map its E11000 to
+        // the same 409 the precheck returns. Same for qid (was a 500).
+        if (error.code === 11000 && error.keyPattern?.dedupKey) {
+            logger.info('Duplicate question creation blocked by unique index', { userId: req.user._id.toString() });
+            return res.status(409).json({ message: DUPLICATE_QUESTION_MESSAGE, errorType: 'DUPLICATE_QUESTION' });
+        }
+        if (error.code === 11000 && error.keyPattern?.qid) {
+            return res.status(409).json({ message: 'A question with this qid already exists.', errorType: 'DUPLICATE_QID' });
+        }
         logger.error('Error creating question', { error: error.message });
         res.status(500).json({ message: 'Server error' });
     }
@@ -198,22 +228,23 @@ async function handleBulkImport(req, res, buffer) {
             .filter(Boolean)
             .map(String)
     );
-    const existingQuestionKeys = new Set();
-    if (sheetSubjectIds.size > 0) {
-        const existingQuestions = await QuestionBank.find(
-            { subject: { $in: [...sheetSubjectIds] }, isActive: true },
-            { subject: 1, question: 1 }
-        );
-        existingQuestions.forEach((q) => {
-            existingQuestionKeys.add(`${q.subject.toString()}|${normalizeQuestionForDedup(q.question)}`);
-        });
-    }
+    const existingQuestionKeys = await loadExistingDedupKeySet([...sheetSubjectIds]);
 
     const errors = [...parseErrors];
     const warnings = [];
     const questions = [];
     const transferJobs = [];
     const duplicates = [];
+    // Split duplicate feedback (both kinds also land in `duplicates`):
+    // rows whose key matched an EARLIER row of this same file vs rows whose
+    // key was already in the bank before this upload.
+    let duplicatesInFile = 0;
+    let duplicatesExisting = 0;
+    const seenInFileKeys = new Set();
+    // Parallel to `questions[]` — insertMany writeErrors index into the
+    // candidates array, and rows skipped above shift the alignment, so the
+    // row label must be tracked per accepted candidate.
+    const questionRowLabels = [];
 
     parsedRows.forEach((row, idx) => {
         const rowLabel = `Row ${idx + 2}`;
@@ -255,16 +286,29 @@ async function handleBulkImport(req, res, buffer) {
             validateQuestionPayload(candidate, { rowLabel });
 
             // Already in the bank (or earlier in this file)? Skip instead of
-            // inserting a duplicate record. Runs before the image-transfer
-            // stage so skipped rows never trigger Cloudinary work.
-            const dedupKey = `${subjectId}|${normalizeQuestionForDedup(candidate.question)}`;
+            // inserting a duplicate record — the first occurrence wins. Runs
+            // before the image-transfer stage so skipped rows never trigger
+            // Cloudinary work.
+            const dedupKey = buildDedupKey(subjectId, candidate.question);
             if (existingQuestionKeys.has(dedupKey)) {
-                duplicates.push(`${rowLabel}: skipped — this question already exists in the question bank.`);
+                if (seenInFileKeys.has(dedupKey)) {
+                    duplicatesInFile++;
+                    duplicates.push(`${rowLabel}: skipped — duplicate of an earlier row in this file.`);
+                } else {
+                    duplicatesExisting++;
+                    duplicates.push(`${rowLabel}: skipped — this question already exists in the question bank.`);
+                }
                 return;
             }
             existingQuestionKeys.add(dedupKey);
+            seenInFileKeys.add(dedupKey);
+
+            // insertMany bypasses the pre('save') hook that normally stamps
+            // the key, so set it here. Race losers surface as E11000 below.
+            candidate.dedupKey = dedupKey;
 
             questions.push(candidate);
+            questionRowLabels.push(rowLabel);
 
             // Remote images (Google Drive links etc.) are transferred to the
             // app's Cloudinary CDN before insert — the same authoritative
@@ -329,7 +373,26 @@ async function handleBulkImport(req, res, buffer) {
         }
         if (Array.isArray(bulkError.writeErrors)) {
             bulkError.writeErrors.forEach(we => {
-                errors.push(`Row ${we.index + 2}: ${we.errmsg || we.err?.errmsg || 'Failed to insert'}`);
+                // Driver write-error shapes vary: the code may sit on the
+                // entry or its nested err, and keyPattern is often missing
+                // entirely (mongodb 5.x) — the index name in errmsg is the
+                // stable signal.
+                const errCode = we.code || we.err?.code;
+                const errMessage = we.errmsg || we.err?.errmsg || '';
+                const keyPattern = we.keyPattern || we.err?.keyPattern;
+                const isDedupKeyDuplicate = errCode === 11000
+                    && (keyPattern?.dedupKey || errMessage.includes('dedupKey_unique_active'));
+                if (isDedupKeyDuplicate) {
+                    // Lost a race: another request inserted the same question
+                    // between our prefetch and this insert. The unique index
+                    // is the authority — a skip, not an import error.
+                    duplicatesExisting++;
+                    duplicates.push(`${questionRowLabels[we.index] || `Row ${we.index + 2}`}: skipped — this question already exists in the question bank.`);
+                    return;
+                }
+                // Everything else (qid collisions included) keeps the
+                // historical row-error behavior.
+                errors.push(`${questionRowLabels[we.index] || `Row ${we.index + 2}`}: ${errMessage || 'Failed to insert'}`);
             });
         }
     }
@@ -337,6 +400,8 @@ async function handleBulkImport(req, res, buffer) {
     logger.info('Question bank import complete', {
         inserted: inserted.length,
         duplicateCount: duplicates.length,
+        duplicatesInFile,
+        duplicatesExisting,
         errorCount: errors.length,
         warningCount: warnings.length,
         userId: req.user._id.toString(),
@@ -347,6 +412,10 @@ async function handleBulkImport(req, res, buffer) {
         count: inserted.length,
         totalRows: parsedRows.length + parseErrors.length,
         duplicatesSkipped: duplicates.length,
+        // Split duplicate feedback: repeated rows inside this upload vs rows
+        // the bank already contained. duplicatesSkipped stays the total.
+        duplicatesInFile,
+        duplicatesExisting,
         // Rows skipped because the same question text already exists under
         // the same subject — surfaced so the admin understands the counts.
         duplicates: duplicates.length > 0 ? duplicates.slice(0, 50) : undefined,
@@ -376,7 +445,7 @@ router.post('/bulk-import', auth, authorize('admin'), upload.single('file'), asy
         if (!req.file) {
             return res.status(400).json({
                 message: 'No file uploaded',
-                hint: 'Please select an Excel file (.xlsx)'
+                hint: 'Please select an Excel (.xlsx, .xls) or CSV (.csv) file'
             });
         }
 
@@ -398,7 +467,7 @@ router.post('/bulk-import-base64', auth, authorize('admin'), async (req, res) =>
         if (!data) {
             return res.status(400).json({
                 message: 'No file data provided',
-                hint: 'Please select an Excel file (.xlsx)'
+                hint: 'Please select an Excel (.xlsx, .xls) or CSV (.csv) file'
             });
         }
 
@@ -590,6 +659,13 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
         }
         if (error.name === 'ValidationError') {
             return res.status(400).json({ message: 'Validation failed', errors: Object.values(error.errors).map(e => e.message) });
+        }
+        if (error.code === 11000 && error.keyPattern?.dedupKey) {
+            logger.info('Duplicate question update blocked by unique index', { userId: req.user._id.toString() });
+            return res.status(409).json({ message: DUPLICATE_QUESTION_MESSAGE, errorType: 'DUPLICATE_QUESTION' });
+        }
+        if (error.code === 11000 && error.keyPattern?.qid) {
+            return res.status(409).json({ message: 'A question with this qid already exists.', errorType: 'DUPLICATE_QID' });
         }
         logger.error('Error updating question', { error: error.message });
         res.status(500).json({ message: 'Server error' });

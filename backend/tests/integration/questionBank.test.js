@@ -536,3 +536,315 @@ describe('POST /api/question-bank/bulk-import — duplicate guard', () => {
     expect(res.body.errors).toBeUndefined();
   });
 });
+
+describe('POST /api/question-bank — duplicate guard (strengthened normalization)', () => {
+  it('treats internal double spaces as the same question', async () => {
+    await request(app).post('/api/question-bank').set('Authorization', `Bearer ${adminToken}`).send(validMcq());
+    const res = await request(app)
+      .post('/api/question-bank')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(validMcq({ question: 'What is the  powerhouse of the cell?' }));
+    expect(res.status).toBe(409);
+    expect(res.body.errorType).toBe('DUPLICATE_QUESTION');
+  });
+
+  it('treats newlines and tabs inside the text as whitespace', async () => {
+    await request(app).post('/api/question-bank').set('Authorization', `Bearer ${adminToken}`).send(validMcq());
+    const res = await request(app)
+      .post('/api/question-bank')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(validMcq({ question: 'What\tis\nthe powerhouse of the cell?' }));
+    expect(res.status).toBe(409);
+  });
+
+  it('treats a unicode-space (NBSP) variant as the same question', async () => {
+    await request(app).post('/api/question-bank').set('Authorization', `Bearer ${adminToken}`).send(validMcq());
+    const res = await request(app)
+      .post('/api/question-bank')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(validMcq({ question: 'What is the powerhouse of the cell?' }));
+    expect(res.status).toBe(409);
+  });
+
+  it('does not dedupe across different punctuation', async () => {
+    await request(app).post('/api/question-bank').set('Authorization', `Bearer ${adminToken}`).send(validMcq());
+    const res = await request(app)
+      .post('/api/question-bank')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(validMcq({ question: 'What is the powerhouse of the cell!' }));
+    expect(res.status).toBe(201);
+  });
+
+  it('concurrent creates of the same text yield exactly one 201 and one 409', async () => {
+    const QuestionBank = require('../../models/QuestionBank');
+    // Force the unique partial index to exist before the race — mongoose
+    // builds indexes in the background and does not block ops on the build.
+    await QuestionBank.init();
+    const [a, b] = await Promise.all([
+      request(app).post('/api/question-bank').set('Authorization', `Bearer ${adminToken}`).send(validMcq()),
+      request(app).post('/api/question-bank').set('Authorization', `Bearer ${adminToken}`).send(validMcq()),
+    ]);
+    expect([a.status, b.status].sort()).toEqual([201, 409]);
+    expect(await QuestionBank.countDocuments({})).toBe(1);
+  });
+});
+
+describe('POST /api/question-bank/bulk-import — strengthened normalization & split counters', () => {
+  const xlsx = require('xlsx');
+
+  const mcqRow = (question, overrides = {}) => ({
+    SUBJECT: 'Pathology', TOPIC: 'Genetics', SUBTOPIC: 'Mendelian Inheritance',
+    SYSTEM: 'Genetic Disorders', QUESTION_TYPE: 'MCQ — Single Correct', DIFFICULTY: 'medium',
+    QUESTION: question, OPTION1: 'A', OPTION2: 'B', OPTION3: 'C', OPTION4: 'D', CORRECT: 'A',
+    ...overrides,
+  });
+
+  const buildWorkbook = (rows) => {
+    const sheet = xlsx.utils.json_to_sheet(rows);
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(workbook, sheet, 'Question Bank');
+    return xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+  };
+
+  const importSheet = (rows) => request(app)
+    .post('/api/question-bank/bulk-import')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .attach('file', buildWorkbook(rows), 'import.xlsx');
+
+  it('skips whitespace and case variants of an already-imported question', async () => {
+    await importSheet([mcqRow('What is osmosis?')]);
+    const res = await importSheet([
+      mcqRow('WHAT   IS OSMOSIS?'),
+      mcqRow('What\tis\nosmosis?'),
+      mcqRow(' What is osmosis? '),
+    ]);
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(0);
+    expect(res.body.duplicatesSkipped).toBe(3);
+    expect(res.body.duplicatesExisting).toBe(3);
+  });
+
+  it('reports duplicatesInFile and duplicatesExisting separately', async () => {
+    await importSheet([mcqRow('Already banked question?')]);
+    const res = await importSheet([
+      mcqRow('Brand new question?'),
+      mcqRow('Already banked question?'),
+      mcqRow('Repeated in this file?'),
+      mcqRow('Repeated in this file?'),
+    ]);
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(2);
+    expect(res.body.duplicatesInFile).toBe(1);
+    expect(res.body.duplicatesExisting).toBe(1);
+    expect(res.body.duplicatesSkipped).toBe(2);
+    expect(res.body.duplicates.some((d) => /duplicate of an earlier row in this file/.test(d))).toBe(true);
+    expect(res.body.duplicates.some((d) => /already exists in the question bank/.test(d))).toBe(true);
+  });
+
+  it('keeps the Row N: skipped pattern for existing-bank duplicates', async () => {
+    await importSheet([mcqRow('Pattern question?')]);
+    const res = await importSheet([mcqRow('Pattern question?')]);
+    expect(res.body.duplicates[0]).toMatch(/^Row \d+: skipped — this question already exists in the question bank\.$/);
+  });
+
+  it('two identical sheets imported concurrently insert one set and never error', async () => {
+    const QuestionBank = require('../../models/QuestionBank');
+    // Force the unique partial index to exist before the race — mongoose
+    // builds indexes in the background and does not block ops on the build.
+    await QuestionBank.init();
+    const rows = [mcqRow('Race question one?'), mcqRow('Race question two?'), mcqRow('Race question three?')];
+    const [a, b] = await Promise.all([importSheet(rows), importSheet(rows)]);
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    expect(a.body.count + b.body.count).toBe(3);
+    expect(a.body.duplicatesSkipped + b.body.duplicatesSkipped).toBe(3);
+    expect(a.body.errors).toBeUndefined();
+    expect(b.body.errors).toBeUndefined();
+    expect(await QuestionBank.countDocuments({})).toBe(3);
+  });
+
+  const sixTypeRows = () => [
+    mcqRow('Single correct question?'),
+    mcqRow('Multi correct question?', { QUESTION_TYPE: 'Multiple Correct', CORRECT: 'A,B' }),
+    mcqRow('Assertion reason question?', {
+      QUESTION_TYPE: 'Assertion & Reason', OPTION1: '', OPTION2: '', OPTION3: '', OPTION4: '',
+      CORRECT: '2', ASSERTION: 'The assertion text.', REASON: 'The reason text.',
+    }),
+    mcqRow('Match the following question?', {
+      QUESTION_TYPE: 'Match the Following', OPTION1: '', OPTION2: '', OPTION3: '', OPTION4: '',
+      CORRECT: '1-A,2-B', COLUMN_A: 'Item A;Item B', COLUMN_B: 'P;Q',
+    }),
+    mcqRow('Numerical question?', {
+      QUESTION_TYPE: 'Numerical', OPTION1: '', OPTION2: '', OPTION3: '', OPTION4: '', CORRECT: '3.14',
+    }),
+    mcqRow('Image based question?', {
+      QUESTION_TYPE: 'Image Based', CORRECT: 'B', Q_IMAGE: 'data:image/png;base64,iVBORw0KGgo=',
+    }),
+  ];
+
+  it('skips duplicates across all six question types on re-import', async () => {
+    const first = await importSheet(sixTypeRows());
+    expect(first.status).toBe(200);
+    expect(first.body.count).toBe(6);
+    expect(first.body.errors).toBeUndefined();
+
+    const second = await importSheet(sixTypeRows());
+    expect(second.status).toBe(200);
+    expect(second.body.count).toBe(0);
+    expect(second.body.duplicatesSkipped).toBe(6);
+
+    const QuestionBank = require('../../models/QuestionBank');
+    expect(await QuestionBank.countDocuments({})).toBe(6);
+  });
+
+  it('imports 2500 rows with a single prefetch query (no per-row lookups)', async () => {
+    const rows = Array.from({ length: 2500 }, (_, i) => mcqRow(`Scale question #${i}?`));
+    const QuestionBank = require('../../models/QuestionBank');
+    const findSpy = jest.spyOn(QuestionBank, 'find');
+    const findOneSpy = jest.spyOn(QuestionBank, 'findOne');
+    try {
+      const res = await importSheet(rows);
+      expect(res.status).toBe(200);
+      expect(res.body.count).toBe(2500);
+      expect(res.body.duplicatesSkipped).toBe(0);
+      expect(findSpy.mock.calls.length).toBeLessThanOrEqual(2); // the one dedup prefetch (+ slack)
+      expect(findOneSpy.mock.calls.length).toBe(0);
+      expect(await QuestionBank.countDocuments({})).toBe(2500);
+    } finally {
+      findSpy.mockRestore();
+      findOneSpy.mockRestore();
+    }
+  });
+});
+
+describe('POST /api/question-bank/bulk-import — legacy docs without dedupKey', () => {
+  const xlsx = require('xlsx');
+  const QuestionBank = require('../../models/QuestionBank');
+
+  const mcqRow = (question) => ({
+    SUBJECT: 'Pathology', TOPIC: 'Genetics', SUBTOPIC: 'Mendelian Inheritance',
+    SYSTEM: 'Genetic Disorders', QUESTION_TYPE: 'MCQ — Single Correct', DIFFICULTY: 'medium',
+    QUESTION: question, OPTION1: 'A', OPTION2: 'B', OPTION3: 'C', OPTION4: 'D', CORRECT: 'A',
+  });
+
+  const importSheet = (rows) => {
+    const sheet = xlsx.utils.json_to_sheet(rows);
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(workbook, sheet, 'Question Bank');
+    return request(app)
+      .post('/api/question-bank/bulk-import')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .attach('file', xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' }), 'import.xlsx');
+  };
+
+  // Native insert: no mongoose validation, no pre-save hook → no dedupKey,
+  // exactly like a pre-backfill production row.
+  const insertLegacyDoc = async (question) => {
+    await QuestionBank.collection.insertOne({
+      subject: subject._id, question, isActive: true, questionType: 'mcq_single', correctAnswer: 0,
+    });
+  };
+
+  it('manual guard still blocks an exact-text legacy doc via the fallback branch', async () => {
+    await insertLegacyDoc('Legacy question?');
+    const res = await request(app)
+      .post('/api/question-bank')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(validMcq({ question: 'Legacy question?' }));
+    expect(res.status).toBe(409);
+    expect(res.body.errorType).toBe('DUPLICATE_QUESTION');
+  });
+
+  it('documents the known window: a whitespace variant of an irregularly-spaced legacy doc is allowed', async () => {
+    // Stored legacy text has internal double spaces and no dedupKey, so
+    // neither the $expr fallback (raw comparison) nor the index sees the
+    // single-spaced variant. Backfilling the key closes this window — see
+    // scripts/backfillQuestionDedupKeys.js.
+    await insertLegacyDoc('Legacy  question  with  spaces?');
+    const res = await request(app)
+      .post('/api/question-bank')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(validMcq({ question: 'Legacy question with spaces?' }));
+    expect(res.status).toBe(201);
+  });
+
+  it('bulk import still catches the whitespace variant of a legacy doc (in-memory normalization)', async () => {
+    await insertLegacyDoc('Legacy  question  with  spaces?');
+    const res = await importSheet([mcqRow('Legacy question with spaces?')]);
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(0);
+    expect(res.body.duplicatesSkipped).toBe(1);
+    expect(res.body.duplicatesExisting).toBe(1);
+  });
+});
+
+describe('POST /api/question-bank/bulk-import — CSV support', () => {
+  const csvEscape = (value) => {
+    const str = String(value ?? '');
+    return /[",\n\r]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+  };
+
+  const buildCsv = (rows) => Buffer.from(rows.map((r) => r.map(csvEscape).join(',')).join('\r\n'), 'utf8');
+
+  const HEADERS = ['SUBJECT', 'TOPIC', 'SUBTOPIC', 'SYSTEM', 'QUESTION_TYPE', 'DIFFICULTY', 'QUESTION',
+    'OPTION1', 'OPTION2', 'OPTION3', 'OPTION4', 'CORRECT', 'SOLUTION'];
+
+  const mcqCells = (question) => ['Pathology', 'Genetics', 'Mendelian Inheritance', 'Genetic Disorders',
+    'MCQ — Single Correct', 'medium', question, 'A', 'B', 'C', 'D', 'A', 'Because A is correct.'];
+
+  const importCsv = (buffer, filename = 'import.csv') => request(app)
+    .post('/api/question-bank/bulk-import')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .attach('file', buffer, { filename, contentType: 'text/csv' });
+
+  it('imports a plain CSV buffer', async () => {
+    const res = await importCsv(buildCsv([
+      HEADERS,
+      mcqCells('What is a CSV question?'),
+      mcqCells('What is a second CSV question?'),
+    ]));
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(2);
+    expect(res.body.errors).toBeUndefined();
+  });
+
+  it('imports a UTF-8 BOM prefixed CSV', async () => {
+    const csv = buildCsv([HEADERS, mcqCells('BOM prefixed question?')]);
+    const res = await importCsv(Buffer.concat([Buffer.from('﻿', 'utf8'), csv]));
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(1);
+  });
+
+  it('handles a quoted multi-line question text in CSV', async () => {
+    const res = await importCsv(buildCsv([
+      HEADERS,
+      mcqCells('A question\nspanning multiple lines?'),
+    ]));
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(1);
+    const QuestionBank = require('../../models/QuestionBank');
+    const doc = await QuestionBank.findOne({});
+    expect(doc.question).toContain('multiple lines');
+  });
+
+  it('re-importing a CSV reports every row as an existing duplicate', async () => {
+    const rows = [HEADERS, mcqCells('Re-import me?')];
+    await importCsv(buildCsv(rows));
+    const res = await importCsv(buildCsv(rows));
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(0);
+    expect(res.body.duplicatesSkipped).toBe(1);
+    expect(res.body.duplicatesExisting).toBe(1);
+    expect(res.body.errors).toBeUndefined();
+  });
+
+  it('base64 route accepts a CSV payload too', async () => {
+    const buffer = buildCsv([HEADERS, mcqCells('Base64 CSV question?')]);
+    const res = await request(app)
+      .post('/api/question-bank/bulk-import-base64')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ filename: 'import.csv', data: buffer.toString('base64') });
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(1);
+  });
+});

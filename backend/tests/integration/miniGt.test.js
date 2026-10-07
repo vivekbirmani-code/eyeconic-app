@@ -25,6 +25,11 @@ let subjects = {}; // name → subject doc
 let paidStudent;
 let freeStudent;
 
+// Incremented per seedBank() call so repeated seeding in one test (bank is
+// topped up mid-test) never reuses a subject+question text — same text under
+// the same subject is a duplicate the unique dedup index now rejects.
+let seedRun = 0;
+
 async function seedQuestion(subjectName, index) {
   const question = await QuestionBank.create({
     subject: subjects[subjectName]._id,
@@ -33,7 +38,7 @@ async function seedQuestion(subjectName, index) {
     system: `${subjectName} System`,
     questionType: 'mcq_single',
     difficulty: 'medium',
-    question: `${subjectName} question #${index}?`,
+    question: `${subjectName} question #${index}? (seed ${seedRun})`,
     options: ['Alpha', 'Beta', 'Gamma', 'Delta'],
     correctAnswer: 1,
     explanation: 'Beta is correct.',
@@ -48,6 +53,7 @@ async function seedQuestion(subjectName, index) {
 
 async function seedBank(perSubject = QUESTIONS_PER_SUBJECT) {
   const bySubject = {};
+  seedRun += 1;
   for (const subjectName of SUBJECTS) {
     bySubject[subjectName] = [];
     for (let i = 0; i < perSubject; i += 1) {

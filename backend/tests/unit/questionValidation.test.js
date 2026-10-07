@@ -247,3 +247,35 @@ describe('validateQuestionPayload — numerical', () => {
     expect(data.correctAnswer).toBe(12.5);
   });
 });
+
+describe('normalizeQuestionForDedup (canonical duplicate rule)', () => {
+  // Mirrors the import at the top of this file's module under test.
+  const { normalizeQuestionForDedup } = require('../../utils/questionValidation');
+
+  it('collapses internal runs of spaces/tabs/newlines to a single space', () => {
+    expect(normalizeQuestionForDedup('What   is   photosynthesis?')).toBe('what is photosynthesis?');
+    expect(normalizeQuestionForDedup('What\tis\nphotosynthesis?')).toBe('what is photosynthesis?');
+    expect(normalizeQuestionForDedup('What\r\nis\r photosynthesis?')).toBe('what is photosynthesis?');
+  });
+
+  it('treats unicode spaces (NBSP, ideographic, BOM) as whitespace', () => {
+    expect(normalizeQuestionForDedup('What is photosynthesis?')).toBe('what is photosynthesis?');
+    expect(normalizeQuestionForDedup('What　is photosynthesis?')).toBe('what is photosynthesis?');
+    expect(normalizeQuestionForDedup('﻿What is photosynthesis?')).toBe('what is photosynthesis?');
+  });
+
+  it('trims surrounding whitespace and folds case', () => {
+    expect(normalizeQuestionForDedup('  WHAT IS PHOTOSYNTHESIS?  ')).toBe('what is photosynthesis?');
+  });
+
+  it('leaves punctuation untouched (a? is not a!)', () => {
+    expect(normalizeQuestionForDedup('What is osmosis?')).not.toBe(normalizeQuestionForDedup('What is osmosis!'));
+    expect(normalizeQuestionForDedup('A.B-C')).toBe('a.b-c');
+  });
+
+  it('normalizes nullish input to the empty string', () => {
+    expect(normalizeQuestionForDedup(undefined)).toBe('');
+    expect(normalizeQuestionForDedup(null)).toBe('');
+    expect(normalizeQuestionForDedup('    ')).toBe('');
+  });
+});

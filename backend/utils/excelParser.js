@@ -249,10 +249,14 @@ const mapRowFromHeaders = (row) => {
 };
 
 /**
- * Parse an uploaded Question Bank / Quiz Excel workbook into normalized row
- * objects plus a list of row-level validation errors. This is the single
- * canonical parser used by both the standalone Question Bank bulk import and
- * the "import quiz from Excel" flow — do not duplicate this logic elsewhere.
+ * Parse an uploaded Question Bank / Quiz spreadsheet (Excel .xlsx/.xls, and
+ * CSV for the Question Bank bulk import) into normalized row objects plus a
+ * list of row-level validation errors. This is the single canonical parser
+ * used by both the standalone Question Bank bulk import and the "import quiz
+ * from Excel" flow — do not duplicate this logic elsewhere. CSV is
+ * auto-detected by SheetJS (`xlsx.read` sniffs the content); a UTF-8 BOM on
+ * the first header is stripped by the header normalizer's non-alphanumeric
+ * filter, and quoted fields may contain commas/newlines per RFC 4180.
  *
  * File-level problems (unreadable workbook, no worksheets, no data rows on
  * any sheet) come back as `{ fatal: { code, message, hint } }` — callers must
@@ -262,12 +266,24 @@ const mapRowFromHeaders = (row) => {
 const parseExcel = async (buffer) => {
     let workbook;
     try {
-        workbook = xlsx.read(buffer, { type: 'buffer' });
+        // codepage 65001 = UTF-8. SheetJS decodes BOM-less CSV with a legacy
+        // latin codepage by default, which mojibakes every non-ASCII cell
+        // (e.g. the em-dash in "MCQ — Single Correct"); xlsx/xls payloads
+        // ignore the option, so it is safe to always pass it. A UTF-8 BOM is
+        // stripped here first — SheetJS's own BOM handling corrupts the first
+        // header when combined with an explicit codepage. Real .xlsx/.xls
+        // files start with PK/OLE magic, never with these bytes.
+        let parseBuffer = buffer;
+        if (parseBuffer && parseBuffer.length >= 3
+            && parseBuffer[0] === 0xEF && parseBuffer[1] === 0xBB && parseBuffer[2] === 0xBF) {
+            parseBuffer = parseBuffer.subarray(3);
+        }
+        workbook = xlsx.read(parseBuffer, { type: 'buffer', codepage: 65001 });
     } catch {
         return fileFatal(
             'UNREADABLE_WORKBOOK',
-            'The file could not be read as an Excel workbook.',
-            'Re-export the sheet as .xlsx from Excel or Google Sheets and try again.'
+            'The file could not be read as a spreadsheet.',
+            'Re-export the sheet as .xlsx or .csv from Excel or Google Sheets and try again.'
         );
     }
 
@@ -341,16 +357,18 @@ const parseExcel = async (buffer) => {
 
         // Legacy sheets have no QUESTION_TYPE column: a row with Q_IMAGE
         // is an image_based question, everything else is mcq_single (the
-        // OPTION1-4/CORRECT layout they all use).
-        let questionType = normalizeQuestionType(rowData.questionType);
-        if (!rowData.questionType && legacySheet.questionType) {
+        // OPTION1-4/CORRECT layout they all use). Whitespace-only cells
+        // count as absent (required error), not as an invalid value.
+        const rawQuestionType = str(rowData.questionType);
+        let questionType = normalizeQuestionType(rawQuestionType);
+        if (!rawQuestionType && legacySheet.questionType) {
             questionType = str(rowData.questionImage)
                 ? QUESTION_TYPES.IMAGE_BASED
                 : QUESTION_TYPES.MCQ_SINGLE;
-        } else if (!rowData.questionType) {
+        } else if (!rawQuestionType) {
             rowErrors.push(`${rowLabel}: Question Type is required.`);
         } else if (!questionType) {
-            rowErrors.push(`${rowLabel}: Invalid Question Type "${rowData.questionType}".`);
+            rowErrors.push(`${rowLabel}: Invalid Question Type "${rawQuestionType}".`);
         }
 
         let difficulty = normalizeDifficulty(rowData.difficulty);

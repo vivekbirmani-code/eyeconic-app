@@ -26,13 +26,24 @@ class QuestionValidationError extends Error {
 const isNonEmptyString = (value) => typeof value === 'string' && value.trim().length > 0;
 
 /**
- * Canonical normalization for question-duplicate detection: case- and
- * surrounding-whitespace-insensitive comparison of the question text within
- * a subject. Single source of truth for the manual create/update duplicate
- * guard AND the Excel bulk import — both must always agree on what counts
+ * Canonical normalization for question-duplicate detection: case-insensitive
+ * comparison of the question text within a subject, insensitive to ALL
+ * whitespace formatting — leading/trailing, internal runs of spaces/tabs/
+ * line breaks, and Unicode spaces (NBSP, ideographic space, BOM, line/para
+ * separators — JS \s covers them all). Punctuation is deliberately NOT
+ * touched ("a?" ≠ "a!"). Single source of truth for every duplicate guard:
+ * manual create/update, bulk import, quiz import, and the persisted dedupKey
+ * (via questionDedup.buildDedupKey) — all must always agree on what counts
  * as "the same question".
+ *
+ * Replication contract for non-JS ops scripts (e.g. Python): collapse every
+ * whitespace run (Unicode-aware) to a single ASCII space, strip, casefold.
  */
-const normalizeQuestionForDedup = (text) => String(text || '').trim().toLowerCase();
+const normalizeQuestionForDedup = (text) =>
+    String(text || '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
 
 // ---- Image URL handling ----
 //
