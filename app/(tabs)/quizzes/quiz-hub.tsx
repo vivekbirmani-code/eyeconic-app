@@ -201,7 +201,9 @@ export default function AdminQuizHub() {
   // stops are scaled to the window height because the gradient now fills the
   // whole screen as the scroll content's background.
   const glowEnd = Math.min(0.98, TOP_GLOW_HEIGHT / Math.max(windowHeight, TOP_GLOW_HEIGHT + 1));
-  const glowLocations = [0, glowEnd * 0.5, glowEnd, 1];
+  // Tuple type so expo-linear-gradient's locations prop (readonly [number, ...])
+  // accepts it — a plain number[] fails its overload.
+  const glowLocations: [number, number, number, number] = [0, glowEnd * 0.5, glowEnd, 1];
 
   const menuItems = [
     {

@@ -12,6 +12,7 @@ import {
   Image,
   Switch,
   FlatList,
+  KeyboardAvoidingView,
 } from 'react-native';
 import { ScreenContainer, FullScreenContainer } from '@/components/layout';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -26,7 +27,9 @@ import {
   X,
   Eye,
   Minus,
-  Sparkles
+  Sparkles,
+  AlertTriangle,
+  Layers,
 } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
@@ -35,6 +38,7 @@ import { DateTimeField } from '@/components/DateTimeField';
 import { formatToIST } from '@/utils/date';
 import { isValidQuizWindow } from '@/utils/quizDateTime';
 import useDebounce from '@/hooks/useDebounce';
+import { colors } from '@/utils/theme';
 import { QUESTION_TYPES, QUESTION_TYPE_LABELS, DIFFICULTY_LEVELS, DIFFICULTY_LABELS } from '@/types/question';
 
 interface Subject {
@@ -99,6 +103,17 @@ interface QuizSection {
 
 type TestType = 'daily' | 'weekly' | 'grand';
 
+/** Duration quick-preset chips shown under the minutes input in Step 2. */
+const DURATION_PRESETS = [
+  { label: '50 min', value: '50' },
+  { label: '1.5 hrs', value: '90' },
+  { label: '3 hrs', value: '180' },
+  { label: '3.5 hrs', value: '210' },
+];
+
+/** Wizard step names, indexed by step number (1–5). */
+const STEP_LABELS = ['Type', 'Settings', 'Questions', 'Sections', 'Assign'];
+
 export default function CreateQuiz() {
   const { user } = useAuth();
   const router = useRouter();
@@ -117,8 +132,6 @@ export default function CreateQuiz() {
 
   // Step 2: Quiz Settings
   const [title, setTitle] = useState('');
-  const [showDurationDropdown, setShowDurationDropdown] = useState(false);
-  const [numberOfQuestions, setNumberOfQuestions] = useState('10');
   const [duration, setDuration] = useState('30');
   const [positiveMarks, setPositiveMarks] = useState('4');
   const [negativeMarks, setNegativeMarks] = useState('1');
@@ -161,6 +174,9 @@ export default function CreateQuiz() {
   const [mentors, setMentors] = useState<Mentor[]>([]);
   const [selectedMentors, setSelectedMentors] = useState<string[]>([]);
   const [assignmentTab, setAssignmentTab] = useState<'students' | 'mentors'>('students');
+  // Dedicated flag for the step-5 audience lists — must not reuse the step-3
+  // question-loading flag (a mentor fetch used to flicker the question list).
+  const [loadingUsers, setLoadingUsers] = useState(false);
 
   // Step 4: Sections (NEW)
   const [quizSections, setQuizSections] = useState<QuizSection[]>([]);
@@ -268,14 +284,13 @@ export default function CreateQuiz() {
 
   const fetchMentors = async () => {
     try {
-      setLoadingQuestions(true);
+      setLoadingUsers(true);
       const response = await api.get('/users/role/mentor');
-      console.log('Fetched mentors:', response.data?.length);
       setMentors(response.data);
     } catch (error) {
       console.error('Error fetching mentors:', error);
     } finally {
-      setLoadingQuestions(false);
+      setLoadingUsers(false);
     }
   };
 
@@ -638,12 +653,22 @@ export default function CreateQuiz() {
     }
   };
 
+  // "All selected" must be membership-based, not length-based: comparing
+  // lengths misread selections made on other filter/pages as "everything
+  // selected" whenever the counts happened to coincide.
+  const allFilteredQuestionsSelected = filteredQuestions.length > 0
+    && filteredQuestions.every(q => selectedQuestions.includes(q._id));
+
   const handleSelectAllQuestions = () => {
-    if (selectedQuestions.length === filteredQuestions.length) {
-      setSelectedQuestions([]);
-    } else {
-      setSelectedQuestions(filteredQuestions.map(q => q._id));
+    const filteredIds = new Set(filteredQuestions.map(q => q._id));
+    if (allFilteredQuestionsSelected) {
+      // Deselect only what is visible; selections outside the current
+      // filter/search stay — same semantics as the student select-all.
+      setSelectedQuestions(prev => prev.filter(id => !filteredIds.has(id)));
+      return;
     }
+
+    setSelectedQuestions(prev => Array.from(new Set([...prev, ...Array.from(filteredIds)])));
   };
 
   const handleCreateQuiz = async () => {
@@ -779,47 +804,48 @@ export default function CreateQuiz() {
       <Text style={styles.stepTitle}>Select Test Type</Text>
 
       <View style={styles.testTypeContainer}>
-        {(['daily', 'weekly', 'grand'] as TestType[]).map(type => (
-          <TouchableOpacity
-            key={type}
-            style={[
-              styles.testTypeCard,
-              testType === type && styles.testTypeCardActive
-            ]}
-            onPress={() => setTestType(type)}
-          >
-            <View style={[
-              styles.testTypeIcon,
-              testType === type && styles.testTypeIconActive
-            ]}>
-              {type === 'daily' && <Clock color={testType === type ? '#FFF' : '#6B7280'} size={24} />}
-              {type === 'weekly' && <BookOpen color={testType === type ? '#FFF' : '#6B7280'} size={24} />}
-              {type === 'grand' && <Users color={testType === type ? '#FFF' : '#6B7280'} size={24} />}
-            </View>
-            <Text style={[
-              styles.testTypeName,
-              testType === type && styles.testTypeNameActive
-            ]}>
-              {type.charAt(0).toUpperCase() + type.slice(1)} Test
-            </Text>
-            <Text style={styles.testTypeDesc}>
-              {type === 'daily' && ''}
-              {type === 'weekly' && ''}
-              {type === 'grand' && ''}
-            </Text>
-          </TouchableOpacity>
-        ))}
+        {(['daily', 'weekly', 'grand'] as TestType[]).map(type => {
+          const active = testType === type;
+          return (
+            <TouchableOpacity
+              key={type}
+              style={[
+                styles.testTypeCard,
+                active && styles.testTypeCardActive
+              ]}
+              onPress={() => setTestType(type)}
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+              accessibilityLabel={`${type} test`}
+            >
+              <View style={[styles.testTypeIcon, active && styles.testTypeIconActive]}>
+                {type === 'daily' && <Clock color={active ? '#FFF' : colors.textSecondary} size={22} />}
+                {type === 'weekly' && <BookOpen color={active ? '#FFF' : colors.textSecondary} size={22} />}
+                {type === 'grand' && <Users color={active ? '#FFF' : colors.textSecondary} size={22} />}
+              </View>
+              <Text style={[styles.testTypeName, active && styles.testTypeNameActive]}>
+                {type.charAt(0).toUpperCase() + type.slice(1)} Test
+              </Text>
+              <Text style={styles.testTypeDesc}>
+                {type === 'daily' ? 'Focused daily practice' : type === 'weekly' ? 'Weekly revision test' : 'Full-length test'}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </View>
 
       <Text style={styles.inputLabel}>Select Subject(s)</Text>
       <TouchableOpacity
         style={styles.dropdown}
         onPress={() => setShowSubjectDropdown(!showSubjectDropdown)}
+        accessibilityRole="button"
+        accessibilityLabel="Select subjects"
+        accessibilityHint={selectedSubjects.length > 0 ? `${selectedSubjects.length} subjects selected` : undefined}
       >
         <Text style={selectedSubjects.length > 0 ? styles.dropdownText : styles.dropdownPlaceholder}>
           {getSelectedSubjectNames()}
         </Text>
-        <ChevronDown color="#6B7280" size={20} />
+        <ChevronDown color={colors.textSecondary} size={20} />
       </TouchableOpacity>
 
       {showSubjectDropdown && (
@@ -872,7 +898,7 @@ export default function CreateQuiz() {
       {selectedSubjects.length > 0 && (
         <View style={styles.infoBox}>
           <Text style={styles.infoText}>
-            📚 {availableQuestions} questions available ({selectedSubjects.length} subjects)
+            {availableQuestions} questions available across {selectedSubjects.length} subject{selectedSubjects.length > 1 ? 's' : ''}
           </Text>
         </View>
       )}
@@ -889,10 +915,11 @@ export default function CreateQuiz() {
         value={title}
         onChangeText={setTitle}
         placeholder="Enter quiz title"
+        placeholderTextColor={colors.textMuted}
       />
 
-      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
-        <View style={{ flex: 1, marginRight: 8 }}>
+      <View style={styles.fieldRow}>
+        <View style={styles.fieldRowItem}>
           <Text style={styles.inputLabel}>Positive Marks</Text>
           <TextInput
             style={styles.input}
@@ -900,9 +927,10 @@ export default function CreateQuiz() {
             onChangeText={setPositiveMarks}
             keyboardType="numeric"
             placeholder="4"
+            placeholderTextColor={colors.textMuted}
           />
         </View>
-        <View style={{ flex: 1, marginLeft: 8 }}>
+        <View style={styles.fieldRowItem}>
           <Text style={styles.inputLabel}>Negative Marks</Text>
           <TextInput
             style={styles.input}
@@ -910,50 +938,40 @@ export default function CreateQuiz() {
             onChangeText={setNegativeMarks}
             keyboardType="numeric"
             placeholder="1"
+            placeholderTextColor={colors.textMuted}
           />
         </View>
       </View>
 
       <Text style={styles.inputLabel}>Duration (minutes)</Text>
-      <View style={{ position: 'relative', zIndex: 10 }}>
-        <TextInput
-          style={styles.input}
-          value={duration}
-          onChangeText={setDuration}
-          keyboardType="numeric"
-          placeholder="30"
-        />
-        <TouchableOpacity 
-          style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 50, justifyContent: 'center', alignItems: 'center' }}
-          onPress={() => setShowDurationDropdown(!showDurationDropdown)}
-        >
-          <ChevronDown color="#6B7280" size={20} />
-        </TouchableOpacity>
+      <TextInput
+        style={styles.input}
+        value={duration}
+        onChangeText={setDuration}
+        keyboardType="numeric"
+        placeholder="30"
+        placeholderTextColor={colors.textMuted}
+      />
+      {/* Quick presets — visible chips instead of a dropdown hidden behind a chevron. */}
+      <View style={styles.presetChipRow}>
+        {DURATION_PRESETS.map(option => (
+          <TouchableOpacity
+            key={option.value}
+            style={[
+              styles.presetChip,
+              duration === option.value && styles.presetChipActive
+            ]}
+            onPress={() => setDuration(option.value)}
+            accessibilityRole="button"
+            accessibilityLabel={`Set duration to ${option.label}`}
+            accessibilityState={{ selected: duration === option.value }}
+          >
+            <Text style={[styles.presetChipText, duration === option.value && styles.presetChipTextActive]}>
+              {option.label}
+            </Text>
+          </TouchableOpacity>
+        ))}
       </View>
-      {showDurationDropdown && (
-        <View style={styles.dropdownList}>
-          {[
-            { label: '50 minutes', value: '50' },
-            { label: '1.5 hrs', value: '90' },
-            { label: '3 hrs', value: '180' },
-            { label: '3.5 hrs', value: '210' },
-          ].map(option => (
-            <TouchableOpacity
-              key={option.value}
-              style={[
-                styles.dropdownItem,
-                duration === option.value && styles.dropdownItemSelected
-              ]}
-              onPress={() => {
-                setDuration(option.value);
-                setShowDurationDropdown(false);
-              }}
-            >
-              <Text style={styles.dropdownItemText}>{option.label}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      )}
 
       <Text style={styles.inputLabel}>Instructions</Text>
       <TextInput
@@ -962,6 +980,7 @@ export default function CreateQuiz() {
         onChangeText={setInstructions}
         multiline
         placeholder="Enter instructions (one per line)"
+        placeholderTextColor={colors.textMuted}
       />
 
       {/* Share Quiz Solution Toggle */}
@@ -975,8 +994,8 @@ export default function CreateQuiz() {
         <Switch
           value={shareSolution}
           onValueChange={setShareSolution}
-          trackColor={{ false: '#D1D5DB', true: '#93C5FD' }}
-          thumbColor={shareSolution ? '#2563EB' : '#9CA3AF'}
+          trackColor={{ false: colors.borderStrong, true: 'rgba(1, 180, 174, 0.45)' }}
+          thumbColor={shareSolution ? colors.primary : colors.textMuted}
         />
       </View>
 
@@ -991,8 +1010,8 @@ export default function CreateQuiz() {
         <Switch
           value={lockSectionsAfterSubmission}
           onValueChange={setLockSectionsAfterSubmission}
-          trackColor={{ false: '#D1D5DB', true: '#93C5FD' }}
-          thumbColor={lockSectionsAfterSubmission ? '#2563EB' : '#9CA3AF'}
+          trackColor={{ false: colors.borderStrong, true: 'rgba(1, 180, 174, 0.45)' }}
+          thumbColor={lockSectionsAfterSubmission ? colors.primary : colors.textMuted}
         />
       </View>
 
@@ -1012,24 +1031,24 @@ export default function CreateQuiz() {
       />
 
       {scheduledDate && expiryDate && expiryDate <= scheduledDate && (
-        <Text style={{ color: '#EF4444', fontSize: 12, marginTop: 4 }}>
-          ⚠️ End date must be after start date
+        <Text style={styles.fieldError}>
+          End date must be after start date
         </Text>
       )}
 
       {/* IST Preview Helper */}
       {(scheduledDate || expiryDate) && (
-        <View style={{ marginTop: 8, padding: 8, backgroundColor: '#F3F4F6', borderRadius: 8 }}>
-          <Text style={{ fontSize: 12, color: '#4B5563', fontWeight: '600', marginBottom: 4 }}>
+        <View style={styles.istPreviewBox}>
+          <Text style={styles.istPreviewLabel}>
             Students will see (IST):
           </Text>
           {scheduledDate && (
-            <Text style={{ fontSize: 12, color: '#6B7280' }}>
+            <Text style={styles.istPreviewText}>
               Starts: {formatToIST(scheduledDate)}
             </Text>
           )}
           {expiryDate && (
-            <Text style={{ fontSize: 12, color: '#6B7280' }}>
+            <Text style={styles.istPreviewText}>
               Ends: {formatToIST(expiryDate)}
             </Text>
           )}
@@ -1038,7 +1057,7 @@ export default function CreateQuiz() {
 
       <View style={styles.infoBox}>
         <Text style={styles.infoText}>
-          📚 {availableQuestions} questions available from {selectedSubjects.length} subject(s)
+          {availableQuestions} questions available from {selectedSubjects.length} subject{selectedSubjects.length > 1 ? 's' : ''}
         </Text>
       </View>
     </View>
@@ -1051,34 +1070,35 @@ export default function CreateQuiz() {
 
       <View style={styles.selectionHeader}>
         <Text style={styles.selectionCount}>
-          {selectedQuestions.length} questions selected
+          {selectedQuestions.length} selected{totalQuestions > 0 ? ` · ${totalQuestions} available` : ''}
         </Text>
         <TouchableOpacity
           onPress={handleSelectAllQuestions}
           accessibilityRole="button"
           accessibilityLabel={
-            selectedQuestions.length === filteredQuestions.length
-              ? 'Deselect all questions'
-              : 'Select all questions'
+            allFilteredQuestionsSelected
+              ? 'Deselect visible questions'
+              : 'Select visible questions'
           }
         >
-          <Text style={styles.selectAllText}>
-            {selectedQuestions.length === filteredQuestions.length ? 'Deselect All' : 'Select All'}
+          <Text style={[styles.selectAllText, filteredQuestions.length === 0 && styles.selectAllTextDisabled]}>
+            {allFilteredQuestionsSelected ? 'Deselect All' : 'Select All'}
           </Text>
         </TouchableOpacity>
       </View>
 
       <View style={styles.searchInput}>
-        <Search color="#6B7280" size={20} />
+        <Search color={colors.textSecondary} size={20} />
         <TextInput
           style={styles.searchTextInput}
           placeholder="Search questions..."
+          placeholderTextColor={colors.textMuted}
           value={questionSearch}
           onChangeText={setQuestionSearch}
         />
         {questionSearch.length > 0 && (
-          <TouchableOpacity onPress={() => setQuestionSearch('')}>
-            <X color="#6B7280" size={18} />
+          <TouchableOpacity onPress={() => setQuestionSearch('')} accessibilityLabel="Clear search">
+            <X color={colors.textSecondary} size={18} />
           </TouchableOpacity>
         )}
       </View>
@@ -1087,14 +1107,14 @@ export default function CreateQuiz() {
         <TextInput
           style={styles.filterTextInput}
           placeholder="Filter by Topic..."
-          placeholderTextColor="#9CA3AF"
+          placeholderTextColor={colors.textMuted}
           value={topicFilter}
           onChangeText={setTopicFilter}
         />
         <TextInput
           style={styles.filterTextInput}
           placeholder="Filter by Tag..."
-          placeholderTextColor="#9CA3AF"
+          placeholderTextColor={colors.textMuted}
           value={tagFilter}
           onChangeText={setTagFilter}
         />
@@ -1192,9 +1212,15 @@ export default function CreateQuiz() {
           under the wizard footer or tab bar. */}
       <View style={styles.questionList}>
         {loadingQuestions && page === 1 ? (
-          <ActivityIndicator color="#2563EB" style={{ marginTop: 20 }} />
+          <ActivityIndicator color={colors.primary} style={{ marginTop: 20 }} />
         ) : filteredQuestions.length === 0 ? (
-          <Text style={styles.emptyText}>No questions found</Text>
+          <View style={styles.emptyState}>
+            <Search color={colors.textMuted} size={28} />
+            <Text style={styles.emptyStateTitle}>No questions found</Text>
+            <Text style={styles.emptyStateText}>
+              Try a different search, or clear the filters above.
+            </Text>
+          </View>
         ) : (
           <FlatList
             data={filteredQuestions}
@@ -1202,35 +1228,46 @@ export default function CreateQuiz() {
             extraData={selectedQuestions}
             keyboardShouldPersistTaps="handled"
             keyboardDismissMode="on-drag"
-            renderItem={({ item }: { item: Question }) => (
-              <TouchableOpacity
-                style={[
-                  styles.questionItem,
-                  selectedQuestions.includes(item._id) && styles.questionItemSelected
-                ]}
-                onPress={() => toggleQuestion(item._id)}
-              >
-                <View style={[styles.checkbox, selectedQuestions.includes(item._id) && styles.checkboxSelected]}>
-                  {selectedQuestions.includes(item._id) && <Check color="#FFF" size={14} />}
-                </View>
-                <View style={styles.questionInfo}>
-                  <Text style={styles.questionText} numberOfLines={2}>{item.question}</Text>
-                  <View style={styles.questionMeta}>
-                    <Text style={styles.questionSubject}>{item.subject?.name}</Text>
-                    {item.topicName && <Text style={styles.questionTopic}> • {item.topicName}</Text>}
-                    {item.difficulty && <Text style={styles.questionTopic}> • {DIFFICULTY_LABELS[item.difficulty as keyof typeof DIFFICULTY_LABELS] || item.difficulty}</Text>}
-                    {item.questionType && <Text style={styles.questionTopic}> • {QUESTION_TYPE_LABELS[item.questionType as keyof typeof QUESTION_TYPE_LABELS] || item.questionType}</Text>}
-                  </View>
-                </View>
+            renderItem={({ item }: { item: Question }) => {
+              const isSelected = selectedQuestions.includes(item._id);
+              return (
                 <TouchableOpacity
-                  style={styles.viewButton}
-                  onPress={() => setSelectedQuestion(item)}
-                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                  style={[
+                    styles.questionItem,
+                    isSelected && styles.questionItemSelected
+                  ]}
+                  onPress={() => toggleQuestion(item._id)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: isSelected }}
                 >
-                  <Eye color="#2563EB" size={20} />
+                  <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
+                    {isSelected && <Check color="#FFF" size={14} />}
+                  </View>
+                  <View style={styles.questionInfo}>
+                    <Text style={styles.questionText} numberOfLines={2}>{item.question}</Text>
+                    <View style={styles.questionMeta}>
+                      {item.subject?.name && (
+                        <View style={styles.questionSubjectBadge}>
+                          <Text style={styles.questionSubjectBadgeText}>{item.subject.name}</Text>
+                        </View>
+                      )}
+                      {item.topicName && <Text style={styles.questionTopic}>{item.topicName}</Text>}
+                      {item.difficulty && <Text style={styles.questionTopic}>{DIFFICULTY_LABELS[item.difficulty as keyof typeof DIFFICULTY_LABELS] || item.difficulty}</Text>}
+                      {item.questionType && <Text style={styles.questionTopic}>{QUESTION_TYPE_LABELS[item.questionType as keyof typeof QUESTION_TYPE_LABELS] || item.questionType}</Text>}
+                    </View>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.viewButton}
+                    onPress={() => setSelectedQuestion(item)}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                    accessibilityRole="button"
+                    accessibilityLabel="Preview question"
+                  >
+                    <Eye color={colors.primary} size={19} />
+                  </TouchableOpacity>
                 </TouchableOpacity>
-              </TouchableOpacity>
-            )}
+              );
+            }}
             onEndReached={() => {
               if (hasMore && !loadingMore) {
                 fetchQuestions(false);
@@ -1239,7 +1276,7 @@ export default function CreateQuiz() {
             onEndReachedThreshold={0.5}
             ListFooterComponent={() => (
               loadingMore ? (
-                <ActivityIndicator color="#2563EB" style={{ marginVertical: 20 }} />
+                <ActivityIndicator color={colors.primary} style={{ marginVertical: 20 }} />
               ) : null
             )}
             contentContainerStyle={{ paddingBottom: 12 }}
@@ -1253,19 +1290,34 @@ export default function CreateQuiz() {
   const renderStep4 = () => {
     const totalTime = parseInt(duration) || 0;
     const allocatedTime = quizSections.reduce((sum, s) => sum + s.duration, 0);
+    const allocationMatches = quizSections.length > 0 && allocatedTime === totalTime;
 
-    const initializeSections = (count: number) => {
-      const newSections: QuizSection[] = [];
-      const equalTime = Math.floor(totalTime / count);
-      for (let i = 0; i < count; i++) {
-        newSections.push({
-          name: `Section ${i + 1}`,
-          duration: i === count - 1 ? totalTime - (equalTime * (count - 1)) : equalTime,
-          selectionType: 'mixed',
-          questions: []
-        });
-      }
-      setQuizSections(newSections);
+    // Changing the count preserves configured sections: fewer truncates the
+    // tail, more appends sections pre-filled with an equal share of the
+    // unallocated time. Only a move from zero sections equal-splits the full
+    // duration (same defaults the old re-initialize produced, without
+    // discarding user-entered names/durations/questions on every change).
+    const setSectionCount = (count: number) => {
+      setQuizSections(prev => {
+        if (prev.length === count) return prev;
+        if (count < prev.length) return prev.slice(0, count);
+
+        const allocated = prev.reduce((sum, s) => sum + s.duration, 0);
+        const remaining = Math.max(totalTime - allocated, 0);
+        const additions = count - prev.length;
+        const equalTime = Math.floor(remaining / additions);
+
+        const next = [...prev];
+        for (let i = 0; i < additions; i++) {
+          next.push({
+            name: `Section ${prev.length + i + 1}`,
+            duration: i === additions - 1 ? remaining - equalTime * (additions - 1) : equalTime,
+            selectionType: 'mixed',
+            questions: []
+          });
+        }
+        return next;
+      });
     };
 
     const updateSection = (index: number, updates: Partial<QuizSection>) => {
@@ -1278,101 +1330,128 @@ export default function CreateQuiz() {
       <View style={styles.stepContent}>
         <Text style={styles.stepTitle}>Configure Sections</Text>
 
-        <View style={styles.infoBox}>
-          <Text style={styles.infoText}>
-            ⏱️ Total Duration: {totalTime} mins | Allocated: {allocatedTime} mins
-          </Text>
-          {allocatedTime !== totalTime && (
-             <Text style={{color: '#EF4444', fontSize: 12, marginTop: 4}}>
-               ⚠️ Allocated time ({allocatedTime}) does not match total duration ({totalTime})
-             </Text>
-          )}
-        </View>
-
-        <View style={styles.sectionSetupHeader}>
-          <Text style={styles.inputLabel}>Number of Sections</Text>
-          <View style={{flexDirection: 'row', gap: 8, marginTop: 8}}>
-            {[1, 2, 3, 4, 5].map(n => (
-              <TouchableOpacity 
-                key={n} 
-                style={[styles.smallChip, quizSections.length === n && styles.smallChipActive]}
-                onPress={() => initializeSections(n)}
-              >
-                <Text style={[styles.smallChipText, quizSections.length === n && styles.smallChipTextActive]}>{n}</Text>
-              </TouchableOpacity>
-            ))}
+        <View style={styles.sectionSummaryRow}>
+          <View style={styles.summaryTile}>
+            <Text style={styles.summaryTileLabel}>Total Duration</Text>
+            <Text style={styles.summaryTileValue}>{totalTime} min</Text>
+          </View>
+          <View style={[styles.summaryTile, quizSections.length > 0 && (allocationMatches ? styles.summaryTileMatch : styles.summaryTileMismatch)]}>
+            <Text style={styles.summaryTileLabel}>Allocated</Text>
+            <Text style={styles.summaryTileValue}>{allocatedTime} min</Text>
           </View>
         </View>
 
-        <ScrollView style={{marginTop: 16}}>
-          {quizSections.map((section, idx) => (
-            <View key={idx} style={styles.sectionConfigCard}>
-              <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center'}}>
-                <TextInput
-                  style={[styles.input, {flex: 2, marginRight: 8}]}
-                  value={section.name}
-                  onChangeText={(val) => updateSection(idx, { name: val })}
-                  placeholder="Section Name"
-                />
-                <View style={{flex: 1}}>
+        {quizSections.length > 0 && !allocationMatches && (
+          <View style={styles.mismatchRow}>
+            <AlertTriangle color={colors.dangerDark} size={16} />
+            <Text style={styles.mismatchText}>
+              Allocated time ({allocatedTime} min) must match total duration ({totalTime} min) before the quiz can be created.
+            </Text>
+          </View>
+        )}
+
+        <Text style={styles.inputLabel}>Number of Sections</Text>
+        <View style={styles.countChipRow}>
+          {[1, 2, 3, 4, 5].map(n => (
+            <TouchableOpacity
+              key={n}
+              style={[styles.countChip, quizSections.length === n && styles.countChipActive]}
+              onPress={() => setSectionCount(n)}
+              accessibilityRole="button"
+              accessibilityLabel={`${n} sections`}
+              accessibilityState={{ selected: quizSections.length === n }}
+            >
+              <Text style={[styles.countChipText, quizSections.length === n && styles.countChipTextActive]}>{n}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        {quizSections.length === 0 ? (
+          <View style={styles.sectionsEmptyState}>
+            <Layers color={colors.textMuted} size={28} />
+            <Text style={styles.emptyStateTitle}>No sections yet</Text>
+            <Text style={styles.emptyStateText}>
+              Pick the number of sections above to split this quiz into timed parts. Leave it at one section for a simple, single-timer test.
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.sectionList}>
+            {quizSections.map((section, idx) => (
+              <View key={idx} style={styles.sectionConfigCard}>
+                <View style={styles.sectionCardHeader}>
+                  <View style={styles.sectionNumberBadge}>
+                    <Text style={styles.sectionNumberText}>{idx + 1}</Text>
+                  </View>
                   <TextInput
-                    style={styles.input}
+                    style={styles.sectionNameInput}
+                    value={section.name}
+                    onChangeText={(val) => updateSection(idx, { name: val })}
+                    placeholder="Section Name"
+                    placeholderTextColor={colors.textMuted}
+                  />
+                  <TextInput
+                    style={styles.sectionDurationInput}
                     value={section.duration.toString()}
                     onChangeText={(val) => updateSection(idx, { duration: parseInt(val) || 0 })}
                     keyboardType="numeric"
-                    placeholder="Mins"
+                    placeholder="Min"
+                    placeholderTextColor={colors.textMuted}
                   />
                 </View>
-              </View>
 
-              <View style={{flexDirection: 'row', gap: 8, marginTop: 12}}>
-                <TouchableOpacity 
-                  style={[styles.typeButton, section.selectionType === 'mixed' && styles.typeButtonActive]}
-                  onPress={() => updateSection(idx, { selectionType: 'mixed', questions: [] })}
-                >
-                  <Text style={[styles.typeButtonText, section.selectionType === 'mixed' && styles.typeButtonTextActive]}>Mixed</Text>
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  style={[styles.typeButton, section.selectionType === 'manual' && styles.typeButtonActive]}
-                  onPress={() => updateSection(idx, { selectionType: 'manual' })}
-                >
-                  <Text style={[styles.typeButtonText, section.selectionType === 'manual' && styles.typeButtonTextActive]}>Manual</Text>
-                </TouchableOpacity>
-              </View>
+                <View style={styles.typeButtonRow}>
+                  <TouchableOpacity
+                    style={[styles.typeButton, section.selectionType === 'mixed' && styles.typeButtonActive]}
+                    onPress={() => updateSection(idx, { selectionType: 'mixed', questions: [] })}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: section.selectionType === 'mixed' }}
+                  >
+                    <Text style={[styles.typeButtonText, section.selectionType === 'mixed' && styles.typeButtonTextActive]}>Mixed</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.typeButton, section.selectionType === 'manual' && styles.typeButtonActive]}
+                    onPress={() => updateSection(idx, { selectionType: 'manual' })}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: section.selectionType === 'manual' }}
+                  >
+                    <Text style={[styles.typeButtonText, section.selectionType === 'manual' && styles.typeButtonTextActive]}>Manual</Text>
+                  </TouchableOpacity>
+                </View>
 
-              {section.selectionType === 'manual' && (
-                <View style={{marginTop: 12}}>
-                   <Text style={{fontSize: 12, color: '#6B7280', marginBottom: 4}}>
-                     Questions: {section.questions.length} assigned
-                   </Text>
-                   <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{paddingBottom: 8}}>
+                {section.selectionType === 'manual' && (
+                  <View style={styles.manualQuestionsBlock}>
+                    <Text style={styles.manualQuestionsLabel}>
+                      {section.questions.length} of {selectedQuestions.length} selected questions assigned
+                    </Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.qTinyChipScrollContent}>
                       {selectedQuestions.map(qId => {
-                         const q = availableQuestionsList.find(aq => aq._id === qId);
-                         if (!q) return null;
-                         const isAssigned = section.questions.includes(qId);
-                         return (
-                           <TouchableOpacity 
-                            key={qId} 
+                        const q = availableQuestionsList.find(aq => aq._id === qId);
+                        if (!q) return null;
+                        const isAssigned = section.questions.includes(qId);
+                        return (
+                          <TouchableOpacity
+                            key={qId}
                             style={[styles.qTinyChip, isAssigned && styles.qTinyChipActive]}
                             onPress={() => {
-                               const newQs = isAssigned 
+                              const newQs = isAssigned
                                 ? section.questions.filter(id => id !== qId)
                                 : [...section.questions, qId];
-                               updateSection(idx, { questions: newQs });
+                              updateSection(idx, { questions: newQs });
                             }}
-                           >
-                             <Text style={[styles.qTinyChipText, isAssigned && styles.qTinyChipTextActive]} numberOfLines={1}>
-                               {q.question.substring(0, 20)}...
-                             </Text>
-                           </TouchableOpacity>
-                         );
+                          >
+                            <Text style={[styles.qTinyChipText, isAssigned && styles.qTinyChipTextActive]} numberOfLines={1}>
+                              {q.question.substring(0, 20)}...
+                            </Text>
+                          </TouchableOpacity>
+                        );
                       })}
-                   </ScrollView>
-                </View>
-              )}
-            </View>
-          ))}
-        </ScrollView>
+                    </ScrollView>
+                  </View>
+                )}
+              </View>
+            ))}
+          </View>
+        )}
       </View>
     );
   };
@@ -1393,23 +1472,27 @@ export default function CreateQuiz() {
         <Switch
           value={assignToAllFreeUsers}
           onValueChange={setAssignToAllFreeUsers}
-          trackColor={{ false: '#D1D5DB', true: '#93C5FD' }}
-          thumbColor={assignToAllFreeUsers ? '#2563EB' : '#9CA3AF'}
+          trackColor={{ false: colors.borderStrong, true: 'rgba(1, 180, 174, 0.45)' }}
+          thumbColor={assignToAllFreeUsers ? colors.primary : colors.textMuted}
         />
       </View>
 
       <View style={styles.assignmentTabs}>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={[styles.assignmentTab, assignmentTab === 'students' && styles.assignmentTabActive]}
           onPress={() => setAssignmentTab('students')}
+          accessibilityRole="tab"
+          accessibilityState={{ selected: assignmentTab === 'students' }}
         >
           <Text style={[styles.assignmentTabText, assignmentTab === 'students' && styles.assignmentTabTextActive]}>
             Students ({students.length})
           </Text>
         </TouchableOpacity>
-        <TouchableOpacity 
+        <TouchableOpacity
           style={[styles.assignmentTab, assignmentTab === 'mentors' && styles.assignmentTabActive]}
           onPress={() => setAssignmentTab('mentors')}
+          accessibilityRole="tab"
+          accessibilityState={{ selected: assignmentTab === 'mentors' }}
         >
           <Text style={[styles.assignmentTabText, assignmentTab === 'mentors' && styles.assignmentTabTextActive]}>
             Mentors ({mentors.length})
@@ -1420,7 +1503,7 @@ export default function CreateQuiz() {
       {assignmentTab === 'students' ? (
         assignToAllFreeUsers ? (
           <View style={styles.freeUserAssignmentBanner}>
-            <Sparkles color="#01b4ae" size={28} style={{ marginBottom: 8 }} />
+            <Sparkles color={colors.primary} size={28} style={{ marginBottom: 8 }} />
             <Text style={styles.freeUserAssignmentTitle}>Assigning to All Free Users</Text>
             <Text style={styles.freeUserAssignmentText}>
               This quiz is configured to be shared with all unregistered and free student users automatically. Individual student selection is disabled.
@@ -1430,7 +1513,7 @@ export default function CreateQuiz() {
           <>
           <View style={styles.selectionHeader}>
             <Text style={styles.selectionCount}>
-              {selectedGroupIds.length} group filter(s) active
+              {selectedGroupIds.length} group filter{selectedGroupIds.length === 1 ? '' : 's'} active
             </Text>
             <TouchableOpacity
               onPress={handleSelectAllFilteredGroups}
@@ -1443,16 +1526,17 @@ export default function CreateQuiz() {
           </View>
 
           <View style={styles.searchInput}>
-            <Users color="#6B7280" size={20} />
+            <Users color={colors.textSecondary} size={20} />
             <TextInput
               style={styles.searchTextInput}
               placeholder="Filter groups by name..."
+              placeholderTextColor={colors.textMuted}
               value={groupSearch}
               onChangeText={setGroupSearch}
             />
             {groupSearch.length > 0 && (
-              <TouchableOpacity onPress={() => setGroupSearch('')}>
-                <X color="#9CA3AF" size={16} />
+              <TouchableOpacity onPress={() => setGroupSearch('')} accessibilityLabel="Clear group filter search">
+                <X color={colors.textSecondary} size={16} />
               </TouchableOpacity>
             )}
           </View>
@@ -1474,6 +1558,8 @@ export default function CreateQuiz() {
                     selectedGroupIds.includes(group._id) && styles.groupChipActive
                   ]}
                   onPress={() => toggleGroupFilter(group._id)}
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: selectedGroupIds.includes(group._id) }}
                 >
                   <Text
                     style={[
@@ -1489,7 +1575,7 @@ export default function CreateQuiz() {
           </ScrollView>
 
           {selectedGroupIds.length > 0 && (
-            <TouchableOpacity onPress={() => setSelectedGroupIds([])}>
+            <TouchableOpacity onPress={() => setSelectedGroupIds([])} accessibilityRole="button" accessibilityLabel="Clear group filters">
               <Text style={styles.clearGroupFilterText}>Clear Group Filters</Text>
             </TouchableOpacity>
           )}
@@ -1500,6 +1586,8 @@ export default function CreateQuiz() {
               onPress={handleSelectAll}
               disabled={filteredStudents.length === 0}
               activeOpacity={0.7}
+              accessibilityRole="button"
+              accessibilityLabel={allFilteredStudentsSelected ? 'Deselect visible students' : 'Select visible students'}
             >
               <View style={[
                 styles.checkbox,
@@ -1518,47 +1606,56 @@ export default function CreateQuiz() {
           </View>
 
           <View style={styles.searchInput}>
-            <Search color="#6B7280" size={20} />
+            <Search color={colors.textSecondary} size={20} />
             <TextInput
               style={styles.searchTextInput}
               placeholder={selectedGroupIds.length > 0 ? 'Search students in selected groups...' : 'Search students...'}
+              placeholderTextColor={colors.textMuted}
               value={studentSearch}
               onChangeText={setStudentSearch}
             />
             {studentSearch.length > 0 && (
-              <TouchableOpacity onPress={() => setStudentSearch('')}>
-                <X color="#9CA3AF" size={16} />
+              <TouchableOpacity onPress={() => setStudentSearch('')} accessibilityLabel="Clear student search">
+                <X color={colors.textSecondary} size={16} />
               </TouchableOpacity>
             )}
           </View>
 
           <View style={styles.studentList}>
-            {loadingQuestions ? (
-              <ActivityIndicator color="#2563EB" style={{ marginTop: 20 }} />
+            {loadingUsers ? (
+              <ActivityIndicator color={colors.primary} style={{ marginTop: 20 }} />
             ) : filteredStudents.length === 0 ? (
-              <Text style={styles.emptyText}>No students found</Text>
+              <View style={styles.emptyState}>
+                <Users color={colors.textMuted} size={28} />
+                <Text style={styles.emptyStateTitle}>No students found</Text>
+                <Text style={styles.emptyStateText}>
+                  Try a different search, or clear the group filters.
+                </Text>
+              </View>
             ) : (
-              filteredStudents.map(item => (
-                <TouchableOpacity
-                  key={item._id}
-                  style={[
-                    styles.studentItem,
-                    selectedStudents.includes(item._id) && styles.studentItemSelected
-                  ]}
-                  onPress={() => toggleStudent(item._id)}
-                >
-                  <View style={[
-                    styles.checkbox,
-                    selectedStudents.includes(item._id) && styles.checkboxSelected
-                  ]}>
-                    {selectedStudents.includes(item._id) && <Check color="#FFF" size={14} />}
-                  </View>
-                  <View style={styles.studentInfo}>
-                    <Text style={styles.studentName}>{item.name}</Text>
-                    <Text style={styles.studentEmail}>{item.email}</Text>
-                  </View>
-                </TouchableOpacity>
-              ))
+              filteredStudents.map(item => {
+                const isSelected = selectedStudents.includes(item._id);
+                return (
+                  <TouchableOpacity
+                    key={item._id}
+                    style={[
+                      styles.studentItem,
+                      isSelected && styles.studentItemSelected
+                    ]}
+                    onPress={() => toggleStudent(item._id)}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: isSelected }}
+                  >
+                    <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
+                      {isSelected && <Check color="#FFF" size={14} />}
+                    </View>
+                    <View style={styles.studentInfo}>
+                      <Text style={styles.studentName}>{item.name}</Text>
+                      <Text style={styles.studentEmail}>{item.email}</Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })
             )}
           </View>
         </>
@@ -1577,32 +1674,37 @@ export default function CreateQuiz() {
           </View>
 
           <View style={styles.studentList}>
-            {loadingQuestions ? (
-              <ActivityIndicator color="#2563EB" style={{ marginTop: 20 }} />
+            {loadingUsers ? (
+              <ActivityIndicator color={colors.primary} style={{ marginTop: 20 }} />
             ) : mentors.length === 0 ? (
-              <Text style={styles.emptyText}>No mentors found</Text>
+              <View style={styles.emptyState}>
+                <Users color={colors.textMuted} size={28} />
+                <Text style={styles.emptyStateTitle}>No mentors found</Text>
+              </View>
             ) : (
-              mentors.map(item => (
-                <TouchableOpacity
-                  key={item._id}
-                  style={[
-                    styles.studentItem,
-                    selectedMentors.includes(item._id) && styles.studentItemSelected
-                  ]}
-                  onPress={() => toggleMentor(item._id)}
-                >
-                  <View style={[
-                    styles.checkbox,
-                    selectedMentors.includes(item._id) && styles.checkboxSelected
-                  ]}>
-                    {selectedMentors.includes(item._id) && <Check color="#FFF" size={14} />}
-                  </View>
-                  <View style={styles.studentInfo}>
-                    <Text style={styles.studentName}>{item.name}</Text>
-                    <Text style={styles.studentEmail}>{item.email}</Text>
-                  </View>
-                </TouchableOpacity>
-              ))
+              mentors.map(item => {
+                const isSelected = selectedMentors.includes(item._id);
+                return (
+                  <TouchableOpacity
+                    key={item._id}
+                    style={[
+                      styles.studentItem,
+                      isSelected && styles.studentItemSelected
+                    ]}
+                    onPress={() => toggleMentor(item._id)}
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: isSelected }}
+                  >
+                    <View style={[styles.checkbox, isSelected && styles.checkboxSelected]}>
+                      {isSelected && <Check color="#FFF" size={14} />}
+                    </View>
+                    <View style={styles.studentInfo}>
+                      <Text style={styles.studentName}>{item.name}</Text>
+                      <Text style={styles.studentEmail}>{item.email}</Text>
+                    </View>
+                  </TouchableOpacity>
+                );
+              })
             )}
           </View>
         </>
@@ -1622,60 +1724,78 @@ export default function CreateQuiz() {
     <ScreenContainer style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()}>
+        <TouchableOpacity onPress={() => router.back()} accessibilityRole="button" accessibilityLabel="Go back">
           <ChevronLeft color="#FFF" size={24} />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>Create Quiz</Text>
+        <Text style={styles.headerTitle}>
+          {editId ? 'Edit Quiz' : cloneId ? 'Clone Quiz' : 'Create Quiz'}
+        </Text>
         <View style={{ width: 24 }} />
       </View>
 
-      {/* Progress Steps */}
-      <View style={styles.progressContainer}>
-        {[1, 2, 3, 4, 5].map(s => (
-          <React.Fragment key={s}>
-            <View style={styles.progressStep}>
-              <View style={[
-                styles.progressCircle,
-                step >= s && styles.progressCircleActive
-              ]}>
-                <Text style={[
-                  styles.progressNumber,
-                  step >= s && styles.progressNumberActive
-                ]}>
-                  {s}
-                </Text>
-              </View>
-              <Text style={styles.progressLabel}>
-                {s === 1 ? 'Type' : s === 2 ? 'Settings' : s === 3 ? 'Questions' : s === 4 ? 'Sections' : 'Assign'}
-              </Text>
-            </View>
-            {s < 5 && (
-              <View style={[
-                styles.progressLine,
-                step > s && styles.progressLineActive
-              ]} />
-            )}
-          </React.Fragment>
-        ))}
-      </View>
-
-      {/* Step Content */}
-      {step === 3 ? (
-        <View style={styles.content}>
-          {renderStep3()}
+      {/* KeyboardAvoidingView keeps Step 2's inputs and the wizard footer
+          reachable while the software keyboard is open (same pattern as the
+          other full-screen form routes: create-group, create-user). */}
+      <KeyboardAvoidingView behavior="padding" style={styles.keyboardArea}>
+        {/* Compact progress header — "Step X of 5" + segmented bar. Five
+            labeled circles overflowed narrow phones; this never clips, and
+            tapping a completed segment jumps back to that step. */}
+        <View style={styles.progressContainer}>
+          <View style={styles.progressHeaderRow}>
+            <Text style={styles.progressStepLabel}>
+              Step {step} of {STEP_LABELS.length}
+            </Text>
+            <Text style={styles.progressStepName}>{STEP_LABELS[step - 1]}</Text>
+          </View>
+          <View style={styles.progressSegments} accessibilityLabel={`Step ${step} of ${STEP_LABELS.length}`}>
+            {STEP_LABELS.map((label, idx) => {
+              const s = idx + 1;
+              const isCurrent = s === step;
+              const isDone = s < step;
+              return (
+                <TouchableOpacity
+                  key={label}
+                  style={styles.progressSegmentTouchable}
+                  onPress={() => {
+                    if (s < step) setStep(s);
+                  }}
+                  disabled={s >= step}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Go to step ${s}: ${label}`}
+                  accessibilityState={{ disabled: s >= step }}
+                >
+                  <View
+                    style={[
+                      styles.progressSegment,
+                      isDone && styles.progressSegmentDone,
+                      isCurrent && styles.progressSegmentCurrent,
+                    ]}
+                  />
+                </TouchableOpacity>
+              );
+            })}
+          </View>
         </View>
-      ) : (
-        <ScrollView
-          style={styles.content}
-          showsVerticalScrollIndicator={false}
-          nestedScrollEnabled={true}
-        >
-          {step === 1 && renderStep1()}
-          {step === 2 && renderStep2()}
-          {step === 4 && renderStep4()}
-          {step === 5 && renderStep5()}
-        </ScrollView>
-      )}
+
+        {/* Step Content */}
+        {step === 3 ? (
+          <View style={styles.content}>
+            {renderStep3()}
+          </View>
+        ) : (
+          <ScrollView
+            style={styles.content}
+            showsVerticalScrollIndicator={false}
+            nestedScrollEnabled={true}
+            keyboardShouldPersistTaps="handled"
+          >
+            {step === 1 && renderStep1()}
+            {step === 2 && renderStep2()}
+            {step === 4 && renderStep4()}
+            {step === 5 && renderStep5()}
+          </ScrollView>
+        )}
+      </KeyboardAvoidingView>
 
       {/* Bottom Navigation */}
       <View style={styles.bottomNav}>
@@ -1683,6 +1803,8 @@ export default function CreateQuiz() {
           <TouchableOpacity
             style={styles.backButton}
             onPress={() => setStep(step - 1)}
+            accessibilityRole="button"
+            accessibilityLabel="Previous step"
           >
             <Text style={styles.backButtonText}>Back</Text>
           </TouchableOpacity>
@@ -1705,6 +1827,8 @@ export default function CreateQuiz() {
               setStep(step + 1);
             }}
             disabled={(step === 1 && selectedSubjects.length === 0) || (step === 3 && selectedQuestions.length === 0)}
+            accessibilityRole="button"
+            accessibilityLabel="Next step"
           >
             <Text style={styles.nextButtonText}>Next</Text>
           </TouchableOpacity>
@@ -1713,6 +1837,8 @@ export default function CreateQuiz() {
             style={[styles.createButton, creating && styles.buttonDisabled]}
             onPress={handleCreateQuiz}
             disabled={creating}
+            accessibilityRole="button"
+            accessibilityLabel={editId ? 'Update quiz' : 'Create and assign quiz'}
           >
             {creating ? (
               <ActivityIndicator color="#FFF" />
@@ -1728,7 +1854,7 @@ export default function CreateQuiz() {
         <FullScreenContainer style={styles.modalContainer}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Question Preview</Text>
-            <TouchableOpacity onPress={() => setSelectedQuestion(null)}>
+            <TouchableOpacity onPress={() => setSelectedQuestion(null)} accessibilityRole="button" accessibilityLabel="Close preview">
               <X color="#FFF" size={24} />
             </TouchableOpacity>
           </View>
@@ -1873,79 +1999,77 @@ export default function CreateQuiz() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
   },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 12,
-    backgroundColor: '#2563EB',
+    padding: 16,
+    backgroundColor: colors.primary,
   },
   headerTitle: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: 'bold',
     color: '#FFF',
+  },
+  keyboardArea: {
+    flex: 1,
   },
   progressContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    backgroundColor: '#FFF',
+    backgroundColor: colors.surface,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: colors.border,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
   },
-  progressStep: {
+  progressHeaderRow: {
+    flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
   },
-  progressCircle: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#E5E7EB',
-    justifyContent: 'center',
-    alignItems: 'center',
+  progressStepLabel: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: colors.textSecondary,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
   },
-  progressCircleActive: {
-    backgroundColor: '#2563EB',
-  },
-  progressNumber: {
+  progressStepName: {
     fontSize: 14,
-    fontWeight: 'bold',
-    color: '#6B7280',
+    fontWeight: '700',
+    color: colors.primaryDark,
   },
-  progressNumberActive: {
-    color: '#FFF',
+  progressSegments: {
+    flexDirection: 'row',
+    gap: 6,
+    marginTop: 10,
   },
-  progressLabel: {
-    fontSize: 10,
-    color: '#6B7280',
-    marginTop: 4,
-  },
-  progressLine: {
+  progressSegmentTouchable: {
     flex: 1,
-    height: 2,
-    backgroundColor: '#E5E7EB',
-    marginTop: -16, // Align with center of circle
-    marginHorizontal: -10,
-    zIndex: -1,
   },
-  progressLineActive: {
-    backgroundColor: '#2563EB',
+  progressSegment: {
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.border,
+  },
+  progressSegmentDone: {
+    backgroundColor: 'rgba(1, 180, 174, 0.4)',
+  },
+  progressSegmentCurrent: {
+    backgroundColor: colors.primary,
   },
   content: {
     flex: 1,
   },
   stepContent: {
-    padding: 20,
+    padding: 16,
   },
   stepTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#1F2937',
-    marginBottom: 20,
+    fontSize: 18,
+    fontWeight: '700',
+    color: colors.text,
+    marginBottom: 16,
   },
   // Step 3 uses a fixed-chrome + flexible-list layout: the controls below keep
   // their natural height while questionList (flex: 1) takes all remaining space.
@@ -1961,250 +2085,149 @@ const styles = StyleSheet.create({
   questionList: {
     flex: 1,
   },
+  // ---- Step 1: test type & subjects ----
   testTypeContainer: {
     flexDirection: 'row',
     gap: 12,
-    marginBottom: 24,
+    marginBottom: 20,
   },
   testTypeCard: {
     flex: 1,
-    backgroundColor: '#FFF',
+    backgroundColor: colors.surface,
     borderRadius: 12,
-    padding: 16,
+    padding: 14,
     alignItems: 'center',
-    borderWidth: 2,
+    borderWidth: 1.5,
     borderColor: 'transparent',
   },
   testTypeCardActive: {
-    borderColor: '#2563EB',
-    backgroundColor: '#EBF5FF',
-  },
-  assignmentTabs: {
-    flexDirection: 'row',
-    backgroundColor: '#E5E7EB',
-    borderRadius: 10,
-    padding: 2,
-    marginBottom: 24,
-    width: '100%',
-  },
-  assignmentTab: {
-    flex: 1,
-    paddingVertical: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 8,
-  },
-  assignmentTabActive: {
-    backgroundColor: '#FFF',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 3.84,
-    elevation: 5,
-  },
-  assignmentTabText: {
-    fontSize: 14,
-    color: '#4B5563',
-    fontWeight: '600',
-  },
-  assignmentTabTextActive: {
-    color: '#2563EB',
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryTint,
   },
   testTypeIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: '#F3F4F6',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: colors.bg,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 8,
   },
   testTypeIconActive: {
-    backgroundColor: '#2563EB',
+    backgroundColor: colors.primary,
   },
   testTypeName: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#374151',
-    marginBottom: 4,
-  },
-  infoBox: {
-    backgroundColor: '#EBF5FF',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#BFDBFE',
-  },
-  infoText: {
-    fontSize: 14,
-    color: '#1E40AF',
-    fontWeight: '600',
-  },
-  sectionSetupHeader: {
-    marginBottom: 8,
-  },
-  smallChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
-    backgroundColor: '#FFF',
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-  },
-  smallChipActive: {
-    backgroundColor: '#2563EB',
-    borderColor: '#2563EB',
-  },
-  smallChipText: {
-    fontSize: 12,
-    color: '#4B5563',
-  },
-  smallChipTextActive: {
-    color: '#FFF',
-    fontWeight: 'bold',
-  },
-  sectionConfigCard: {
-    backgroundColor: '#FFF',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
-    shadowOpacity: 0.05,
-    shadowRadius: 2,
-    elevation: 2,
-  },
-  typeButton: {
-    flex: 1,
-    paddingVertical: 8,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    alignItems: 'center',
-    backgroundColor: '#F9FAFB',
-  },
-  typeButtonActive: {
-    borderColor: '#2563EB',
-    backgroundColor: '#EBF5FF',
-  },
-  typeButtonText: {
-    fontSize: 13,
-    color: '#4B5563',
-  },
-  typeButtonTextActive: {
-    color: '#2563EB',
-    fontWeight: '600',
-  },
-  qTinyChip: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 12,
-    backgroundColor: '#F3F4F6',
-    marginRight: 6,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    maxWidth: 150,
-  },
-  qTinyChipActive: {
-    backgroundColor: '#2563EB',
-    borderColor: '#2563EB',
-  },
-  qTinyChipText: {
-    fontSize: 11,
-    color: '#6B7280',
-  },
-  qTinyChipTextActive: {
-    color: '#FFF',
+    color: colors.textBody,
+    marginBottom: 2,
   },
   testTypeNameActive: {
-    color: '#2563EB',
+    color: colors.primaryDark,
   },
   testTypeDesc: {
     fontSize: 11,
-    color: '#9CA3AF',
+    color: colors.textMuted,
     textAlign: 'center',
   },
+  infoBox: {
+    backgroundColor: colors.primaryTint,
+    padding: 12,
+    borderRadius: 10,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: colors.primaryTintBorder,
+  },
+  infoText: {
+    fontSize: 13,
+    color: colors.primaryDark,
+    fontWeight: '600',
+  },
+  // ---- Form fields ----
   inputLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#374151',
+    color: colors.textBody,
     marginBottom: 8,
     marginTop: 16,
   },
   input: {
-    backgroundColor: '#FFF',
-    borderRadius: 8,
-    padding: 12,
+    backgroundColor: colors.surface,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
     fontSize: 16,
+    color: colors.text,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
   },
   textArea: {
     minHeight: 120,
     textAlignVertical: 'top',
   },
-  dropdown: {
+  fieldRow: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#FFF',
-    borderRadius: 8,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  dropdownText: {
-    fontSize: 16,
-    color: '#1F2937',
-  },
-  dropdownPlaceholder: {
-    fontSize: 16,
-    color: '#9CA3AF',
-  },
-  dropdownList: {
-    backgroundColor: '#FFF',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    marginTop: 4,
-    maxHeight: 260,
-    overflow: 'hidden',
-  },
-  dropdownItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    padding: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
     gap: 12,
   },
-  dropdownItemSelected: {
-    backgroundColor: '#EBF5FF',
-  },
-  dropdownItemText: {
-    fontSize: 16,
-    color: '#1F2937',
-  },
-  row: {
-    flexDirection: 'row',
-    gap: 16,
-  },
-  halfInput: {
+  fieldRowItem: {
     flex: 1,
   },
-  helperText: {
+  presetChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 8,
+  },
+  presetChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 16,
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  presetChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  presetChipText: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
+    fontWeight: '500',
+  },
+  presetChipTextActive: {
+    color: '#FFF',
+    fontWeight: '600',
+  },
+  fieldError: {
+    fontSize: 12,
+    color: colors.danger,
     marginTop: 4,
   },
+  istPreviewBox: {
+    marginTop: 8,
+    padding: 10,
+    backgroundColor: colors.primaryTint,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.primaryTintBorder,
+  },
+  istPreviewLabel: {
+    fontSize: 12,
+    color: colors.primaryDark,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  istPreviewText: {
+    fontSize: 12,
+    color: colors.primaryText,
+  },
+  // ---- Step 3: question selection ----
   selectionHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: 10,
   },
   selectAllCheckboxRow: {
     flexDirection: 'row',
@@ -2212,96 +2235,57 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   selectionCount: {
-    fontSize: 14,
-    color: '#6B7280',
+    fontSize: 13,
+    color: colors.textSecondary,
   },
   selectAllText: {
     fontSize: 14,
-    color: '#2563EB',
+    color: colors.primary,
     fontWeight: '600',
   },
   selectAllTextDisabled: {
-    color: '#9CA3AF',
+    color: colors.textMuted,
   },
   searchInput: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFF',
-    borderRadius: 8,
+    backgroundColor: colors.surface,
+    borderRadius: 10,
     paddingHorizontal: 12,
     gap: 8,
-    marginBottom: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
   },
   searchTextInput: {
     flex: 1,
-    paddingVertical: 12,
-    fontSize: 16,
+    paddingVertical: 11,
+    fontSize: 15,
+    color: colors.text,
   },
-  groupChipScroll: {
-    marginBottom: 8,
-  },
-  groupChipScrollContent: {
-    paddingRight: 12,
-    gap: 8,
-  },
-  groupFilterEmpty: {
-    fontSize: 13,
-    color: '#9CA3AF',
-    paddingVertical: 10,
-  },
-  groupChip: {
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 16,
-    backgroundColor: '#F3F4F6',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  groupChipActive: {
-    backgroundColor: '#EBF5FF',
-    borderColor: '#2563EB',
-  },
-  groupChipText: {
-    fontSize: 12,
-    color: '#4B5563',
-    fontWeight: '500',
-  },
-  groupChipTextActive: {
-    color: '#1D4ED8',
-    fontWeight: '600',
-  },
-  clearGroupFilterText: {
-    fontSize: 13,
-    color: '#2563EB',
-    fontWeight: '600',
-    marginBottom: 12,
-  },
-  // Topic/Tag text filters sit side by side (flexDirection: 'row'). Without it
-  // the two inputs stacked vertically on the default column axis and produced
-  // a ~90dp near-invisible band between the search bar and the filter chips.
   filterRow: {
     flexDirection: 'row',
     gap: 8,
-    marginBottom: 10,
+    marginBottom: 8,
   },
   // Compact, visibly-boxed inputs so the Topic/Tag row reads as part of the
   // filter block instead of borderless text floating on the gray canvas.
   filterTextInput: {
     flex: 1,
-    backgroundColor: '#FFF',
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 8,
+    borderColor: colors.border,
+    borderRadius: 10,
     paddingHorizontal: 10,
     paddingVertical: 8,
     fontSize: 14,
-    color: '#1F2937',
+    color: colors.text,
   },
   // Compact single-line filter group: fixed label + horizontally scrollable chips
   filterChipRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 10,
+    marginBottom: 8,
   },
   // Fixed label column so every filter row (Difficulty/Type/Subject) starts its
   // chip strip at the same x-origin. minWidth keeps labels from ever wrapping
@@ -2309,7 +2293,7 @@ const styles = StyleSheet.create({
   filterLabelInline: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#6B7280',
+    color: colors.textSecondary,
     minWidth: 68,
     marginRight: 8,
   },
@@ -2325,18 +2309,389 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 6,
     borderRadius: 16,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.border,
     marginRight: 8,
   },
   filterChipActive: {
-    backgroundColor: '#2563EB',
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   filterChipText: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   filterChipTextActive: {
     color: '#FFF',
+    fontWeight: '600',
+  },
+  questionItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  questionItemSelected: {
+    backgroundColor: colors.primaryTint,
+    borderColor: colors.primary,
+  },
+  questionInfo: {
+    flex: 1,
+  },
+  questionText: {
+    fontSize: 14,
+    color: colors.text,
+    lineHeight: 20,
+  },
+  questionMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 6,
+  },
+  questionSubjectBadge: {
+    backgroundColor: 'rgba(1, 180, 174, 0.1)',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  questionSubjectBadgeText: {
+    fontSize: 11,
+    color: colors.primaryDark,
+    fontWeight: '600',
+  },
+  questionTopic: {
+    fontSize: 12,
+    color: colors.textSecondary,
+  },
+  viewButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: colors.bg,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  // ---- Step 4: sections ----
+  sectionSummaryRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 12,
+  },
+  summaryTile: {
+    flex: 1,
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 12,
+  },
+  summaryTileLabel: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginBottom: 4,
+  },
+  summaryTileValue: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: colors.text,
+  },
+  summaryTileMatch: {
+    borderColor: 'rgba(16, 185, 129, 0.4)',
+  },
+  summaryTileMismatch: {
+    borderColor: 'rgba(239, 68, 68, 0.45)',
+  },
+  mismatchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: colors.dangerTint,
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 12,
+  },
+  mismatchText: {
+    flex: 1,
+    fontSize: 13,
+    color: colors.dangerDark,
+    fontWeight: '500',
+  },
+  countChipRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
+  countChip: {
+    minWidth: 44,
+    paddingVertical: 8,
+    borderRadius: 10,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  countChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  countChipText: {
+    fontSize: 14,
+    color: colors.textBody,
+  },
+  countChipTextActive: {
+    color: '#FFF',
+    fontWeight: '700',
+  },
+  sectionList: {
+    marginTop: 8,
+  },
+  sectionConfigCard: {
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  sectionCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  sectionNumberBadge: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: colors.primaryTint,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sectionNumberText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.primaryDark,
+  },
+  sectionNameInput: {
+    flex: 1,
+    backgroundColor: colors.surface,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: colors.text,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  sectionDurationInput: {
+    width: 76,
+    backgroundColor: colors.surface,
+    borderRadius: 10,
+    paddingHorizontal: 8,
+    paddingVertical: 10,
+    fontSize: 15,
+    color: colors.text,
+    borderWidth: 1,
+    borderColor: colors.border,
+    textAlign: 'center',
+  },
+  typeButtonRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+  },
+  typeButton: {
+    flex: 1,
+    paddingVertical: 9,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.borderStrong,
+    alignItems: 'center',
+    backgroundColor: colors.surfaceMuted,
+  },
+  typeButtonActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryTint,
+  },
+  typeButtonText: {
+    fontSize: 13,
+    color: colors.textBody,
+  },
+  typeButtonTextActive: {
+    color: colors.primaryDark,
+    fontWeight: '600',
+  },
+  manualQuestionsBlock: {
+    marginTop: 12,
+  },
+  manualQuestionsLabel: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    marginBottom: 8,
+  },
+  qTinyChipScrollContent: {
+    paddingRight: 8,
+    paddingBottom: 4,
+  },
+  qTinyChip: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    backgroundColor: colors.bg,
+    marginRight: 6,
+    borderWidth: 1,
+    borderColor: colors.border,
+    maxWidth: 150,
+  },
+  qTinyChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  qTinyChipText: {
+    fontSize: 11,
+    color: colors.textSecondary,
+  },
+  qTinyChipTextActive: {
+    color: '#FFF',
+  },
+  dropdown: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderRadius: 10,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  dropdownText: {
+    fontSize: 16,
+    color: colors.text,
+  },
+  dropdownPlaceholder: {
+    fontSize: 16,
+    color: colors.textMuted,
+  },
+  dropdownList: {
+    backgroundColor: colors.surface,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginTop: 4,
+    maxHeight: 260,
+    overflow: 'hidden',
+  },
+  dropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.bg,
+    gap: 12,
+  },
+  dropdownItemSelected: {
+    backgroundColor: colors.primaryTint,
+  },
+  dropdownItemText: {
+    fontSize: 16,
+    color: colors.text,
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: colors.borderStrong,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  checkboxSelected: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  // ---- Step 5: assignment ----
+  assignmentTabs: {
+    flexDirection: 'row',
+    backgroundColor: colors.bg,
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 16,
+    width: '100%',
+  },
+  assignmentTab: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 8,
+  },
+  assignmentTabActive: {
+    backgroundColor: colors.primary,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  assignmentTabText: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  assignmentTabTextActive: {
+    color: '#FFFFFF',
+  },
+  groupChipScroll: {
+    marginBottom: 8,
+  },
+  groupChipScrollContent: {
+    paddingRight: 12,
+    gap: 8,
+  },
+  groupFilterEmpty: {
+    fontSize: 13,
+    color: colors.textMuted,
+    paddingVertical: 10,
+  },
+  groupChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 16,
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  groupChipActive: {
+    backgroundColor: colors.primaryTint,
+    borderColor: colors.primary,
+  },
+  groupChipText: {
+    fontSize: 12,
+    color: colors.textBody,
+    fontWeight: '500',
+  },
+  groupChipTextActive: {
+    color: colors.primaryDark,
+    fontWeight: '600',
+  },
+  clearGroupFilterText: {
+    fontSize: 13,
+    color: colors.primary,
+    fontWeight: '600',
+    marginBottom: 12,
   },
   studentList: {
     flex: 1,
@@ -2345,153 +2700,157 @@ const styles = StyleSheet.create({
   studentItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFF',
-    borderRadius: 8,
+    backgroundColor: colors.surface,
+    borderRadius: 12,
     padding: 12,
     marginBottom: 8,
     gap: 12,
+    borderWidth: 1,
+    borderColor: 'transparent',
   },
   studentItemSelected: {
-    backgroundColor: '#EBF5FF',
-    borderWidth: 1,
-    borderColor: '#2563EB',
-  },
-  checkbox: {
-    width: 24,
-    height: 24,
-    borderRadius: 4,
-    borderWidth: 2,
-    borderColor: '#D1D5DB',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  checkboxSelected: {
-    backgroundColor: '#2563EB',
-    borderColor: '#2563EB',
+    backgroundColor: colors.primaryTint,
+    borderColor: colors.primary,
   },
   studentInfo: {
     flex: 1,
   },
   studentName: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
-    color: '#1F2937',
+    color: colors.text,
   },
   studentEmail: {
     fontSize: 13,
-    color: '#6B7280',
+    color: colors.textSecondary,
+    marginTop: 2,
   },
-  emptyText: {
-    fontSize: 14,
-    color: '#6B7280',
+  // ---- Toggles ----
+  toggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: colors.surface,
+    padding: 14,
+    borderRadius: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  toggleLabelContainer: {
+    flex: 1,
+    marginRight: 12,
+  },
+  toggleLabel: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.text,
+    marginBottom: 4,
+  },
+  toggleHelperText: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    lineHeight: 18,
+  },
+  // ---- Empty / error states ----
+  emptyState: {
+    alignItems: 'center',
+    paddingVertical: 28,
+    paddingHorizontal: 16,
+    gap: 6,
+  },
+  emptyStateTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: colors.textBody,
+  },
+  emptyStateText: {
+    fontSize: 13,
+    color: colors.textSecondary,
     textAlign: 'center',
-    padding: 20,
+  },
+  sectionsEmptyState: {
+    alignItems: 'center',
+    paddingVertical: 28,
+    paddingHorizontal: 24,
+    gap: 8,
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderStyle: 'dashed',
+    marginTop: 8,
   },
   errorText: {
     fontSize: 16,
-    color: '#EF4444',
+    color: colors.danger,
     textAlign: 'center',
     marginTop: 50,
   },
+  // ---- Bottom navigation ----
   bottomNav: {
     flexDirection: 'row',
     padding: 12,
-    backgroundColor: '#FFF',
+    backgroundColor: colors.surface,
     borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
+    borderTopColor: colors.border,
     gap: 12,
   },
   backButton: {
     flex: 1,
-    padding: 16,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#2563EB',
+    paddingVertical: 14,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: colors.primary,
     alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surface,
   },
   backButtonText: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
-    color: '#2563EB',
+    color: colors.primary,
   },
   nextButton: {
     flex: 2,
-    padding: 16,
-    borderRadius: 8,
-    backgroundColor: '#2563EB',
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: colors.primary,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   nextButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '700',
     color: '#FFF',
   },
   createButton: {
     flex: 2,
-    padding: 16,
-    borderRadius: 8,
-    backgroundColor: '#10B981',
+    paddingVertical: 14,
+    borderRadius: 12,
+    backgroundColor: colors.primary,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   createButtonText: {
-    fontSize: 16,
-    fontWeight: '600',
+    fontSize: 15,
+    fontWeight: '700',
     color: '#FFF',
   },
   buttonDisabled: {
-    opacity: 0.5,
+    opacity: 0.45,
   },
-  questionItem: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    backgroundColor: '#FFF',
-    borderRadius: 8,
-    padding: 12,
-    marginBottom: 8,
-    gap: 12,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  questionItemSelected: {
-    backgroundColor: '#EBF5FF',
-    borderColor: '#2563EB',
-  },
-  questionInfo: {
-    flex: 1,
-  },
-  questionText: {
-    fontSize: 14,
-    color: '#1F2937',
-    lineHeight: 20,
-  },
-  questionMeta: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginTop: 6,
-  },
-  questionSubject: {
-    fontSize: 12,
-    color: '#2563EB',
-    fontWeight: '500',
-  },
-  questionTopic: {
-    fontSize: 12,
-    color: '#6B7280',
-  },
-  viewButton: {
-    padding: 8,
-  },
-  // Question Detail Modal Styles
+  // ---- Question Detail Modal ----
   modalContainer: {
     flex: 1,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
   },
   modalHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: 16,
-    backgroundColor: '#2563EB',
+    backgroundColor: colors.primary,
   },
   modalTitle: {
     fontSize: 18,
@@ -2503,7 +2862,7 @@ const styles = StyleSheet.create({
     padding: 16,
   },
   questionSection: {
-    backgroundColor: '#FFF',
+    backgroundColor: colors.surface,
     padding: 16,
     borderRadius: 12,
     marginBottom: 16,
@@ -2511,13 +2870,13 @@ const styles = StyleSheet.create({
   sectionLabel: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#6B7280',
+    color: colors.textSecondary,
     marginBottom: 8,
     textTransform: 'uppercase',
   },
   fullQuestionText: {
     fontSize: 16,
-    color: '#1F2937',
+    color: colors.text,
     lineHeight: 24,
   },
   questionImage: {
@@ -2527,7 +2886,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   optionsSection: {
-    backgroundColor: '#FFF',
+    backgroundColor: colors.surface,
     padding: 16,
     borderRadius: 12,
     marginBottom: 16,
@@ -2537,30 +2896,30 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
     padding: 12,
     borderRadius: 8,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
     marginBottom: 8,
     gap: 12,
   },
   correctOption: {
-    backgroundColor: '#D1FAE5',
+    backgroundColor: colors.successTint,
     borderWidth: 1,
-    borderColor: '#10B981',
+    borderColor: colors.success,
   },
   optionLabel: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#374151',
+    color: colors.textBody,
     width: 24,
   },
   correctOptionText: {
-    color: '#059669',
+    color: colors.successDark,
   },
   optionContent: {
     flex: 1,
   },
   optionText: {
     fontSize: 14,
-    color: '#374151',
+    color: colors.textBody,
     lineHeight: 20,
   },
   optionImage: {
@@ -2570,7 +2929,7 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   explanationSection: {
-    backgroundColor: '#FEF3C7',
+    backgroundColor: colors.warningTint,
     padding: 16,
     borderRadius: 12,
     marginBottom: 16,
@@ -2587,67 +2946,20 @@ const styles = StyleSheet.create({
     borderRadius: 8,
   },
   metaSection: {
-    backgroundColor: '#FFF',
+    backgroundColor: colors.surface,
     padding: 16,
     borderRadius: 12,
     marginBottom: 16,
   },
   metaText: {
     fontSize: 13,
-    color: '#6B7280',
+    color: colors.textSecondary,
     marginBottom: 4,
-  },
-  // Toggle Styles for shareSolution
-  toggleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: '#F9FAFB',
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  toggleLabelContainer: {
-    flex: 1,
-    marginRight: 12,
-  },
-  toggleLabel: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1F2937',
-    marginBottom: 4,
-  },
-  toggleHelperText: {
-    fontSize: 13,
-    color: '#6B7280',
-    lineHeight: 18,
-  },
-  sectionContainer: {
-    marginBottom: 20,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    overflow: 'hidden',
-  },
-  sectionHeader: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#374151',
-    backgroundColor: '#F3F4F6',
-    paddingVertical: 10,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
   },
   freeUserAssignmentBanner: {
-    backgroundColor: '#F0FDFA',
+    backgroundColor: colors.primaryTint,
     borderWidth: 1,
-    borderColor: '#CCFBF1',
+    borderColor: colors.primaryTintBorder,
     borderRadius: 16,
     padding: 20,
     alignItems: 'center',
@@ -2657,13 +2969,13 @@ const styles = StyleSheet.create({
   freeUserAssignmentTitle: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#0D9488',
+    color: colors.primaryDark,
     marginBottom: 6,
     textAlign: 'center',
   },
   freeUserAssignmentText: {
     fontSize: 14,
-    color: '#0F766E',
+    color: colors.primaryText,
     textAlign: 'center',
     lineHeight: 20,
   },
