@@ -10,11 +10,14 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { Check, Clock, Download, FileSpreadsheet, FileText, Globe, Radio, RefreshCw, Trophy, Users } from 'lucide-react-native';
+import { Clock, Download, Radio, RefreshCw, Trophy } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { downloadApiReport, getReportDownloadErrorMessage } from '@/services/downloads';
 import { useNotifications } from '@/context/NotificationContext';
-import { KeyboardAvoidingDialog } from '@/components/KeyboardAvoidingDialog';
+import ExportLeaderboardDialog, {
+  type ExportAudience,
+  type ExportFormat,
+} from './ExportLeaderboardDialog';
 import { formatPercent, LeaderboardEntry, LeaderboardResponse } from '@/types/analytics';
 
 // Bursts of submissions collapse into one refetch: events arriving inside
@@ -30,9 +33,6 @@ const UPDATED_LABEL_TICK_MS = 30000;
 const MEDAL_COLORS = ['#F59E0B', '#94A3B8', '#CD7F32'] as const;
 
 type FetchStatus = 'loading' | 'ready' | 'error';
-
-type ExportFormat = 'excel' | 'csv';
-type ExportAudience = 'internal' | 'external';
 
 function formatMarks(value: number): string {
   const num = Number(value);
@@ -218,39 +218,6 @@ interface LiveLeaderboardProps {
   guestParticipantCount?: number;
 }
 
-interface OptionRowProps {
-  icon: React.ReactNode;
-  label: string;
-  description?: string;
-  selected: boolean;
-  onPress: () => void;
-}
-
-/**
- * Radio-style option card for the export dialog's audience/format sections.
- * Selected state mirrors the app's teal selection convention (teal border +
- * pale teal fill + check).
- */
-function OptionRow({ icon, label, description, selected, onPress }: OptionRowProps) {
-  return (
-    <TouchableOpacity
-      style={[styles.optionRow, selected && styles.optionRowSelected]}
-      onPress={onPress}
-      activeOpacity={0.7}
-      accessibilityRole="radio"
-      accessibilityState={{ checked: selected }}
-      accessibilityLabel={label}
-    >
-      {icon}
-      <View style={styles.optionText}>
-        <Text style={styles.optionLabel}>{label}</Text>
-        {description ? <Text style={styles.optionDescription}>{description}</Text> : null}
-      </View>
-      {selected ? <Check color="#01b4ae" size={18} /> : null}
-    </TouchableOpacity>
-  );
-}
-
 /**
  * Real-time leaderboard for the selected test in Test Analytics.
  *
@@ -279,10 +246,12 @@ export default function LiveLeaderboard({
   const [highlights, setHighlights] = useState<Set<string>>(new Set());
   const [updateId, setUpdateId] = useState(0);
   // Export dialog — picks the audience (internal registered students /
-  // external public-quiz guests, admin-only) and the file format. Rendered
-  // with the in-tree KeyboardAvoidingDialog overlay so it behaves the same on
-  // iOS, Android and react-native-web (Alert.alert is a no-op on web, and RN
-  // Modal gets no keyboard resize on Android edge-to-edge).
+  // external public-quiz guests, admin-only) and the file format. Rendered as
+  // a screen-level RN Modal (see ExportLeaderboardDialog): the chooser has no
+  // inputs, so the Android Modal keyboard pitfalls don't apply, and a
+  // host-level Modal is the only way to scrim + center over the whole
+  // viewport from inside this card (an in-tree overlay anchors to this
+  // component's bounds within the analytics ScrollView).
   const [dialogVisible, setDialogVisible] = useState(false);
   const [exportAudience, setExportAudience] = useState<ExportAudience>('internal');
   const [exportFormat, setExportFormat] = useState<ExportFormat>('excel');
@@ -612,79 +581,24 @@ export default function LiveLeaderboard({
         )}
       </View>
 
-      {/* Export chooser — audience + format. In-tree overlay (not RN Modal)
-          so it behaves identically on iOS, Android edge-to-edge and web. */}
-      <KeyboardAvoidingDialog
+      {/* Export chooser — audience + format. Rendered as a host-level RN
+          Modal so the scrim and centering cover the whole viewport instead of
+          this card's bounds inside the analytics ScrollView. */}
+      <ExportLeaderboardDialog
         visible={dialogVisible}
-        onClose={() => {
+        isAdmin={isAdmin}
+        audience={exportAudience}
+        format={exportFormat}
+        exporting={!!exporting}
+        internalCount={rows.length}
+        externalCount={guestParticipantCount ?? 0}
+        onAudienceChange={setExportAudience}
+        onFormatChange={setExportFormat}
+        onCancel={() => {
           if (!exporting) setDialogVisible(false);
         }}
-        cardStyle={styles.dialogCard}
-      >
-        <Text style={styles.dialogTitle}>Export Leaderboard</Text>
-
-        <Text style={styles.dialogSectionLabel}>Audience</Text>
-        <OptionRow
-          icon={<Users color={exportAudience === 'internal' ? '#0F766E' : '#374151'} size={16} />}
-          label="Internal Students"
-          description="Registered app users in the leaderboard"
-          selected={exportAudience === 'internal'}
-          onPress={() => setExportAudience('internal')}
-        />
-        {isAdmin && (
-          <OptionRow
-            icon={<Globe color={exportAudience === 'external' ? '#0F766E' : '#374151'} size={16} />}
-            label="External Students"
-            description="Public-quiz guests (unregistered, verified leads)"
-            selected={exportAudience === 'external'}
-            onPress={() => setExportAudience('external')}
-          />
-        )}
-
-        <Text style={styles.dialogSectionLabel}>Format</Text>
-        <OptionRow
-          icon={<FileSpreadsheet color={exportFormat === 'excel' ? '#0F766E' : '#374151'} size={16} />}
-          label="Excel (.xlsx)"
-          selected={exportFormat === 'excel'}
-          onPress={() => setExportFormat('excel')}
-        />
-        <OptionRow
-          icon={<FileText color={exportFormat === 'csv' ? '#0F766E' : '#374151'} size={16} />}
-          label="CSV (.csv)"
-          selected={exportFormat === 'csv'}
-          onPress={() => setExportFormat('csv')}
-        />
-
-        <View style={styles.dialogActions}>
-          <TouchableOpacity
-            style={styles.dialogCancel}
-            onPress={() => setDialogVisible(false)}
-            activeOpacity={0.7}
-            disabled={!!exporting}
-            accessibilityRole="button"
-            accessibilityLabel="Cancel export"
-          >
-            <Text style={styles.dialogCancelText}>Cancel</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={styles.dialogExportButton}
-            onPress={handleExport}
-            activeOpacity={0.7}
-            disabled={!!exporting}
-            accessibilityRole="button"
-            accessibilityLabel="Export leaderboard"
-          >
-            {exporting ? (
-              <ActivityIndicator color="#FFFFFF" size="small" />
-            ) : (
-              <Download color="#FFFFFF" size={16} />
-            )}
-            <Text style={styles.dialogExportButtonText}>
-              {exporting ? 'Exporting…' : 'Export'}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      </KeyboardAvoidingDialog>
+        onExport={handleExport}
+      />
     </View>
   );
 }
@@ -751,91 +665,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#F3F4F6',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  // ---- Export dialog ----
-  dialogCard: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
-    padding: 20,
-    width: 360,
-    maxWidth: '100%',
-  },
-  dialogTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#1F2937',
-    marginBottom: 12,
-  },
-  dialogSectionLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: '#6B7280',
-    marginBottom: 8,
-    marginTop: 6,
-  },
-  optionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-    marginBottom: 8,
-    backgroundColor: '#FFFFFF',
-  },
-  optionRowSelected: {
-    borderColor: '#01b4ae',
-    backgroundColor: '#E0FBF9',
-  },
-  optionText: {
-    flex: 1,
-    minWidth: 0,
-  },
-  optionLabel: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#1F2937',
-  },
-  optionDescription: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginTop: 1,
-  },
-  dialogActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    gap: 10,
-    marginTop: 10,
-  },
-  dialogCancel: {
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  dialogCancelText: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#374151',
-  },
-  dialogExportButton: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-    borderRadius: 8,
-    backgroundColor: '#01b4ae',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-  },
-  dialogExportButtonText: {
-    color: '#FFFFFF',
-    fontSize: 14,
-    fontWeight: '600',
   },
   livePill: {
     flexDirection: 'row',

@@ -49,3 +49,6 @@ backend/scripts/student_credentials_*.csv
 
 # local dev server logs
 backend/.dev-server*.log
+
+# playwright MCP session artifacts (console logs, page snapshots)
+.playwright-mcp/
