@@ -35,6 +35,21 @@ interface QuizAttempt {
   duration: number;
   answers: QuizAnswer[];
   status: 'in_progress' | 'completed' | 'auto_submitted';
+  /**
+   * Server-authoritative flat-attempt deadline (startTime + quiz duration,
+   * computed at /start). Display-only on the client: the server enforces it
+   * lazily on every attempt touch, capped live by the quiz's expiryDate (the
+   * effective deadline is min of the two, computed on the taking screen where
+   * the quiz object is loaded). Absent for section-locked attempts (their
+   * authority is sectionStates[].endsAt) and for pre-feature attempts.
+   */
+  durationDeadline?: string;
+  /**
+   * Server clock at the moment the server produced this attempt payload.
+   * Combined with the device clock it yields a skew-free countdown:
+   * serverNowEstimate = Date.now() + (serverNow - deviceNowAtFetch).
+   */
+  serverNow?: string;
   sectionLockEnabled?: boolean;
   sectionDefinitions?: SectionDefinition[];
   sectionStates?: SectionState[];
@@ -177,6 +192,8 @@ export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children
         duration: response.data.duration,
         answers: response.data.answers || [],
         status: 'in_progress',
+        ...(response.data.durationDeadline ? { durationDeadline: response.data.durationDeadline } : {}),
+        ...(response.data.serverNow ? { serverNow: response.data.serverNow } : {}),
         sectionLockEnabled: response.data.sectionLockEnabled === true,
         sectionDefinitions: response.data.sectionDefinitions,
         sectionStates: response.data.sectionStates,
@@ -264,13 +281,16 @@ export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch (error: any) {
       if (isFinalWriteRejection(error)) {
         // The section was locked server-side (timer expired on another
-        // device / while away). Drop the write — it is final.
+        // device / while away), or the whole attempt was finalized by the
+        // server-side deadline (duration or quiz window). Drop the write —
+        // it is final — and re-throw so the taking screen can adopt the
+        // server's terminal state instead of showing an endless retry.
         setSaveQueue(prevQueue => {
           const newQueue = new Map(prevQueue);
           newQueue.delete(questionIndex);
           return newQueue;
         });
-        return;
+        throw error;
       }
       console.warn('Immediate save failed, will retry in background:', error);
       // Keep in queue - will be picked up by processSaveQueue
@@ -368,6 +388,8 @@ export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children
         duration: data.duration ?? 0, // taking screen uses quiz.duration when unset
         answers: data.answers || [],
         status: data.status || 'in_progress',
+        ...(data.durationDeadline ? { durationDeadline: data.durationDeadline } : {}),
+        ...(data.serverNow ? { serverNow: data.serverNow } : {}),
         sectionLockEnabled: data.sectionLockEnabled === true,
         sectionDefinitions: data.sectionDefinitions,
         sectionStates: data.sectionStates,

@@ -6,8 +6,11 @@ const {
   computeFlatDurationDeadline,
   hasDurationDeadline,
   getDurationDeadline,
+  getEffectiveDeadline,
   getSubmissionWindowEnd,
   isPastSubmissionWindow,
+  isPastQuizWindow,
+  buildAutoSubmitReason,
   resolveSubmissionStatus,
 } = require('../../../utils/proctoring/durationEnforcement');
 
@@ -140,5 +143,101 @@ describe('server clock is the only clock (client timing manipulation resistance)
     // decision inputs are (stored deadline, server now) only.
     const result = resolveSubmissionStatus(attempt, { isAutoSubmit: false, now: new Date() });
     expect(result.status).toBe('completed');
+  });
+});
+
+describe('effective deadline — min(durationDeadline, participation window)', () => {
+  const durationDeadline = new Date('2026-10-10T11:30:00Z'); // attempt: 30 min from 11:00
+
+  it('getEffectiveDeadline picks the earlier of the two caps', () => {
+    const earlierWindow = { expiryDate: new Date('2026-10-10T11:15:00Z') };
+    const laterWindow = { expiryDate: new Date('2026-10-10T20:00:00Z') };
+    const attempt = { status: 'in_progress', durationDeadline };
+
+    expect(getEffectiveDeadline(attempt, earlierWindow).getTime())
+      .toBe(new Date('2026-10-10T11:15:00Z').getTime());
+    expect(getEffectiveDeadline(attempt, laterWindow).getTime())
+      .toBe(durationDeadline.getTime());
+  });
+
+  it('getEffectiveDeadline uses publicExpiryDate only in publicMode (guests)', () => {
+    const quiz = { expiryDate: new Date('2026-10-10T09:00:00Z'), publicExpiryDate: new Date('2026-10-10T19:00:00Z') };
+    const attempt = { status: 'in_progress', durationDeadline };
+
+    // Registered: the student window (09:00, already past) is irrelevant as
+    // the min() still yields the earlier — here the 09:00 window.
+    expect(getEffectiveDeadline(attempt, quiz).getTime())
+      .toBe(new Date('2026-10-10T09:00:00Z').getTime());
+    // Guest: ONLY the link expiry participates.
+    expect(getEffectiveDeadline(attempt, quiz, { publicMode: true }).getTime())
+      .toBe(durationDeadline.getTime());
+  });
+
+  it('getEffectiveDeadline tolerates missing caps (legacy attempts, window-less quizzes)', () => {
+    const windowEnd = new Date(Date.now() + MINUTE);
+    // Legacy attempt (no stored deadline) on a windowed quiz: the window is
+    // still a cap — the window alone governs.
+    expect(getEffectiveDeadline({ status: 'in_progress' }, { expiryDate: windowEnd }).getTime())
+      .toBe(windowEnd.getTime());
+    expect(getEffectiveDeadline({ status: 'in_progress', durationDeadline }, {}).getTime()).toBe(durationDeadline.getTime());
+    expect(getEffectiveDeadline({ status: 'in_progress', durationDeadline }, null).getTime()).toBe(durationDeadline.getTime());
+    expect(getEffectiveDeadline({ status: 'in_progress' }, { expiryDate: 'garbage' })).toBeNull();
+    expect(getEffectiveDeadline({ status: 'in_progress' }, {})).toBeNull();
+  });
+
+  it('isPastSubmissionWindow honours the min() when a quiz is supplied', () => {
+    const attempt = { status: 'in_progress', durationDeadline: new Date(Date.now() + 30 * MINUTE) };
+    const closedWindow = { expiryDate: new Date(Date.now() - 10 * MINUTE) };
+    const openWindow = { expiryDate: new Date(Date.now() + 30 * MINUTE) };
+
+    // Individual deadline far away, window closed → past the EFFECTIVE deadline.
+    expect(isPastSubmissionWindow(attempt, new Date(), closedWindow)).toBe(true);
+    // Same attempt, window open → not past anything.
+    expect(isPastSubmissionWindow(attempt, new Date(), openWindow)).toBe(false);
+  });
+
+  it('isPastQuizWindow applies the grace to the window end itself', () => {
+    const justClosed = { expiryDate: new Date(Date.now() - 5 * 1000) };
+    const closedPastGrace = { expiryDate: new Date(Date.now() - DURATION_GRACE_MS - 1000) };
+
+    expect(isPastQuizWindow(justClosed)).toBe(false);   // in-transit tolerance
+    expect(isPastQuizWindow(closedPastGrace)).toBe(true);
+    expect(isPastQuizWindow({})).toBe(false);           // window-less quiz: no cap
+    expect(isPastQuizWindow({ publicExpiryDate: closedPastGrace.expiryDate }, new Date(), { publicMode: true })).toBe(true);
+  });
+
+  it('buildAutoSubmitReason attributes the cap that actually fired', () => {
+    const now = new Date();
+    const windowFirst = buildAutoSubmitReason(
+      { durationDeadline: new Date('2026-10-10T11:30:00Z') },
+      { expiryDate: new Date('2026-10-10T11:00:00Z') },
+      now
+    );
+    expect(windowFirst.kind).toBe('quiz_window');
+    expect(windowFirst.deadline.getTime()).toBe(new Date('2026-10-10T11:00:00Z').getTime());
+    expect(windowFirst.detectedAt.getTime()).toBe(now.getTime());
+
+    const durationFirst = buildAutoSubmitReason(
+      { durationDeadline: new Date('2026-10-10T10:45:00Z') },
+      { expiryDate: new Date('2026-10-10T11:00:00Z') },
+      now
+    );
+    expect(durationFirst.kind).toBe('duration');
+
+    // Identical deadlines report exactly ONE reason (duration, deterministically).
+    const same = new Date('2026-10-10T11:00:00Z');
+    expect(buildAutoSubmitReason({ durationDeadline: same }, { expiryDate: same }, now).kind).toBe('duration');
+  });
+
+  it('resolveSubmissionStatus decides auto_submitted from whichever cap fired', () => {
+    const attempt = { status: 'in_progress', durationDeadline: new Date(Date.now() + 30 * MINUTE) };
+    const closedWindow = { expiryDate: new Date(Date.now() - 10 * MINUTE) };
+
+    const decided = resolveSubmissionStatus(attempt, { isAutoSubmit: false, quiz: closedWindow });
+    expect(decided.status).toBe('auto_submitted');
+    expect(decided.autoSubmitReason.kind).toBe('quiz_window');
+
+    // Without the quiz the same attempt is happily in-window (back-compat).
+    expect(resolveSubmissionStatus(attempt, { isAutoSubmit: false }).status).toBe('completed');
   });
 });

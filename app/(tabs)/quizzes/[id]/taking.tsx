@@ -157,6 +157,45 @@ function QuizTakingContent() {
   const isLastSection =
     sectionLockOn && activeSectionIndex === (currentAttempt?.sectionDefinitions?.length ?? 0) - 1;
 
+  // ===== Server-authoritative countdown inputs =====
+  // clockOffsetMs corrects the device clock against the server's own "now"
+  // (captured when the attempt payload arrived). Combined with a server
+  // deadline below, a drifted/tampered device clock can no longer extend or
+  // shrink the visible remaining time. The server stays the enforcer — this
+  // is display-only.
+  const clockOffsetMs = useMemo(() => {
+    const serverNow = currentAttempt?.serverNow;
+    if (!serverNow) return 0;
+    const serverMs = new Date(serverNow).getTime();
+    if (!Number.isFinite(serverMs)) return 0;
+    return serverMs - Date.now();
+  }, [currentAttempt?.serverNow]);
+
+  // Effective participation deadline for a FLAT attempt =
+  // min(server-computed attempt deadline, quiz end) — the same formula the
+  // backend enforces on every write. Null for section-locked/pre-deadline
+  // attempts (the section timer or the legacy fallback is used instead).
+  const effectiveDeadlineMs = useMemo(() => {
+    const candidates: number[] = [];
+    const attemptDeadline = currentAttempt?.durationDeadline
+      ? new Date(currentAttempt.durationDeadline).getTime()
+      : NaN;
+    if (Number.isFinite(attemptDeadline)) candidates.push(attemptDeadline);
+    const quizEnd = quiz?.expiryDate ? new Date(quiz.expiryDate).getTime() : NaN;
+    if (Number.isFinite(quizEnd)) candidates.push(quizEnd);
+    return candidates.length > 0 ? Math.min(...candidates) : null;
+  }, [currentAttempt?.durationDeadline, quiz?.expiryDate]);
+
+  // Section countdown: the server-stored section end, capped by the quiz's
+  // own end (a section can never outlive the quiz window server-side).
+  const sectionDeadlineMs = useMemo(() => {
+    if (!activeSectionState?.endsAt) return null;
+    const endsAt = new Date(activeSectionState.endsAt).getTime();
+    if (!Number.isFinite(endsAt)) return null;
+    const quizEnd = quiz?.expiryDate ? new Date(quiz.expiryDate).getTime() : NaN;
+    return Number.isFinite(quizEnd) ? Math.min(endsAt, quizEnd) : endsAt;
+  }, [activeSectionState?.endsAt, quiz?.expiryDate]);
+
   // Animations
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(50)).current;
@@ -485,6 +524,44 @@ function QuizTakingContent() {
     );
   }, [recordExitAttempted, router]);
 
+  // The server rejected a write because the attempt was finalized server-side
+  // (duration deadline or quiz window closed while this screen was open /
+  // offline). Adopt the server's terminal state: re-sync, then land the
+  // student on their result — never leave a dead retry loop on screen.
+  const serverFinalizedHandledRef = useRef(false);
+  const handleServerFinalized = useCallback(async () => {
+    if (serverFinalizedHandledRef.current) return;
+    serverFinalizedHandledRef.current = true;
+    const attemptId = currentAttempt?.attemptId;
+    try {
+      if (attemptId) {
+        const data = await loadAttempt(attemptId);
+        if (data?.status && data.status !== 'in_progress') {
+          Alert.alert(
+            'Time Over',
+            "This quiz's time has ended. Your saved answers have been submitted.",
+            [{ text: 'View Results', onPress: () => router.replace(`/quizzes/${id}/result/${attemptId}`) }]
+          );
+          return;
+        }
+      }
+    } catch (syncError) {
+      console.warn('Post-expiry re-sync failed:', syncError);
+    }
+    Alert.alert(
+      'Time Over',
+      "This quiz's time has ended. Your saved answers are being submitted.",
+      [{ text: 'OK' }]
+    );
+  }, [currentAttempt?.attemptId, loadAttempt, router, id]);
+
+  // True when a save/submit error means the attempt is FINAL server-side
+  // (the whole attempt expired, or the section locked) — not a retryable failure.
+  const isFinalRejection = useCallback((error: any) =>
+    error?.response?.status === 403 &&
+    (error?.response?.data?.errorCode === 'TIME_EXPIRED' ||
+      error?.response?.data?.errorCode === 'SECTION_LOCKED'), []);
+
   const handleResponseChange = useCallback(async (response: StudentResponse) => {
     // Button press animation
     Animated.sequence([
@@ -511,12 +588,17 @@ function QuizTakingContent() {
       await saveAnswer(currentQuestionIndex, response, markedForReview, timeSpent, questionId);
       AccessibilityInfo.announceForAccessibility('Response saved');
     } catch (error) {
+      if (isFinalRejection(error)) {
+        setSaving(false);
+        handleServerFinalized();
+        return;
+      }
       setSaveError(true);
       console.error('Save error:', error);
     } finally {
       setSaving(false);
     }
-  }, [currentQuestionIndex, markedForReview, questionStartTime, saveAnswer, quiz]);
+  }, [currentQuestionIndex, markedForReview, questionStartTime, saveAnswer, quiz, isFinalRejection, handleServerFinalized]);
 
   const handleMarkForReview = useCallback(async () => {
     const newMarkedState = !markedForReview;
@@ -531,9 +613,13 @@ function QuizTakingContent() {
         newMarkedState ? 'Question marked for review' : 'Question unmarked'
       );
     } catch (error) {
+      if (isFinalRejection(error)) {
+        handleServerFinalized();
+        return;
+      }
       console.error('Mark error:', error);
     }
-  }, [markedForReview, currentQuestionIndex, selectedAnswer, questionStartTime, saveAnswer, quiz]);
+  }, [markedForReview, currentQuestionIndex, selectedAnswer, questionStartTime, saveAnswer, quiz, isFinalRejection, handleServerFinalized]);
 
   const handleNextQuestion = useCallback(async () => {
     const activeIndex = activeQuestionIndexes.indexOf(currentQuestionIndex);
@@ -544,13 +630,17 @@ function QuizTakingContent() {
       try {
         await saveAnswer(currentQuestionIndex, selectedAnswer, markedForReview, timeSpent, questionId);
       } catch (err) {
+        if (isFinalRejection(err)) {
+          handleServerFinalized();
+          return;
+        }
         console.error('Save failed on skip:', err);
       }
 
       setCurrentQuestionIndex(activeQuestionIndexes[activeIndex + 1]);
       scrollViewRef.current?.scrollTo({ y: 0, animated: false });
     }
-  }, [quiz, currentQuestionIndex, activeQuestionIndexes, questionStartTime, selectedAnswer, markedForReview, saveAnswer]);
+  }, [quiz, currentQuestionIndex, activeQuestionIndexes, questionStartTime, selectedAnswer, markedForReview, saveAnswer, isFinalRejection, handleServerFinalized]);
 
   const handlePreviousQuestion = useCallback(async () => {
     const activeIndex = activeQuestionIndexes.indexOf(currentQuestionIndex);
@@ -561,13 +651,17 @@ function QuizTakingContent() {
       try {
         await saveAnswer(currentQuestionIndex, selectedAnswer, markedForReview, timeSpent, questionId);
       } catch (err) {
+        if (isFinalRejection(err)) {
+          handleServerFinalized();
+          return;
+        }
         console.error('Save failed on skip back:', err);
       }
 
       setCurrentQuestionIndex(activeQuestionIndexes[activeIndex - 1]);
       scrollViewRef.current?.scrollTo({ y: 0, animated: false });
     }
-  }, [currentQuestionIndex, activeQuestionIndexes, questionStartTime, selectedAnswer, markedForReview, saveAnswer, quiz]);
+  }, [currentQuestionIndex, activeQuestionIndexes, questionStartTime, selectedAnswer, markedForReview, saveAnswer, quiz, isFinalRejection, handleServerFinalized]);
 
   // Helper: find which section a given global question index belongs to
   const getSectionForIndex = useCallback((index: number): string => {
@@ -910,12 +1004,16 @@ function QuizTakingContent() {
             <QuizTimer
               duration={activeSectionDef.duration}
               startTime={new Date(activeSectionState.startedAt)}
+              deadline={sectionDeadlineMs ?? undefined}
+              clockOffsetMs={clockOffsetMs}
               onTimeUp={handleSectionTimeUp}
             />
           ) : currentAttempt && (
             <QuizTimer
               duration={getActualDuration()}
               startTime={currentAttempt.startTime}
+              deadline={effectiveDeadlineMs ?? undefined}
+              clockOffsetMs={clockOffsetMs}
               onTimeUp={handleTimeUp}
             />
           )}

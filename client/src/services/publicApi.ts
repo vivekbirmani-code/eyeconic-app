@@ -125,6 +125,8 @@ export interface PublicQuizSummary {
   instructions: string[];
   totalMarks: number;
   questionCount: number;
+  // The link's own expiry — the participation cutoff for guest attempts.
+  publicExpiryDate?: string;
   lockSectionsAfterSubmission: boolean;
   sections: { name: string; duration: number; questionCount: number }[];
 }
@@ -183,6 +185,10 @@ export interface StartAttemptResponse {
     sectionLockEnabled?: boolean;
     sectionDefinitions?: SectionDefinition[];
     sectionStates?: SectionState[];
+    // Server-authoritative flat-attempt deadline (startTime + duration,
+    // computed at /start). Display-only: the server enforces the effective
+    // deadline min(this, quiz.publicExpiryDate) on every write.
+    durationDeadline?: string;
     serverNow?: string;
   };
   quiz: {
@@ -191,6 +197,7 @@ export interface StartAttemptResponse {
     duration: number;
     questions: PublicQuestion[];
     totalMarks: number;
+    publicExpiryDate?: string;
   };
 }
 

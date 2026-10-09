@@ -82,7 +82,8 @@ const {
 } = require('../utils/sectionLocking');
 const {
   computeFlatDurationDeadline,
-  isPastSubmissionWindow,
+  isPastQuizWindow,
+  buildAutoSubmitReason,
   resolveSubmissionStatus,
   syncExpiredDuration,
 } = require('../utils/proctoring/durationEnforcement');
@@ -369,13 +370,15 @@ async function finalizeQuizAttempt(attempt, { isAutoSubmit = false, req = null, 
 
   marksObtained = roundTo2(marksObtained);
 
-  // Server-authoritative status (plan §7.5, D12): for flat attempts with a
-  // stored durationDeadline, status derives from server time vs the deadline
-  // (+grace); the client's isAutoSubmit flag only decides within the allowed
-  // window. Section-locked attempts keep the endsAt cascade's semantics
-  // (isAutoSubmit derived from the section states) — resolveSubmissionStatus
-  // is a no-op for them because they carry no durationDeadline.
-  const decided = resolveSubmissionStatus(attempt, { isAutoSubmit });
+  // Server-authoritative status (plan §7.5, D12): for attempts with a stored
+  // durationDeadline and/or a quiz availability window, status derives from
+  // server time vs the EFFECTIVE deadline min(durationDeadline, quiz
+  // expiryDate) (+grace); the client's isAutoSubmit flag only decides within
+  // the allowed window. Section-locked attempts on window-less quizzes keep
+  // the endsAt cascade's semantics (isAutoSubmit derived from the section
+  // states) — resolveSubmissionStatus is a no-op for them because they carry
+  // no durationDeadline and the quiz has no window end.
+  const decided = resolveSubmissionStatus(attempt, { isAutoSubmit, quiz });
   const finalStatus = decided.status;
   let finalAutoSubmitReason = decided.autoSubmitReason;
   if (!finalAutoSubmitReason && autoSubmitReason && finalStatus === 'auto_submitted') {
@@ -567,6 +570,60 @@ const makePolicySubmitter = (req) => async (attempt, { autoSubmitReason } = {}) 
   return finalizeQuizAttempt(attempt, { isAutoSubmit: true, req, sectionStates, autoSubmitReason });
 };
 
+// Single lazy enforcement orchestrator for EVERY attempt-touching path
+// (routes below + the overdue sweep in utils/attemptSweep.js). Applies the
+// effective participation deadline
+//
+//   min(attempt.durationDeadline, quiz.expiryDate)   (+grace, one policy)
+//
+// in precedence order:
+//   1. quiz window closed        → whole-attempt finalize ({kind:'quiz_window'}
+//      or {kind:'duration'} when the individual deadline was the earlier cap),
+//      closing any enforced sections atomically with the finalize;
+//   2. section-locked attempt    → the sectionStates[].endsAt cascade (its own
+//      authority — the window cap above is the only extra cutoff it gets);
+//   3. flat attempt              → syncExpiredDuration with the quiz's live
+//      window end (min semantics).
+//
+// Never throws for finalize-internal issues beyond what finalizeQuizAttempt
+// already tolerates; always returns the freshest attempt doc so callers can
+// re-check status. Idempotent by construction (CAS finalizes inside).
+const enforceAttemptDeadlines = async (attempt, quiz, { req = null } = {}) => {
+  if (!attempt || attempt.status !== 'in_progress' || !quiz) {
+    return { attempt, finalized: false };
+  }
+
+  // 1. Whole-quiz cutoff: the quiz's availability window has closed. No
+  // attempt shape may outlive it, section-locked or flat.
+  if (isPastQuizWindow(quiz)) {
+    const result = await finalizeQuizAttempt(attempt, {
+      isAutoSubmit: true,
+      req,
+      sectionStates: isSectionLockEnforced(attempt)
+        ? closeSectionStates(attempt.sectionStates, { status: 'auto_submitted' })
+        : null,
+      autoSubmitReason: buildAutoSubmitReason(attempt, quiz),
+    });
+    return { attempt: result.attempt || attempt, finalized: result.ok === true };
+  }
+
+  // 2. Section cascade (unchanged authority for section-locked attempts).
+  if (isSectionLockEnforced(attempt)) {
+    const synced = await syncExpiredSections(QuizAttempt, {
+      _id: attempt._id,
+      student: attempt.student,
+    }, { finalize: makeSyncFinalizer(req) });
+    return { attempt: synced.attempt || attempt, finalized: synced.finalized };
+  }
+
+  // 3. Flat deadline, capped by the live quiz window end.
+  const durationSync = await syncExpiredDuration(QuizAttempt, {
+    _id: attempt._id,
+    student: attempt.student,
+  }, { quiz, finalize: makeSyncFinalizer(req) });
+  return { attempt: durationSync.attempt || attempt, finalized: durationSync.finalized };
+};
+
 // Proctoring event transport — Phase 3 (plan §27.2). Mounted AFTER
 // makeSyncFinalizer exists because the events route performs the same lazy
 // §7.5 duration finalize as every other attempt-touching route (the factory
@@ -579,6 +636,7 @@ const {
 router.use('/:id/attempt/:attemptId/proctoring', buildEventsRouter({
   makeFinalizer: makeSyncFinalizer,
   makePolicySubmitter,
+  enforceDeadlines: enforceAttemptDeadlines,
 }));
 router.use('/attempt/:attemptId/proctoring', buildSessionRouter());
 
@@ -2913,7 +2971,9 @@ router.post('/:id/start', auth, authorize('student'), async (req, res) => {
 
     const { formatToIST } = require('../utils/dateUtils');
 
-    // Enforce time window (UTC comparison)
+    // Enforce time window (UTC comparison). Boundaries: AT the start time the
+    // quiz opens; AT or after the end time participation is forbidden (a
+    // start at the closing instant would grant zero time anyway).
     const now = new Date();
     if (quiz.scheduledDate && now < quiz.scheduledDate) {
       return res.status(403).json({
@@ -2921,7 +2981,25 @@ router.post('/:id/start', auth, authorize('student'), async (req, res) => {
         scheduledDate: quiz.scheduledDate
       });
     }
-    if (quiz.expiryDate && now > quiz.expiryDate) {
+    if (quiz.expiryDate && now >= quiz.expiryDate) {
+      // The window has closed for good. Any attempt still in_progress belongs
+      // to a student who ran out the clock without submitting (or never came
+      // back) — finalize it NOW from its server-persisted answers so the
+      // saved work materializes as a result instead of dangling forever.
+      // Best-effort: a failure here must not block the (correct) 403.
+      try {
+        const dangling = await QuizAttempt.findOne({
+          quiz: quiz._id,
+          student: req.user._id,
+          status: 'in_progress'
+        });
+        if (dangling) {
+          await enforceAttemptDeadlines(dangling, quiz, { req });
+        }
+      } catch (finalizeError) {
+        console.error('[Start Quiz] Failed to finalize expired-window attempt:', finalizeError?.message || finalizeError);
+      }
+
       return res.status(403).json({
         message: 'This quiz has expired. It closed on ' + formatToIST(quiz.expiryDate),
         expiryDate: quiz.expiryDate
@@ -2937,54 +3015,36 @@ router.post('/:id/start', auth, authorize('student'), async (req, res) => {
     }).sort({ startTime: 1, _id: 1 });
 
     if (attempt) {
-      // Resume existing attempt. For section-locked attempts, first lazily
-      // apply any sections whose server-side deadlines expired while the
-      // student was away (refresh, app close, second device, offline).
-      if (isSectionLockEnforced(attempt)) {
-        const synced = await syncExpiredSections(QuizAttempt, {
-          _id: attempt._id,
-          student: req.user._id,
-        }, { finalize: makeSyncFinalizer(req) });
-
-        if (!synced.attempt || synced.attempt.status !== 'in_progress') {
-          return res.json({
-            message: 'This quiz attempt has ended and has been submitted',
-            attemptFinalized: true,
-            attemptId: attempt._id,
-            status: synced.attempt?.status || 'auto_submitted',
-          });
-        }
-
+      // Resume existing attempt. First lazily apply the effective deadline:
+      // sections whose server-side deadlines expired while the student was
+      // away (refresh, app close, second device, offline), the flat duration
+      // deadline (§7.5), or the quiz's availability window — a resume long
+      // after any of them finalizes as auto_submitted instead of
+      // resurrecting the attempt.
+      const resumeSync = await enforceAttemptDeadlines(attempt, quiz, { req });
+      if (resumeSync.attempt && resumeSync.attempt.status !== 'in_progress') {
         return res.json({
-          message: 'Resuming existing attempt',
-          attemptId: synced.attempt._id,
-          startTime: synced.attempt.startTime,
-          answers: synced.attempt.answers,
-          sectionLockEnabled: true,
-          sectionDefinitions: synced.attempt.sectionDefinitions,
-          sectionStates: synced.attempt.sectionStates,
-          duration: quiz.duration,
+          message: 'This quiz attempt has ended and has been submitted',
+          attemptFinalized: true,
+          attemptId: attempt._id,
+          status: resumeSync.attempt.status || 'auto_submitted',
         });
       }
+      if (resumeSync.attempt) {
+        attempt = resumeSync.attempt;
+      }
 
-      // Flat attempt: lazily enforce the server-side duration deadline
-      // (§7.5) — a resume long after the deadline finalizes as auto_submitted
-      // instead of resurrecting the attempt.
-      if (isPastSubmissionWindow(attempt)) {
-        const durationSync = await syncExpiredDuration(QuizAttempt, {
-          _id: attempt._id,
-          student: req.user._id,
-        }, { finalize: makeSyncFinalizer(req) });
-
-        if (!durationSync.attempt || durationSync.attempt.status !== 'in_progress') {
-          return res.json({
-            message: 'This quiz attempt has ended and has been submitted',
-            attemptFinalized: true,
-            attemptId: attempt._id,
-            status: durationSync.attempt?.status || 'auto_submitted',
-          });
-        }
-        attempt = durationSync.attempt;
+      if (isSectionLockEnforced(attempt)) {
+        return res.json({
+          message: 'Resuming existing attempt',
+          attemptId: attempt._id,
+          startTime: attempt.startTime,
+          answers: attempt.answers,
+          sectionLockEnabled: true,
+          sectionDefinitions: attempt.sectionDefinitions,
+          sectionStates: attempt.sectionStates,
+          duration: quiz.duration,
+        });
       }
 
       // Self-heal a missing proctoring session (crash between the attempt
@@ -3160,15 +3220,13 @@ router.post('/:id/attempt/:attemptId/tab-switch', auth, authorize('student'), ta
       return res.status(404).json({ message: 'Attempt not found' });
     }
 
-    // Lazy §7.5 duration sync (same doctrine as the answer route): a
-    // past-deadline attempt is finalized first, then rejected below — a
-    // tab-switch must never land on (or dual-write into) an expired attempt.
-    if (attempt.status === 'in_progress' && isPastSubmissionWindow(attempt)) {
-      const durationSync = await syncExpiredDuration(QuizAttempt, {
-        _id: attempt._id,
-        student: req.user._id
-      }, { finalize: makeSyncFinalizer(req) });
-      attempt = durationSync.attempt || attempt;
+    // Lazy §7.5 duration + quiz-window sync (same doctrine as the answer
+    // route): a past-deadline attempt is finalized first, then rejected below
+    // — a tab-switch must never land on (or dual-write into) an expired
+    // attempt.
+    if (attempt.status === 'in_progress') {
+      const quizForWindow = await Quiz.findById(attempt.quiz).select('expiryDate');
+      attempt = (await enforceAttemptDeadlines(attempt, quizForWindow, { req })).attempt || attempt;
     }
 
     if (attempt.status !== 'in_progress') {
@@ -3251,32 +3309,37 @@ router.put('/:id/attempt/:attemptId/answer', auth, authorize('student'), async (
       return res.status(404).json({ message: 'No active attempt found' });
     }
 
-    // Flat-quiz duration enforcement (§7.5): lazily finalize the attempt when
-    // the server-side deadline (+grace) has passed, then reject the write
-    // like any completed attempt. A tampered/offline/delayed client cannot
-    // keep saving past the deadline — the check uses server time against the
-    // server-stored deadline only. Cheap guard first: the sync runs only when
-    // the stored deadline has actually passed.
-    if (isPastSubmissionWindow(attempt)) {
-      const durationSync = await syncExpiredDuration(QuizAttempt, {
-        _id: attempt._id,
-        student: req.user._id,
-      }, { finalize: makeSyncFinalizer(req) });
+    // The attempt must belong to the quiz in the URL: the enforcement below
+    // reads that quiz's availability window, so a mismatched pair must never
+    // reach it (a different quiz's window could finalize this attempt).
+    if (String(attempt.quiz) !== String(req.params.id)) {
+      return res.status(404).json({ message: 'No active attempt found' });
+    }
 
-      if (!durationSync.attempt || durationSync.attempt.status !== 'in_progress') {
-        return res.status(403).json({
-          message: "This quiz's time has ended and it has been submitted.",
-          errorCode: 'TIME_EXPIRED',
-          attemptFinalized: true,
-        });
-      }
-      attempt = durationSync.attempt;
+    // Deadline enforcement (§7.5 + availability window): lazily finalize the
+    // attempt when the EFFECTIVE deadline — min(server-side duration
+    // deadline, quiz expiry) (+grace) — has passed, then reject the write
+    // like any completed attempt. Covers flat duration expiry, the quiz's
+    // absolute end time, and the section cascade in one policy. A
+    // tampered/offline/delayed client cannot keep saving past any of them:
+    // every comparison uses server time against server-stored deadlines.
+    // Runs BEFORE payload validation so ANY touch of an overdue attempt —
+    // even a malformed one — converges it to its terminal state.
+    const quizForAnswer = await Quiz.findById(req.params.id).select('questions expiryDate');
+    const enforcement = await enforceAttemptDeadlines(attempt, quizForAnswer, { req });
+    attempt = enforcement.attempt;
+
+    if (!attempt || attempt.status !== 'in_progress') {
+      return res.status(403).json({
+        message: "This quiz's time has ended and it has been submitted.",
+        errorCode: 'TIME_EXPIRED',
+        attemptFinalized: true,
+      });
     }
 
     // Resolve the canonical question id server-side from the quiz's ordered
     // question list. A client-supplied questionId is only ever used as a
     // consistency check — never as the source of truth for identity.
-    const quizForAnswer = await Quiz.findById(req.params.id).select('questions');
     const resolvedQuestionId = quizForAnswer?.questions?.[questionIndex];
     if (!resolvedQuestionId) {
       return res.status(400).json({ message: 'Invalid question index for this quiz' });
@@ -3285,26 +3348,14 @@ router.put('/:id/attempt/:attemptId/answer', auth, authorize('student'), async (
       return res.status(400).json({ message: 'questionId does not match the quiz question at this index' });
     }
 
-    // Section-locking enforcement (server-authoritative). First lazily apply
-    // any sections whose deadlines expired, then reject writes into sections
-    // that are no longer open. A tampered/offline client cannot bypass this:
-    // the lock state lives on the attempt, keyed by question identity.
+    // Section-locking enforcement (server-authoritative): reject writes into
+    // sections that are no longer open. A tampered/offline client cannot
+    // bypass this: the lock state lives on the attempt, keyed by question
+    // identity. (Expiry cascade already applied by enforceAttemptDeadlines.)
     if (isSectionLockEnforced(attempt)) {
-      const synced = await syncExpiredSections(QuizAttempt, {
-        _id: attempt._id,
-        student: req.user._id,
-      }, { finalize: makeSyncFinalizer(req) });
-
-      if (!synced.attempt || synced.attempt.status !== 'in_progress') {
-        return res.status(403).json({
-          message: "This quiz's time has ended and it has been submitted.",
-          errorCode: 'SECTION_LOCKED'
-        });
-      }
-
-      const sectionIndex = sectionIndexForQuestionId(synced.attempt.sectionDefinitions, resolvedQuestionId);
+      const sectionIndex = sectionIndexForQuestionId(attempt.sectionDefinitions, resolvedQuestionId);
       const sectionState = sectionIndex >= 0
-        ? synced.attempt.sectionStates.find(s => Number(s.index) === sectionIndex)
+        ? attempt.sectionStates.find(s => Number(s.index) === sectionIndex)
         : null;
       if (sectionState && sectionState.status !== 'in_progress') {
         return res.status(403).json({
@@ -3312,8 +3363,6 @@ router.put('/:id/attempt/:attemptId/answer', auth, authorize('student'), async (
           errorCode: 'SECTION_LOCKED'
         });
       }
-
-      attempt = synced.attempt;
     }
 
     // Find or create answer for this question
@@ -3393,12 +3442,11 @@ router.post('/:id/attempt/:attemptId/sections/:sectionIndex/submit', auth, autho
       });
     }
 
-    // Lazily apply sections that expired while the student was away — this
-    // may itself finalize the attempt (e.g. the final timer ran out).
-    const synced = await syncExpiredSections(QuizAttempt, {
-      _id: attempt._id,
-      student: req.user._id,
-    }, { finalize: makeSyncFinalizer(req) });
+    // Lazily apply the effective deadline — sections whose stored deadlines
+    // expired while the student was away (the cascade) OR the quiz's
+    // availability window closing (an absolute cutoff no section outlives).
+    // Either may itself finalize the attempt.
+    const synced = await enforceAttemptDeadlines(attempt, attempt.quiz, { req });
 
     if (!synced.attempt || synced.attempt.status !== 'in_progress') {
       const finalized = synced.attempt || attempt;
@@ -3599,11 +3647,15 @@ router.post('/:id/attempt/:attemptId/submit', auth, authorize('student'), async 
     // Defensive section close: when the attempt enforces section locking,
     // ending the whole quiz closes every remaining section atomically with
     // the finalize (covers old app binaries; it only forfeits remaining
-    // questions — nothing is ever unlocked).
+    // questions — nothing is ever unlocked). The close status follows the
+    // SERVER's submission-status decision, not the client's isAutoSubmit
+    // claim — a manual submit that arrives past the effective deadline
+    // (duration or quiz window) finalizes auto_submitted throughout.
     let closedSectionStates = null;
     if (isSectionLockEnforced(attempt)) {
+      const decidedStatus = resolveSubmissionStatus(attempt, { isAutoSubmit, quiz: attempt.quiz }).status;
       closedSectionStates = closeSectionStates(attempt.sectionStates, {
-        status: isAutoSubmit ? 'auto_submitted' : 'submitted',
+        status: decidedStatus === 'auto_submitted' ? 'auto_submitted' : 'submitted',
       });
     }
 
@@ -4522,7 +4574,7 @@ router.get('/:id/share-status', auth, authorize('admin'), async (req, res) => {
 // Get attempt details by ID (used for retrieving quizId)
 router.get('/attempt/:id', auth, async (req, res) => {
   try {
-    let attempt = await QuizAttempt.findById(req.params.id).populate('quiz', 'createdBy assignedMentors');
+    let attempt = await QuizAttempt.findById(req.params.id).populate('quiz', 'createdBy assignedMentors expiryDate');
 
     // Guest-attempt fallback (public-quiz participants): ADMIN ONLY.
     // Mentors/students get a bare 404 — guest leads are admin-privileged.
@@ -4571,34 +4623,14 @@ router.get('/attempt/:id', auth, async (req, res) => {
       return res.status(403).json({ message: 'You are not authorized to view this attempt' });
     }
 
-    // Section-locking re-sync channel: the taking screen calls this on mount
-    // so refresh / restart / second-device / tampered local state all adopt
-    // the server's section progress. Also lazily applies expired sections.
-    if (isOwner && isSectionLockEnforced(attempt)) {
-      const synced = await syncExpiredSections(QuizAttempt, {
-        _id: attempt._id,
-        student: req.user._id,
-      }, { finalize: makeSyncFinalizer(req) });
-      if (synced.attempt) {
-        const syncedObj = synced.attempt.toObject();
-        syncedObj.quiz = attempt.quiz;
-        const syncedSessionHint = await buildProctoringSessionHint(synced.attempt);
-        return res.json({
-          ...syncedObj,
-          ...(syncedSessionHint ? { proctoringSession: syncedSessionHint } : {}),
-          serverNow: new Date().toISOString(),
-        });
-      }
-    }
-
-    // Flat-quiz duration re-sync (§7.5): same doctrine — a client that was
-    // closed/disconnected past the deadline adopts the server's finalized
-    // state on the next mount instead of resuming a stale timer.
-    if (isOwner && attempt.status === 'in_progress' && isPastSubmissionWindow(attempt)) {
-      const synced = await syncExpiredDuration(QuizAttempt, {
-        _id: attempt._id,
-        student: req.user._id,
-      }, { finalize: makeSyncFinalizer(req) });
+    // Deadline re-sync channel (§7.5 + availability window): the taking
+    // screen calls this on mount so refresh / restart / second-device /
+    // tampered local state all adopt the server's progress — and a client
+    // that was closed/disconnected past the effective deadline (individual
+    // duration, section cascade or quiz window) adopts the server's finalized
+    // state instead of resuming a stale timer.
+    if (isOwner && attempt.status === 'in_progress') {
+      const synced = await enforceAttemptDeadlines(attempt, attempt.quiz, { req });
       if (synced.attempt) {
         const syncedObj = synced.attempt.toObject();
         syncedObj.quiz = attempt.quiz;
@@ -4626,3 +4658,9 @@ router.get('/attempt/:id', auth, async (req, res) => {
 
 
 module.exports = router;
+// Re-exported for the overdue-attempt sweep (utils/attemptSweep.js): the
+// sweep must run the EXACT same lazy enforcement/finalize path as the routes
+// so sweep-finalized attempts are indistinguishable from student-touch
+// finalizations. Attached after the router so require('../routes/quizzes')
+// keeps returning the Express router.
+module.exports.enforceAttemptDeadlines = enforceAttemptDeadlines;

@@ -26,6 +26,12 @@ const {
     closeSectionStates,
     syncExpiredSections,
 } = require('../utils/sectionLocking');
+const {
+    computeFlatDurationDeadline,
+    isPastQuizWindow,
+    isPastSubmissionWindow,
+    buildAutoSubmitReason,
+} = require('../utils/proctoring/durationEnforcement');
 
 const router = express.Router();
 
@@ -106,6 +112,7 @@ const gradeAndFinalizeGuestAttempt = async (attempt, {
     sectionStates = null,
     tabSwitchCount = undefined,
     tabSwitchLog = undefined,
+    autoSubmitReason = null,
 } = {}) => {
     const quiz = await Quiz.findById(attempt.quiz).populate({
         path: 'questions',
@@ -187,6 +194,12 @@ const gradeAndFinalizeGuestAttempt = async (attempt, {
     if (tabSwitchLog !== undefined) {
         finalFields.tabSwitchLog = tabSwitchLog;
     }
+    // Server-initiated finalizations (duration/link-window expiry, sweep)
+    // record the machine-readable reason; manual and in-window client-timer
+    // submits leave it absent — same contract as QuizAttempt.
+    if (isAutoSubmit && autoSubmitReason) {
+        finalFields.autoSubmitReason = autoSubmitReason;
+    }
 
     const updated = await GuestAttempt.findOneAndUpdate(
         { _id: attempt._id, guestId: attempt.guestId, status: 'in_progress' },
@@ -213,6 +226,55 @@ const findOwnedGuestAttempt = (attemptId, quizId, guestId, guest) => {
         });
     }
     return GuestAttempt.findOne({ _id: attemptId, ...quizClause, guestId });
+};
+
+// Single lazy enforcement orchestrator for guest attempts — the mirror of
+// enforceAttemptDeadlines in routes/quizzes.js. Effective participation
+// deadline = min(attempt.durationDeadline, quiz.publicExpiryDate) (+grace):
+// public links are governed by the LINK's expiry (utils/publicQuizAccess.js),
+// not the quiz's internal student window. In precedence order:
+//   1. link window closed  → whole-attempt finalize from STORED answers
+//      ({kind:'quiz_window'} — or {kind:'duration'} when the individual
+//      deadline was the earlier cap), closing enforced sections atomically;
+//   2. section-locked      → the sectionStates[].endsAt cascade;
+//   3. flat attempt        → stored durationDeadline capped by the live link
+//      window end (min semantics).
+// Finalizes only what the STORED deadlines already say is expired; never
+// accepts post-deadline answers. Idempotent (CAS inside the grader).
+const enforceGuestAttemptDeadlines = async (attempt, quiz, { now = new Date() } = {}) => {
+    if (!attempt || attempt.status !== 'in_progress' || !quiz) {
+        return { attempt, finalized: false };
+    }
+
+    if (isPastQuizWindow(quiz, now, { publicMode: true })) {
+        const finalized = await gradeAndFinalizeGuestAttempt(attempt, {
+            isAutoSubmit: true,
+            autoSubmitReason: buildAutoSubmitReason(attempt, quiz, now, { publicMode: true }),
+            ...(isSectionLockEnforced(attempt)
+                ? { sectionStates: closeSectionStates(attempt.sectionStates, { status: 'auto_submitted' }) }
+                : {}),
+        });
+        return { attempt: finalized || attempt, finalized: !!finalized && finalized.status !== 'in_progress' };
+    }
+
+    if (isSectionLockEnforced(attempt)) {
+        const synced = await syncExpiredSections(GuestAttempt, {
+            _id: attempt._id,
+            guestId: attempt.guestId,
+            quiz: quiz._id,
+        }, { finalize: gradeAndFinalizeGuestAttempt });
+        return { attempt: synced.attempt || attempt, finalized: synced.finalized };
+    }
+
+    if (isPastSubmissionWindow(attempt, now, quiz, { publicMode: true })) {
+        const finalized = await gradeAndFinalizeGuestAttempt(attempt, {
+            isAutoSubmit: true,
+            autoSubmitReason: buildAutoSubmitReason(attempt, quiz, now, { publicMode: true }),
+        });
+        return { attempt: finalized || attempt, finalized: !!finalized && finalized.status !== 'in_progress' };
+    }
+
+    return { attempt, finalized: false };
 };
 
 // Verified-lead block attached to /start responses (create AND resume) so
@@ -287,6 +349,9 @@ router.get('/quiz/:shareToken', async (req, res) => {
                 instructions: quiz.instructions,
                 totalMarks: quiz.totalMarks,
                 questionCount: quiz.questions.length,
+                // The link's own expiry — the participation cutoff for guest
+                // attempts (clients display it and cap their countdowns).
+                ...(quiz.publicExpiryDate ? { publicExpiryDate: quiz.publicExpiryDate } : {}),
                 lockSectionsAfterSubmission: quiz.lockSectionsAfterSubmission !== false,
                 // Structure only (no question content) — the guest landing
                 // page uses this to show the sequential-sections notice.
@@ -406,45 +471,41 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
         }
 
         if (attempt) {
-            // Resume existing attempt. For section-locked attempts, lazily
-            // apply any sections whose server-side deadlines expired while
-            // the guest was away before returning state. The sync keys on
-            // the ATTEMPT's own guestId — a cross-device resume under the
-            // verified lead may carry a different device UUID than the one
-            // that created the attempt (same contract as the submit routes;
-            // keying on the caller's guestId would make the sync find
-            // nothing and falsely report the attempt as ended).
+            // Resume existing attempt. First lazily enforce the effective
+            // deadline — min(stored duration deadline, link expiry) or the
+            // section cascade. The enforcement keys on the ATTEMPT's own
+            // guestId — a cross-device resume under the verified lead may
+            // carry a different device UUID than the one that created the
+            // attempt (same contract as the submit routes; keying on the
+            // caller's guestId would make the sync find nothing and falsely
+            // report the attempt as ended).
+            const enforcement = await enforceGuestAttemptDeadlines(attempt, quiz);
+            if (enforcement.attempt && enforcement.attempt.status !== 'in_progress') {
+                return res.json({
+                    success: true,
+                    message: 'This quiz attempt has ended and has been submitted',
+                    attemptFinalized: true,
+                    status: enforcement.attempt.status || 'auto_submitted',
+                    // The finalized attempt's own id — the client routes
+                    // to its result page without guessing from storage.
+                    attemptId: enforcement.attempt._id || attempt._id,
+                    ...(req.guest ? { lead: leadSummary(req.guest) } : {}),
+                });
+            }
+            if (enforcement.attempt) attempt = enforcement.attempt;
+
             if (isSectionLockEnforced(attempt)) {
-                const synced = await syncExpiredSections(GuestAttempt, {
-                    _id: attempt._id,
-                    guestId: attempt.guestId,
-                    quiz: quiz._id,
-                }, { finalize: gradeAndFinalizeGuestAttempt });
-
-                if (!synced.attempt || synced.attempt.status !== 'in_progress') {
-                    return res.json({
-                        success: true,
-                        message: 'This quiz attempt has ended and has been submitted',
-                        attemptFinalized: true,
-                        status: synced.attempt?.status || 'auto_submitted',
-                        // The finalized attempt's own id — the client routes
-                        // to its result page without guessing from storage.
-                        attemptId: synced.attempt?._id || attempt._id,
-                        ...(req.guest ? { lead: leadSummary(req.guest) } : {}),
-                    });
-                }
-
                 return res.json({
                     success: true,
                     message: 'Resuming existing attempt',
                     ...(req.guest ? { lead: leadSummary(req.guest) } : {}),
                     attempt: {
-                        _id: synced.attempt._id,
-                        startTime: synced.attempt.startTime,
-                        answers: synced.attempt.answers,
+                        _id: attempt._id,
+                        startTime: attempt.startTime,
+                        answers: attempt.answers,
                         sectionLockEnabled: true,
-                        sectionDefinitions: synced.attempt.sectionDefinitions,
-                        sectionStates: synced.attempt.sectionStates,
+                        sectionDefinitions: attempt.sectionDefinitions,
+                        sectionStates: attempt.sectionStates,
                         serverNow: new Date().toISOString()
                     },
                     quiz: {
@@ -479,6 +540,10 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
                     _id: attempt._id,
                     startTime: attempt.startTime,
                     answers: attempt.answers,
+                    // Server-authoritative flat deadline (display-only
+                    // countdown; server-side enforcement caps it by the
+                    // link's live expiry).
+                    ...(attempt.durationDeadline ? { durationDeadline: attempt.durationDeadline } : {}),
                     // Client-side timers are computed against the server
                     // clock so device clock skew cannot extend/shrink them.
                     serverNow: new Date().toISOString()
@@ -509,11 +574,24 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
         // Create new attempt. Section-locking snapshot is frozen here (same
         // helper + shapes as authenticated attempts). OTP-flow attempts are
         // stamped with the lead ref + immutable name/email/phone snapshot.
-        const sectionSnapshot = buildSectionSnapshot(quiz, new Date());
+        // Flat attempts additionally get the server-side duration deadline
+        // (§7.5 mirror of the registered flow): startTime + duration, stored
+        // pure — the effective deadline min(this, link expiry) is enforced
+        // lazily on every attempt touch.
+        const startedAt = new Date();
+        const sectionSnapshot = buildSectionSnapshot(quiz, startedAt);
+        const flatDurationDeadline = computeFlatDurationDeadline(
+            { durationMinutes: quiz.duration, sectionLockEnabled: sectionSnapshot.sectionLockEnabled === true },
+            startedAt
+        );
         attempt = new GuestAttempt({
             quiz: quiz._id,
             guestId,
             deviceInfo,
+            // Pinned to the same instant the section snapshot and the flat
+            // deadline derive from (the schema default would be a few ms
+            // later, breaking the deadline === startTime + duration invariant).
+            startTime: startedAt,
             guest: req.guest ? req.guest._id : null,
             guestName: req.guest ? req.guest.name : null,
             guestEmail: req.guest ? req.guest.email : null,
@@ -521,6 +599,7 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
             totalQuestions: quiz.questions.length,
             totalMarks: quiz.totalMarks,
             ...(sectionSnapshot.sectionLockEnabled ? sectionSnapshot : {}),
+            ...(flatDurationDeadline ? { durationDeadline: flatDurationDeadline } : {}),
             answers: quiz.questions.map((q, index) => ({
                 questionIndex: index,
                 questionId: q._id,
@@ -582,6 +661,7 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
                 // Server clock reference for ALL quiz shapes (flat timers
                 // need it too — see the resume path above).
                 serverNow: new Date().toISOString(),
+                ...(attempt.durationDeadline ? { durationDeadline: attempt.durationDeadline } : {}),
                 ...(attempt.sectionLockEnabled ? {
                     sectionLockEnabled: true,
                     sectionDefinitions: attempt.sectionDefinitions,
@@ -592,6 +672,7 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
                 _id: quiz._id,
                 title: quiz.title,
                 duration: quiz.duration,
+                ...(quiz.publicExpiryDate ? { publicExpiryDate: quiz.publicExpiryDate } : {}),
                 questions: quiz.questions.map(q => ({
                     _id: q._id,
                     questionText: q.question,
@@ -638,14 +719,31 @@ router.post('/quiz/:shareToken/submit', optionalGuestAuth, async (req, res) => {
                 populate: { path: 'subject', select: 'name' }
             }
         });
-        if (access.error) {
-            return sendPublicQuizError(res, access.error);
-        }
-        const quiz = access.quiz;
 
-        const attempt = await findOwnedGuestAttempt(attemptId, quiz._id, guestId, req.guest);
+        let quiz = null;
+        let expiredWindow = false;
+        if (access.error) {
+            if (access.error.code !== 'SHARE_LINK_EXPIRED') {
+                return sendPublicQuizError(res, access.error);
+            }
+            // The link's window closed. A guest holding a live attempt still
+            // gets a terminal outcome: past the grace margin the attempt is
+            // finalized from SERVER-STORED answers (a late client payload is
+            // never accepted past the cutoff); within the margin the submit
+            // is honored like an on-time one (in-transit tolerance, same
+            // policy as the registered flow). No live attempt → plain 410.
+            expiredWindow = true;
+            quiz = await Quiz.findOne({ shareToken, isPublic: true }).select('_id publicExpiryDate');
+        } else {
+            quiz = access.quiz;
+        }
+
+        let attempt = quiz ? await findOwnedGuestAttempt(attemptId, quiz._id, guestId, req.guest) : null;
 
         if (!attempt) {
+            if (expiredWindow) {
+                return sendPublicQuizError(res, access.error);
+            }
             return res.status(404).json({
                 success: false,
                 message: 'Attempt not found'
@@ -667,9 +765,28 @@ router.post('/quiz/:shareToken/submit', optionalGuestAuth, async (req, res) => {
             }
             return res.status(400).json({
                 success: false,
-                message: 'This attempt has already been submitted'
+                message: 'This attempt has already been submitted',
+                // Additive: lets clients route to the existing result instead
+                // of showing a dead retry loop (auto-submit at expiry races).
+                code: 'ALREADY_SUBMITTED'
             });
         }
+
+        // Lazy effective-deadline enforcement — min(stored duration deadline,
+        // link expiry) or the section cascade. A submit arriving past the
+        // cutoff finalizes from STORED answers (client-supplied answers past
+        // the deadline are never accepted); within it the normal flow below
+        // runs unchanged (store-then-grade).
+        const enforcement = await enforceGuestAttemptDeadlines(attempt, quiz);
+        if (enforcement.attempt && enforcement.attempt.status !== 'in_progress') {
+            return res.json({
+                success: true,
+                message: 'Quiz submitted successfully',
+                attemptId: attempt._id,
+                submitted: true
+            });
+        }
+        if (enforcement.attempt) attempt = enforcement.attempt;
 
         // Duplicate-finalization defense: two attempts by the same person
         // can both be live if they were STARTED concurrently (the start gate
@@ -837,16 +954,13 @@ router.post('/quiz/:shareToken/sections/:sectionIndex/submit', optionalGuestAuth
             });
         }
 
-        // Lazily apply sections that expired while the guest was away —
-        // this may itself finalize the attempt. Keyed on the attempt's own
-        // guestId (cross-device resume may carry a different device UUID).
-        const synced = await syncExpiredSections(GuestAttempt, {
-            _id: attempt._id,
-            guestId: attempt.guestId,
-            quiz: quiz._id,
-        }, { finalize: gradeAndFinalizeGuestAttempt });
-
-        const current = synced.attempt || attempt;
+        // Lazily apply the effective deadline — sections whose stored
+        // deadlines expired while the guest was away (the cascade, keyed on
+        // the attempt's own guestId for cross-device resumes) OR the link's
+        // window closing (an absolute cutoff no section outlives). Either
+        // may itself finalize the attempt.
+        const enforcement = await enforceGuestAttemptDeadlines(attempt, quiz);
+        const current = enforcement.attempt || attempt;
         if (current.status !== 'in_progress') {
             return res.json({
                 success: true,
@@ -1000,7 +1114,7 @@ router.post('/quiz/:shareToken/save-progress', optionalGuestAuth, async (req, re
         }
 
         // Historical behavior: save-progress never filtered by quiz — kept.
-        const attempt = await findOwnedGuestAttempt(attemptId, null, guestId, req.guest)
+        let attempt = await findOwnedGuestAttempt(attemptId, null, guestId, req.guest)
             .then(doc => (doc && doc.status === 'in_progress') ? doc : null);
 
         if (!attempt) {
@@ -1010,32 +1124,34 @@ router.post('/quiz/:shareToken/save-progress', optionalGuestAuth, async (req, re
             });
         }
 
-        // Section locking: lazily apply expired sections first, then MERGE
-        // (never wholesale-replace) filtered answers — locked sections keep
-        // their persisted values. The channel is fire-and-forget, so a
-        // filtered write silently succeeds rather than erroring.
-        if (isSectionLockEnforced(attempt)) {
-            const quiz = await Quiz.findById(attempt.quiz);
-            if (!quiz) {
-                return res.status(404).json({ success: false, message: 'Quiz not found' });
-            }
-
-            const synced = await syncExpiredSections(GuestAttempt, {
-                _id: attempt._id,
-                guestId: attempt.guestId,
-                quiz: quiz._id,
-            }, { finalize: gradeAndFinalizeGuestAttempt });
-
-            const current = synced.attempt || attempt;
-            if (current.status !== 'in_progress') {
-                // Fire-and-forget friendly: the attempt ended server-side.
+        // Lazy effective-deadline enforcement — min(stored duration deadline,
+        // link expiry) or the section cascade. Fire-and-forget friendly: an
+        // expired attempt finalizes server-side and this write is reported as
+        // finalized (the client stops saving and routes to its result).
+        const quiz = await Quiz.findById(attempt.quiz);
+        if (quiz) {
+            const enforcement = await enforceGuestAttemptDeadlines(attempt, quiz);
+            if (!enforcement.attempt || enforcement.attempt.status !== 'in_progress') {
                 return res.json({
                     success: true,
                     message: 'Progress saved',
                     attemptFinalized: true,
-                    status: current.status
+                    status: enforcement.attempt?.status || 'auto_submitted'
                 });
             }
+            attempt = enforcement.attempt;
+        }
+
+        // Section locking: MERGE (never wholesale-replace) filtered answers —
+        // locked sections keep their persisted values. The channel is
+        // fire-and-forget, so a filtered write silently succeeds rather than
+        // erroring. (Expiry cascade already applied above.)
+        if (isSectionLockEnforced(attempt)) {
+            if (!quiz) {
+                return res.status(404).json({ success: false, message: 'Quiz not found' });
+            }
+
+            const current = attempt;
 
             current.answers = mergeOpenSectionGuestAnswers(current, answers);
             current.tabSwitchCount = tabSwitchCount || current.tabSwitchCount;
@@ -1160,3 +1276,9 @@ router.get('/quiz/:shareToken/attempt/:attemptId/result', guestAuth, async (req,
 });
 
 module.exports = router;
+// Re-exported for the overdue-attempt sweep (utils/attemptSweep.js): the
+// sweep runs the SAME lazy enforcement/finalize path as these routes so
+// sweep-finalized guest attempts are indistinguishable from guest-touch
+// finalizations. Attached after the router so require('../routes/public-quiz')
+// keeps returning the Express router.
+module.exports.enforceGuestAttemptDeadlines = enforceGuestAttemptDeadlines;

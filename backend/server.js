@@ -260,6 +260,22 @@ const startDatabase = async () => {
       await migrateGuestIdentityIndexes();
       cleanupExpiredMedia();
       setInterval(cleanupExpiredMedia, 24 * 60 * 60 * 1000);
+
+      // Overdue-attempt sweep (utils/attemptSweep.js): materializes
+      // finalizations for attempts whose owner never touches the API again
+      // (app closed past the deadline, quiz window closed mid-attempt). The
+      // lazy per-request checks remain the hard enforcement gate; this only
+      // advances state the stored deadlines already say is expired. Interval
+      // and disable switch are env-configurable for tests/ops.
+      if (process.env.QUIZ_SWEEP_DISABLED !== '1') {
+        const { runAttemptSweep } = require('./utils/attemptSweep');
+        const sweepIntervalMs = Number(process.env.QUIZ_SWEEP_INTERVAL_MS) > 0
+          ? Number(process.env.QUIZ_SWEEP_INTERVAL_MS)
+          : 60 * 1000;
+        setTimeout(runAttemptSweep, 10 * 1000); // first cycle shortly after boot
+        setInterval(runAttemptSweep, sweepIntervalMs);
+        logger.info('Overdue-attempt sweep scheduled', { intervalMs: sweepIntervalMs });
+      }
     });
   } catch {
     // Retry initial connection only — ongoing reconnects are handled by mongoose.

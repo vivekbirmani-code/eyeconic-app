@@ -123,6 +123,24 @@ const guestAttemptSchema = new mongoose.Schema({
         type: String
     },
 
+    // ===== Server-authoritative duration (flat attempts) =====
+    // Mirrors QuizAttempt.durationDeadline (plan §7.5, D12): computed at
+    // /start as startTime + quiz duration, stored PURE (never pre-capped).
+    // Section-locked attempts never set it — their authority stays the
+    // sectionStates[].endsAt cascade. The effective participation deadline is
+    // recomputed at enforcement time as min(this, quiz.publicExpiryDate) by
+    // utils/proctoring/durationEnforcement.js.
+    durationDeadline: {
+        type: Date
+    },
+
+    // Machine-readable reason recorded when the server finalized the attempt
+    // itself: {kind:'duration'|'quiz_window', deadline, detectedAt}. Absent
+    // for manual submits and in-window client-timer auto-submits.
+    autoSubmitReason: {
+        type: mongoose.Schema.Types.Mixed
+    },
+
     // ===== Section locking (snapshot copied from the quiz at /start) =====
     // Same semantics as QuizAttempt: defaults false so pre-feature attempts
     // and section-less quizzes never enforce.

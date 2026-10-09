@@ -310,15 +310,32 @@ export default function PublicQuizTakingPage() {
     // All deadlines are SERVER timestamps; serverClockOffset (client - server
     // at response time) converts the ticking client clock to server time so
     // device clock skew cannot extend or shrink either timer shape.
+    // The link's own expiry caps every shape — the same min() the backend
+    // enforces server-side.
+    const serverNowMs = nowMs - serverClockOffset;
+    const linkEndMs = quiz.publicExpiryDate ? new Date(quiz.publicExpiryDate).getTime() : null;
     if (sectionLockEnabled) {
       const endsAt = activeSectionState?.endsAt;
       if (!endsAt) return 0;
-      return (new Date(endsAt).getTime() - (nowMs - serverClockOffset)) / 1000;
+      let deadline = new Date(endsAt).getTime();
+      if (linkEndMs !== null && Number.isFinite(linkEndMs)) {
+        deadline = Math.min(deadline, linkEndMs);
+      }
+      return (deadline - serverNowMs) / 1000;
     }
-    if (!attempt?.startTime) return 0;
-    const deadline = new Date(attempt.startTime).getTime() + quiz.duration * 60 * 1000;
-    return (deadline - (nowMs - serverClockOffset)) / 1000;
-  }, [quiz, sectionLockEnabled, activeSectionState, attempt?.startTime, nowMs, serverClockOffset]);
+    // Flat: prefer the server-computed deadline; the startTime + duration
+    // math remains only for pre-deadline (legacy) attempts.
+    const attemptDeadlineMs = attempt?.durationDeadline
+      ? new Date(attempt.durationDeadline).getTime()
+      : attempt?.startTime
+        ? new Date(attempt.startTime).getTime() + quiz.duration * 60 * 1000
+        : null;
+    if (attemptDeadlineMs === null || !Number.isFinite(attemptDeadlineMs)) return 0;
+    const effective = linkEndMs !== null && Number.isFinite(linkEndMs)
+      ? Math.min(attemptDeadlineMs, linkEndMs)
+      : attemptDeadlineMs;
+    return (effective - serverNowMs) / 1000;
+  }, [quiz, sectionLockEnabled, activeSectionState, attempt?.startTime, attempt?.durationDeadline, nowMs, serverClockOffset]);
 
   // ---------- answers ----------
 
@@ -380,20 +397,39 @@ export default function PublicQuizTakingPage() {
 
   // ---------- autosave ----------
 
+  // Result navigation (defined before its consumers below — saveProgress and
+  // the submit paths both route through it).
+  const goToResult = useCallback(
+    (attemptId: string, options?: { alreadyAttempted?: boolean }) => {
+      submittingRef.current = true;
+      navigate(`/public-quiz/${token}/result/${attemptId}`, {
+        replace: true,
+        ...(options?.alreadyAttempted ? { state: { alreadyAttempted: true } } : {}),
+      });
+    },
+    [navigate, token]
+  );
+
   const saveProgress = useCallback(async () => {
     if (!attempt || submittingRef.current) return;
     try {
-      await publicQuizApi.saveProgress(token, {
+      const response = await publicQuizApi.saveProgress(token, {
         guestId,
         attemptId: attempt._id,
         answers: buildAnswerPayload(),
         tabSwitchCount: tabSwitchRef.current.count,
         tabSwitchLog: tabSwitchRef.current.log,
       });
+      // The server finalized the attempt while we were saving (deadline or
+      // link expiry) — route to the result instead of saving into a dead
+      // attempt on every beat.
+      if (response.data?.attemptFinalized) {
+        goToResult(attempt._id);
+      }
     } catch {
       // fire-and-forget — the next beat or submit retries
     }
-  }, [attempt, token, guestId, buildAnswerPayload]);
+  }, [attempt, token, guestId, buildAnswerPayload, goToResult]);
 
   useEffect(() => {
     if (!attempt) return;
@@ -418,17 +454,6 @@ export default function PublicQuizTakingPage() {
   }, [attempt, saveProgress]);
 
   // ---------- submissions ----------
-
-  const goToResult = useCallback(
-    (attemptId: string, options?: { alreadyAttempted?: boolean }) => {
-      submittingRef.current = true;
-      navigate(`/public-quiz/${token}/result/${attemptId}`, {
-        replace: true,
-        ...(options?.alreadyAttempted ? { state: { alreadyAttempted: true } } : {}),
-      });
-    },
-    [navigate, token]
-  );
 
   // Duplicate-attempt resolution: the server refused a submit because the
   // same person already finalized an attempt on this quiz. Their first
@@ -479,6 +504,16 @@ export default function PublicQuizTakingPage() {
         if (extracted?.code === 'QUIZ_ALREADY_ATTEMPTED') {
           handleAlreadyAttempted(extracted);
           return;
+        }
+        // The attempt already finalized server-side (deadline/link-expiry
+        // race with this submit, or a replayed submit): route to the result
+        // this guest's pointer knows about instead of dead-looping a retry.
+        if (extracted?.code === 'ALREADY_SUBMITTED' || extracted?.code === 'SHARE_LINK_EXPIRED') {
+          const existingId = recallAttemptId(token, leadIdRef.current);
+          if (existingId) {
+            goToResult(existingId);
+            return;
+          }
         }
         submittingRef.current = false;
         setSubmitting(false);

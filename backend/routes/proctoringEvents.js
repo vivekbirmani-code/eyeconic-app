@@ -34,7 +34,7 @@ const { auth, authorize } = require('../middleware/auth');
 const { proctoringEventsRateLimit } = require('../middleware/proctoringRateLimit');
 const logger = require('../utils/logger');
 const { emitToUser } = require('../utils/socket-helpers');
-const { isPastSubmissionWindow, syncExpiredDuration } = require('../utils/proctoring/durationEnforcement');
+const Quiz = require('../models/Quiz');
 const { validateEventPayload } = require('../utils/proctoring/eventValidation');
 const {
   parseEventBatchEnvelope,
@@ -67,7 +67,7 @@ const DETERRENCE_VALUES = ['android-flagsecure', 'ios-detect-only', 'unsupported
  * ownership → lazy §7.5 duration finalize → attempt/session state → envelope
  * and per-event validation → dedup → insert → session health bookkeeping.
  */
-const buildEventsRouter = ({ makeFinalizer, makePolicySubmitter }) => {
+const buildEventsRouter = ({ makeFinalizer, makePolicySubmitter, enforceDeadlines }) => {
   const router = express.Router({ mergeParams: true });
 
   router.post('/events', auth, authorize('student'), proctoringEventsRateLimit, async (req, res) => {
@@ -87,14 +87,18 @@ const buildEventsRouter = ({ makeFinalizer, makePolicySubmitter }) => {
         });
       }
 
-      // Lazy duration enforcement FIRST (plan §27.2): a past-deadline attempt
-      // is finalized through the same CAS path as every other finalize, then
-      // this batch is rejected — the session the events belong to is closed.
-      if (attempt.status === 'in_progress' && isPastSubmissionWindow(attempt)) {
-        const durationSync = await syncExpiredDuration(QuizAttempt, {
-          _id: attempt._id, student: req.user._id,
-        }, { finalize: makeFinalizer(req) });
-        attempt = durationSync.attempt || attempt;
+      // Lazy duration + quiz-window enforcement FIRST (plan §27.2): a
+      // past-deadline attempt — individual duration, the section cascade, or
+      // the quiz's availability window, whichever closed first — is finalized
+      // through the same CAS path as every other finalize, then this batch is
+      // rejected: the session the events belong to is closed.
+      // enforceDeadlines is the shared orchestrator injected by quizzes.js
+      // (same one every quiz route uses; injected to avoid a require cycle).
+      if (attempt.status === 'in_progress' && typeof enforceDeadlines === 'function') {
+        const quizForWindow = await Quiz.findById(attempt.quiz).select('expiryDate');
+        if (quizForWindow) {
+          attempt = (await enforceDeadlines(attempt, quizForWindow, { req })).attempt || attempt;
+        }
       }
 
       if (attempt.status !== 'in_progress') {
