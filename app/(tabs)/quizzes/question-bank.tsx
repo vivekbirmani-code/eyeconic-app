@@ -564,10 +564,16 @@ export default function QuestionBankManagement() {
       const duplicateNote = dupCount > 0
         ? `\n${dupCount} duplicate row(s) skipped (${dupInFile} repeated in this file, ${dupExisting} already in the bank).`
         : '';
+      // Image transfers that kept their direct source URLs — surfaced so a
+      // partial transfer is never reported as a fully clean import.
+      const warnings = Array.isArray(apiResponse.data?.warnings) ? apiResponse.data.warnings : [];
+      const warningPreview = warnings.length > 0
+        ? `\n\n⚠️ ${warnings.length} image(s) kept on their direct URLs:\n${warnings.slice(0, 5).join('\n')}${warnings.length > 5 ? '\n...' : ''}`
+        : '';
 
       Alert.alert(
         'Import Complete',
-        `Imported ${apiResponse.data.count} of ${apiResponse.data?.totalRows ?? '?'} rows.${duplicateNote}${errorPreview}`,
+        `Imported ${apiResponse.data.count} of ${apiResponse.data?.totalRows ?? '?'} rows.${duplicateNote}${errorPreview}${warningPreview}`,
         [{
           text: 'OK',
           onPress: () => {

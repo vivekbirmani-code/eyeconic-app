@@ -39,7 +39,7 @@ describe('needsCloudinaryTransfer', () => {
   });
 });
 
-describe('processQuestionImages — URL handling', () => {
+describe('transferQuestionImages — URL handling', () => {
   beforeEach(() => {
     axios.get.mockReset();
     cloudinary.uploader.upload.mockReset();
@@ -51,10 +51,8 @@ describe('processQuestionImages — URL handling', () => {
     // 25+ char token in a NON-Drive URL: must NOT be rewritten to
     // lh3.googleusercontent.com (the quiz-import path used to corrupt these).
     const signedCdnUrl = 'https://cdn.example-medical.org/images/abcdefghij0123456789abcdef0123456789?sig=tok';
-    const { questionImage } = await (require('../../utils/imageUploader').processQuestionImages({
-      questionImage: signedCdnUrl,
-    }));
-    expect(questionImage).toBe(CLOUDINARY_URL);
+    const { candidate } = await transferQuestionImages({ questionImage: signedCdnUrl });
+    expect(candidate.questionImage).toBe(CLOUDINARY_URL);
     expect(axios.get.mock.calls[0][0]).toBe(signedCdnUrl);
   });
 
@@ -62,7 +60,7 @@ describe('processQuestionImages — URL handling', () => {
     stubDownload();
     stubUpload();
     const shareUrl = 'https://drive.google.com/file/d/1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789/view';
-    await (require('../../utils/imageUploader').processQuestionImages({ questionImage: shareUrl }));
+    await transferQuestionImages({ questionImage: shareUrl });
     expect(axios.get.mock.calls[0][0]).toBe(DRIVE_URL);
   });
 });
@@ -98,6 +96,30 @@ describe('transferQuestionImages', () => {
 
     expect(candidate.questionImage).toBe(DRIVE_URL);
     expect(warnings).toEqual([`Row 5: Image transfer failed for question image — stored the direct source URL (${DRIVE_URL}).`]);
+  });
+
+  it('never silently drops an option or explanation image on transfer failure', async () => {
+    // Regression: the retired processQuestionImages helper null-ed the
+    // question image and blank-ed option images when the Cloudinary transfer
+    // failed, so quiz imports stored image-less questions while reporting
+    // success. The transfer contract must keep every direct URL and warn.
+    stubDownload();
+    cloudinary.uploader.upload.mockRejectedValue(new Error('throttled'));
+
+    const { candidate, warnings } = await transferQuestionImages({
+      questionImage: DRIVE_URL,
+      optionImages: [DRIVE_URL, ''],
+      explanationImage: DRIVE_URL,
+    }, 'Row 9');
+
+    expect(candidate.questionImage).toBe(DRIVE_URL);
+    expect(candidate.optionImages).toEqual([DRIVE_URL, '']);
+    expect(candidate.explanationImage).toBe(DRIVE_URL);
+    expect(warnings).toHaveLength(3);
+    expect(warnings[0]).toContain('Row 9');
+    expect(warnings[0]).toContain('question image');
+    expect(warnings[1]).toContain('option 1 image');
+    expect(warnings[2]).toContain('explanation image');
   });
 
   it('leaves already-Cloudinary and inline images untouched (no upload calls)', async () => {

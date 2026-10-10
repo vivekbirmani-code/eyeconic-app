@@ -72,63 +72,6 @@ const uploadImageFromUrl = async (imageUrl, folder = 'eyeconic_questions') => {
 };
 
 /**
- * Process all images for a question and upload to Cloudinary
- * @param {Object} questionData - Question data with image URLs
- * @param {Object} [opts] - { imageSummary } per-image outcome tracker
- *   (utils/importImageSummary). questionData.rowNumber identifies the row
- *   in the import summary; without it no outcomes are recorded.
- * @returns {Promise<Object>} - Question data with Cloudinary URLs
- */
-const processQuestionImages = async (questionData, opts = {}) => {
-    const processed = { ...questionData };
-    const { imageSummary } = opts;
-    const rowNumber = questionData.rowNumber || null;
-
-    // Process question image
-    if (questionData.questionImage) {
-        console.log(`\n🖼️ Processing question image...`);
-        imageSummary?.expect(rowNumber, IMAGE_TYPES.QUESTION);
-        const cloudinaryUrl = await uploadImageFromUrl(questionData.questionImage);
-        processed.questionImage = cloudinaryUrl || null;
-        if (cloudinaryUrl) {
-            imageSummary?.markUploaded(rowNumber, IMAGE_TYPES.QUESTION);
-        } else {
-            imageSummary?.markFailed(rowNumber, IMAGE_TYPES.QUESTION, 'Upload failed — image was not stored.');
-        }
-    }
-
-    // Process option images
-    if (questionData.optionImages && Array.isArray(questionData.optionImages)) {
-        processed.optionImages = [];
-        for (let i = 0; i < questionData.optionImages.length; i++) {
-            const optImg = questionData.optionImages[i];
-            if (optImg) {
-                console.log(`🖼️ Processing option ${i + 1} image...`);
-                const cloudinaryUrl = await uploadImageFromUrl(optImg);
-                processed.optionImages.push(cloudinaryUrl || '');
-            } else {
-                processed.optionImages.push('');
-            }
-        }
-    }
-
-    // Process explanation image
-    if (questionData.explanationImage) {
-        console.log(`🖼️ Processing explanation image...`);
-        imageSummary?.expect(rowNumber, IMAGE_TYPES.SOLUTION);
-        const cloudinaryUrl = await uploadImageFromUrl(questionData.explanationImage);
-        processed.explanationImage = cloudinaryUrl || null;
-        if (cloudinaryUrl) {
-            imageSummary?.markUploaded(rowNumber, IMAGE_TYPES.SOLUTION);
-        } else {
-            imageSummary?.markFailed(rowNumber, IMAGE_TYPES.SOLUTION, 'Upload failed — image was not stored.');
-        }
-    }
-
-    return processed;
-};
-
-/**
  * True for values that live on a remote host and are NOT already on our own
  * Cloudinary CDN — i.e. the ones an import should transfer. Inline data:
  * URIs and empty cells need no transfer.
@@ -204,7 +147,6 @@ const transferQuestionImages = async (candidate, rowLabel = '', opts = {}) => {
 module.exports = {
     convertGoogleDriveUrl,
     uploadImageFromUrl,
-    processQuestionImages,
     needsCloudinaryTransfer,
     transferQuestionImages
 };

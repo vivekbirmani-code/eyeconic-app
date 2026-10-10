@@ -1,7 +1,7 @@
 /**
  * importImageSummary: the per-image outcome tracker behind the Image Upload
- * Summary popup, plus its integration with both import image pipelines
- * (transferQuestionImages / processQuestionImages). Network (axios) and
+ * Summary popup, plus its integration with the import image pipeline
+ * (transferQuestionImages — used by BOTH import paths). Network (axios) and
  * Cloudinary are stubbed — these tests pin the counting CONTRACT.
  */
 jest.mock('cloudinary', () => {
@@ -12,7 +12,7 @@ jest.mock('cloudinary', () => {
 const cloudinary = require('cloudinary').v2;
 const axios = require('axios');
 const { IMAGE_TYPES, createImageImportSummary } = require('../../utils/importImageSummary');
-const { transferQuestionImages, processQuestionImages } = require('../../utils/imageUploader');
+const { transferQuestionImages } = require('../../utils/imageUploader');
 
 jest.spyOn(axios, 'get');
 
@@ -156,50 +156,57 @@ describe('transferQuestionImages — imageSummary integration (bank import path)
   });
 });
 
-describe('processQuestionImages — imageSummary integration (quiz import path)', () => {
+describe('transferQuestionImages — quiz import path (caller-side registration)', () => {
   beforeEach(() => {
     axios.get.mockReset();
     cloudinary.uploader.upload.mockReset();
   });
 
-  it('marks question and solution images uploaded', async () => {
-    stubDownload();
+  it('counts an already-stored image as uploaded — no transfer is attempted', async () => {
     stubUpload();
     const summary = createImageImportSummary();
+    // The quiz route registers the row's images before the transfer; an
+    // already-Cloudinary value needs no upload and stays "pending", which
+    // the summary reports as uploaded.
+    summary.expect(3, IMAGE_TYPES.QUESTION);
 
-    await processQuestionImages(
+    const { candidate } = await transferQuestionImages(
+      { rowNumber: 3, questionImage: CLOUDINARY_URL, explanationImage: undefined },
+      'Row 3',
+      { rowNumber: 3, imageSummary: summary }
+    );
+
+    expect(candidate.questionImage).toBe(CLOUDINARY_URL);
+    expect(cloudinary.uploader.upload).not.toHaveBeenCalled();
+    expect(summary.toJSON()).toEqual({ total: 1, uploaded: 1, failed: 0, failures: [] });
+  });
+
+  it('marks question and solution images failed when their transfers fail (direct URLs kept)', async () => {
+    stubDownload();
+    cloudinary.uploader.upload.mockRejectedValue(new Error('throttled'));
+    const summary = createImageImportSummary();
+    summary.expect(3, IMAGE_TYPES.QUESTION);
+    summary.expect(3, IMAGE_TYPES.SOLUTION);
+
+    const { candidate } = await transferQuestionImages(
       { rowNumber: 3, questionImage: DRIVE_URL, explanationImage: DRIVE_URL },
-      { imageSummary: summary }
+      'Row 3',
+      { rowNumber: 3, imageSummary: summary }
     );
 
-    expect(summary.toJSON()).toEqual({ total: 2, uploaded: 2, failed: 0, failures: [] });
+    expect(candidate.questionImage).toBe(DRIVE_URL);
+    expect(candidate.explanationImage).toBe(DRIVE_URL);
+    const json = summary.toJSON();
+    expect(json.failed).toBe(2);
+    expect(json.failures.map((f) => f.type)).toEqual(['question', 'solution']);
   });
 
-  it('marks a dropped image (upload returned null) failed', async () => {
-    stubDownload();
-    cloudinary.uploader.upload.mockRejectedValue(new Error('boom'));
-    const summary = createImageImportSummary();
-
-    const processed = await processQuestionImages(
-      { rowNumber: 3, questionImage: DRIVE_URL },
-      { imageSummary: summary }
-    );
-
-    expect(processed.questionImage).toBeNull();
-    expect(summary.toJSON()).toEqual({
-      total: 1,
-      uploaded: 0,
-      failed: 1,
-      failures: [{ row: 3, type: 'question', reason: 'Upload failed — image was not stored.' }],
-    });
-  });
-
-  it('records nothing without a rowNumber (non-import callers)', async () => {
+  it('records nothing when no row number can be resolved', async () => {
     stubDownload();
     stubUpload();
     const summary = createImageImportSummary();
 
-    await processQuestionImages({ questionImage: DRIVE_URL }, { imageSummary: summary });
+    await transferQuestionImages({ questionImage: DRIVE_URL }, '', { imageSummary: summary });
 
     expect(summary.toJSON().total).toBe(0);
   });

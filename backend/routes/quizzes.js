@@ -9,7 +9,7 @@ const QuestionBank = require('../models/QuestionBank');
 const { auth, authorize } = require('../middleware/auth');
 const multer = require('multer');
 const { parseExcel } = require('../utils/excelParser');
-const { processQuestionImages } = require('../utils/imageUploader');
+const { transferQuestionImages } = require('../utils/imageUploader');
 const {
   QuestionValidationError,
   normalizeQuestionImageFields,
@@ -20,7 +20,7 @@ const {
   loadActiveQuestionDedupMap,
 } = require('../utils/questionDedup');
 const { buildImportValidationPayload } = require('../utils/importErrors');
-const { createImageImportSummary } = require('../utils/importImageSummary');
+const { IMAGE_TYPES, createImageImportSummary } = require('../utils/importImageSummary');
 const Subject = require('../models/Subject');
 const MentorStudentAssignment = require('../models/MentorStudentAssignment');
 const ProctoringSession = require('../models/ProctoringSession');
@@ -1344,9 +1344,8 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
     for (const qData of parsedQuestions) {
       const rowLabel = `Row ${qData.rowNumber || '?'}`;
       const candidate = {
-        // Sheet row for the import image summary; never persisted (the
-        // QuestionBank constructor below copies named fields only).
-        rowNumber: qData.rowNumber || null,
+        // Original sheet row — labels the image-transfer warnings below.
+        rowNumber: qData.rowNumber,
         subject: subjectsMap[qData._normalizedSubject || qData.subjectName.toLowerCase()],
         topicName: qData.topicName,
         subtopicName: qData.subtopicName,
@@ -1401,11 +1400,22 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
     let duplicatesUpdated = 0;
     let questionsWithImages = 0;
     const previewQuestions = [];
+    // Non-fatal image-transfer outcomes (direct source URL kept); surfaced in
+    // the response so a partial transfer is never reported as fully clean.
+    const imageWarnings = [];
     // Per-image outcome tracker for the app's Image Upload Summary popup.
     // Only rows whose images the pipeline actually processes (created rows
     // and duplicate rows enriched with images) are counted — skipped
     // duplicates do no image work.
     const imageSummary = createImageImportSummary();
+    // Register a row's question/solution images before its transfer so the
+    // summary counts every processed image: transferQuestionImages only
+    // marks the ones it actually transfers, and already-stored values
+    // (our CDN / inline URIs) legitimately count as uploaded via "pending".
+    const trackRowImages = (row) => {
+      if (row.questionImage) imageSummary.expect(row.rowNumber, IMAGE_TYPES.QUESTION);
+      if (row.explanationImage) imageSummary.expect(row.rowNumber, IMAGE_TYPES.SOLUTION);
+    };
 
     // One batched prefetch of the existing ACTIVE questions for the subjects
     // this sheet touches — same-subject + same-normalized-text IS the
@@ -1441,13 +1451,22 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
         if (newHasImage && !existingHasImage) {
           // Update existing with new images. Transfer them to Cloudinary
           // first — same treatment new questions get — so updated questions
-          // never store hotlinked third-party URLs.
+          // never store hotlinked third-party URLs. transferQuestionImages
+          // mutates the candidate in place: each image becomes its Cloudinary
+          // URL, or (on a failed transfer) stays the normalized direct URL
+          // with a warning — never a silent drop to "no image".
           console.log(`\n🖼️ Processing images for duplicate question: ${candidate.question.substring(0, 50)}...`);
-          const processed = await processQuestionImages(candidate, { imageSummary });
+          trackRowImages(candidate);
+          const { warnings: rowWarnings } = await transferQuestionImages(
+            candidate,
+            `Row ${candidate.rowNumber || '?'}`,
+            { rowNumber: candidate.rowNumber, imageSummary }
+          );
+          imageWarnings.push(...rowWarnings);
 
-          existingQuestion.questionImage = processed.questionImage || existingQuestion.questionImage;
-          existingQuestion.optionImages = processed.optionImages?.some(img => img) ? processed.optionImages : existingQuestion.optionImages;
-          existingQuestion.explanationImage = processed.explanationImage || existingQuestion.explanationImage;
+          existingQuestion.questionImage = candidate.questionImage || existingQuestion.questionImage;
+          existingQuestion.optionImages = candidate.optionImages?.some(img => img) ? candidate.optionImages : existingQuestion.optionImages;
+          existingQuestion.explanationImage = candidate.explanationImage || existingQuestion.explanationImage;
           // Also update tags to include import tag
           existingQuestion.tags = [...new Set([...existingQuestion.tags, ...(candidate.tags || []), 'excel-import', `quiz:${quizTitle}`])];
           await existingQuestion.save();
@@ -1484,30 +1503,40 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
         }
       } else {
         // Create new question
-        // Upload images to Cloudinary
+        // Transfer images to the app's Cloudinary CDN. transferQuestionImages
+        // mutates the candidate in place: remote URLs become Cloudinary URLs,
+        // already-Cloudinary/inline URLs are left untouched (no wasteful
+        // re-upload), and a failed transfer keeps the normalized direct URL
+        // with a warning instead of silently dropping the image.
         console.log(`\n📝 Processing question ${questionsCreated + 1}: ${candidate.question.substring(0, 50)}...`);
-        const processed = await processQuestionImages(candidate, { imageSummary });
+        trackRowImages(candidate);
+        const { warnings: rowWarnings } = await transferQuestionImages(
+          candidate,
+          `Row ${candidate.rowNumber || '?'}`,
+          { rowNumber: candidate.rowNumber, imageSummary }
+        );
+        imageWarnings.push(...rowWarnings);
 
         const question = new QuestionBank({
           subject: subId,
-          topicName: processed.topicName,
-          subtopicName: processed.subtopicName,
-          system: processed.system,
-          questionType: processed.questionType,
-          difficulty: processed.difficulty,
-          question: processed.question,
-          questionImage: processed.questionImage,
-          options: processed.options,
-          optionImages: processed.optionImages,
-          assertion: processed.assertion,
-          reason: processed.reason,
-          columnA: processed.columnA,
-          columnB: processed.columnB,
-          correctAnswer: processed.correctAnswer,
-          explanation: processed.explanation,
-          explanationImage: processed.explanationImage,
-          marrowCode: processed.marrowCode,
-          source: processed.source,
+          topicName: candidate.topicName,
+          subtopicName: candidate.subtopicName,
+          system: candidate.system,
+          questionType: candidate.questionType,
+          difficulty: candidate.difficulty,
+          question: candidate.question,
+          questionImage: candidate.questionImage,
+          options: candidate.options,
+          optionImages: candidate.optionImages,
+          assertion: candidate.assertion,
+          reason: candidate.reason,
+          columnA: candidate.columnA,
+          columnB: candidate.columnB,
+          correctAnswer: candidate.correctAnswer,
+          explanation: candidate.explanation,
+          explanationImage: candidate.explanationImage,
+          marrowCode: candidate.marrowCode,
+          source: candidate.source,
           tags: [...(candidate.tags || []), 'excel-import', `quiz:${quizTitle}`],
           createdBy: req.user._id,
           isActive: true
@@ -1523,7 +1552,7 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
             const racer = await QuestionBank.findOne({ dedupKey, isActive: true });
             if (racer) {
               existingByDedupKey.set(dedupKey, racer);
-              // This row's images were uploaded but the racer question is
+              // This row's images were transferred but the racer question is
               // reused as-is, so they were never linked to a stored question.
               imageSummary.failRow(candidate.rowNumber, 'Question was not saved (duplicate) — image not linked.');
               duplicatesSkipped++;
@@ -1607,6 +1636,11 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
 
     await quiz.save();
 
+    if (imageWarnings.length > 0) {
+      console.warn(`Quiz import "${quizTitle}" kept ${imageWarnings.length} image(s) on their direct source URLs:`,
+        imageWarnings.slice(0, 10));
+    }
+
     res.status(201).json({
       message: 'Quiz imported successfully',
       quiz,
@@ -1617,6 +1651,10 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
         duplicatesUpdated,
         questionsWithImages
       },
+      // Images whose Cloudinary transfer failed and were stored as direct
+      // source URLs — the admin should re-check these in the preview below.
+      warningCount: imageWarnings.length,
+      warnings: imageWarnings.length > 0 ? imageWarnings.slice(0, 50) : undefined,
       // Per-image outcomes (question/solution images on processed rows) for
       // the app's Image Upload Summary popup. total === 0 means the file
       // carried no images — the app skips the popup in that case.

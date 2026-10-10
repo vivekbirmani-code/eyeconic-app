@@ -86,15 +86,18 @@ export default function ImportQuiz() {
   const [showPreview, setShowPreview] = useState(false);
   const [previewQuestions, setPreviewQuestions] = useState<PreviewQuestion[]>([]);
   const [importStats, setImportStats] = useState<ImportStats | null>(null);
-
-  // Post-import Share Quiz popup (same sheet as Past Tests)
-  const [createdQuiz, setCreatedQuiz] = useState<ShareQuizTarget | null>(null);
-  const [shareModalVisible, setShareModalVisible] = useState(false);
+  // Image transfers that fell back to their direct source URLs (not on our
+  // Cloudinary CDN). Never silent — the admin is told which rows to re-check.
+  const [imageWarnings, setImageWarnings] = useState<string[]>([]);
 
   // Image Upload Summary popup (stacks on the Import Complete modal). Only
   // opened when the imported file actually carried images.
   const [imageSummary, setImageSummary] = useState<ImageImportSummary | null>(null);
   const [imageSummaryVisible, setImageSummaryVisible] = useState(false);
+
+  // Post-import Share Quiz popup (same sheet as Past Tests)
+  const [createdQuiz, setCreatedQuiz] = useState<ShareQuizTarget | null>(null);
+  const [shareModalVisible, setShareModalVisible] = useState(false);
 
   useEffect(() => {
     fetchSubjects();
@@ -165,9 +168,10 @@ export default function ImportQuiz() {
   const finishImport = () => {
     setShareModalVisible(false);
     setCreatedQuiz(null);
+    setShowPreview(false);
+    setImageWarnings([]);
     setImageSummaryVisible(false);
     setImageSummary(null);
-    setShowPreview(false);
     router.back();
   };
 
@@ -258,6 +262,7 @@ export default function ImportQuiz() {
       // Show preview modal with stats
       setImportStats(response.data.stats);
       setPreviewQuestions(response.data.previewQuestions || []);
+      setImageWarnings(Array.isArray(response.data.warnings) ? response.data.warnings : []);
       setShareModalVisible(false);
 
       // Image summary popup (question/solution image outcomes) — only when
@@ -660,6 +665,20 @@ export default function ImportQuiz() {
                 <Text style={[styles.statValue, { color: colors.primaryDark }]}>{importStats.questionsWithImages}</Text>
                 <Text style={styles.statLabel}>With Images</Text>
               </View>
+            </View>
+          )}
+
+          {imageWarnings.length > 0 && (
+            <View style={styles.warningBanner}>
+              <Text style={styles.warningTitle}>
+                {imageWarnings.length} image{imageWarnings.length === 1 ? '' : 's'} could not be moved to the app CDN
+              </Text>
+              {imageWarnings.slice(0, 3).map((w, i) => (
+                <Text key={i} style={styles.warningText} numberOfLines={2}>{w}</Text>
+              ))}
+              {imageWarnings.length > 3 && (
+                <Text style={styles.warningText}>…and {imageWarnings.length - 3} more. The questions keep their direct image URLs — verify they render before sharing.</Text>
+              )}
             </View>
           )}
 
@@ -1143,6 +1162,26 @@ const styles = StyleSheet.create({
     fontSize: 11,
     color: colors.textSecondary,
     marginTop: 2,
+  },
+  warningBanner: {
+    marginHorizontal: 12,
+    marginTop: 4,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: colors.warningTint,
+    borderWidth: 1,
+    borderColor: colors.warning,
+  },
+  warningTitle: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: colors.warningDark,
+    marginBottom: 4,
+  },
+  warningText: {
+    fontSize: 12,
+    color: colors.warningDark,
+    marginBottom: 2,
   },
   previewList: {
     flex: 1,
