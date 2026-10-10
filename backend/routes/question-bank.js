@@ -305,6 +305,11 @@ async function handleBulkImport(req, res, buffer) {
                     duplicatesExisting++;
                     duplicates.push(`${rowLabel}: skipped — this question already exists in the question bank.`);
                 }
+                // The row's image cells are detected in the file but never
+                // processed — the existing question (with its own stored
+                // images) is reused as-is. Counted as skipped, not failed.
+                if (candidate.questionImage) imageSummary.markSkipped(rowNumber, IMAGE_TYPES.QUESTION);
+                if (candidate.explanationImage) imageSummary.markSkipped(rowNumber, IMAGE_TYPES.SOLUTION);
                 return;
             }
             existingQuestionKeys.add(dedupKey);
@@ -448,9 +453,9 @@ async function handleBulkImport(req, res, buffer) {
         // Non-fatal image-transfer outcomes (direct URL kept); surfaced so
         // the admin knows which images to re-check in the Question Bank.
         warnings: warnings.length > 0 ? warnings.slice(0, 50) : undefined,
-        // Per-image outcomes (question/solution images on accepted rows) for
-        // the app's Image Upload Summary popup. total === 0 means the file
-        // carried no images — the app skips the popup in that case.
+        // Per-image outcomes (question/solution images detected in the file)
+        // for the app's Image Upload Summary popup. total === 0 means the
+        // file carried no images — the app skips the popup in that case.
         imageSummary: imageSummary.toJSON()
     });
 }

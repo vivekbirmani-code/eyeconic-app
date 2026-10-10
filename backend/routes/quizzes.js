@@ -1404,9 +1404,10 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
     // the response so a partial transfer is never reported as fully clean.
     const imageWarnings = [];
     // Per-image outcome tracker for the app's Image Upload Summary popup.
-    // Only rows whose images the pipeline actually processes (created rows
-    // and duplicate rows enriched with images) are counted — skipped
-    // duplicates do no image work.
+    // Every question/solution image cell on a validated row is counted:
+    // processed rows get uploaded/failed outcomes, and reused duplicate
+    // rows mark theirs skipped (detected in the file, not processed — the
+    // existing question keeps its own stored images).
     const imageSummary = createImageImportSummary();
     // Register a row's question/solution images before its transfer so the
     // summary counts every processed image: transferQuestionImages only
@@ -1415,6 +1416,10 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
     const trackRowImages = (row) => {
       if (row.questionImage) imageSummary.expect(row.rowNumber, IMAGE_TYPES.QUESTION);
       if (row.explanationImage) imageSummary.expect(row.rowNumber, IMAGE_TYPES.SOLUTION);
+    };
+    const skipRowImages = (row) => {
+      if (row.questionImage) imageSummary.markSkipped(row.rowNumber, IMAGE_TYPES.QUESTION);
+      if (row.explanationImage) imageSummary.markSkipped(row.rowNumber, IMAGE_TYPES.SOLUTION);
     };
 
     // One batched prefetch of the existing ACTIVE questions for the subjects
@@ -1486,7 +1491,10 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
             status: 'updated'
           });
         } else {
-          // Skip - existing has image or neither has image
+          // Skip - existing has image or neither has image. The row's image
+          // cells count as skipped: detected in the file, not processed —
+          // the existing question keeps its own stored images.
+          skipRowImages(candidate);
           duplicatesSkipped++;
           questionIds.push(existingQuestion._id);
           if (existingQuestion.questionImage || existingQuestion.optionImages?.some(img => img)) {
@@ -1655,9 +1663,9 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
       // source URLs — the admin should re-check these in the preview below.
       warningCount: imageWarnings.length,
       warnings: imageWarnings.length > 0 ? imageWarnings.slice(0, 50) : undefined,
-      // Per-image outcomes (question/solution images on processed rows) for
-      // the app's Image Upload Summary popup. total === 0 means the file
-      // carried no images — the app skips the popup in that case.
+      // Per-image outcomes (question/solution images detected in the file)
+      // for the app's Image Upload Summary popup. total === 0 means the
+      // file carried no images — the app skips the popup in that case.
       imageSummary: imageSummary.toJSON(),
       previewQuestions
     });

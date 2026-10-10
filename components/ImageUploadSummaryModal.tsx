@@ -24,6 +24,10 @@ export interface ImageImportSummary {
   total: number;
   uploaded: number;
   failed: number;
+  /** Detected but not processed — the row was a duplicate, so the existing
+   *  question (with its own stored images) was reused. Absent on older
+   *  payloads; treated as 0. */
+  skipped?: number;
   failures: ImageImportFailure[];
 }
 
@@ -50,7 +54,9 @@ interface ImageUploadSummaryModalProps {
 export default function ImageUploadSummaryModal({ visible, summary, onClose }: ImageUploadSummaryModalProps) {
   if (!summary) return null;
 
+  const skipped = Number(summary.skipped) || 0;
   const allUploaded = summary.failed === 0;
+  const processed = summary.total - skipped;
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
@@ -77,9 +83,11 @@ export default function ImageUploadSummaryModal({ visible, summary, onClose }: I
                   <AlertTriangle color={colors.warningDark} size={18} />
                 )}
                 <Text style={[styles.bannerText, allUploaded ? styles.bannerTextSuccess : styles.bannerTextWarning]}>
-                  {allUploaded
+                  {allUploaded && skipped === 0
                     ? `All ${summary.total} image${summary.total === 1 ? '' : 's'} uploaded successfully.`
-                    : `${summary.failed} of ${summary.total} image${summary.total === 1 ? '' : 's'} could not be uploaded.`}
+                    : allUploaded
+                      ? `${summary.uploaded} image${summary.uploaded === 1 ? '' : 's'} uploaded · ${skipped} skipped — reused questions kept their existing images.`
+                      : `${summary.failed} of ${processed} image${processed === 1 ? '' : 's'} could not be uploaded${skipped > 0 ? ` · ${skipped} skipped (reused)` : ''}.`}
                 </Text>
               </View>
 
@@ -96,6 +104,12 @@ export default function ImageUploadSummaryModal({ visible, summary, onClose }: I
                   <Text style={[styles.statValue, { color: colors.danger }]}>{summary.failed}</Text>
                   <Text style={styles.statLabel}>Failed</Text>
                 </View>
+                {skipped > 0 && (
+                  <View style={styles.statBox}>
+                    <Text style={styles.statValue}>{skipped}</Text>
+                    <Text style={styles.statLabel}>Skipped</Text>
+                  </View>
+                )}
               </View>
             </>
           )}

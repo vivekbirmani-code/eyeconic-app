@@ -134,6 +134,40 @@ describe('POST /api/quizzes/import-excel — valid imports', () => {
     // One question total — the existing one was updated, not duplicated.
     expect(await QuestionBank.countDocuments({})).toBe(1);
   });
+
+  it('reports every image detected in the file — reused rows count as skipped, not failed', async () => {
+    // Already-Cloudinary URLs: no network, and no transfer needed — so the
+    // first import reports them uploaded (stored as-is) and the re-import,
+    // where every row is a reused duplicate, reports them skipped. This is
+    // the Image Upload Summary popup data for the all-duplicates case.
+    const CLOUD = 'https://res.cloudinary.com/demo/image/upload/v1/eyeconic_questions/q.png';
+    const rows = [baseRow({
+      QUESTION_TYPE: 'image_based',
+      Q_IMAGE: CLOUD,
+      SOLUTION_IMAGE: CLOUD,
+    })];
+
+    const first = await importFile(adminToken, toBuffer(rows), { quizTitle: 'Summary Quiz One' });
+    expect(first.status).toBe(201);
+    expect(first.body.imageSummary).toEqual({
+      total: 2,
+      uploaded: 2,
+      failed: 0,
+      skipped: 0,
+      failures: [],
+    });
+
+    const second = await importFile(adminToken, toBuffer(rows), { quizTitle: 'Summary Quiz Two' });
+    expect(second.status).toBe(201);
+    expect(second.body.stats.duplicatesSkipped).toBe(1);
+    expect(second.body.imageSummary).toEqual({
+      total: 2,
+      uploaded: 0,
+      failed: 0,
+      skipped: 2,
+      failures: [],
+    });
+  });
 });
 
 describe('POST /api/quizzes/import-excel — file-level rejections (must be 400, never 500)', () => {

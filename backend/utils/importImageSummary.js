@@ -9,10 +9,13 @@
  * failure can point the admin back at the exact row in Excel.
  *
  * Contract:
- *   expect(rowNumber, type)  — an image cell detected on a row the import
- *                              accepted for processing (counts toward total).
+ *   expect(rowNumber, type)  — an image cell detected in the uploaded file
+ *                              (counts toward total).
  *   markUploaded(...)        — the image ended up stored and linked.
  *   markFailed(...)          — extraction/transfer/upload/association failed.
+ *   markSkipped(...)         — detected but not processed: the row was a
+ *                              duplicate, so the existing question (with its
+ *                              own stored images) was reused as-is.
  *   failRow(rowNumber, why)  — the row's question was not saved, so none of
  *                              its images ended up linked to a question.
  *
@@ -55,6 +58,10 @@ const createImageImportSummary = () => {
             mark(rowNumber, type, 'failed', reason);
         },
 
+        markSkipped(rowNumber, type) {
+            mark(rowNumber, type, 'skipped');
+        },
+
         failRow(rowNumber, reason) {
             if (!rowNumber) return;
             const prefix = `${rowNumber}|`;
@@ -67,7 +74,12 @@ const createImageImportSummary = () => {
 
         toJSON() {
             const failures = [];
+            let skipped = 0;
             entries.forEach((entry, k) => {
+                if (entry.status === 'skipped') {
+                    skipped++;
+                    return;
+                }
                 if (entry.status !== 'failed') return;
                 const [rowRaw, type] = k.split('|');
                 failures.push({
@@ -81,8 +93,9 @@ const createImageImportSummary = () => {
             failures.sort((a, b) => a.row - b.row || a.type.localeCompare(b.type));
             return {
                 total: entries.size,
-                uploaded: entries.size - failures.length,
+                uploaded: entries.size - failures.length - skipped,
                 failed: failures.length,
+                skipped,
                 failures,
             };
         },

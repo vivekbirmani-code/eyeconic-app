@@ -43,6 +43,7 @@ describe('createImageImportSummary — counting contract', () => {
       total: 2,
       uploaded: 2,
       failed: 0,
+      skipped: 0,
       failures: [],
     });
   });
@@ -51,6 +52,24 @@ describe('createImageImportSummary — counting contract', () => {
     const summary = createImageImportSummary();
     summary.expect(2, IMAGE_TYPES.QUESTION);
     expect(summary.toJSON().uploaded).toBe(1);
+  });
+
+  it('counts skipped images (reused duplicate rows) without reporting them as failed', () => {
+    const summary = createImageImportSummary();
+    summary.expect(3, IMAGE_TYPES.QUESTION);
+    summary.expect(3, IMAGE_TYPES.SOLUTION);
+    summary.markSkipped(3, IMAGE_TYPES.QUESTION);
+    summary.markSkipped(3, IMAGE_TYPES.SOLUTION);
+    summary.expect(4, IMAGE_TYPES.QUESTION);
+    summary.markUploaded(4, IMAGE_TYPES.QUESTION);
+
+    expect(summary.toJSON()).toEqual({
+      total: 3,
+      uploaded: 1,
+      failed: 0,
+      skipped: 2,
+      failures: [],
+    });
   });
 
   it('tracks failures individually with row and type, in sheet order', () => {
@@ -65,6 +84,7 @@ describe('createImageImportSummary — counting contract', () => {
       total: 2,
       uploaded: 0,
       failed: 2,
+      skipped: 0,
     });
     expect(json.failures).toEqual([
       { row: 3, type: 'question', reason: 'Cloudinary transfer failed — the direct source URL was stored instead.' },
@@ -116,7 +136,7 @@ describe('transferQuestionImages — imageSummary integration (bank import path)
       { rowNumber: 4, imageSummary: summary }
     );
 
-    expect(summary.toJSON()).toEqual({ total: 1, uploaded: 1, failed: 0, failures: [] });
+    expect(summary.toJSON()).toEqual({ total: 1, uploaded: 1, failed: 0, skipped: 0, failures: [] });
   });
 
   it('marks a failed transfer failed (direct URL kept), keyed by the row from the label', async () => {
@@ -178,7 +198,7 @@ describe('transferQuestionImages — quiz import path (caller-side registration)
 
     expect(candidate.questionImage).toBe(CLOUDINARY_URL);
     expect(cloudinary.uploader.upload).not.toHaveBeenCalled();
-    expect(summary.toJSON()).toEqual({ total: 1, uploaded: 1, failed: 0, failures: [] });
+    expect(summary.toJSON()).toEqual({ total: 1, uploaded: 1, failed: 0, skipped: 0, failures: [] });
   });
 
   it('marks question and solution images failed when their transfers fail (direct URLs kept)', async () => {
