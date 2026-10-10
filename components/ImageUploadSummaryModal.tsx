@@ -12,11 +12,12 @@ import { colors } from '@/utils/theme';
 
 /**
  * Shape of backend `imageSummary` (utils/importImageSummary.js) returned by
- * both Excel import endpoints. `type` maps to the popup's display labels.
+ * both Excel import endpoints. `type` maps to the popup's display labels;
+ * option images arrive as `option1` … `option6` (one slot per O_IMAGE_n).
  */
 export interface ImageImportFailure {
   row: number;
-  type: 'question' | 'solution';
+  type: 'question' | 'solution' | `option${number}`;
   reason?: string;
 }
 
@@ -31,9 +32,10 @@ export interface ImageImportSummary {
   failures: ImageImportFailure[];
 }
 
-const TYPE_LABELS: Record<ImageImportFailure['type'], string> = {
-  question: 'Question Image',
-  solution: 'Solution Image',
+const typeLabel = (type: ImageImportFailure['type']): string => {
+  if (type === 'question') return 'Question Image';
+  if (type === 'solution') return 'Solution Image';
+  return `Option Image ${type.replace(/^option/, '')}`;
 };
 
 interface ImageUploadSummaryModalProps {
@@ -44,9 +46,10 @@ interface ImageUploadSummaryModalProps {
 
 /**
  * Post-import image report shown after an Excel import finishes: total
- * question/solution images in the file, how many ended up stored and linked,
- * and — for every failure — the sheet row and image type. All-success and
- * no-image states render as clear status banners instead of a failure list.
+ * question/option/solution images in the file, how many ended up stored and
+ * linked, and — for every failure — the sheet row, image type (option images
+ * carry their option number), and why it failed. All-success and no-image
+ * states render as clear status banners instead of a failure list.
  *
  * Render this inside the parent modal's tree when stacked on another modal
  * (iOS child-dialog placement); at screen root otherwise.
@@ -120,12 +123,15 @@ export default function ImageUploadSummaryModal({ visible, summary, onClose }: I
               <ScrollView style={styles.failureList} contentContainerStyle={styles.failureListContent}>
                 {summary.failures.map((failure) => (
                   <View key={`${failure.row}-${failure.type}`} style={styles.failureRow}>
-                    <Text style={styles.failureRowLabel}>Row {failure.row}</Text>
-                    <View style={styles.failureTypeBadge}>
-                      <Text style={styles.failureTypeText}>
-                        {TYPE_LABELS[failure.type] || 'Image'}
-                      </Text>
+                    <View style={styles.failureRowTop}>
+                      <Text style={styles.failureRowLabel}>Row {failure.row}</Text>
+                      <View style={styles.failureTypeBadge}>
+                        <Text style={styles.failureTypeText}>{typeLabel(failure.type)}</Text>
+                      </View>
                     </View>
+                    {!!failure.reason && (
+                      <Text style={styles.failureReason}>{failure.reason}</Text>
+                    )}
                   </View>
                 ))}
               </ScrollView>
@@ -243,18 +249,25 @@ const styles = StyleSheet.create({
     gap: 6,
   },
   failureRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
     backgroundColor: colors.dangerTint,
     borderRadius: 8,
     paddingHorizontal: 10,
     paddingVertical: 8,
   },
+  failureRowTop: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   failureRowLabel: {
     fontSize: 13,
     fontWeight: '600',
     color: colors.dangerDark,
+  },
+  failureReason: {
+    fontSize: 11,
+    color: colors.dangerDark,
+    marginTop: 2,
   },
   failureTypeBadge: {
     backgroundColor: colors.surface,

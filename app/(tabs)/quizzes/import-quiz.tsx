@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -8,7 +8,10 @@ import {
   TextInput,
   Alert,
   ActivityIndicator,
-  Modal,
+  Animated,
+  BackHandler,
+  Dimensions,
+  Easing,
   FlatList,
   Switch,
 } from 'react-native';
@@ -165,7 +168,11 @@ export default function ImportQuiz() {
   };
 
   // Leaves the Import Complete screen entirely (and clears the share target).
+  // Guarded so a double tap can't pop the route twice.
+  const finishingRef = useRef(false);
   const finishImport = () => {
+    if (finishingRef.current) return;
+    finishingRef.current = true;
     setShareModalVisible(false);
     setCreatedQuiz(null);
     setShowPreview(false);
@@ -174,6 +181,42 @@ export default function ImportQuiz() {
     setImageSummary(null);
     router.back();
   };
+
+  // Import Complete renders as a fullscreen in-window overlay, NOT a native
+  // Modal: its child dialogs (image summary, Share Quiz sheet) are native
+  // Modals, and on Android dismissing a Modal stacked over another Modal
+  // leaves the parent window touch-dead — Done/Share stopped responding
+  // right after the image summary closed. With Import Complete in the main
+  // window there is only ever one native Modal visible, the same mounting
+  // Past Tests already uses for the Share sheet.
+  const previewSlide = useRef(new Animated.Value(0)).current;
+
+  // Slide the overlay in — parity with the old Modal's animationType="slide".
+  // (No exit animation: finishImport pops the route, so the screen unmounts
+  // immediately, exactly as before.)
+  useEffect(() => {
+    if (!showPreview) return;
+    previewSlide.setValue(Dimensions.get('window').height);
+    Animated.timing(previewSlide, {
+      toValue: 0,
+      duration: 250,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [showPreview, previewSlide]);
+
+  // Hardware back closes Import Complete (the old Modal never wired
+  // onRequestClose, so back did nothing). Native child Modals consume the
+  // key themselves while shown, so this only fires behind them.
+  useEffect(() => {
+    if (!showPreview) return;
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      finishImport();
+      return true;
+    });
+    return () => subscription.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showPreview]);
 
   const handleImport = async () => {
     if (!file) {
@@ -220,6 +263,7 @@ export default function ImportQuiz() {
     }
 
     setLoading(true);
+    finishingRef.current = false;
     setProgressMessage('Uploading file and processing images...');
     try {
       const formData = new FormData();
@@ -265,11 +309,12 @@ export default function ImportQuiz() {
       setImageWarnings(Array.isArray(response.data.warnings) ? response.data.warnings : []);
       setShareModalVisible(false);
 
-      // Image summary popup (question/solution image outcomes) — only when
-      // the file carried images; a no-image file never opens it.
+      // Image summary popup — shown after EVERY successful import; a file
+      // with no images reports "No images were found" rather than silently
+      // skipping the report.
       const summary: ImageImportSummary | undefined = response.data.imageSummary;
       setImageSummary(summary || null);
-      setImageSummaryVisible(!!summary && Number(summary.total) > 0);
+      setImageSummaryVisible(!!summary);
 
       // Keep the freshly imported quiz around so the Import Complete screen
       // can offer the Share Quiz sheet (internal students / public link).
@@ -633,8 +678,14 @@ export default function ImportQuiz() {
         </View>
       </ScrollView>
 
-      {/* Preview Modal */}
-      <Modal visible={showPreview} animationType="slide">
+      {/* Import Complete — fullscreen in-window overlay, not a native Modal
+          (see the note at previewSlide): nesting the image summary / share
+          sheet inside a Modal stacked native dialogs and deadened this
+          screen's touches on Android once they closed. */}
+      {showPreview && (
+        <Animated.View
+          style={[styles.previewOverlay, { transform: [{ translateY: previewSlide }] }]}
+        >
         <FullScreenContainer style={styles.modalContainer}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Import Complete</Text>
@@ -729,23 +780,25 @@ export default function ImportQuiz() {
             </TouchableOpacity>
           </View>
 
-          {/* Share sheet is nested INSIDE this Modal's tree so it stacks on
-              top of the Import Complete modal on iOS. */}
-          <ShareQuizModal
-            visible={shareModalVisible}
-            quiz={createdQuiz}
-            onClose={() => setShareModalVisible(false)}
-          />
-
-          {/* Image summary popup stacks on the Import Complete modal the same
-              way; dismissing it falls back to the Import Complete screen. */}
-          <ImageUploadSummaryModal
-            visible={imageSummaryVisible}
-            summary={imageSummary}
-            onClose={() => setImageSummaryVisible(false)}
-          />
         </FullScreenContainer>
-      </Modal>
+        </Animated.View>
+      )}
+
+      {/* Share sheet + image summary mount at the route root so each is the
+          ONLY native Modal on screen while shown — the mounting Past Tests
+          and Question Bank already use. Closing either returns touches to
+          the Import Complete overlay above. */}
+      <ShareQuizModal
+        visible={shareModalVisible}
+        quiz={createdQuiz}
+        onClose={() => setShareModalVisible(false)}
+      />
+
+      <ImageUploadSummaryModal
+        visible={imageSummaryVisible}
+        summary={imageSummary}
+        onClose={() => setImageSummaryVisible(false)}
+      />
     </ScreenContainer>
   );
 }
@@ -1120,6 +1173,14 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 20,
     fontSize: 16,
+  },
+  // Import Complete overlay — in-window fullscreen cover above the import
+  // form. Elevation (not just zIndex) so Android draws it over everything.
+  previewOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: colors.bg,
+    zIndex: 100,
+    elevation: 24,
   },
   // Preview Modal Styles
   modalContainer: {

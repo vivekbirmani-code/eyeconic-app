@@ -11,7 +11,7 @@ jest.mock('cloudinary', () => {
 
 const cloudinary = require('cloudinary').v2;
 const axios = require('axios');
-const { IMAGE_TYPES, createImageImportSummary } = require('../../utils/importImageSummary');
+const { IMAGE_TYPES, optionImageType, createImageImportSummary } = require('../../utils/importImageSummary');
 const { transferQuestionImages } = require('../../utils/imageUploader');
 
 jest.spyOn(axios, 'get');
@@ -111,6 +111,25 @@ describe('createImageImportSummary — counting contract', () => {
     expect(json.failures[0].reason).toBe('Question was not saved — image not linked.');
   });
 
+  it('tracks option images per slot — failure detail carries the option number', () => {
+    const summary = createImageImportSummary();
+    summary.expect(6, IMAGE_TYPES.QUESTION);
+    summary.expect(6, optionImageType(1));
+    summary.expect(6, optionImageType(2));
+    summary.expect(6, IMAGE_TYPES.SOLUTION);
+    summary.markUploaded(6, IMAGE_TYPES.QUESTION);
+    summary.markFailed(6, optionImageType(2), 'Cloudinary transfer failed — the direct source URL was stored instead.');
+
+    expect(summary.toJSON()).toEqual({
+      total: 4,
+      // question (marked) + option 1 and solution (pending = no transfer needed)
+      uploaded: 3,
+      failed: 1,
+      skipped: 0,
+      failures: [{ row: 6, type: 'option2', reason: 'Cloudinary transfer failed — the direct source URL was stored instead.' }],
+    });
+  });
+
   it('ignores registrations without a row number', () => {
     const summary = createImageImportSummary();
     summary.expect(null, IMAGE_TYPES.QUESTION);
@@ -160,10 +179,12 @@ describe('transferQuestionImages — imageSummary integration (bank import path)
     ]);
   });
 
-  it('does not mark outcomes for option images (not part of the summary)', async () => {
+  it('marks option image outcomes per slot, keyed by the option number', async () => {
     stubDownload();
     stubUpload();
     const summary = createImageImportSummary();
+    // Routes register only filled slots — an empty O_IMAGE cell is no image.
+    summary.expect(2, optionImageType(1));
 
     const { candidate } = await transferQuestionImages(
       { optionImages: [DRIVE_URL, ''] },
@@ -172,7 +193,74 @@ describe('transferQuestionImages — imageSummary integration (bank import path)
     );
 
     expect(candidate.optionImages[0]).toBe(CLOUDINARY_URL);
-    expect(summary.toJSON().total).toBe(0);
+    // Only the filled slot is counted — an empty O_IMAGE cell is no image.
+    expect(summary.toJSON()).toEqual({ total: 1, uploaded: 1, failed: 0, skipped: 0, failures: [] });
+  });
+
+  it('distinguishes a genuinely unavailable image from a failed Cloudinary transfer', async () => {
+    // Source URL is dead: the download itself fails, so the retained link is
+    // broken — failed with an "unavailable at source" reason and NO
+    // "still loadable" warning. The Cloudinary failure keeps the historical
+    // retained-URL reason AND warns.
+    const deadUrl = 'https://files.example.org/dead.png';
+    const summary = createImageImportSummary();
+    summary.expect(5, IMAGE_TYPES.QUESTION);
+    summary.expect(5, IMAGE_TYPES.SOLUTION);
+
+    axios.get.mockRejectedValue(new Error('404 Not Found'));
+    stubUpload();
+
+    let result = await transferQuestionImages(
+      { questionImage: deadUrl },
+      'Row 5',
+      { rowNumber: 5, imageSummary: summary }
+    );
+    expect(result.warnings).toEqual([]); // a broken link is not a "kept direct URL" warning
+    expect(result.candidate.questionImage).toBe(deadUrl);
+
+    stubDownload();
+    cloudinary.uploader.upload.mockRejectedValue(new Error('boom'));
+
+    result = await transferQuestionImages(
+      { explanationImage: DRIVE_URL },
+      'Row 5',
+      { rowNumber: 5, imageSummary: summary }
+    );
+
+    const json = summary.toJSON();
+    expect(json.failed).toBe(2);
+    expect(json.failures).toEqual([
+      { row: 5, type: 'question', reason: 'Image unavailable at its source URL (404 Not Found) — the stored link is likely broken.' },
+      { row: 5, type: 'solution', reason: 'Cloudinary transfer failed — the direct source URL was stored instead.' },
+    ]);
+    expect(result.warnings).toEqual([
+      'Row 5: Image transfer failed for explanation image — stored the direct source URL (' + DRIVE_URL + ').',
+    ]);
+  });
+
+  it('treats a source that serves a non-image as unavailable (unsupported format)', async () => {
+    const notAnImage = 'https://files.example.org/not-an-image';
+    const summary = createImageImportSummary();
+    summary.expect(8, IMAGE_TYPES.QUESTION);
+    stubUpload();
+
+    axios.get.mockResolvedValue({
+      data: Buffer.from('<html>not an image</html>'),
+      headers: { 'content-type': 'text/html' },
+    });
+
+    const { candidate, warnings } = await transferQuestionImages(
+      { questionImage: notAnImage },
+      'Row 8',
+      { rowNumber: 8, imageSummary: summary }
+    );
+
+    expect(candidate.questionImage).toBe(notAnImage);
+    expect(cloudinary.uploader.upload).not.toHaveBeenCalled();
+    expect(warnings).toEqual([]);
+    const json = summary.toJSON();
+    expect(json.failed).toBe(1);
+    expect(json.failures[0].reason).toMatch(/not an image|unavailable at its source URL/i);
   });
 });
 

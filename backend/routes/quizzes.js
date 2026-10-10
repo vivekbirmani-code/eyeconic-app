@@ -20,7 +20,7 @@ const {
   loadActiveQuestionDedupMap,
 } = require('../utils/questionDedup');
 const { buildImportValidationPayload } = require('../utils/importErrors');
-const { IMAGE_TYPES, createImageImportSummary } = require('../utils/importImageSummary');
+const { IMAGE_TYPES, optionImageType, createImageImportSummary } = require('../utils/importImageSummary');
 const Subject = require('../models/Subject');
 const MentorStudentAssignment = require('../models/MentorStudentAssignment');
 const ProctoringSession = require('../models/ProctoringSession');
@@ -1404,21 +1404,31 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
     // the response so a partial transfer is never reported as fully clean.
     const imageWarnings = [];
     // Per-image outcome tracker for the app's Image Upload Summary popup.
-    // Every question/solution image cell on a validated row is counted:
-    // processed rows get uploaded/failed outcomes, and reused duplicate
-    // rows mark theirs skipped (detected in the file, not processed — the
-    // existing question keeps its own stored images).
+    // Every image cell on a validated row is counted — question, option
+    // (per slot), and solution: processed rows get uploaded/failed outcomes,
+    // and reused duplicate rows mark theirs skipped (detected in the file,
+    // not processed — the existing question keeps its own stored images).
     const imageSummary = createImageImportSummary();
-    // Register a row's question/solution images before its transfer so the
-    // summary counts every processed image: transferQuestionImages only
-    // marks the ones it actually transfers, and already-stored values
-    // (our CDN / inline URIs) legitimately count as uploaded via "pending".
+    // Register a row's detected images before its transfer so the summary
+    // counts every processed image: transferQuestionImages only marks the
+    // ones it actually transfers, and already-stored values (our CDN /
+    // inline URIs) legitimately count as uploaded via "pending".
     const trackRowImages = (row) => {
       if (row.questionImage) imageSummary.expect(row.rowNumber, IMAGE_TYPES.QUESTION);
+      if (Array.isArray(row.optionImages)) {
+        row.optionImages.forEach((img, i) => {
+          if (img) imageSummary.expect(row.rowNumber, optionImageType(i + 1));
+        });
+      }
       if (row.explanationImage) imageSummary.expect(row.rowNumber, IMAGE_TYPES.SOLUTION);
     };
     const skipRowImages = (row) => {
       if (row.questionImage) imageSummary.markSkipped(row.rowNumber, IMAGE_TYPES.QUESTION);
+      if (Array.isArray(row.optionImages)) {
+        row.optionImages.forEach((img, i) => {
+          if (img) imageSummary.markSkipped(row.rowNumber, optionImageType(i + 1));
+        });
+      }
       if (row.explanationImage) imageSummary.markSkipped(row.rowNumber, IMAGE_TYPES.SOLUTION);
     };
 

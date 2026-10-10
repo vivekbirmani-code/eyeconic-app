@@ -3,19 +3,22 @@ import { useAuth } from '../../../contexts/AuthContext';
 import { api } from '../../../services/api';
 import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, UploadCloud, FileSpreadsheet, CheckCircle, Info } from 'lucide-react';
+import ImageUploadSummaryModal, { type ImageImportSummary } from '../../../components/ImageUploadSummaryModal';
 
 export default function ImportQuiz() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
-  const [success, setSuccess] = useState<{ count: number; skipped: number; inFile: number; existing: number } | null>(null);
+  const [success, setSuccess] = useState<{ count: number; skipped: number; inFile: number; existing: number; warnings: string[] } | null>(null);
+  const [imageSummary, setImageSummary] = useState<ImageImportSummary | null>(null);
   const [guidelinesOpen, setGuidelinesOpen] = useState(false);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
       setFile(e.target.files[0]);
       setSuccess(null);
+      setImageSummary(null);
     }
   };
 
@@ -38,7 +41,11 @@ export default function ImportQuiz() {
             skipped: Number(res.data.duplicatesSkipped) || 0,
             inFile: Number(res.data.duplicatesInFile) || 0,
             existing: Number(res.data.duplicatesExisting) || 0,
+            warnings: Array.isArray(res.data.warnings) ? res.data.warnings : [],
           });
+          // Per-image outcomes for the Image Upload Summary popup — shown
+          // after every import (a no-image file reports "No images found").
+          setImageSummary(res.data.imageSummary || null);
           setFile(null);
         } catch (err: any) {
           alert('Failed to import: ' + (err.response?.data?.message || err.message));
@@ -104,6 +111,20 @@ export default function ImportQuiz() {
                 Successfully imported {success.count} questions into the bank!
                 {success.skipped > 0 && ` ${success.skipped} duplicate row(s) skipped (${success.inFile} repeated in this file, ${success.existing} already in the bank).`}
               </p>
+            </div>
+          )}
+
+          {success && success.warnings.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 text-amber-800 px-4 py-3 rounded-xl mb-6 text-left animate-fade-in">
+              <p className="font-semibold text-sm mb-1">
+                ⚠️ {success.warnings.length} image{success.warnings.length === 1 ? '' : 's'} kept on their direct source URLs (cloud transfer failed)
+              </p>
+              <ul className="list-disc list-inside text-xs space-y-0.5">
+                {success.warnings.slice(0, 5).map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+              {success.warnings.length > 5 && (
+                <p className="text-xs mt-1">…and {success.warnings.length - 5} more. Verify these images render in the Question Bank before assigning quizzes.</p>
+              )}
             </div>
           )}
 
@@ -313,6 +334,8 @@ export default function ImportQuiz() {
         </div>
 
       </div>
+
+      <ImageUploadSummaryModal summary={imageSummary} onClose={() => setImageSummary(null)} />
     </div>
   );
 }

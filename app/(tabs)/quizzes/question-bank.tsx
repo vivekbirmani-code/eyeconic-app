@@ -578,10 +578,10 @@ export default function QuestionBankManagement() {
           text: 'OK',
           onPress: () => {
             fetchQuestions(); fetchStats(); fetchSubjects();
-            // Image summary popup follows the row-level report — only when
-            // the file carried question/solution images.
+            // Image summary popup follows the row-level report — after every
+            // import; a no-image file reports "No images were found".
             const summary: ImageImportSummary | undefined = apiResponse.data?.imageSummary;
-            if (summary && Number(summary.total) > 0) setImageSummary(summary);
+            if (summary) setImageSummary(summary);
           }
         }]
       );

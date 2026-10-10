@@ -22,7 +22,7 @@ const {
     needsCloudinaryTransfer,
     transferQuestionImages,
 } = require('../utils/imageUploader');
-const { IMAGE_TYPES, createImageImportSummary } = require('../utils/importImageSummary');
+const { IMAGE_TYPES, optionImageType, createImageImportSummary } = require('../utils/importImageSummary');
 const logger = require('../utils/logger');
 
 /**
@@ -253,8 +253,10 @@ async function handleBulkImport(req, res, buffer) {
     const imageSummary = createImageImportSummary();
 
     parsedRows.forEach((row, idx) => {
-        const rowLabel = `Row ${idx + 2}`;
+        // Parser rowNumber is the true sheet row (blank rows above were
+        // skipped), so labels — dup messages, warnings — must use it too.
         const rowNumber = row.rowNumber || idx + 2;
+        const rowLabel = `Row ${rowNumber}`;
         const subjectId = subjectsMap[subjectLookupKey(row.subjectName)];
         if (!subjectId) {
             errors.push(`${rowLabel}: Unknown subject '${row.subjectName}'. Please use standard subject names.`);
@@ -309,6 +311,11 @@ async function handleBulkImport(req, res, buffer) {
                 // processed — the existing question (with its own stored
                 // images) is reused as-is. Counted as skipped, not failed.
                 if (candidate.questionImage) imageSummary.markSkipped(rowNumber, IMAGE_TYPES.QUESTION);
+                if (Array.isArray(candidate.optionImages)) {
+                    candidate.optionImages.forEach((img, i) => {
+                        if (img) imageSummary.markSkipped(rowNumber, optionImageType(i + 1));
+                    });
+                }
                 if (candidate.explanationImage) imageSummary.markSkipped(rowNumber, IMAGE_TYPES.SOLUTION);
                 return;
             }
@@ -323,13 +330,18 @@ async function handleBulkImport(req, res, buffer) {
             questionRowLabels.push(rowLabel);
             questionRowNumbers.push(rowNumber);
 
-            // Register this row's question/solution images for the import
+            // Register this row's detected image cells for the import
             // summary popup. Registration happens at acceptance so rows whose
             // images need no Cloudinary transfer (already on our CDN / inline
             // data URIs) are still counted; those stay "pending" in the
             // tracker, which reports them as uploaded. Remote ones get their
             // final status from the transfer stage below.
             if (candidate.questionImage) imageSummary.expect(rowNumber, IMAGE_TYPES.QUESTION);
+            if (Array.isArray(candidate.optionImages)) {
+                candidate.optionImages.forEach((img, i) => {
+                    if (img) imageSummary.expect(rowNumber, optionImageType(i + 1));
+                });
+            }
             if (candidate.explanationImage) imageSummary.expect(rowNumber, IMAGE_TYPES.SOLUTION);
 
             // Remote images (Google Drive links etc.) are transferred to the

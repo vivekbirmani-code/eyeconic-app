@@ -10,7 +10,7 @@
 
 const mongoose = require('mongoose');
 const QuestionBank = require('../models/QuestionBank');
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
 const { getMongoUri } = require('../utils/mongoUri');
 
 const clearQuestionBank = async () => {

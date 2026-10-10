@@ -98,6 +98,24 @@ describe('transferQuestionImages', () => {
     expect(warnings).toEqual([`Row 5: Image transfer failed for question image — stored the direct source URL (${DRIVE_URL}).`]);
   });
 
+  it('keeps a dead source URL without a "still loadable" warning — it is a popup failure, not a transfer warning', async () => {
+    // A URL that cannot be downloaded is genuinely unavailable: the stored
+    // link is broken. Warnings stay reserved for retained-but-loadable
+    // direct URLs, so this path must NOT push one.
+    axios.get.mockRejectedValue(new Error('404 Not Found'));
+    stubUpload();
+
+    const { candidate, warnings } = await transferQuestionImages(
+      { questionImage: 'https://files.example.org/dead.png', optionImages: ['https://files.example.org/dead-too.png'] },
+      'Row 6'
+    );
+
+    expect(candidate.questionImage).toBe('https://files.example.org/dead.png');
+    expect(candidate.optionImages[0]).toBe('https://files.example.org/dead-too.png');
+    expect(cloudinary.uploader.upload).not.toHaveBeenCalled();
+    expect(warnings).toEqual([]);
+  });
+
   it('never silently drops an option or explanation image on transfer failure', async () => {
     // Regression: the retired processQuestionImages helper null-ed the
     // question image and blank-ed option images when the Cloudinary transfer

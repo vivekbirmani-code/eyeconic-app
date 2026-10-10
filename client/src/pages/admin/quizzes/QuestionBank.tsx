@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Plus, Upload, BookOpen, Search, Trash2, Edit, ChevronLeft, X, Image as ImageIcon
 } from 'lucide-react';
+import ImageUploadSummaryModal, { type ImageImportSummary } from '../../../components/ImageUploadSummaryModal';
 
 const QUESTION_TYPES = [
   { value: 'mcq_single', label: 'MCQ — Single Correct' },
@@ -72,6 +73,7 @@ export default function QuestionBank() {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [imageSummary, setImageSummary] = useState<ImageImportSummary | null>(null);
 
   const [form, setForm] = useState(emptyForm());
 
@@ -358,6 +360,10 @@ export default function QuestionBank() {
           if (dupCount) console.info('Duplicate questions skipped:', res.data.duplicates);
           if (errCount) console.warn('Import errors:', res.data.errors);
           if (warnCount) console.warn('Import warnings:', res.data.warnings);
+          // Per-image outcomes for the Image Upload Summary popup — shown
+          // after every import (a no-image file reports "No images found").
+          // Renders beneath the blocking alert, so it is visible on dismiss.
+          setImageSummary(res.data.imageSummary || null);
           fetchQuestions();
           fetchStats();
         } catch (err: any) {
@@ -699,6 +705,7 @@ export default function QuestionBank() {
         </div>
       )}
 
+      <ImageUploadSummaryModal summary={imageSummary} onClose={() => setImageSummary(null)} />
     </div>
   );
 }

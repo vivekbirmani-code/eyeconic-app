@@ -409,9 +409,11 @@ describe('POST /api/question-bank/bulk-import — legacy tech-team sheet', () =>
     // Reuse the same subjects the route resolves against.
     const OBGYN = await createSubject('OBGYN');
     // The import attempts a Drive -> Cloudinary transfer for the Q_IMAGE;
-    // stub the download so the test is deterministic and offline. The
-    // transfer then fails per-image and falls back to keeping the direct
-    // (normalized) URL, surfacing a warning — the exact contract below.
+    // stub the download so the test is deterministic and offline. A failed
+    // DOWNLOAD means the source itself is unavailable: the direct
+    // (normalized) URL is still kept, but as a popup FAILURE with an
+    // "unavailable at source" reason — NOT a retained-URL transfer warning
+    // (those are reserved for images whose direct URL still loads).
     const axios = require('axios');
     const getSpy = jest.spyOn(axios, 'get').mockRejectedValue(new Error('offline test'));
     try {
@@ -423,7 +425,18 @@ describe('POST /api/question-bank/bulk-import — legacy tech-team sheet', () =>
       expect(res.status).toBe(200);
       expect(res.body.count).toBe(1);
       expect(res.body.errors).toBeUndefined();
-      expect(res.body.warnings?.some((w) => w.includes('Image transfer failed'))).toBe(true);
+      expect(res.body.warnings).toBeUndefined(); // dead source ≠ "kept direct URL" warning
+      expect(res.body.imageSummary).toEqual({
+        total: 1,
+        uploaded: 0,
+        failed: 1,
+        skipped: 0,
+        failures: [{
+          row: 2,
+          type: 'question',
+          reason: 'Image unavailable at its source URL (offline test) — the stored link is likely broken.',
+        }],
+      });
 
       const QuestionBank = require('../../models/QuestionBank');
       const saved = await QuestionBank.findOne({ qid: '38' });
@@ -714,6 +727,90 @@ describe('POST /api/question-bank/bulk-import — strengthened normalization & s
       findSpy.mockRestore();
       findOneSpy.mockRestore();
     }
+  });
+});
+
+describe('POST /api/question-bank/bulk-import — image upload summary', () => {
+  const xlsx = require('xlsx');
+
+  // Already-Cloudinary/inline URLs: no network, no transfer needed — pending
+  // entries legitimately report as uploaded. This pins the COUNTING contract
+  // of the Image Upload Summary popup on the bank-import path.
+  const CLOUD = 'https://res.cloudinary.com/demo/image/upload/v1/eyeconic_questions/q.png';
+
+  const mcqRow = (question, overrides = {}) => ({
+    SUBJECT: 'Pathology', TOPIC: 'Genetics', SUBTOPIC: 'Mendelian Inheritance',
+    SYSTEM: 'Genetic Disorders', QUESTION_TYPE: 'MCQ — Single Correct', DIFFICULTY: 'medium',
+    QUESTION: question, OPTION1: 'A', OPTION2: 'B', OPTION3: 'C', OPTION4: 'D', CORRECT: 'A',
+    ...overrides,
+  });
+
+  const buildWorkbook = (rows) => {
+    const sheet = xlsx.utils.json_to_sheet(rows);
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(workbook, sheet, 'Question Bank');
+    return xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+  };
+
+  const importSheet = (rows) => request(app)
+    .post('/api/question-bank/bulk-import')
+    .set('Authorization', `Bearer ${adminToken}`)
+    .attach('file', buildWorkbook(rows), 'import.xlsx');
+
+  it('counts question, option, and solution images — reconciling total = uploaded + failed + skipped', async () => {
+    const res = await importSheet([
+      mcqRow('Summary counting question?', {
+        QUESTION_TYPE: 'Image Based', Q_IMAGE: CLOUD, O_IMAGE_1: CLOUD, O_IMAGE_2: CLOUD, SOLUTION_IMAGE: CLOUD,
+      }),
+      mcqRow('Second unique question?', { Q_IMAGE: CLOUD }),
+      mcqRow('Summary counting question?', { // duplicate of row 2 → its images skipped
+        QUESTION_TYPE: 'Image Based', Q_IMAGE: CLOUD, SOLUTION_IMAGE: CLOUD,
+      }),
+    ]);
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(2);
+    expect(res.body.duplicatesSkipped).toBe(1);
+
+    const summary = res.body.imageSummary;
+    expect(summary.total).toBe(7); // 4 on row 2, 1 on row 3, 2 on row 4 (skipped)
+    expect(summary.uploaded).toBe(5);
+    expect(summary.failed).toBe(0);
+    expect(summary.skipped).toBe(2);
+    expect(summary.total).toBe(summary.uploaded + summary.failed + summary.skipped);
+    expect(summary.failures).toEqual([]);
+  });
+
+  it('reports zero images for a text-only sheet', async () => {
+    const res = await importSheet([mcqRow('No images anywhere?')]);
+    expect(res.status).toBe(200);
+    expect(res.body.imageSummary).toEqual({
+      total: 0, uploaded: 0, failed: 0, skipped: 0, failures: [],
+    });
+  });
+
+  it('keys row labels on the true sheet row when blank rows precede the data', async () => {
+    // Header in row 1, a fully blank row 2, first question in row 3: the
+    // duplicate message must point at the Excel row the admin sees (4),
+    // not the parsed-row index (2).
+    const sheet = xlsx.utils.aoa_to_sheet([
+      ['SUBJECT', 'TOPIC', 'SUBTOPIC', 'SYSTEM', 'QUESTION_TYPE', 'DIFFICULTY', 'QUESTION', 'OPTION1', 'OPTION2', 'CORRECT'],
+      [],
+      ['Pathology', 'Genetics', 'Mendelian Inheritance', 'Genetic Disorders', 'MCQ — Single Correct', 'medium', 'Blank row question?', 'A', 'B', 'A'],
+      ['Pathology', 'Genetics', 'Mendelian Inheritance', 'Genetic Disorders', 'MCQ — Single Correct', 'medium', 'Blank row question?', 'A', 'B', 'A'],
+    ]);
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(workbook, sheet, 'Question Bank');
+    const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+    const res = await request(app)
+      .post('/api/question-bank/bulk-import')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .attach('file', buffer, 'import.xlsx');
+
+    expect(res.status).toBe(200);
+    expect(res.body.count).toBe(1);
+    expect(res.body.duplicatesSkipped).toBe(1);
+    expect(res.body.duplicates[0]).toBe('Row 4: skipped — duplicate of an earlier row in this file.');
   });
 });
 

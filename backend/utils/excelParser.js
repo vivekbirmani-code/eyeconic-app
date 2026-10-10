@@ -297,9 +297,16 @@ const parseExcel = async (buffer) => {
     }
 
     const { sheet, sheetName } = selectImportWorksheet(workbook);
-    const rawData = xlsx.utils.sheet_to_json(sheet);
+    // blankrows keeps fully empty sheet rows in the output as `{}` so the
+    // index below maps 1:1 onto the sheet — dropping them (SheetJS's default)
+    // would shift every subsequent row's computed number and point import
+    // errors and image-summary failures at the wrong Excel row.
+    const rawData = xlsx.utils.sheet_to_json(sheet, { blankrows: true });
 
-    if (!rawData || rawData.length === 0) {
+    // blankrows output can be non-empty yet carry only `{}` placeholders —
+    // a sheet of nothing but empty rows is still "no question rows".
+    const hasAnyPopulatedRow = rawData.some((row) => row && Object.keys(row).length > 0);
+    if (!rawData || rawData.length === 0 || !hasAnyPopulatedRow) {
         return fileFatal(
             'NO_QUESTION_ROWS',
             `No question rows were found in this workbook (sheets: ${sheetNames.join(', ')}).`,

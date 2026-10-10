@@ -22,12 +22,22 @@
  * An entry that is still `pending` at toJSON() time needed no upload (the
  * value was already on our Cloudinary CDN or an inline data URI), so it is
  * reported as uploaded — the image IS stored and linked as-is.
+ *
+ * Option images are tracked per slot: type `option1` … `option6` (one entry
+ * per filled O_IMAGE_n cell), so a failure names the exact option number.
  */
 
 const IMAGE_TYPES = Object.freeze({
     QUESTION: 'question',
     SOLUTION: 'solution',
 });
+
+/**
+ * Summary type key for the n-th option image (1-based, matching the
+ * O_IMAGE_1…O_IMAGE_6 sheet columns). Kept as a string prefix so the
+ * composite (row|type) key stays unique per option slot.
+ */
+const optionImageType = (n) => `option${n}`;
 
 const createImageImportSummary = () => {
     // `${rowNumber}|${type}` → { status: 'pending' | 'uploaded' | 'failed', reason? }
@@ -104,5 +114,6 @@ const createImageImportSummary = () => {
 
 module.exports = {
     IMAGE_TYPES,
+    optionImageType,
     createImageImportSummary,
 };

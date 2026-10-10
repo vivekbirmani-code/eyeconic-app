@@ -143,6 +143,26 @@ describe('parseExcel — row-level errors', () => {
     expect(questions).toHaveLength(1);
     expect(errors.some((e) => e.startsWith('Row 3:'))).toBe(true);
   });
+
+  it('keeps sheet row numbers true across blank rows', async () => {
+    // Header row 1, blank row 2, question in row 3, invalid row in row 4:
+    // every surfaced row number must match what the admin sees in Excel.
+    const sheet = xlsx.utils.aoa_to_sheet([
+      ['SUBJECT', 'TOPIC', 'SUBTOPIC', 'SYSTEM', 'QUESTION_TYPE', 'DIFFICULTY', 'QUESTION', 'OPTION1', 'OPTION2', 'CORRECT'],
+      [],
+      ['Pathology', 'Genetics', 'Mendelian Inheritance', 'Genetic Disorders', 'mcq_single', 'medium', 'Blank row below me?', 'A', 'B', 'A'],
+      ['Pathology', 'Genetics', 'Mendelian Inheritance', '', 'mcq_single', 'medium', 'Missing system here?', 'A', 'B', 'A'],
+    ]);
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(workbook, sheet, 'Questions');
+    const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+    const { questions, errors } = await parseExcel(buffer);
+    expect(questions).toHaveLength(1);
+    expect(questions[0].rowNumber).toBe(3);
+    expect(questions[0].question).toBe('Blank row below me?');
+    expect(errors.some((e) => e.startsWith('Row 4:') && /System/.test(e))).toBe(true);
+  });
 });
 
 describe('splitList', () => {
@@ -250,6 +270,20 @@ describe('parseExcel — file-level failures (no throws)', () => {
     expect(result.fatal).toBeTruthy();
     expect(result.fatal.message).toMatch(/no question rows/i);
     expect(result.fatal.hint).toBeTruthy();
+  });
+
+  it('returns fatal when the only sheet carries blank rows and nothing else', async () => {
+    const workbook = xlsx.utils.book_new();
+    xlsx.utils.book_append_sheet(workbook, xlsx.utils.aoa_to_sheet([
+      ['SUBJECT', 'QUESTION'],
+      [],
+      [],
+    ]), 'Sheet1');
+    const buffer = xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+
+    const result = await parseExcel(buffer);
+    expect(result.fatal).toBeTruthy();
+    expect(result.fatal.code).toBe('NO_QUESTION_ROWS');
   });
 
   it('returns fatal when the file is not a readable Excel workbook', async () => {
