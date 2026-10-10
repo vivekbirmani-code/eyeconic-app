@@ -29,6 +29,7 @@ import { colors } from '@/utils/theme';
 import { api, normalizeApiError } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
 import ShareQuizModal, { ShareQuizTarget } from '@/components/ShareQuizModal';
+import ImageUploadSummaryModal, { ImageImportSummary } from '@/components/ImageUploadSummaryModal';
 import { DateTimeField } from '@/components/DateTimeField';
 
 interface Subject {
@@ -89,6 +90,11 @@ export default function ImportQuiz() {
   // Post-import Share Quiz popup (same sheet as Past Tests)
   const [createdQuiz, setCreatedQuiz] = useState<ShareQuizTarget | null>(null);
   const [shareModalVisible, setShareModalVisible] = useState(false);
+
+  // Image Upload Summary popup (stacks on the Import Complete modal). Only
+  // opened when the imported file actually carried images.
+  const [imageSummary, setImageSummary] = useState<ImageImportSummary | null>(null);
+  const [imageSummaryVisible, setImageSummaryVisible] = useState(false);
 
   useEffect(() => {
     fetchSubjects();
@@ -159,6 +165,8 @@ export default function ImportQuiz() {
   const finishImport = () => {
     setShareModalVisible(false);
     setCreatedQuiz(null);
+    setImageSummaryVisible(false);
+    setImageSummary(null);
     setShowPreview(false);
     router.back();
   };
@@ -251,6 +259,12 @@ export default function ImportQuiz() {
       setImportStats(response.data.stats);
       setPreviewQuestions(response.data.previewQuestions || []);
       setShareModalVisible(false);
+
+      // Image summary popup (question/solution image outcomes) — only when
+      // the file carried images; a no-image file never opens it.
+      const summary: ImageImportSummary | undefined = response.data.imageSummary;
+      setImageSummary(summary || null);
+      setImageSummaryVisible(!!summary && Number(summary.total) > 0);
 
       // Keep the freshly imported quiz around so the Import Complete screen
       // can offer the Share Quiz sheet (internal students / public link).
@@ -702,6 +716,14 @@ export default function ImportQuiz() {
             visible={shareModalVisible}
             quiz={createdQuiz}
             onClose={() => setShareModalVisible(false)}
+          />
+
+          {/* Image summary popup stacks on the Import Complete modal the same
+              way; dismissing it falls back to the Import Complete screen. */}
+          <ImageUploadSummaryModal
+            visible={imageSummaryVisible}
+            summary={imageSummary}
+            onClose={() => setImageSummaryVisible(false)}
           />
         </FullScreenContainer>
       </Modal>

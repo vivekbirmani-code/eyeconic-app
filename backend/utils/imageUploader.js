@@ -1,6 +1,7 @@
 const cloudinary = require('cloudinary').v2;
 const axios = require('axios');
 const { convertGoogleDriveUrl, isGoogleDriveUrl } = require('./imageUrls');
+const { IMAGE_TYPES } = require('./importImageSummary');
 
 // Configure Cloudinary
 cloudinary.config({
@@ -73,16 +74,27 @@ const uploadImageFromUrl = async (imageUrl, folder = 'eyeconic_questions') => {
 /**
  * Process all images for a question and upload to Cloudinary
  * @param {Object} questionData - Question data with image URLs
+ * @param {Object} [opts] - { imageSummary } per-image outcome tracker
+ *   (utils/importImageSummary). questionData.rowNumber identifies the row
+ *   in the import summary; without it no outcomes are recorded.
  * @returns {Promise<Object>} - Question data with Cloudinary URLs
  */
-const processQuestionImages = async (questionData) => {
+const processQuestionImages = async (questionData, opts = {}) => {
     const processed = { ...questionData };
+    const { imageSummary } = opts;
+    const rowNumber = questionData.rowNumber || null;
 
     // Process question image
     if (questionData.questionImage) {
         console.log(`\n🖼️ Processing question image...`);
+        imageSummary?.expect(rowNumber, IMAGE_TYPES.QUESTION);
         const cloudinaryUrl = await uploadImageFromUrl(questionData.questionImage);
         processed.questionImage = cloudinaryUrl || null;
+        if (cloudinaryUrl) {
+            imageSummary?.markUploaded(rowNumber, IMAGE_TYPES.QUESTION);
+        } else {
+            imageSummary?.markFailed(rowNumber, IMAGE_TYPES.QUESTION, 'Upload failed — image was not stored.');
+        }
     }
 
     // Process option images
@@ -103,8 +115,14 @@ const processQuestionImages = async (questionData) => {
     // Process explanation image
     if (questionData.explanationImage) {
         console.log(`🖼️ Processing explanation image...`);
+        imageSummary?.expect(rowNumber, IMAGE_TYPES.SOLUTION);
         const cloudinaryUrl = await uploadImageFromUrl(questionData.explanationImage);
         processed.explanationImage = cloudinaryUrl || null;
+        if (cloudinaryUrl) {
+            imageSummary?.markUploaded(rowNumber, IMAGE_TYPES.SOLUTION);
+        } else {
+            imageSummary?.markFailed(rowNumber, IMAGE_TYPES.SOLUTION, 'Upload failed — image was not stored.');
+        }
     }
 
     return processed;
@@ -136,21 +154,36 @@ const needsCloudinaryTransfer = (value) => {
  * loadable — and a warning is returned so the import report surfaces it.
  *
  * Mutates and returns { candidate, warnings }.
+ *
+ * opts.imageSummary (utils/importImageSummary) records per-image outcomes for
+ * the import summary popup; opts.rowNumber identifies the row (falls back to
+ * the number in rowLabel, e.g. "Row 7"). A value that needs no transfer is
+ * left as-is here — the caller registers it and the summary counts it as
+ * uploaded, because it is already stored on our CDN or inline.
  */
-const transferQuestionImages = async (candidate, rowLabel = '') => {
+const transferQuestionImages = async (candidate, rowLabel = '', opts = {}) => {
     const warnings = [];
     const prefix = rowLabel ? `${rowLabel}: ` : '';
+    const { imageSummary } = opts;
+    const labelMatch = /Row (\d+)/.exec(rowLabel || '');
+    const rowNumber = opts.rowNumber || (labelMatch ? Number(labelMatch[1]) : null);
 
-    const transferOne = async (value, label) => {
+    const transferOne = async (value, label, type) => {
         if (!needsCloudinaryTransfer(value)) return value;
         const uploaded = await uploadImageFromUrl(value);
-        if (uploaded) return uploaded;
+        if (uploaded) {
+            if (imageSummary && type) imageSummary.markUploaded(rowNumber, type);
+            return uploaded;
+        }
         warnings.push(`${prefix}Image transfer failed for ${label} — stored the direct source URL (${value}).`);
+        if (imageSummary && type) {
+            imageSummary.markFailed(rowNumber, type, 'Cloudinary transfer failed — the direct source URL was stored instead.');
+        }
         return value;
     };
 
     if (candidate.questionImage) {
-        candidate.questionImage = await transferOne(candidate.questionImage, 'question image');
+        candidate.questionImage = await transferOne(candidate.questionImage, 'question image', IMAGE_TYPES.QUESTION);
     }
 
     if (Array.isArray(candidate.optionImages)) {
@@ -162,7 +195,7 @@ const transferQuestionImages = async (candidate, rowLabel = '') => {
     }
 
     if (candidate.explanationImage) {
-        candidate.explanationImage = await transferOne(candidate.explanationImage, 'explanation image');
+        candidate.explanationImage = await transferOne(candidate.explanationImage, 'explanation image', IMAGE_TYPES.SOLUTION);
     }
 
     return { candidate, warnings };

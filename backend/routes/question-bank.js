@@ -22,6 +22,7 @@ const {
     needsCloudinaryTransfer,
     transferQuestionImages,
 } = require('../utils/imageUploader');
+const { IMAGE_TYPES, createImageImportSummary } = require('../utils/importImageSummary');
 const logger = require('../utils/logger');
 
 /**
@@ -245,9 +246,15 @@ async function handleBulkImport(req, res, buffer) {
     // candidates array, and rows skipped above shift the alignment, so the
     // row label must be tracked per accepted candidate.
     const questionRowLabels = [];
+    // Same alignment, but the actual sheet row (parser rowNumber) — the image
+    // summary and insert-error mapping key on it, not the label.
+    const questionRowNumbers = [];
+    // Per-image outcome tracker for the app's Image Upload Summary popup.
+    const imageSummary = createImageImportSummary();
 
     parsedRows.forEach((row, idx) => {
         const rowLabel = `Row ${idx + 2}`;
+        const rowNumber = row.rowNumber || idx + 2;
         const subjectId = subjectsMap[subjectLookupKey(row.subjectName)];
         if (!subjectId) {
             errors.push(`${rowLabel}: Unknown subject '${row.subjectName}'. Please use standard subject names.`);
@@ -309,6 +316,16 @@ async function handleBulkImport(req, res, buffer) {
 
             questions.push(candidate);
             questionRowLabels.push(rowLabel);
+            questionRowNumbers.push(rowNumber);
+
+            // Register this row's question/solution images for the import
+            // summary popup. Registration happens at acceptance so rows whose
+            // images need no Cloudinary transfer (already on our CDN / inline
+            // data URIs) are still counted; those stay "pending" in the
+            // tracker, which reports them as uploaded. Remote ones get their
+            // final status from the transfer stage below.
+            if (candidate.questionImage) imageSummary.expect(rowNumber, IMAGE_TYPES.QUESTION);
+            if (candidate.explanationImage) imageSummary.expect(rowNumber, IMAGE_TYPES.SOLUTION);
 
             // Remote images (Google Drive links etc.) are transferred to the
             // app's Cloudinary CDN before insert — the same authoritative
@@ -320,7 +337,7 @@ async function handleBulkImport(req, res, buffer) {
                 || (Array.isArray(candidate.optionImages) && candidate.optionImages.some(needsCloudinaryTransfer))
                 || needsCloudinaryTransfer(candidate.explanationImage)
             ) {
-                transferJobs.push({ candidate, rowLabel });
+                transferJobs.push({ candidate, rowLabel, rowNumber });
             }
         } catch (err) {
             if (err instanceof QuestionValidationError) {
@@ -341,13 +358,17 @@ async function handleBulkImport(req, res, buffer) {
             while (next < transferJobs.length) {
                 const job = transferJobs[next++];
                 try {
-                    const { warnings: rowWarnings } = await transferQuestionImages(job.candidate, job.rowLabel);
+                    const { warnings: rowWarnings } = await transferQuestionImages(job.candidate, job.rowLabel, {
+                        rowNumber: job.rowNumber,
+                        imageSummary,
+                    });
                     warnings.push(...rowWarnings);
                 } catch (err) {
                     // transferQuestionImages already falls back to the direct
                     // URL per image; a throw here is a programming error, but
                     // the import must still not fail because of it.
                     warnings.push(`${job.rowLabel}: image transfer skipped (${err.message}) — direct source URLs kept.`);
+                    imageSummary.failRow(job.rowNumber, `Image transfer error (${err.message}) — direct source URLs kept.`);
                 }
             }
         };
@@ -388,11 +409,15 @@ async function handleBulkImport(req, res, buffer) {
                     // is the authority — a skip, not an import error.
                     duplicatesExisting++;
                     duplicates.push(`${questionRowLabels[we.index] || `Row ${we.index + 2}`}: skipped — this question already exists in the question bank.`);
+                    // The row was not saved, so its transferred images were
+                    // never linked to a stored question.
+                    imageSummary.failRow(questionRowNumbers[we.index], 'Question was not saved (duplicate) — image not linked.');
                     return;
                 }
                 // Everything else (qid collisions included) keeps the
                 // historical row-error behavior.
                 errors.push(`${questionRowLabels[we.index] || `Row ${we.index + 2}`}: ${errMessage || 'Failed to insert'}`);
+                imageSummary.failRow(questionRowNumbers[we.index], 'Question was not saved — image not linked.');
             });
         }
     }
@@ -422,7 +447,11 @@ async function handleBulkImport(req, res, buffer) {
         errors: errors.length > 0 ? errors.slice(0, 50) : undefined,
         // Non-fatal image-transfer outcomes (direct URL kept); surfaced so
         // the admin knows which images to re-check in the Question Bank.
-        warnings: warnings.length > 0 ? warnings.slice(0, 50) : undefined
+        warnings: warnings.length > 0 ? warnings.slice(0, 50) : undefined,
+        // Per-image outcomes (question/solution images on accepted rows) for
+        // the app's Image Upload Summary popup. total === 0 means the file
+        // carried no images — the app skips the popup in that case.
+        imageSummary: imageSummary.toJSON()
     });
 }
 

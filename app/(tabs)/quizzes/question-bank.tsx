@@ -50,6 +50,7 @@ import {
   DEFAULT_ASSERTION_REASON_OPTIONS,
   emptyQuestionFormState,
 } from '@/types/question';
+import ImageUploadSummaryModal, { ImageImportSummary } from '@/components/ImageUploadSummaryModal';
 
 interface Subject {
   _id: string;
@@ -68,6 +69,10 @@ export default function QuestionBankManagement() {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+
+  // Image Upload Summary popup after a bulk import (question/solution image
+  // outcomes); null = closed. Only set when the file carried images.
+  const [imageSummary, setImageSummary] = useState<ImageImportSummary | null>(null);
 
   // Filters
   const [selectedSubject, setSelectedSubject] = useState<string>('');
@@ -563,7 +568,16 @@ export default function QuestionBankManagement() {
       Alert.alert(
         'Import Complete',
         `Imported ${apiResponse.data.count} of ${apiResponse.data?.totalRows ?? '?'} rows.${duplicateNote}${errorPreview}`,
-        [{ text: 'OK', onPress: () => { fetchQuestions(); fetchStats(); fetchSubjects(); } }]
+        [{
+          text: 'OK',
+          onPress: () => {
+            fetchQuestions(); fetchStats(); fetchSubjects();
+            // Image summary popup follows the row-level report — only when
+            // the file carried question/solution images.
+            const summary: ImageImportSummary | undefined = apiResponse.data?.imageSummary;
+            if (summary && Number(summary.total) > 0) setImageSummary(summary);
+          }
+        }]
       );
     } catch (error: unknown) {
       const normalized = normalizeApiError(error);
@@ -1456,6 +1470,12 @@ export default function QuestionBankManagement() {
           )}
         </View>
       </Modal>
+
+      <ImageUploadSummaryModal
+        visible={!!imageSummary}
+        summary={imageSummary}
+        onClose={() => setImageSummary(null)}
+      />
 
     </ScreenContainer>
   );

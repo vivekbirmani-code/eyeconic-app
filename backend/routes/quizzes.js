@@ -20,6 +20,7 @@ const {
   loadActiveQuestionDedupMap,
 } = require('../utils/questionDedup');
 const { buildImportValidationPayload } = require('../utils/importErrors');
+const { createImageImportSummary } = require('../utils/importImageSummary');
 const Subject = require('../models/Subject');
 const MentorStudentAssignment = require('../models/MentorStudentAssignment');
 const ProctoringSession = require('../models/ProctoringSession');
@@ -1343,6 +1344,9 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
     for (const qData of parsedQuestions) {
       const rowLabel = `Row ${qData.rowNumber || '?'}`;
       const candidate = {
+        // Sheet row for the import image summary; never persisted (the
+        // QuestionBank constructor below copies named fields only).
+        rowNumber: qData.rowNumber || null,
         subject: subjectsMap[qData._normalizedSubject || qData.subjectName.toLowerCase()],
         topicName: qData.topicName,
         subtopicName: qData.subtopicName,
@@ -1397,6 +1401,11 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
     let duplicatesUpdated = 0;
     let questionsWithImages = 0;
     const previewQuestions = [];
+    // Per-image outcome tracker for the app's Image Upload Summary popup.
+    // Only rows whose images the pipeline actually processes (created rows
+    // and duplicate rows enriched with images) are counted — skipped
+    // duplicates do no image work.
+    const imageSummary = createImageImportSummary();
 
     // One batched prefetch of the existing ACTIVE questions for the subjects
     // this sheet touches — same-subject + same-normalized-text IS the
@@ -1434,7 +1443,7 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
           // first — same treatment new questions get — so updated questions
           // never store hotlinked third-party URLs.
           console.log(`\n🖼️ Processing images for duplicate question: ${candidate.question.substring(0, 50)}...`);
-          const processed = await processQuestionImages(candidate);
+          const processed = await processQuestionImages(candidate, { imageSummary });
 
           existingQuestion.questionImage = processed.questionImage || existingQuestion.questionImage;
           existingQuestion.optionImages = processed.optionImages?.some(img => img) ? processed.optionImages : existingQuestion.optionImages;
@@ -1477,7 +1486,7 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
         // Create new question
         // Upload images to Cloudinary
         console.log(`\n📝 Processing question ${questionsCreated + 1}: ${candidate.question.substring(0, 50)}...`);
-        const processed = await processQuestionImages(candidate);
+        const processed = await processQuestionImages(candidate, { imageSummary });
 
         const question = new QuestionBank({
           subject: subId,
@@ -1514,6 +1523,9 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
             const racer = await QuestionBank.findOne({ dedupKey, isActive: true });
             if (racer) {
               existingByDedupKey.set(dedupKey, racer);
+              // This row's images were uploaded but the racer question is
+              // reused as-is, so they were never linked to a stored question.
+              imageSummary.failRow(candidate.rowNumber, 'Question was not saved (duplicate) — image not linked.');
               duplicatesSkipped++;
               questionIds.push(racer._id);
               if (racer.questionImage || racer.optionImages?.some(img => img)) {
@@ -1605,6 +1617,10 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
         duplicatesUpdated,
         questionsWithImages
       },
+      // Per-image outcomes (question/solution images on processed rows) for
+      // the app's Image Upload Summary popup. total === 0 means the file
+      // carried no images — the app skips the popup in that case.
+      imageSummary: imageSummary.toJSON(),
       previewQuestions
     });
 
