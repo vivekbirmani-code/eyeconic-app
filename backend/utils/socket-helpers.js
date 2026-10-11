@@ -85,4 +85,35 @@ async function emitToAdmins(event, data) {
     }
 }
 
-module.exports = { setIo, verifySocketToken, registerSocket, unregisterSocket, emitToUser, emitToAdmins };
+/**
+ * Nudge every admin/mentor currently watching this test's leaderboard room
+ * (`leaderboard:<quizId>` — join_leaderboard in server.js) that a submission
+ * landed. Works from ANY finalization context: a request-scoped caller passes
+ * its req (io resolved via app.get('io'), the indirection tests use), and
+ * background paths (attempt sweep, request-less lazy expiry) fall back to the
+ * io instance server.js registered through setIo. The payload stays a nudge —
+ * viewers refetch the ranked endpoint, so ranking always comes from the
+ * rankStudentAttempts source of truth.
+ *
+ * @returns {boolean} true when an io instance existed and the emit went out
+ */
+function emitQuizLeaderboardUpdated(quizId, payload, { req = null } = {}) {
+    const reqIo = req && req.app && typeof req.app.get === 'function' ? req.app.get('io') : null;
+    const io = reqIo || _io;
+    if (!io || !quizId) return false;
+    io.to(`leaderboard:${quizId}`).emit('quiz_leaderboard_updated', {
+        quizId: quizId.toString(),
+        ...payload,
+    });
+    return true;
+}
+
+module.exports = {
+    setIo,
+    verifySocketToken,
+    registerSocket,
+    unregisterSocket,
+    emitToUser,
+    emitToAdmins,
+    emitQuizLeaderboardUpdated,
+};

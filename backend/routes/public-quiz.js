@@ -32,6 +32,7 @@ const {
     isPastSubmissionWindow,
     buildAutoSubmitReason,
 } = require('../utils/proctoring/durationEnforcement');
+const socketHelpers = require('../utils/socket-helpers');
 
 const router = express.Router();
 
@@ -206,7 +207,21 @@ const gradeAndFinalizeGuestAttempt = async (attempt, {
         { $set: finalFields },
         { new: true }
     );
-    if (updated) return updated;
+    if (updated) {
+        // Live leaderboard: this CAS win is the ONE place a guest attempt
+        // transitions to finalized, so every guest path (whole-quiz submit,
+        // section cascade, lazy expiry, sweep) nudges the test's leaderboard
+        // room exactly once — losers of the CAS never emit. Payload mirrors
+        // the registered flow plus cohort:'external' so admin viewers can
+        // refresh their guest-participant panels; guests never receive
+        // results over any channel.
+        socketHelpers.emitQuizLeaderboardUpdated(attempt.quiz, {
+            attemptId: updated._id.toString(),
+            cohort: 'external',
+            submittedAt: (updated.endTime || new Date()).toISOString(),
+        });
+        return updated;
+    }
     const existing = await GuestAttempt.findOne({ _id: attempt._id, guestId: attempt.guestId });
     return existing || attempt;
 };

@@ -12,6 +12,8 @@
  *      per finalized submission, and that refetching the leaderboard endpoint
  *      shows correct ranking after each step.
  *   5. A mentor viewer's refetch is scoped to only their own students.
+ *   6. An external (public-quiz guest) submission nudges the same room with
+ *      cohort:'external' and lands in the admin analytics payload.
  *
  * Run from the repo root:  node scripts/verify-live-leaderboard.js
  */
@@ -322,6 +324,99 @@ async function main() {
     throw new Error('duplicate submit emitted an extra leaderboard event');
   }
   log('duplicate submit emitted no extra event');
+
+  // ---- External student: public-quiz guest submission must nudge too ----
+  // Same questions, separate PUBLIC quiz (guest attempts live on GuestAttempt
+  // and surface in the admin analytics payload as guestParticipants).
+  const publicQuiz = await Quiz.create({
+    title: 'Live Guest Verify Test',
+    subject: subject._id,
+    testType: 'daily',
+    duration: 15,
+    questions: questions.map((q) => q._id),
+    positiveMarks: 4,
+    negativeMarks: 1,
+    createdBy: admin._id,
+    isPublic: true,
+    isActive: true,
+    shareToken: `verify-guest-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    publicExpiryDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
+    assignedStudents: [],
+  });
+
+  const guestId = `verify-device-${Date.now()}`;
+
+  // The viewer is now watching the PUBLIC quiz's board — join that room too.
+  const guestJoined = waitFor(adminSocket, 'leaderboard_joined');
+  adminSocket.emit('join_leaderboard', publicQuiz._id.toString());
+  await guestJoined;
+
+  // Verified lead (the web OTP flow's outcome) — admin analytics only counts
+  // lead-attempted guests (guest: {$ne: null}), so an anonymous device
+  // attempt would never reach guestParticipants.
+  const GuestModel = requireBackend('models/Guest');
+  const { signGuestToken } = requireBackend('middleware/guestAuth');
+  const lead = await GuestModel.create({
+    name: 'Vera External',
+    email: `verify-guest-${Date.now()}@verify.test`,
+    emailVerifiedAt: new Date(),
+    phone: `+9198${String(Date.now()).slice(-8)}`,
+    source: 'web',
+  });
+  const guestToken = signGuestToken(lead._id);
+
+  const guestStart = await api('POST', `/public/quiz/${publicQuiz.shareToken}/start`, {
+    token: guestToken,
+    body: { guestId },
+  });
+  if (guestStart.status !== 201) {
+    throw new Error(`guest start failed: ${guestStart.status} ${JSON.stringify(guestStart.body)}`);
+  }
+  const guestAttemptId = guestStart.body.attempt._id;
+
+  const guestEventPromise = waitForEvents(adminSocket, 'quiz_leaderboard_updated', 1);
+  const guestSubmit = await api('POST', `/public/quiz/${publicQuiz.shareToken}/submit`, {
+    token: guestToken,
+    body: {
+      guestId,
+      attemptId: guestAttemptId,
+      answers: questions.map((q, i) => ({
+        questionIndex: i,
+        questionId: q._id.toString(),
+        selectedAnswer: i < 3 ? 1 : 2, // 3 correct, 1 wrong
+      })),
+      tabSwitchCount: 0,
+      tabSwitchLog: [],
+    },
+  });
+  if (guestSubmit.status !== 200) {
+    throw new Error(`guest submit failed: ${guestSubmit.status} ${JSON.stringify(guestSubmit.body)}`);
+  }
+  const [guestEvent] = await guestEventPromise;
+  if (
+    guestEvent.quizId !== publicQuiz._id.toString()
+    || guestEvent.cohort !== 'external'
+    || guestEvent.attemptId !== guestAttemptId.toString()
+  ) {
+    throw new Error(`unexpected guest event payload: ${JSON.stringify(guestEvent)}`);
+  }
+  log('external guest submission nudged the viewer (cohort external)');
+
+  // The analytics payload the admin screen refetches now carries the guest.
+  const analytics = await api('GET', `/quizzes/analytics/test/${publicQuiz._id}`, { token: adminToken });
+  if (analytics.status !== 200) throw new Error(`analytics fetch failed: ${analytics.status}`);
+  const guests = analytics.body.guestParticipants || [];
+  if (guests.length !== 1 || guests[0].attemptId !== guestAttemptId.toString()) {
+    throw new Error(`guest participants wrong after submit: ${JSON.stringify(guests)}`);
+  }
+  log('admin analytics payload reflects the external guest submission');
+
+  // Internal board for the guest quiz stays empty — cohorts never mix.
+  const guestBoard = await api('GET', `/quizzes/analytics/test/${publicQuiz._id}/leaderboard`, { token: adminToken });
+  if (guestBoard.status !== 200 || guestBoard.body.leaderboard.length !== 0) {
+    throw new Error(`internal board for guest quiz should be empty: ${JSON.stringify(guestBoard.body)}`);
+  }
+  log('internal leaderboard stays cohort-clean for the public quiz');
 
   console.log('\nALL LIVE-LEADERBOARD RUNTIME CHECKS PASSED');
   process.exit(0);

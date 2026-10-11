@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -26,6 +26,7 @@ import {
 import { api } from '@/services/api';
 import { downloadApiReport, getReportDownloadErrorMessage } from '@/services/downloads';
 import { useAuth } from '@/context/AuthContext';
+import { useNotifications } from '@/context/NotificationContext';
 import TabSwitcher from '@/components/analytics/TabSwitcher';
 import TestDropdown from '@/components/analytics/test-analytics/TestDropdown';
 import TestOverview from '@/components/analytics/test-analytics/TestOverview';
@@ -120,6 +121,7 @@ interface TestAnalyticsData {
 
 export default function Analytics() {
   const { user } = useAuth();
+  const { socket } = useNotifications();
   const router = useRouter();
 
   const formatMarks = (value: number) => {
@@ -204,18 +206,72 @@ export default function Analytics() {
     }
   };
 
-  const fetchTestAnalytics = async (testId: string) => {
-    setLoadingTestAnalytics(true);
+  // Latest-response guard: a live refresh can race the initial load (or a
+  // previous test's slow response) — only the newest request may set state.
+  const analyticsReqSeq = useRef(0);
+
+  // { quiet } = a live refresh: swap the payload in place (no loading
+  // spinner over the whole screen) and keep the last good data on failure.
+  const fetchTestAnalytics = async (testId: string, { quiet = false } = {}) => {
+    const seq = ++analyticsReqSeq.current;
+    if (!quiet) setLoadingTestAnalytics(true);
     try {
       const response = await api.get(`/quizzes/analytics/test/${testId}`);
+      if (seq !== analyticsReqSeq.current) return; // stale response
       setTestAnalytics(response.data);
     } catch (error) {
+      if (seq !== analyticsReqSeq.current) return;
       console.error('Error fetching test analytics:', error);
-      setTestAnalytics(null);
+      if (!quiet) setTestAnalytics(null);
     } finally {
-      setLoadingTestAnalytics(false);
+      if (seq === analyticsReqSeq.current) setLoadingTestAnalytics(false);
     }
   };
+
+  // Ref indirection so the socket effect below never re-subscribes because
+  // fetchTestAnalytics is recreated on render.
+  const fetchAnalyticsRef = useRef(fetchTestAnalytics);
+  fetchAnalyticsRef.current = fetchTestAnalytics;
+
+  // Live analytics: the same quiz_leaderboard_updated nudges that drive
+  // LiveLeaderboard also invalidate this screen's payload — external
+  // (public-quiz guest) submissions only surface here (guestParticipants),
+  // and the overview/question cards move on internal submissions too. Bursts
+  // coalesce into one quiet trailing refetch; one more on socket reconnect
+  // covers anything missed while offline. Joining the room here (duplicate
+  // with LiveLeaderboard's join) is idempotent server-side and keeps this
+  // subscription independent of the leaderboard card's lifecycle.
+  useEffect(() => {
+    if (!socket || !selectedTest) return;
+    const testId = selectedTest._id;
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRefresh = () => {
+      if (refreshTimer) return;
+      refreshTimer = setTimeout(() => {
+        refreshTimer = null;
+        fetchAnalyticsRef.current(testId, { quiet: true });
+      }, 800);
+    };
+    const handleUpdate = (payload: { quizId?: string }) => {
+      if (payload?.quizId === testId) scheduleRefresh();
+    };
+    const handleConnect = () => {
+      socket.emit('join_leaderboard', testId);
+      scheduleRefresh();
+    };
+    if (socket.connected) {
+      handleConnect();
+    } else {
+      socket.on('connect', handleConnect);
+    }
+    socket.on('quiz_leaderboard_updated', handleUpdate);
+    return () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      socket.off('connect', handleConnect);
+      socket.off('quiz_leaderboard_updated', handleUpdate);
+      socket.emit('leave_leaderboard', testId);
+    };
+  }, [socket, selectedTest]);
 
   const fetchStudents = async () => {
     setLoadingStudents(true);

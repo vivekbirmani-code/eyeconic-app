@@ -4,7 +4,10 @@ const { buildApp, createUser, createSubject } = require('../helpers/testApp');
 const Quiz = require('../../models/Quiz');
 const QuestionBank = require('../../models/QuestionBank');
 const QuizAttempt = require('../../models/QuizAttempt');
+const GuestAttempt = require('../../models/GuestAttempt');
 const MentorStudentAssignment = require('../../models/MentorStudentAssignment');
+const socketHelpers = require('../../utils/socket-helpers');
+const quizRoutes = require('../../routes/quizzes');
 
 let app;
 
@@ -319,8 +322,14 @@ describe('Live leaderboard socket emission', () => {
     roomEmit = jest.fn();
     fakeIo = { to: jest.fn(() => ({ emit: roomEmit })) };
     // finalizeQuizAttempt reads the io instance off the app — the same
-    // indirection server.js uses (app.set('io', io)).
+    // indirection server.js uses (app.set('io', io)). Request-less paths
+    // (sweep, guest grader) fall back to the setIo-registered instance.
     app.set('io', fakeIo);
+    socketHelpers.setIo(fakeIo);
+  });
+
+  afterEach(() => {
+    socketHelpers.setIo(null);
   });
 
   async function setupQuiz() {
@@ -370,6 +379,7 @@ describe('Live leaderboard socket emission', () => {
     expect(payload.quizId).toBe(quiz._id.toString());
     expect(payload.attemptId).toBe(attemptId.toString());
     expect(payload.studentId).toBe(student.user._id.toString());
+    expect(payload.cohort).toBe('internal');
     expect(payload.submittedAt).toBeDefined();
 
     // The leaderboard a viewer would refetch shows the submission: one
@@ -419,5 +429,101 @@ describe('Live leaderboard socket emission', () => {
       .get(`/api/quizzes/analytics/test/${quiz._id}/leaderboard`)
       .set('Authorization', `Bearer ${admin.token}`);
     expect(board.body.leaderboard).toHaveLength(1);
+  });
+
+  it('emits a cohort:external nudge when a public-quiz guest submits (and not again on replay)', async () => {
+    // Public quiz with a live share link; an anonymous device-keyed guest
+    // attempt in progress (the legacy mobile flow shape — no lead required).
+    const questions = [await createQuestion(admin, subject), await createQuestion(admin, subject)];
+    const quiz = await Quiz.create({
+      title: 'Live Guest Emission Test',
+      subject: subject._id,
+      testType: 'daily',
+      duration: 30,
+      questions: questions.map((q) => q._id),
+      positiveMarks: 4,
+      negativeMarks: 1,
+      isPublic: true,
+      isActive: true,
+      shareToken: `live-guest-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      publicExpiryDate: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      createdBy: admin.user._id,
+    });
+    const guestId = `guest-device-${Date.now()}`;
+    const attempt = await GuestAttempt.create({
+      quiz: quiz._id,
+      guestId,
+      status: 'in_progress',
+      startTime: new Date(Date.now() - 5 * 60 * 1000),
+      answers: [],
+    });
+
+    const submit = await request(app)
+      .post(`/api/public/quiz/${quiz.shareToken}/submit`)
+      .send({
+        guestId,
+        attemptId: attempt._id,
+        answers: [
+          { questionIndex: 0, questionId: questions[0]._id, selectedAnswer: 1 },
+          { questionIndex: 1, questionId: questions[1]._id, selectedAnswer: 2 },
+        ],
+      });
+    expect(submit.status).toBe(200);
+    expect(submit.body.submitted).toBe(true);
+
+    expect(fakeIo.to).toHaveBeenCalledWith(`leaderboard:${quiz._id}`);
+    expect(roomEmit).toHaveBeenCalledTimes(1);
+    const [event, payload] = roomEmit.mock.calls[0];
+    expect(event).toBe('quiz_leaderboard_updated');
+    expect(payload.quizId).toBe(quiz._id.toString());
+    expect(payload.attemptId).toBe(attempt._id.toString());
+    expect(payload.cohort).toBe('external');
+    expect(payload.studentId).toBeUndefined();
+    expect(payload.submittedAt).toBeDefined();
+
+    // Replay of the same submit is refused (non-section-lock attempts keep
+    // the historical 400) and the CAS inside the grader means no re-emit.
+    const replay = await request(app)
+      .post(`/api/public/quiz/${quiz.shareToken}/submit`)
+      .send({ guestId, attemptId: attempt._id, answers: [] });
+    expect(replay.status).toBe(400);
+    expect(replay.body.code).toBe('ALREADY_SUBMITTED');
+    expect(roomEmit).toHaveBeenCalledTimes(1);
+  });
+
+  it('emits from the request-less lazy/sweep finalize path (overdue attempt)', async () => {
+    const { quiz, questions } = await setupQuiz();
+
+    // Overdue flat attempt: durationDeadline passed by more than the 30s
+    // grace. The sweep (utils/attemptSweep.js) hands exactly this shape to
+    // enforceAttemptDeadlines with req: null.
+    const attempt = await QuizAttempt.create({
+      quiz: quiz._id,
+      student: student.user._id,
+      status: 'in_progress',
+      startTime: new Date(Date.now() - 60 * 60 * 1000),
+      durationDeadline: new Date(Date.now() - 5 * 60 * 1000),
+      answers: [answerRow(questions[0], 0, true)],
+    });
+
+    const result = await quizRoutes.enforceAttemptDeadlines(attempt, quiz, { req: null });
+    expect(result.finalized).toBe(true);
+
+    expect(fakeIo.to).toHaveBeenCalledWith(`leaderboard:${quiz._id}`);
+    expect(roomEmit).toHaveBeenCalledTimes(1);
+    const [event, payload] = roomEmit.mock.calls[0];
+    expect(event).toBe('quiz_leaderboard_updated');
+    expect(payload.quizId).toBe(quiz._id.toString());
+    expect(payload.attemptId).toBe(attempt._id.toString());
+    expect(payload.studentId).toBe(student.user._id.toString());
+    expect(payload.cohort).toBe('internal');
+    expect(payload.submittedAt).toBeDefined();
+
+    // The finalized attempt is what a viewer's refetch would now rank.
+    const board = await request(app)
+      .get(`/api/quizzes/analytics/test/${quiz._id}/leaderboard`)
+      .set('Authorization', `Bearer ${admin.token}`);
+    expect(board.body.leaderboard).toHaveLength(1);
+    expect(board.body.leaderboard[0].correct).toBe(1);
   });
 });

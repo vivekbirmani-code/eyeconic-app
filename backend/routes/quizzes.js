@@ -460,10 +460,8 @@ async function finalizeQuizAttempt(attempt, { isAutoSubmit = false, req = null, 
   }
 
   // Emit quiz_submitted event back to the student
-  const io = req ? req.app.get('io') : null;
-  if (io && req && req.user) {
-    // Find the socket helper to emit.
-    const socketHelpers = require('../utils/socket-helpers');
+  const socketHelpers = require('../utils/socket-helpers');
+  if (req && req.user) {
     if (socketHelpers && socketHelpers.emitToUser) {
       socketHelpers.emitToUser(req.user._id.toString(), 'quiz_submitted', {
         quizId: quiz._id,
@@ -472,23 +470,32 @@ async function finalizeQuizAttempt(attempt, { isAutoSubmit = false, req = null, 
         status: finalizedAttempt.status
       });
     }
+  }
 
-    // Live leaderboard: nudge every admin/mentor currently watching this
-    // test's leaderboard. The event carries no ranking data — viewers refetch
-    // the leaderboard endpoint, so ranking, tie-breakers and mentor scoping
-    // always come from the single rankStudentAttempts source of truth and a
-    // burst of submissions collapses into cheap invalidations instead of N
-    // full-leaderboard fan-outs.
-    io.to(`leaderboard:${quiz._id}`).emit('quiz_leaderboard_updated', {
-      quizId: quiz._id.toString(),
-      attemptId: finalizedAttempt._id.toString(),
-      // The attempt owner, NOT req.user: the expired-section sync path can
-      // finalize another student's attempt from an unrelated request.
-      studentId: (finalizedAttempt.student || attempt.student || req.user._id).toString(),
-      submittedAt: endTime.toISOString(),
-    });
+  // Live leaderboard: nudge every admin/mentor currently watching this
+  // test's leaderboard. Emitted from EVERY finalize context — student
+  // submits, section cascade, policy auto-submit and the overdue sweep
+  // (which carries no request at all; the helper falls back to the io
+  // server.js registered via setIo) — so a finalized attempt always
+  // surfaces on live boards without a manual refresh. The event carries no
+  // ranking data — viewers refetch the leaderboard endpoint, so ranking,
+  // tie-breakers and mentor scoping always come from the single
+  // rankStudentAttempts source of truth and a burst of submissions
+  // collapses into cheap invalidations instead of N full-leaderboard
+  // fan-outs.
+  // The attempt owner, NOT req.user: the expired-section sync path can
+  // finalize another student's attempt from an unrelated request (and the
+  // sweep has no req.user at all).
+  const attemptOwner = finalizedAttempt.student || attempt.student || (req.user && req.user._id) || null;
+  socketHelpers.emitQuizLeaderboardUpdated(quiz._id, {
+    attemptId: finalizedAttempt._id.toString(),
+    studentId: attemptOwner ? attemptOwner.toString() : null,
+    cohort: 'internal',
+    submittedAt: endTime.toISOString(),
+  }, { req });
 
-    // --- NEW FOR MENTOR/ADMIN REMINDERS ---
+  // --- NEW FOR MENTOR/ADMIN REMINDERS ---
+  if (req && req.user) {
     try {
       const studentObj = await User.findById(req.user._id).select('name');
       const studentName = studentObj ? studentObj.name : 'A student';
