@@ -265,6 +265,27 @@ describe('Student performance analytics', () => {
     expect(res.body.frequentlyMissedQuestions).toHaveLength(0);
   });
 
+  it('returns mentor self-service performance via /analytics/me', async () => {
+    const res = await request(app)
+      .get('/api/quizzes/analytics/me')
+      .set('Authorization', `Bearer ${mentor.token}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.student.id).toBe(mentor.user._id.toString());
+    expect(res.body.summary.totalTests).toBe(0);
+    expect(res.body.attempts).toHaveLength(0);
+  });
+
+  it('still restricts /analytics/me from admins and unauthenticated callers', async () => {
+    const adminRes = await request(app)
+      .get('/api/quizzes/analytics/me')
+      .set('Authorization', `Bearer ${admin.token}`);
+    expect(adminRes.status).toBe(403);
+
+    const noAuthRes = await request(app).get('/api/quizzes/analytics/me');
+    expect(noAuthRes.status).toBe(401);
+  });
+
   it('does not count unattempted answers as incorrect in frequently missed', async () => {
     const quiz = await Quiz.create({
       title: 'Skipped Quiz',

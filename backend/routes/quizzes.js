@@ -2740,9 +2740,12 @@ router.get('/analytics/heatmap', auth, authorize('admin', 'mentor'), async (req,
   }
 });
 
-// Get current student's performance (student self-service)
+// Get the caller's own quiz performance (self-service). The Tests tab
+// renders the My Performance card for every non-admin role — students and
+// mentors both reach this screen — so both roles may fetch their own data.
+// Mentors cannot attempt quizzes, so their payload is an empty summary.
 // NOTE: Must be registered before /analytics/:id to avoid "me" being captured as an id.
-router.get('/analytics/me', auth, authorize('student'), async (req, res) => {
+router.get('/analytics/me', auth, authorize('student', 'mentor'), async (req, res) => {
   try {
     const {
       range,
@@ -2762,6 +2765,7 @@ router.get('/analytics/me', auth, authorize('student'), async (req, res) => {
       minIncorrectAttempts: minIncorrectAttempts
         ? parseInt(minIncorrectAttempts, 10)
         : MIN_INCORRECT_ATTEMPTS_FOR_RECURRING,
+      allowedRoles: ['student', 'mentor'],
     });
 
     res.json(payload);

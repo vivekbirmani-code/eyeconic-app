@@ -44,6 +44,11 @@ function mapAttemptSummary(attempt) {
 
 /**
  * Build a paginated student performance payload used by analytics endpoints.
+ *
+ * `allowedRoles` gates which user records may be profiled. Defaults to
+ * students only (the admin/mentor → /analytics/student/:studentId path);
+ * the self-service /analytics/me route passes its own authorized roles so a
+ * mentor can view their own (test-taking) history.
  */
 async function buildStudentPerformanceResponse(studentId, options = {}) {
   const {
@@ -55,6 +60,7 @@ async function buildStudentPerformanceResponse(studentId, options = {}) {
     minIncorrectAttempts,
     includeInsights = false,
     includeSubjectWise = false,
+    allowedRoles = ['student'],
   } = options;
 
   const pageNum = parsePositiveInt(page, 1);
@@ -70,7 +76,7 @@ async function buildStudentPerformanceResponse(studentId, options = {}) {
   }
 
   const student = await User.findById(studentId).select('name email profilePicture role').lean();
-  if (!student || student.role !== 'student') {
+  if (!student || !allowedRoles.includes(student.role)) {
     const error = new Error('Student not found');
     error.statusCode = 404;
     throw error;

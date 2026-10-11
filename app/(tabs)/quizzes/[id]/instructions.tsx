@@ -15,6 +15,7 @@ import { BookOpen, Clock, FileText, Award } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { useQuiz } from '@/context/QuizContext';
 import { formatToIST } from '@/utils/date';
+import { colors } from '@/utils/theme';
 
 interface Quiz {
   _id: string;
@@ -150,7 +151,7 @@ export default function QuizInstructions() {
   if (loading) {
     return (
       <ScreenContainer style={styles.container}>
-        <ActivityIndicator size="large" color="#2563EB" />
+        <ActivityIndicator size="large" color={colors.primary} />
       </ScreenContainer>
     );
   }
@@ -215,7 +216,7 @@ export default function QuizInstructions() {
         {/* Header */}
         <View style={styles.header}>
           <View style={styles.iconContainer}>
-            <BookOpen color="#2563EB" size={32} />
+            <BookOpen color={colors.primary} size={32} />
           </View>
           <Text style={styles.title}>{quiz.title}</Text>
           <Text style={styles.subject}>
@@ -232,7 +233,7 @@ export default function QuizInstructions() {
                 value: quiz.questions.length,
                 label: 'Questions',
                 icon: FileText,
-                iconColor: '#2563EB',
+                iconColor: colors.primary,
                 valueColor: '#1F2937',
               },
               {
@@ -258,15 +259,15 @@ export default function QuizInstructions() {
         {/* Time Window (IST) */}
         {(quiz.scheduledDate || quiz.expiryDate) && (
           <View style={styles.section}>
-            <View style={[styles.noteCard, { backgroundColor: '#EFF6FF', borderColor: '#BFDBFE' }]}>
-              <Text style={[styles.noteTitle, { color: '#1E40AF' }]}>📅 Schedule (IST)</Text>
+            <View style={[styles.noteCard, styles.scheduleCard]}>
+              <Text style={[styles.noteTitle, styles.scheduleTitle]}>📅 Schedule (IST)</Text>
               {quiz.scheduledDate && (
-                <Text style={[styles.noteText, { color: '#1E40AF' }]}>
+                <Text style={[styles.noteText, styles.scheduleText]}>
                   • Starts: {formatToIST(quiz.scheduledDate)}
                 </Text>
               )}
               {quiz.expiryDate && (
-                <Text style={[styles.noteText, { color: '#1E40AF' }]}>
+                <Text style={[styles.noteText, styles.scheduleText]}>
                   • Ends: {formatToIST(quiz.expiryDate)}
                 </Text>
               )}
@@ -367,7 +368,7 @@ const styles = StyleSheet.create({
   header: {
     alignItems: 'center',
     padding: 24,
-    backgroundColor: '#EBF5FF',
+    backgroundColor: colors.primaryTint,
     borderBottomLeftRadius: 24,
     borderBottomRightRadius: 24,
   },
@@ -389,7 +390,7 @@ const styles = StyleSheet.create({
   },
   subject: {
     fontSize: 16,
-    color: '#2563EB',
+    color: colors.primaryDark,
     fontWeight: '600',
   },
   statsContainer: {
@@ -441,7 +442,7 @@ const styles = StyleSheet.create({
   bullet: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#2563EB',
+    color: colors.primaryDark,
   },
   instructionText: {
     flex: 1,
@@ -455,6 +456,18 @@ const styles = StyleSheet.create({
     padding: 16,
     borderWidth: 1,
     borderColor: '#F59E0B',
+  },
+  // Schedule panel — teal info variant of the amber noteCard, matching the
+  // primaryTint info boxes used across the migrated screens.
+  scheduleCard: {
+    backgroundColor: colors.primaryTint,
+    borderColor: colors.primaryTintBorder,
+  },
+  scheduleTitle: {
+    color: colors.primaryDark,
+  },
+  scheduleText: {
+    color: colors.primaryText,
   },
   noteTitle: {
     fontSize: 16,
@@ -474,7 +487,7 @@ const styles = StyleSheet.create({
     borderTopColor: '#E5E7EB',
   },
   startButton: {
-    backgroundColor: '#2563EB',
+    backgroundColor: colors.primary,
     borderRadius: 12,
     padding: 16,
     alignItems: 'center',
