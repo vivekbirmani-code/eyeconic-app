@@ -123,7 +123,9 @@ export default function QuizInstructions() {
                   errorCode === 'PROCTORING_CONSENT_REQUIRED' ||
                   errorCode === 'PROCTORING_PRECHECK_REQUIRED'
                 ) {
-                  // The gate message was already surfaced by the context.
+                  // Expected on first entry: the gate codes stay silent in the
+                  // context (they are steering, not failures) — this screen
+                  // owns the routing into the readiness + consent flow.
                   router.push(`/quizzes/${id}/precheck` as any);
                 }
                 // Any other failure was surfaced by the context — stay here.

@@ -1,29 +1,23 @@
 /**
- * ProctoringCameraPip — the student-visible camera preview during a proctored
- * attempt (plan §10.1: student-visible preview with an active indicator).
+ * ProctoringCameraPip — the student-visible monitoring indicator during a
+ * proctored attempt (plan §10.1: student-visible indicator with an active
+ * dot).
  *
- * Track 2: on Android the preview is the NATIVE streaming view
- * (ProctoringCameraView) — preview and analysis frames are ONE camera session
- * (CameraX Preview + ImageAnalysis in a single bind). The sanitized
- * observations it emits are forwarded to the engine's StreamingCameraSource
- * through the module bus; nothing is ever recorded or stored. The expo-camera
- * snapshot fallback remains only as a defensive branch for platforms where
- * the native view is unavailable (precheck reports camera UNSUPPORTED there —
- * a proctored attempt cannot be in flight in that state).
+ * Track 2b Phase 3 (§43): the native MODULE owns the camera and the engine
+ * streams from it headlessly — this PiP is NO LONGER on the frame path and
+ * renders no camera on Android (the retired view refuses to bind while the
+ * service owns the camera; two owners would fight over the sensor). It is
+ * deliberately OPTIONAL: absent, late, remounted, or failed, analysis is
+ * unaffected. Nothing is ever recorded or stored. A live preview attachment
+ * is future native work, intentionally out of Phase 3 scope (§43 decision).
+ * The expo-camera branch survives only for non-Android, where the engine's
+ * snapshot fallback path still captures through this CameraView's ref.
  */
 
-import React, { useEffect, useState } from 'react';
+import React from 'react';
 import { View, Text, StyleSheet, Platform } from 'react-native';
 import { CameraView } from 'expo-camera';
 import { PROCTORING_COPY } from '@/utils/proctoringCopy';
-import { getProctoringCameraView } from '@/modules/proctoring-spike/src';
-import {
-  emitProctoringObservation,
-  emitProctoringCameraError,
-  subscribeProctoringAnalysisPaused,
-} from '@/services/proctoring/streamingCameraSource';
-
-const NativeCameraView = Platform.OS === 'android' ? getProctoringCameraView() : null;
 
 interface ProctoringCameraPipProps {
   dimmed?: boolean;
@@ -31,25 +25,17 @@ interface ProctoringCameraPipProps {
 
 export const ProctoringCameraPip = React.forwardRef<CameraView, ProctoringCameraPipProps>(
   function ProctoringCameraPip({ dimmed }, ref) {
-    // The engine's pause/resume drives the native analysis pause through the
-    // bus (the view lives in React, the engine does not).
-    const [analysisPaused, setAnalysisPaused] = useState(false);
-    useEffect(() => subscribeProctoringAnalysisPaused(setAnalysisPaused), []);
-
     return (
       <View style={[styles.wrap, dimmed && styles.dimmed]} pointerEvents="none">
-        {NativeCameraView ? (
-          <NativeCameraView
-            style={styles.camera}
-            paused={analysisPaused}
-            minIntervalMs={250}
-            onFrameObservation={(event) => emitProctoringObservation(event.nativeEvent)}
-            onCameraError={(event) => emitProctoringCameraError(event.nativeEvent)}
-          />
-        ) : (
+        {Platform.OS !== 'android' ? (
           // Defensive fallback only — unreachable for an armed proctored
-          // attempt (precheck requires the native module on Android).
+          // attempt on Android (module transport); the non-Android snapshot
+          // path captures through this CameraView's ref.
           <CameraView ref={ref} style={styles.camera} facing="front" mode="picture" />
+        ) : (
+          // Android: indicator tile only — the module camera streams to the
+          // engine with no view attached (same footprint the preview had).
+          <View style={styles.camera} />
         )}
         <View style={styles.statusRow}>
           <View style={[styles.dot, dimmed ? styles.dotIdle : styles.dotLive]} />

@@ -305,10 +305,12 @@ docs/phase-0-cv-spike-report.md                                        NEW (this
 
 ## Appendix C — On-device run results
 
-**RUNBOOK STATUS: IN PROGRESS (first data 2026-09-16).** Partial export below — scenarios
-C/D (multi-face), G/H (lighting), the 10-minute soak, the C.4–C.7 drills and the device
-identity (C.1) are still missing, so the §5.5 tier decision CANNOT be made yet. Interim
-assessment in C.8.
+**RUNBOOK STATUS: IN PROGRESS (first data 2026-09-16; device-1 soak added 2026-10-14).**
+Partial export below — scenarios G/H (lighting) reruns, the C.4–C.7 drills and a second
+(low-end) device are still missing, so the §5.5 tier decision CANNOT be made yet. The
+device-1 10-minute soak is now complete (C.2, 2026-10-14) — note it ran on the Track 2b
+STREAMING transport (the current intended production path, plan §43.2), not the Phase 0
+snapshot transport this appendix originally measured. Interim assessment in C.8.
 
 ### C.1 Devices tested
 
@@ -325,17 +327,48 @@ low-end device from the matrix.
 
 | Device | FPS first min | FPS last min | capture p95 | decode p95 | inference p95 | Warmth (cool/warm/hot) | Battery Δ | UI jank? | Crash? |
 |---|---|---|---|---|---|---|---|---|---|
-| OnePlus Nord (Android 12) | — NOT RUN (suite sessions uptime 194.9 s / 184.4 s ≈ 3 min only) | | | | | | | | |
+| OnePlus Nord (Android 12) — **soak 2026-10-14, STREAMING transport (§43.2)** | Not captured | Not captured | 0 ms (by design — no photo taken) | 0 ms (by design — no JPEG round-trip) | 131 ms | Not captured | Not captured | Not captured | No — 0 errors over 5,383 frames / 668 s; export copied from the live screen at 08:50:14 UTC after the run |
 
-Interim session-wide numbers (not a soak): Run 1 effectiveFps **0.77** (114 frames / 0 errors /
+Session-summary facts the export does carry: **8.06 effectiveFps over the full soak** (5,383
+frames, 668.1 s first→last-frame span = 11 min 8 s ≥ the 10-min requirement), interFrame mean
+124.1 ms / p95 155 ms, inference mean 41.6 ms / p95 131 ms — the lowest inference mean of the
+day, i.e. no thermal-degradation signature in the data. All 5,383 frames classified `one`;
+0 errors, 0 sanitized. The screen exports session summaries only — first-vs-last-minute FPS
+was not recorded and is not estimated. The Phase 0 SNAPSHOT-transport soak (this row's
+original spec) remains unrun — the interim ~3-min snapshot numbers are retained for history:
+
+Interim session-wide numbers (snapshot transport, not a soak): Run 1 effectiveFps **0.77** (114 frames / 0 errors /
 0 sanitized over 194.9 s) · Run 2 **0.63** (110 frames over 184.4 s) · capture mean 749–795 /
 p95 840–877 ms · decode mean 16 / p95 21–22 ms · inference mean 185–201 / p95 227–248 ms ·
 interFrame mean 1296–1587 ms.
 
-Paste the soak JSON (copied at the 10-minute mark) below:
+Soak export (device 1, streaming transport, copied 2026-10-14T08:50:14Z at the 11-minute
+mark). The raw clipboard payload was verified in-session but not retained as a file — this is
+the transcribed summary; nothing below is estimated:
 
 ```json
-(DEVICE 1 — SOAK JSON)
+{
+  "note": "TRANSCRIBED SUMMARY — raw export not retained on disk (2026-10-14); fps rounded to 2 dp",
+  "phase": "phase-0-spike",
+  "source": "streaming",
+  "transportRevision": "2b-1",
+  "summary": {
+    "frames": 5383,
+    "errors": 0,
+    "sanitizedFrames": 0,
+    "effectiveFps": 8.06,
+    "interFrameMs": { "mean": 124.1, "p95": 155 },
+    "latency": {
+      "captureMs": { "mean": 0, "p95": 0 },
+      "decodeMs": { "mean": 0, "p95": 0 },
+      "inferenceMs": { "mean": 41.6, "p95": 131 }
+    },
+    "byFaceCountClass": { "one": 5383 },
+    "frameSpanMs": 668100,
+    "uptimeMs": 747100
+  },
+  "copiedAt": "2026-10-14T08:50:14Z"
+}
 ```
 
 ### C.3 Controlled scenario suite (per reference device)
@@ -807,7 +840,10 @@ scattered under-detections do not prevent episode formation, matching the 6/6
 
 - ~~C/D episode-level validation~~ **DONE — Run 4 (live)**; the synthetic replay path
   (C.3c) remains available as optional corroboration but no longer gates anything.
-- The 10-minute soak at Max pacing (thermal + sustained FPS).
+- ~~The 10-minute soak at Max pacing (thermal + sustained FPS)~~ **DONE — 2026-10-14, on the
+  STREAMING transport (C.2, plan §43.2): 11.1 min, 8.06 fps, no thermal-degradation signature
+  in the data; ancillary warmth/battery/first-vs-last-min-FPS observations NOT captured.** The
+  snapshot-transport soak remains unrun (superseded — streaming is the intended path).
 - C.4–C.7 drills.
 - A second, lower-end device class for the device floor (§24) — the Nord is the reference
   point, not the lower bound.
@@ -818,4 +854,5 @@ scattered under-detections do not prevent episode formation, matching the 6/6
   FPS fails via snapshot transport (streaming decision mandatory), inference p95 misses
   the spike target (acceptable under streaming), multi-face confirmed at BOTH levels
   (per-frame D ≥ 95 % in Run 4; episode-level live PASS), extreme-edge under-detection
-  characterized and fail-safe. Unmeasured: the 10-min soak and the C.4–C.7 drills.
+  characterized and fail-safe. Unmeasured: the C.4–C.7 drills (the 10-min soak is done on the
+  streaming transport — C.2; its ancillary operator observations were not captured).

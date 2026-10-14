@@ -207,16 +207,30 @@ export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setCurrentAttempt(attempt);
       return response.data;
     } catch (error: any) {
-      console.error('Start quiz error:', error);
-      if (error.response) {
-        console.error('Error response:', error.response.data);
-        console.error('Error status:', error.response.status);
+      // The proctoring start-gate refusals are expected, HANDLED outcomes on
+      // every call path — instructions probes /start to detect a resumable
+      // attempt and routes to the readiness screen on these codes; the
+      // precheck screen re-runs its checks. Surfacing them here as "Access
+      // Denied" alerts and console errors drowns the designed flow in noise,
+      // so they stay silent and each caller decides what the student sees.
+      const gateCode = error?.response?.data?.errorCode ?? error?.response?.data?.code;
+      const expectedProctoringGate =
+        gateCode === 'PROCTORING_CONSENT_REQUIRED' ||
+        gateCode === 'PROCTORING_PRECHECK_REQUIRED' ||
+        gateCode === 'PRECHECK_TOKEN_INVALID';
+
+      if (!expectedProctoringGate) {
+        console.error('Start quiz error:', error);
+        if (error.response) {
+          console.error('Error response:', error.response.data);
+          console.error('Error status:', error.response.status);
+        }
+
+        const errorMessage = error.response?.data?.message || 'Failed to start quiz';
+        const errorTitle = error.response?.status === 403 ? 'Access Denied' : 'Error';
+
+        Alert.alert(errorTitle, errorMessage);
       }
-
-      const errorMessage = error.response?.data?.message || 'Failed to start quiz';
-      const errorTitle = error.response?.status === 403 ? 'Access Denied' : 'Error';
-
-      Alert.alert(errorTitle, errorMessage);
       throw error;
     } finally {
       setIsLoading(false);

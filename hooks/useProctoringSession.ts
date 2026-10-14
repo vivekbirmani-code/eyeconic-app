@@ -31,7 +31,7 @@ import {
   type ProctoringEngineState,
 } from '@/services/proctoring/engine';
 import { StreamingCameraSource } from '@/services/proctoring/streamingCameraSource';
-import { getProctoringCameraView } from '@/modules/proctoring-spike/src';
+import { isProctoringSpikeNativeAvailable } from '@/modules/proctoring-spike/src';
 import { FocusTracker } from '@/services/proctoring/focusTracker';
 import { resolveScreenCaptureDeterrence } from '@/services/proctoring/screenCapture';
 import type { EventBufferStorage } from '@/services/proctoring/eventBuffer';
@@ -245,13 +245,14 @@ export function useProctoringSession({
       }
       if (cancelled) return;
 
-      // Track 2 — the streaming frame source (CameraX ImageAnalysis via the
-      // native view the PiP renders): preview + analysis are ONE camera
-      // session, no still-photo polling, inference fully on-device, and only
-      // sanitized observations cross the bridge. Falls back to the snapshot
-      // path when the native view is unavailable (non-Android; precheck
-      // reports camera UNSUPPORTED there, so this is defensive).
-      const useStreamingSource = Platform.OS === 'android' && getProctoringCameraView() !== null;
+      // Track 2b — the headless streaming transport (§43/§43.3): the native
+      // MODULE owns the camera (ImageAnalysis alone) and the engine subscribes
+      // to module events directly — NO React view sits on the frame path, so a
+      // late/missing/remounted/failing PiP can never stall analysis (Preview
+      // is an optional attachment). Falls back to the snapshot path when the
+      // module is absent (non-Android; precheck reports camera UNSUPPORTED
+      // there, so this is defensive).
+      const useStreamingSource = Platform.OS === 'android' && isProctoringSpikeNativeAvailable();
 
       const engine = new ProctoringEngine({
         session: { quizId, attemptId, sessionId },

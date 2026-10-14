@@ -3225,7 +3225,7 @@ a commit.
 **On-device behavior is Phase 2's gate** (below) — the spike screen's Streaming tab is now the
 analysis-only harness.
 
-### 43.2 Phase 2 — Nord device gate (pending)
+### 43.2 Phase 2 — Nord device gate (PASS — 2026-10-14)
 
 Uninstall → rebuild from working tree → install (kills the stale-build variable; `transportRevision`
 on screen confirms). Spike screen → Streaming: frames must arrive and sustain **≥2 FPS with 0
@@ -3233,3 +3233,84 @@ on screen confirms). Spike screen → Streaming: frames must arrive and sustain 
 (preview as optional attachment). **FAIL** (analysis-only still 0 frames) → STOP: the problem is
 CameraX/device/HAL level, not view timing; escalate there. No retries, no delays, no watchdog
 masking — the watchdog only ever reports.
+
+**§43.2 Phase 2 — Nord device gate: PASS (2026-10-14).** Uninstall → rebuild → install
+confirmed by `transportRevision 2b-1` on screen and in every export. Six verified sessions
+(OnePlus Nord, Android 12): 7.5-min continuous 7.99 fps; Stop→Start ×2; background/foreground
+×5; cold start ×2 (8.23/7.87 fps); 11.1-min soak 8.06 fps (668 s frame span, mean interFrame
+124 ms, p95 155 ms, inference mean 41.6 ms — no drift vs short runs). 10,155 frames total,
+0 errors, 0 `no_frames`, 0 sanitized. Evidence basis: per-session JSON exports (errors are
+session-scoped by construction — tracker resets on mount/Reset); lifecycle actions
+operator-performed and corroborated by interruption-signature gap distributions (mean>p95
+tails) in the Stop/Start and bg/fg exports; cycle counts operator-attested. Footnotes:
+per-segment streaming windows in the lifecycle battery ran ~7–10 s (shorter than the
+suggested 30 s; §43.2 sets no per-segment duration); pre-force-stop export not captured;
+first soak attempt (2026-10-14 morning) accidentally ran the snapshot transport (mode chip
+defaults to Snapshot — 1.15 fps, capture 646 ms/decode 18.6 ms non-zero fingerprint) and was
+discarded as gate evidence. **→ Phase 3 unlocked.**
+
+**C.2 ancillary soak fields — NOT CAPTURED (recorded honestly, not estimated).** The spike
+screen's export carries session-summary metrics only; the operator-observed items the C.2 row
+asks for were not recorded: exact soak start time; live FPS at the 1-minute and 10-minute
+marks; device warmth (cool/warm/hot); battery delta; UI jank. None of these is inferred or
+back-filled. What the export itself proves: 5,383 frames, 668.1 s first→last frame span
+(11 min 8 s ≥ the 10-min requirement, derivable from the JSON alone), 8.06 effectiveFps,
+interFrame mean 124.1 ms / p95 155 ms, inference mean 41.6 ms / p95 131 ms — the lowest
+inference mean of the day, i.e. no thermal-degradation signature in the data — 0 errors,
+0 sanitized, all frames classified `one`. The raw per-session export JSONs were
+clipboard-copied and fingerprint-verified in-session (2026-10-14, 08:05–08:50 UTC) but not
+retained as files; the C.2 row in `docs/phase-0-cv-spike-report.md` carries the transcribed
+summary.
+
+### 43.3 Phase 3 — engine wiring + optional preview (implemented 2026-10-14)
+
+The engine now streams from the module transport directly; **no React view sits on the frame
+path**, so a late/missing/remounted/failing PiP can never stall analysis (the §43 core
+requirement). The PiP is demoted to the student-visible indicator tile (§10.1) — no live
+camera picture on Android in this phase; a preview attachment is future native work, out of
+scope here by decision.
+
+| Area | Change |
+|---|---|
+| `services/proctoring/streamingCameraSource.ts` | Rewritten to DRIVE the module transport: subscribe FIRST, then `startProctoringStreaming` (§43.1 ordering); pause/resume → `setStreamingPaused` (analysis pauses, camera stays bound); stop in the spike screen's proven order (unsubscribe → pause-flag clear → `stopStreaming`, full native release). Start rejection rides the same taxonomy as `onCameraError` (`start_failed`, the spike screen's mapping; the duplicated native failure event is honestly double-delivered, no dedup). Race guards: pause re-asserted after a late bind resolves; stop-during-bind releases the now-bound runtime (native stop is idempotent + generation-guarded). Same `classifyFrame` sanitizer; same engine contract (`start/pause/resume/stop` + `onFrame/onError/onStatus`) — `engine.ts` untouched. The view bus (`emitProctoringObservation` etc.) is DELETED. Native binding resolved LAZILY via `require` (repo idiom) so node-env tests never load `expo-modules-core`; injectable `ProctoringStreamBinding` is the test seam |
+| `hooks/useProctoringSession.ts` | Streaming gate: `getProctoringCameraView() !== null` (retired view) → `isProctoringSpikeNativeAvailable()` (module presence). One line + comments |
+| `components/proctoring/ProctoringCameraPip.tsx` | Android: indicator tile only (black tile + dot + caption, same footprint as the old preview) — renders NO camera (the retired view refuses to bind while the service owns the camera). Non-Android keeps the expo-camera fallback branch (snapshot path's capture ref) |
+| `app/(tabs)/quizzes/[id]/taking.tsx` | Comment-only (the PiP is no longer "the same CameraView the engine captures from") |
+| E2E-surfaced fix 1 — start-gate noise | The instructions screen's designed /start probe (detect resumable attempts) surfaced the EXPECTED gate refusals as "Access Denied" + 3 console errors + an apiLogger console error (LogBox). Fixed at the taxonomy layer: `services/errors.ts` now reads the server's `errorCode` envelope field (proviously only `code`) and adds `PROCTORING_CONSENT_REQUIRED`/`PROCTORING_PRECHECK_REQUIRED`/`PRECHECK_TOKEN_INVALID` as EXPECTED failures (warn-level logging); `context/QuizContext.tsx startQuiz` stays silent for those three (no alert, no console errors — callers own the UX); every real failure still alerts loudly |
+| E2E-surfaced fix 2 — post-close flush noise | The engine's final teardown flush routinely lands after the server closes the session on submit → 409 `SESSION_NOT_ACTIVE` (designed §7.5 post-close rejection; the engine already maps it to its `session_closed` outcome and drops the buffer) — but the apiLogger console-errored it as generic CONFLICT. `SESSION_NOT_ACTIVE` joins the taxonomy as expected; generic 409s stay loud |
+| Tests | `proctoringStreamingSource.test.ts` rewritten around the injected fake binding (15 tests: subscribe-before-start ordering, 250 ms cadence, teardown order, pause-during-bind re-assert, stop-during-bind release, start-failure taxonomy + honest double-delivery, sanitizer shape, degraded/recovery, no-callbacks-after-stop); `errors.test.ts` +7 (gate codes from `errorCode`, SESSION_NOT_ACTIVE, generic 403/409 unchanged) |
+| Device driver (`backend/scripts/_tmp_phase4_device_driver.js`, temp) | Fixed live: flips the in-process `aiProctoring` freeze flag (mirrors verifyProctoringFlow — without it the start route attaches no session and the app never arms; discovered as 0 sessions after 60 s), seeds a complete student profile (the post-login profile gate costs ~2 min of adb typing), and gains `POST /reset` (one-call retest reset that clears attempt/session/event/consent rows but keeps users — the device stays logged in across resets) |
+
+**Verification.** `tsc -p tsconfig.proctoring.json` 0 errors; ESLint clean on changed files
+(pre-existing warnings untouched); full proctoring jest set 11/11 suites, 146 tests, plus
+errors 12/12; `gradlew :proctoring-spike:compileDebugKotlin` BUILD SUCCESSFUL with **zero
+native delta** (Phase 3 is JS-only, as designed).
+
+**Device E2E (OnePlus Nord, Android 12, dev build via Metro, driver gates ON in-process
+only):** two clean student-driven runs (21 s and ~3 min). Evidence from the long run —
+session `ACTIVE` on start with `SESSION_STARTED`; **heartbeats every 30 s, all 200s**
+(12:02:35→12:05:15), 0 missed intervals, 0 heartbeats missed; recents-key backgrounding for
+37.7 s produced the `APP_BACKGROUND` episode (exact duration) + `WARNING_DELIVERED` (the
+§20.3 banner), buffered and flushed on resume, session healthy throughout; C.7 prevention
+CONFIRMED: `screencap` on the taking screen returns a **0-byte capture** (FLAG_SECURE;
+earlier same-day "black but non-empty" captures were the arming window), the recents card is
+a **solid black rectangle** (content suppressed; system UI renders normally), and capture
+works again the moment the attempt finalizes (results screen captured cleanly, no LogBox
+overlay); submit → `ACTIVE->CLOSED:attempt_completed`, deterrence `android-flagsecure` on
+the session, attempt completed with snapshot. The post-close 409 occurred on the wire
+(12:05:36) exactly as designed and was silent client-side.
+
+**Evidence basis + limitations, honestly:** "frames are flowing" is inferential-positive —
+sanitized observations never leave the device by design, so the server cannot count frames;
+the operative facts are zero `no_frames`/camera errors across sessions far beyond the 6 s
+first-frame watchdog (both runs), healthy heartbeats, and clean lifecycle. Both runs are on
+the reference Nord only — no low-end device yet (deferred; does not gate Phase 3). The
+operator (student) drove the UI by hand; the C.7 checks and state pulls were automated from
+the host. LogBox-absence post-fix is verified by the clean results-screen capture (a LogBox
+error overlays the screen). The first E2E attempt surfaced the two noise defects above
+(pre-fix); both are unit-locked now. Rollout gates in every real config remain OFF (kill
+switch, aiProctoring false in the 3 mirrored files, quiz opt-in default false); the freeze
+interplay stands (§38.5): admin proctoring toggles answer 503 until allowlisted/unfrozen.
+
+**Track 2b complete.** Next per the continuation plan: Track 3 (runbook refill, close D1),
+then Phase 5 (attention), 7-full, 8–9.

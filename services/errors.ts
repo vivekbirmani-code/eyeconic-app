@@ -17,6 +17,17 @@ export type ApiErrorCode =
   | 'RATE_LIMITED'
   | 'CONFIGURATION_ERROR'
   | 'INTERNAL_ERROR'
+  // Proctoring start gates (AI proctoring plan §7.1/§9.3): designed, handled
+  // outcomes — the app routes the student through consent/readiness, they are
+  // never surfaced as failures.
+  | 'PROCTORING_CONSENT_REQUIRED'
+  | 'PROCTORING_PRECHECK_REQUIRED'
+  | 'PRECHECK_TOKEN_INVALID'
+  // Proctoring post-close batch rejection (plan §7.5): the engine's final
+  // teardown flush routinely lands after the server closed the session on
+  // submit — the engine maps it to its session_closed outcome (drop the
+  // buffer, stop) and the server only counts it as telemetry.
+  | 'SESSION_NOT_ACTIVE'
   | 'UNKNOWN';
 
 export interface NormalizedApiError {
@@ -50,6 +61,16 @@ const USER_MESSAGES: Record<ApiErrorCode, string> = {
     'The app is not configured correctly. Please contact support if this continues.',
   INTERNAL_ERROR:
     "We're unable to process your request right now. Please try again shortly.",
+  // Fallbacks only — the server always sends its own student-facing message
+  // for these, which normalizeApiError prefers when present.
+  PROCTORING_CONSENT_REQUIRED:
+    'Please review the monitoring notice and accept it before starting this test.',
+  PROCTORING_PRECHECK_REQUIRED:
+    'Please complete the readiness checks before starting this test.',
+  PRECHECK_TOKEN_INVALID:
+    'Your readiness check needs to be run again.',
+  SESSION_NOT_ACTIVE:
+    'This test has ended; monitoring events are no longer accepted.',
   UNKNOWN: 'Something went wrong. Please try again.',
 };
 
@@ -94,6 +115,11 @@ const mapServerCode = (serverCode?: string): ApiErrorCode | null => {
       return 'UNAUTHORIZED';
     case 'FORBIDDEN':
       return 'FORBIDDEN';
+    case 'PROCTORING_CONSENT_REQUIRED':
+    case 'PROCTORING_PRECHECK_REQUIRED':
+    case 'PRECHECK_TOKEN_INVALID':
+    case 'SESSION_NOT_ACTIVE':
+      return serverCode as ApiErrorCode;
     default:
       return null;
   }
@@ -130,6 +156,7 @@ export const normalizeApiError = (error: unknown): NormalizedApiError => {
   const axiosError = error as AxiosError<{
     message?: string;
     code?: string;
+    errorCode?: string;
     requestId?: string;
   }>;
 
@@ -145,7 +172,10 @@ export const normalizeApiError = (error: unknown): NormalizedApiError => {
 
   const status = axiosError.response?.status;
   const serverMessage = axiosError.response?.data?.message;
-  const serverCode = axiosError.response?.data?.code;
+  // The backend's error envelope carries `code` on most routes and the
+  // proctoring start gates send `errorCode` — read both so gate refusals
+  // normalize to their specific codes instead of a generic FORBIDDEN.
+  const serverCode = axiosError.response?.data?.code ?? axiosError.response?.data?.errorCode;
   const requestId = axiosError.response?.data?.requestId;
   const codeFromServer = mapServerCode(serverCode);
   const code = codeFromServer ?? (status ? mapStatusToCode(status) : 'UNKNOWN');
@@ -174,7 +204,21 @@ export const isRetryableError = (error: unknown): boolean => {
 };
 
 export const isExpectedApiFailure = (errorCode: ApiErrorCode): boolean => {
-  return RETRYABLE_ERROR_CODES.has(errorCode) || errorCode === 'UNAUTHORIZED' || errorCode === 'VALIDATION_ERROR';
+  return (
+    RETRYABLE_ERROR_CODES.has(errorCode) ||
+    errorCode === 'UNAUTHORIZED' ||
+    errorCode === 'VALIDATION_ERROR' ||
+    // The proctoring start gates steer the student through consent/readiness
+    // (instructions probes /start, the precheck screen re-runs its checks) —
+    // expected control flow, so the API logger records them as warnings,
+    // never console errors.
+    errorCode === 'PROCTORING_CONSENT_REQUIRED' ||
+    errorCode === 'PROCTORING_PRECHECK_REQUIRED' ||
+    errorCode === 'PRECHECK_TOKEN_INVALID' ||
+    // The engine's final teardown flush routinely arrives after the server
+    // closed the session on submit — mapped to session_closed and dropped.
+    errorCode === 'SESSION_NOT_ACTIVE'
+  );
 };
 
 export const getDeviceContext = () => ({

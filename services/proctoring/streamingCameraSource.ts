@@ -1,20 +1,23 @@
 /**
- * StreamingCameraSource — the Track 2 frame source for the proctoring engine
- * (AI Proctoring plan §5.2/§29.1: the snapshot transport was the measured FPS
- * bottleneck; CameraX ImageAnalysis replaces still-photo polling).
+ * StreamingCameraSource — the Track 2b frame source for the proctoring engine
+ * (plan §43/§43.3: the native MODULE owns the camera; Preview is an optional,
+ * non-blocking attachment that is never on the frame path).
  *
- * The native `ProctoringCameraView` (rendered by ProctoringCameraPip) owns the
- * camera and emits sanitized observations; this module is the ENGINE-SIDE half
- * of the pair: it implements the same frame-source contract CameraLoop
- * satisfies (start/pause/resume/stop + onFrame(SpikeFrameResult) +
- * onError/onStatus) by subscribing to the observations through a tiny bus.
- * Frames run through the SAME classifyFrame sanitizer as the snapshot path —
- * the pipeline downstream (EpisodeTracker → buffer → transport) is untouched.
+ * Phase 3 wiring — this source DRIVES the headless module transport itself:
+ * subscribe FIRST, then startProctoringStreaming (the §43.1 lesson: a bind
+ * that resolves or fails fast must never outrun its own subscription);
+ * pause/resume map to setStreamingPaused (analysis pauses WITHOUT unbinding
+ * the camera); stop tears down in the spike screen's proven order —
+ * subscription removed, pause flag cleared, then stopStreaming (full native
+ * runtime release). A start rejection rides the SAME error taxonomy as
+ * onCameraError (code `start_failed`), mirroring the spike screen. Frames run
+ * through the SAME classifyFrame sanitizer as the snapshot path — the
+ * pipeline downstream (EpisodeTracker → buffer → transport) is untouched, and
+ * NO React view sits anywhere on the frame path.
  *
- * Pause semantics mirror CameraLoop's: while paused, incoming observations are
- * dropped (the view is also told to pause analysis — no wasted inference); no
- * stale frame is ever delivered after resume. stop() always wins: no callback
- * fires after stop resolves.
+ * The native binding is injectable: node-env unit tests drive the identical
+ * lifecycle against a fake, so the real expo-modules-core dependency is
+ * resolved LAZILY (first production construction) and never loads in tests.
  */
 
 import { classifyFrame } from '../proctoringSpike/classifyFrame';
@@ -24,41 +27,46 @@ import type {
   SpikeNativeDetectResult,
 } from '../proctoringSpike/types';
 
-// ===== The bus connecting the React view (producer) to the engine (consumer).
-// Module-level by necessity: the view lives in React, the engine does not.
+// ===== The module-binding seam =====
 
-export type ProctoringObservationListener = (result: SpikeNativeDetectResult) => void;
-export type ProctoringCameraErrorListener = (error: { code: string; message: string }) => void;
-
-const observationListeners = new Set<ProctoringObservationListener>();
-const cameraErrorListeners = new Set<ProctoringCameraErrorListener>();
-const pauseListeners = new Set<(paused: boolean) => void>();
-let analysisPaused = false;
-
-/** Producer side: the PiP forwards each native observation here. */
-export function emitProctoringObservation(result: SpikeNativeDetectResult): void {
-  for (const listener of observationListeners) listener(result);
+/**
+ * The slice of the headless transport this source drives (plan §43.1).
+ * One-to-one with startProctoringStreaming / stopProctoringStreaming /
+ * setStreamingPaused / subscribeProctoringStreamEvents from
+ * `modules/proctoring-spike/src`; injectable so tests fake the whole module.
+ */
+export interface ProctoringStreamBinding {
+  startStreaming(options: { minIntervalMs?: number }): Promise<unknown>;
+  stopStreaming(): Promise<void>;
+  setStreamingPaused(paused: boolean): void;
+  subscribeStreamEvents(handlers: {
+    onFrameObservation?: (payload: SpikeNativeDetectResult) => void;
+    onCameraError?: (error: { code: string; message: string }) => void;
+  }): { remove(): void };
 }
 
-/** Producer side: the PiP forwards camera/detector errors here. */
-export function emitProctoringCameraError(error: { code: string; message: string }): void {
-  for (const listener of cameraErrorListeners) listener(error);
-}
+type ProctoringSpikeBindingModule = typeof import('../../modules/proctoring-spike/src');
 
-/** The view binds its `paused` prop to this subscription. */
-export function subscribeProctoringAnalysisPaused(
-  listener: (paused: boolean) => void
-): () => void {
-  pauseListeners.add(listener);
-  listener(analysisPaused);
-  return () => {
-    pauseListeners.delete(listener);
+let cachedBindingModule: ProctoringSpikeBindingModule | null = null;
+
+/** Lazy so importing this file never pulls expo-modules-core into node tests. */
+const loadBindingModule = (): ProctoringSpikeBindingModule => {
+  if (!cachedBindingModule) {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const mod = require('../../modules/proctoring-spike/src') as ProctoringSpikeBindingModule;
+    cachedBindingModule = mod;
+  }
+  return cachedBindingModule;
+};
+
+const createModuleBinding = (): ProctoringStreamBinding => {
+  const mod = loadBindingModule();
+  return {
+    startStreaming: (options) => mod.startProctoringStreaming(options),
+    stopStreaming: () => mod.stopProctoringStreaming(),
+    setStreamingPaused: (paused) => mod.setProctoringStreamingPaused(paused),
+    subscribeStreamEvents: (handlers) => mod.subscribeProctoringStreamEvents(handlers),
   };
-}
-
-const setPaused = (paused: boolean) => {
-  analysisPaused = paused;
-  for (const listener of pauseListeners) listener(paused);
 };
 
 // ===== The engine-side frame source =====
@@ -67,6 +75,10 @@ export interface StreamingCameraSourceOptions {
   onFrame: (frame: SpikeFrameResult) => void;
   onError: (error: Error, consecutiveFailures: number) => void;
   onStatus: (status: SpikeEngineStatus) => void;
+  /** Test seam: defaults to the real headless module transport. */
+  binding?: ProctoringStreamBinding;
+  /** Frame pacing (ms) — 250 mirrors the retired view transport's cadence. */
+  minIntervalMs?: number;
 }
 
 /** Mirrors CameraLoop's degraded-after threshold (the engine's banner reads it). */
@@ -74,15 +86,18 @@ const DEGRADED_AFTER = 3;
 
 export class StreamingCameraSource {
   private readonly options: StreamingCameraSourceOptions;
+  private readonly binding: ProctoringStreamBinding;
+  private readonly minIntervalMs: number;
   private state: 'stopped' | 'running' | 'paused' = 'stopped';
   private generation = 0;
   private frameIndex = 0;
   private consecutiveFailures = 0;
-  private unsubscribe: (() => void) | null = null;
-  private unsubscribeErrors: (() => void) | null = null;
+  private subscription: { remove(): void } | null = null;
 
   constructor(options: StreamingCameraSourceOptions) {
     this.options = options;
+    this.binding = options.binding ?? createModuleBinding();
+    this.minIntervalMs = options.minIntervalMs ?? 250;
   }
 
   get status(): SpikeEngineStatus {
@@ -92,53 +107,97 @@ export class StreamingCameraSource {
     return this.state === 'paused' ? 'paused' : 'stopped';
   }
 
+  /**
+   * State read through a method so TypeScript cannot narrow it across
+   * `await` points — pause()/stop() mutate externally while a start cycle
+   * is in flight (same discipline as the engine's currentStatus()).
+   */
+  private currentState(): 'stopped' | 'running' | 'paused' {
+    return this.state;
+  }
+
   async start(): Promise<void> {
     if (this.state === 'running' || this.state === 'paused') return;
     this.state = 'running';
-    this.generation += 1;
+    const generation = ++this.generation;
     this.consecutiveFailures = 0;
     this.options.onStatus('running');
 
-    this.unsubscribe = () => {
-      observationListeners.delete(this.handleObservation);
-    };
-    observationListeners.add(this.handleObservation);
-    this.unsubscribeErrors = () => {
-      cameraErrorListeners.delete(this.handleError);
-    };
-    cameraErrorListeners.add(this.handleError);
+    // Subscribe BEFORE start (§43.1): a fast bind can never outrun its own
+    // subscription, and the canonical error channel (onCameraError — the
+    // native failure of a rejecting start arrives there too) is armed first.
+    this.subscription = this.binding.subscribeStreamEvents({
+      onFrameObservation: this.handleObservation,
+      onCameraError: this.handleError,
+    });
+
+    try {
+      await this.binding.startStreaming({ minIntervalMs: this.minIntervalMs });
+    } catch (error) {
+      // The spike screen's proven mapping: the rejection rides the same
+      // error taxonomy (the native failure itself also arrives through
+      // onCameraError — both are real events; no dedup, no masking).
+      const message =
+        error instanceof Error ? error.message : String(error ?? 'startStreaming failed');
+      this.handleError({ code: 'start_failed', message });
+      return;
+    }
+    if (generation !== this.generation) {
+      // stop() won a race against the pending bind: its stopStreaming ran
+      // before the camera existed — release the now-bound runtime (idempotent
+      // natively; the service is generation-guarded per §43.1).
+      this.subscription?.remove();
+      this.subscription = null;
+      await this.binding.stopStreaming();
+      return;
+    }
+    if (this.currentState() === 'paused') {
+      // pause() ran while the bind was in flight — re-assert it natively so
+      // the camera can never stream into a source that believes it is paused.
+      this.binding.setStreamingPaused(true);
+    }
   }
 
   /** Pause analysis (AppState background) — safe when not running. */
   pause(): void {
     if (this.state === 'stopped' || this.state === 'paused') return;
     this.state = 'paused';
-    setPaused(true);
+    this.binding.setStreamingPaused(true);
     this.options.onStatus('paused');
   }
 
   /**
    * Resume analysis. Unlike CameraLoop there is no parked coroutine to
-   * restart — observations simply start flowing again (the native view is
-   * told to resume inference through the bus). Idempotent.
+   * restart — the module simply resumes inference (camera stayed bound).
+   * Idempotent.
    */
   async resume(): Promise<void> {
     if (this.state === 'running' || this.state === 'stopped') return;
     this.state = 'running';
-    setPaused(false);
+    this.binding.setStreamingPaused(false);
     this.options.onStatus('running');
   }
 
-  /** Stop — always wins; no further callbacks fire after this. */
+  /**
+   * Stop — always wins; no further callbacks fire once stop() begins. The
+   * spike screen's proven teardown order: drop the subscription, clear the
+   * pause flag (the service is process-wide — a stale flag must not leak
+   * into the next session), then release the native runtime.
+   */
   async stop(): Promise<void> {
     this.generation += 1;
     this.state = 'stopped';
-    setPaused(false);
-    this.unsubscribe?.();
-    this.unsubscribe = null;
-    this.unsubscribeErrors?.();
-    this.unsubscribeErrors = null;
+    this.subscription?.remove();
+    this.subscription = null;
+    this.binding.setStreamingPaused(false);
     this.options.onStatus('stopped');
+    try {
+      await this.binding.stopStreaming();
+    } catch {
+      // Release is best-effort at the JS seam — the native service's own
+      // lifecycle guarantees the full runtime release (§43.1). A rejected
+      // stop must never resurrect callbacks or surface as a student error.
+    }
   }
 
   private handleObservation = (result: SpikeNativeDetectResult) => {

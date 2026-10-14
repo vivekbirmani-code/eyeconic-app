@@ -1050,8 +1050,8 @@ function QuizTakingContent() {
       />
 
       <View style={styles.mainContent}>
-        {/* Proctoring: student-visible PiP preview — the same CameraView the
-            engine captures from (one camera session, never recorded) */}
+        {/* Proctoring: monitoring-indicator PiP (Track 2b §43) — the engine
+            streams from the module-owned camera; no view on the frame path */}
         {proctoring.active && (
           <ProctoringCameraPip
             ref={proctoringCameraRef}

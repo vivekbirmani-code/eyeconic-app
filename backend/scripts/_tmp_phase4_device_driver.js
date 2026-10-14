@@ -22,6 +22,14 @@ async function main() {
 
   const { app, server } = require(path.join(BACKEND, 'server'));
 
+  // Gates ON in-process for the device run — mirrors verifyProctoringFlow.js:
+  // the rollout ladder is kill switch > aiProctoring freeze flag > quiz opt-in,
+  // and setProctoringEnabled(true) below only opens the FIRST rung. Without
+  // this flip the start route attaches no proctoring session and the app never
+  // arms the engine (discovered live 2026-10-14: 0 sessions after 60 s).
+  require(path.join(BACKEND, 'config', 'featureAvailability'))
+    .FEATURE_AVAILABILITY.aiProctoring = true;
+
   const traceRequest = (req, res) => {
     const entry = { at: new Date().toISOString(), method: req.method, url: req.url, status: null };
     requests.push(entry);
@@ -54,7 +62,12 @@ async function main() {
     }));
   }
   const admin = await User.create({ name: 'P4 Admin', email: 'p4admin@run.test', password: 'P4passw0rd23', role: 'admin' });
-  const student = await User.create({ name: 'P4 Student', email: 'p4device@run.test', password: 'P4passw0rd23', role: 'student' });
+  const student = await User.create({
+    name: 'P4 Student', email: 'p4device@run.test', password: 'P4passw0rd23', role: 'student',
+    // Complete profile so the app's post-login profile gate never appears
+    // (the 2026-10-14 run hit it mid-flow and it costs ~2 min of adb typing).
+    mbbsBatch: '2019', collegeName: 'AIIMS Delhi', batchType: 'REGULAR',
+  });
   const quiz = await Quiz.create({
     title: 'P4 Device Acceptance Quiz', subject: subject._id, testType: 'daily', duration: 20,
     questions: questions.map((q) => q._id), positiveMarks: 4, negativeMarks: 1,
@@ -65,6 +78,32 @@ async function main() {
   console.log('[driver] seeded p4device@run.test / P4passw0rd23');
 
   const sidecar = express();
+  sidecar.use(express.json());
+  // One-call retest reset: clears every attempt/proctoring row for the seeded
+  // quiz but KEEPS the users/quiz/questions — so the device keeps its valid
+  // login token across resets (added 2026-10-14 mid-E2E for fast iteration).
+  sidecar.post('/reset', async (_req, res) => {
+    try {
+      const QuizAttemptModel = require(path.join(BACKEND, 'models', 'QuizAttempt'));
+      const ProctoringSessionModel = require(path.join(BACKEND, 'models', 'ProctoringSession'));
+      const ProctoringEventModel = require(path.join(BACKEND, 'models', 'ProctoringEvent'));
+      const ProctoringConsentModel = require(path.join(BACKEND, 'models', 'ProctoringConsent'));
+      const ProctoringViolationModel = require(path.join(BACKEND, 'models', 'ProctoringViolation'));
+      const ProctoringOverrideModel = require(path.join(BACKEND, 'models', 'ProctoringOverride'));
+      const cleared = {
+        attempts: await QuizAttemptModel.deleteMany({ quiz: quiz._id }),
+        sessions: await ProctoringSessionModel.deleteMany({ quiz: quiz._id }),
+        events: await ProctoringEventModel.deleteMany({ quiz: quiz._id }),
+        consents: await ProctoringConsentModel.deleteMany({ quiz: quiz._id }),
+        violations: await ProctoringViolationModel.deleteMany({ quiz: quiz._id }),
+        overrides: await ProctoringOverrideModel.deleteMany({ quiz: quiz._id }),
+      };
+      requests.length = 0;
+      res.json({ ok: true, cleared: Object.fromEntries(Object.entries(cleared).map(([k, r]) => [k, r.deletedCount])) });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
   sidecar.get('/requests', (_req, res) => res.json(requests));
   sidecar.get('/state', async (_req, res) => {
     try {
