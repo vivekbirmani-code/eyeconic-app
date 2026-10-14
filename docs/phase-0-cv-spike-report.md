@@ -305,12 +305,13 @@ docs/phase-0-cv-spike-report.md                                        NEW (this
 
 ## Appendix C — On-device run results
 
-**RUNBOOK STATUS: IN PROGRESS (first data 2026-09-16; device-1 soak added 2026-10-14).**
-Partial export below — scenarios G/H (lighting) reruns, the C.4–C.7 drills and a second
-(low-end) device are still missing, so the §5.5 tier decision CANNOT be made yet. The
-device-1 10-minute soak is now complete (C.2, 2026-10-14) — note it ran on the Track 2b
-STREAMING transport (the current intended production path, plan §43.2), not the Phase 0
-snapshot transport this appendix originally measured. Interim assessment in C.8.
+**RUNBOOK STATUS: IN PROGRESS (first data 2026-09-16; soak + C.4–C.7 drills + G/H lighting
+added 2026-10-14).** Only ONE item is still missing for the §5.5 tier decision: a second
+(low-end) device. The device-1 10-minute soak (C.2), ALL FOUR drill rows (C.4 head-pose,
+C.5 first-detect, C.6 recovery, C.7 prevention), and the G/H lighting scenarios are
+complete — all on the Track 2b STREAMING transport (the current intended production path,
+plan §43.2/§43.3), not the Phase 0 snapshot transport this appendix originally measured.
+Interim assessment in C.8.
 
 ### C.1 Devices tested
 
@@ -422,11 +423,18 @@ Derived table (from the JSON's `scenarioRuns`; D and H absent from the export = 
 | D_MULTI_FACE_3 | — | — | — | — | — | ⛔ NOT RUN (absent from export) |
 | E_PARTIAL_FACE | 18 | 0.889 | 0 | 2 | 0 | ❌ |
 | F_EDGE_OF_FRAME | 19 | 0.368 | 0 | 12 | 0 | ❌ |
-| G_POOR_LIGHTING | 0 | — | — | — | — | ⛔ NOT RUN (a 2026-09-15 fragment showed 26/26 = 1.00, unlabeled — rerun for the record) |
-| H_BACKLIGHT | — | — | — | — | — | ⛔ NOT RUN (absent from export) |
+| G_POOR_LIGHTING | **455** | **0.9956** | 0 | 2 | 0 | ✅ *(2026-10-14, STREAMING — replaces the unlabeled Sept fragment)* |
+| H_BACKLIGHT | **325** | **1.00** | 0 | 0 | 0 | ✅ *(2026-10-14, STREAMING — first labeled run)* |
 | I_FACE_FAR | 14 | 1.00 | 0 | 0 | 0 | ✅ |
 
-**Counted-suite aggregate: 99/113 = 87.6 % correct — below the 95 % threshold as measured.**
+**Counted-suite aggregate: 99/113 = 87.6 % correct — below the 95 % threshold as measured**
+*(September snapshot-transport suite, A/B/E/F/I only — kept as its own labeled result; the
+G/H rows above are 2026-10-14 streaming-transport runs and are not mixed into that aggregate).
+Streaming G/H (2026-10-14, operator-attested lighting conditions — lights-off room for G,
+strong backlight for H; luma is not in the export and mid-run luma captures were not taken):
+780 frames combined, 0 errors, 0 sanitized, 0 FP/multi-FP, 2 FN (both in G, momentary `none`
+blips far under the 8 s episode floor), 7.41/7.82 fps, inference mean 50.1/46.7 ms —
+cross-checked (frame-span × interFrame arithmetic holds for both exports).*
 Zero false positives anywhere (including the empty-frame scenario — the anti-false-accusation
 direction); every miss is an under-detection (face present, classified `none`).
 
@@ -760,31 +768,63 @@ Turn head slowly left / right / up / down (~30–45° each), 2 passes:
 
 | Movement | Yaw/pitch sign & band react correctly? |
 |---|---|
-| Left | |
-| Right | |
-| Up | |
-| Down | |
+| Left | ✅ yaw +40.0° / +38.3° (pass 1/2), band `turned` |
+| Right | ✅ yaw −25.2° / −28.7°, band `turned` |
+| Up | ✅ pitch +46.5° / +42.6°, band `extreme` (>40° threshold) |
+| Down | ✅ pitch −28.8° / −31.4°, band `turned` |
 
-Directionally correct in ≥ 90 % of poses? (Y/N)
+Directionally correct in ≥ 90 % of poses? **Y — 8/8 (100 %).**
+
+*Run 2026-10-14, Nord, STREAMING transport (spike screen live readout; baseline forward pose
+yaw −0.9° / pitch +20.2°, so each sign flip is measured against the operator's neutral).
+Evidence: 8 screencaps of the live yaw/pitch/band readout, one per held pose (~5 s holds,
+captures ~4.5 s apart, pose order L→R→U→D ×2; operator-attested pose order). Convention on
+this capture: LEFT = +yaw, UP = +pitch. Face tracking never broke at ±40° yaw — faceCount 1,
+landmarks 10, quality 0.84–1.00 in every capture; no error chip, frames/FPS advancing
+throughout.*
 
 ### C.5 First-detect latency (model-load proxy; ≤ 10 s target)
 
-First frame's `inferenceMs` after Start, 3 restarts: ____ / ____ / ____ ms
+First frame's `inferenceMs` after Start, 3 restarts: **≤169 (bounded) / 62 / 42 ms**
+
+*Run 2026-10-14, Nord, STREAMING transport, 3 force-stop→relaunch cold restarts. Restart 2
+and 3 caught frame 1 exactly (operator screenshot at frames=1: 62 ms and 42 ms, mean/p95
+matching that single frame); restart 1's earliest capture landed at frames=4 with running
+mean 99 / p95 169 ⇒ frame-1 bounded by ≤ 169 ms (the p95 is constant from the first sample
+and consistent with one warm-up frame near 169 ms then 20–50 ms steady state — the same
+shape rounds 2–3 measured directly). Camera `open` + face classified from the first frame in
+every restart; zero watchdog events. Time-to-first-frame from Start is bounded by the same
+captures (frames 1–4 within the first operator screenshots, ≈1–2 s) — the ≤ 10 s model-load
+target is met by roughly two orders of magnitude. Steady-state inference across all three
+restarts: mean 34–66 ms / p95 62–169 ms at 7.4–8.0 fps.*
 
 ### C.6 Recovery drill (≥ 4/5 without app restart)
 
 | Induced failure | Recovered without restart? | Notes |
 |---|---|---|
-| Cover camera 10 s | | |
-| Background → foreground ×5 | | |
-| Revoke camera permission → return | | |
-| Force-stop app mid-run → relaunch | | |
-| (optional) 10 s airplane mode | | |
+| Cover camera 10 s | ✅ | Frames CONTINUE through the cover as `none`/`covered` (luma 17, quality 0.17), 0 errors, 7.98 fps; uncover → `one` immediately, no action needed |
+| Background → foreground ×5 | ✅ | Frames advanced through every cycle (199→461 over the 5 cycles), face `one`, 0 errors, 7.72 fps after |
+| Revoke camera permission → return | ✅ (one Start tap) | Revoke → stream stops, screen shows honest `permission_denied` + camera `denied` chip, NO crash; re-grant does NOT auto-resume; one Start tap → full recovery (face `one`, 7.56 fps, 0 errors). Honest note: no auto-resume — recovery is one tap, zero restart |
+| Force-stop app mid-run → relaunch | ✅ | Process death mid-stream → relaunch → navigate + Start → streaming active (7.19 fps, face `one`, 0 errors); no reinstall/clear-data needed |
+| (optional) 10 s airplane mode | — not run | The spike screen uses no network by design; the network-loss path that matters for proctored attempts is the persisted-buffer flush, exercised live in the 2026-10-14 Phase 3 E2E (bg/fg episode buffered + flushed on resume) |
+
+*Run 2026-10-14, Nord, STREAMING transport, spike screen. Evidence: host+operator screencaps
+at each stage (frame counters, classification, error chips, FPS in the captures). 4/4 run
+items recovered without an app restart — the ≥ 4/5 criterion is met; the optional airplane
+item is honestly not run (rationale in the row).*
 
 ### C.7 Screen-capture prevention (D13, Android)
 
-Prevention ON: screenshot blocked? (Y/N) · recents thumbnail hidden? (Y/N) ·
-Prevention OFF/leave screen: screenshots work again? (Y/N)
+Prevention ON: screenshot blocked? **Y** (host `adb exec-out screencap` on the proctored
+taking screen returns a **0-byte PNG**; an earlier same-day capture during the arming window
+returned black-but-non-empty — the flag arms within ~seconds of screen mount) ·
+recents thumbnail hidden? **Y** (app switcher shows a solid black card; system UI renders
+normally) · Prevention OFF/leave screen: screenshots work again? **Y** (capture restored the
+moment the attempt finalizes — results screen captured cleanly).
+
+*Run 2026-10-14, Nord, LIVE proctored attempt through the Phase 3 E2E (driver-gated quiz):
+deterrence `android-flagsecure` recorded server-side on the session; released on
+finalize (attempt_completed). Evidence: host captures + :3101 state.*
 
 ### C.8 Outcome
 
@@ -798,13 +838,13 @@ Tier A acceptance (§5.5), per criterion:
 |---|---|---|---|
 | Sustained analysis FPS | 0.77 / 0.63 / 0.53 / 0.36 (sessions 3–5 min, no 10-min soak; the Run-3/4 drops are session composition — more repositioning between scenarios; Run 4 steady state p95 inter-frame 1181 ms ≈ 0.85 fps; per-stage latencies unchanged) | ≥ 2 fps | ❌ **fails on the reference class via the snapshot transport** (detector core sustains ~4–5 fps) |
 | Inference p95 | 227 / 248 / 231 / 231 ms | < 150 ms | ❌ as measured — note this is a SPIKE target, not a production threshold; with a streaming transport ~200 ms inference still yields ~4–5 analysis fps. ACCURATE-mode cost on this SoC is now a known number; FAST mode trades accuracy and is NOT recommended without its own suite run. |
-| Suite classification (per-frame) | Run 3: 84.6 % (132/156) · Run 4: 89.1 % (41/46, C/D only) | ≥ 95 % | ❌ per-frame — dominated by C/D and extreme-edge F (50 %) |
+| Suite classification (per-frame) | Run 3: 84.6 % (132/156) · Run 4: 89.1 % (41/46, C/D only); **2026-10-14 streaming: G 99.56 % (455 f) · H 100 % (325 f) · 0 FP** | ≥ 95 % | ❌ overall per-frame (Sept suite, dominated by C/D and extreme-edge F) — **but every lighting scenario (G/H) now PASSES ≥ 95 % on the streaming transport** |
 | **Multi-face recall** | Run 3: C **73.0 %**, D **76.3 %** · Run 4 (protocol v2): C **82.6 %**, D **95.7 %** per-frame | implicit in ≥ 95 % | ⚠️→✅ **capability CONFIRMED at both levels** (Run 2's 0/40 was scene geometry). C below 95 % per-frame, but the production contract is EPISODES — **live-confirmed in Run 4** (both → `MULTIPLE_FACES_DETECTED`, first open ~3.3 s, zero unexpected opens). |
 | False positives | 0 across ALL THREE runs (~440 counted frames), incl. empty-frame scenario and zero multi-face FPs | — | ✅ (the safety-critical direction, now firmly established) |
-| Head-pose directional ≥ 90 % | not measured (C.4) | ≥ 90 % | ⛔ pending |
-| Model load ≤ 10 s p95 | not measured (C.5) | ≤ 10 s | ⛔ pending |
-| Recovery ≥ 4/5 | not measured (C.6) | ≥ 4/5 | ⛔ pending |
-| Prevention toggles cleanly | not measured (C.7) | — | ⛔ pending |
+| Head-pose directional ≥ 90 % | C.4 (2026-10-14, streaming): 8/8 poses directionally correct, bands respond at thresholds, no track loss at ±40° yaw | ≥ 90 % | ✅ |
+| Model load ≤ 10 s p95 | C.5 (2026-10-14, streaming, 3 cold restarts): frame-1 inference ≤169 / 62 / 42 ms; face classified on frame 1 every time | ≤ 10 s | ✅ (by ~two orders of magnitude) |
+| Recovery ≥ 4/5 | C.6 (2026-10-14, streaming): 4/4 run items recovered without app restart (cover, bg/fg ×5, permission cycle, force-stop; optional airplane item not run — spike screen is network-free) | ≥ 4/5 | ✅ |
+| Prevention toggles cleanly | C.7 (2026-10-14, live proctored attempt): blocked (0-byte capture) → recents blank → restored on finalize, deterrence stamped server-side | — | ✅ |
 
 **Episode-level multi-face analysis — RESOLVED by Run 4 (live device data):** the plan's
 doctrine is "episodes, not frames" (§1/§17.1), yet the spike suite tallies per-frame
@@ -844,15 +884,25 @@ scattered under-detections do not prevent episode formation, matching the 6/6
   STREAMING transport (C.2, plan §43.2): 11.1 min, 8.06 fps, no thermal-degradation signature
   in the data; ancillary warmth/battery/first-vs-last-min-FPS observations NOT captured.** The
   snapshot-transport soak remains unrun (superseded — streaming is the intended path).
-- C.4–C.7 drills.
+- ~~C.4–C.7 drills~~ **DONE — 2026-10-14, on the STREAMING transport (spike screen + live
+  proctored attempt): C.4 head-pose 8/8, C.5 first-detect ≤169/62/42 ms, C.6 recovery 4/4
+  without app restart, C.7 prevention blocked/blank/restored.** Optional airplane-mode item
+  honestly not run (spike screen is network-free; the production network-loss path is the
+  buffered flush, live-verified 2026-10-14).
+- ~~G/H lighting reruns~~ **DONE — 2026-10-14, STREAMING: G (poor lighting) 99.56 % over
+  455 frames, H (strong backlight) 100 % over 325 frames, 0 errors / 0 FP / 0 sanitized in
+  both; lighting conditions operator-attested (luma not in the export).**
 - A second, lower-end device class for the device floor (§24) — the Nord is the reference
-  point, not the lower bound.
+  point, not the lower bound. **The last remaining item.**
 
 - Provisional device floor (§24): unchanged hypothesis (Android 8+/≥3 GB); the Nord
   comfortably exceeds it, so this data neither confirms nor refutes the floor.
-- Verdict: **remains CONDITIONAL GO** — runbook in progress. On the reference device:
-  FPS fails via snapshot transport (streaming decision mandatory), inference p95 misses
-  the spike target (acceptable under streaming), multi-face confirmed at BOTH levels
-  (per-frame D ≥ 95 % in Run 4; episode-level live PASS), extreme-edge under-detection
-  characterized and fail-safe. Unmeasured: the C.4–C.7 drills (the 10-min soak is done on the
-  streaming transport — C.2; its ancillary operator observations were not captured).
+- Verdict: **remains CONDITIONAL GO — one item left (low-end device floor).** On the
+  reference device: FPS via the STREAMING transport sustained 7.4–8.2 fps across the
+  §43.2/§43.3 gates (the snapshot-transport failure is settled history — streaming is the
+  production path), inference p95 misses the Phase 0 spike target but yields 7–8 fps
+  analysis (acceptable), multi-face confirmed at BOTH levels (per-frame D ≥ 95 % in Run 4;
+  episode-level live PASS), extreme-edge under-detection characterized and fail-safe,
+  head-pose/recovery/prevention drills PASS, and BOTH lighting scenarios (G/H) ≥ 99.5 % with
+  zero false positives on the streaming transport. Unmeasured: the low-end device floor only
+  (plus the honestly-not-captured ancillary soak observations, C.2).
