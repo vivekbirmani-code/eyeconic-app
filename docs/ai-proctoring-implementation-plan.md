@@ -3504,3 +3504,67 @@ deviation band sits immediately above a natural conversational turn — brief
 brushing is expected and harmless (record-only + 4 s sustain + confidence
 floor), but the band/pocket width is a first tuning candidate once shadow data
 exists.
+
+### 45.4 Phase 5 production closeout review (2026-10-15, post-commit `11a6709`)
+
+A fresh-eyes review of the committed Phase 5 work before Phase 7-full, covering
+code, tests, the missing device events, and documentation accuracy.
+
+**Review findings.**
+- **Threshold mirror verified mechanically** — the client
+  `DEFAULT_ATTENTION_THRESHOLDS` and backend `defaults.js`
+  `attention.thresholds` are an EXACT match (all 12 leaves), so pre-Phase-5
+  snapshots behave identically on both sides.
+- **Fixed (2, both trivial):** the precheck-report token issuance computed the
+  same `face_readiness` `.find()` twice (now computed once); one new boundary
+  test shipped a mangled ternary in its assertion (now a plain comparison —
+  the production code was verified correct both times before the fix).
+- **Reviewed and accepted (no change):** numeric leniency in
+  `parseProctoringConfig` (e.g. `true` → 1) matches the pre-existing clamp
+  behavior of every other policy section and stays bounded; the baseline's
+  trust chain is precheck-validation → signed token → consent/session (a
+  hostile client can only shift its own record-only observations, never a
+  consequence); `MAX_PATTERN_SEGMENTS` is technically unreachable (window
+  emits at minEpisodes ≤ 50) but harmless defense; `ensureProctoringSession`
+  trusts its `attentionBaseline` argument exactly as it trusts
+  `policySnapshot` (same caller discipline).
+- **Test matrix re-executed on the committed tree:** backend 1124/1125 with
+  the single failure being `guestAttemptLead.test.js` — an OTP-email-timeout
+  flake under full-suite parallelism that passes 12/12 in isolation and shares
+  no surface with Phase 5 (guest flow; the only common file touched is the
+  Quiz schema, additively). Root client 23/23 suites, 278/278 tests (273 +
+  5 new device-derived boundary tests). `verifyProctoringFlow.js` 38/38.
+
+**Missing device events — determination.** The deviation-active window for
+the measured baseline is |yaw − (−1.6°)| ≥ 35° with yaw < 50° → measured yaw
+∈ [33.4°, 50°) — a ~16.6° pocket. The device session's spike-screen mapping
+puts the operator's natural "medium" turn AT 38.5° (inside the pocket) while
+in-quiz attempts measured 27.65° (under) and ≥50° (over, where the extreme
+band legally owns the frames and deviation suppression IS the observed,
+correct behavior). Conclusion: **both `ATTENTION_DEVIATION_*` events are
+safely and reliably demonstrable with a live-feedback-anchored protocol and
+NO threshold or behavior change**:
+1. On the spike screen, hold a turn until the live yaw readout shows ~40–45°;
+   rehearse that exact physical pose (this removes the aiming error that
+   caused every miss — holding a tracked angle was never the problem).
+2. In a proctored quiz, hold the anchored pose 6–8 s → exactly one
+   `ATTENTION_DEVIATION_SUSTAINED` (4 s sustain; releases ~11 s after return).
+3. Four-to-six anchored glances of 2–3 s within 5 min → one
+   `ATTENTION_DEVIATION_REPEATED` (window consumes on emit).
+The boundary semantics at both band edges are now regression-locked by unit
+tests (33°/35°/49°/51° cases). No device re-run was attempted during this
+review (no operator session); the §45.3 NOT-CAPTURED record stands until the
+protocol above is executed.
+
+**Acceptance criteria status (Phase 5 section):** AC-1 (zero FP across the
+normal-behavior matrix) — unit-locked + device-observed silent; AC-2
+(sustained/repeated episodes with basis/confidence) — unit-locked; device:
+EXTREME ×4 + REPEATED ×3 confirmed, DEVIATION_* unit-only (documented above);
+AC-3 (thresholds from the snapshot) — unit-locked (deg:10 test) + device
+(policy echo in metadata); AC-4 (no V1 policy can escalate attention) —
+property tests + ingest-level integration + verify script + device (final
+run: 4 attention episodes, 0 violations/0 warnings/0 risk); AC-5
+(calibration fallback, no behavioral difference) — unit-locked only, not
+exercised on device. **Phase 5 meets its documented acceptance criteria with
+two explicitly unit-only verification gaps (DEVIATION_* device capture,
+fallback path device capture) recorded here and in §45.3.**

@@ -471,3 +471,57 @@ describe('Phase 5 attention — reliability + determinism', () => {
     expect(flushed.filter((e: any) => /REPEATED/.test(e.type))).toEqual([]);
   });
 });
+
+// ---------- device-derived band boundaries (Nord 2026-10-15, §45.3) ----------
+//
+// The device session showed the deviation pocket is narrow: baseline yaw
+// −1.6°, so deviation-active = measured yaw ∈ [33.4°, 50°). These tests lock
+// the EXACT boundary semantics at both edges so calibration rounds can't
+// silently shift them.
+
+describe('Phase 5 attention — deviation/extreme band boundaries (device-derived)', () => {
+  const sustainedDeviationAt = (yaw: number) => {
+    const tracker = makeTracker(undefined, { yaw: -1.6, pitch: 0 });
+    const emitted = [
+      ...hold(tracker, yaw, 0, 80), // 8 s hold — well past the 4 s sustain
+      ...hold(tracker, 0, 0, 130), // close + cooldown release
+    ];
+    return emitted.filter((e: any) => /ATTENTION_DEVIATION|HEAD_POSE/.test(e.type));
+  };
+
+  test('33° (just under the 33.4° lower edge) → nothing', () => {
+    expect(sustainedDeviationAt(33)).toEqual([]);
+  });
+
+  test('35° (just inside the pocket) → one ATTENTION_DEVIATION_SUSTAINED', () => {
+    const events = sustainedDeviationAt(35);
+    expect(events.filter((e: any) => e.type === 'ATTENTION_DEVIATION_SUSTAINED')).toHaveLength(1);
+  });
+
+  test('49° (just under the extreme band) → deviation, NOT extreme', () => {
+    const events = sustainedDeviationAt(49);
+    expect(events.filter((e: any) => e.type === 'ATTENTION_DEVIATION_SUSTAINED')).toHaveLength(1);
+    expect(events.filter((e: any) => e.type === 'HEAD_POSE_EXTREME')).toEqual([]);
+  });
+
+  test('51° (just past the extreme band) → extreme owns the frames, no deviation', () => {
+    const events = sustainedDeviationAt(51);
+    expect(events.filter((e: any) => e.type === 'HEAD_POSE_EXTREME')).toHaveLength(1);
+    expect(events.filter((e: any) => e.type === 'ATTENTION_DEVIATION_SUSTAINED')).toEqual([]);
+  });
+
+  test('the repeated-deviation window fills from pocket glances (device protocol shape)', () => {
+    // 5 anchored glances of 2.5 s each in the pocket → ≥ minEpisodes (4)
+    // qualifying segments → exactly one REPEATED event.
+    const tracker = makeTracker(undefined, { yaw: -1.6, pitch: 0 });
+    const glance = () => [...hold(tracker, 42, 0, 25), ...hold(tracker, 0, 0, 12)];
+    const emitted = [
+      ...glance(), ...glance(), ...glance(), ...glance(), ...glance(),
+    ];
+    const repeated = emitted.filter((e: any) => e.type === 'ATTENTION_DEVIATION_REPEATED');
+    expect(repeated).toHaveLength(1);
+    expect(repeated[0].metadata.episodes).toBeGreaterThanOrEqual(4);
+    // Sustained glances (2.5 s < 4 s sustain) emit nothing individually.
+    expect(emitted.filter((e: any) => e.type === 'ATTENTION_DEVIATION_SUSTAINED')).toEqual([]);
+  });
+});

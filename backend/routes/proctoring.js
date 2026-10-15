@@ -177,9 +177,10 @@ router.post('/precheck-report', auth, authorize('student'), precheckReportRateLi
         // Phase 5 (D11): the server-validated baseline from the face_readiness
         // metadata, when the client captured one — absent for older clients
         // (fallback sessions proceed without it, never blocked).
-        ...(parsed.value.checks.find((c) => c.id === 'face_readiness')?.metadata?.attentionBaseline
-          ? { attentionBaseline: parsed.value.checks.find((c) => c.id === 'face_readiness').metadata.attentionBaseline }
-          : {}),
+        ...(() => {
+          const baseline = parsed.value.checks.find((c) => c.id === 'face_readiness')?.metadata?.attentionBaseline;
+          return baseline ? { attentionBaseline: baseline } : {};
+        })(),
       },
     });
 
