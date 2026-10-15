@@ -305,13 +305,15 @@ docs/phase-0-cv-spike-report.md                                        NEW (this
 
 ## Appendix C — On-device run results
 
-**RUNBOOK STATUS: IN PROGRESS (first data 2026-09-16; soak + C.4–C.7 drills + G/H lighting
-added 2026-10-14).** Only ONE item is still missing for the §5.5 tier decision: a second
-(low-end) device. The device-1 10-minute soak (C.2), ALL FOUR drill rows (C.4 head-pose,
-C.5 first-detect, C.6 recovery, C.7 prevention), and the G/H lighting scenarios are
-complete — all on the Track 2b STREAMING transport (the current intended production path,
-plan §43.2/§43.3), not the Phase 0 snapshot transport this appendix originally measured.
-Interim assessment in C.8.
+**RUNBOOK STATUS: COMPLETE FOR THE REFERENCE CLASS (2026-10-15 — runbook closed and the
+report accepted by the product owner; D1 tier decision recorded in plan §44).** The device-1
+10-minute soak (C.2), ALL FOUR drill rows (C.4 head-pose, C.5 first-detect, C.6 recovery,
+C.7 prevention), and the G/H lighting scenarios are complete — all on the Track 2b STREAMING
+transport (the production path, plan §43.2/§43.3). The low-end second device item was
+**waived by product decision 2026-10-15**: the floor stays provisional (Android 8+/≥3 GB,
+bottom edge unverified on hardware), defended by the 4× FPS headroom, the fail-closed
+precheck/accommodation path, and real student-device telemetry at rollout (every precheck
+report carries device facts). Interim assessment in C.8.
 
 ### C.1 Devices tested
 
@@ -876,7 +878,8 @@ scattered under-detections do not prevent episode formation, matching the 6/6
    under-detects, surfacing as `FACE_NOT_DETECTED` ambiguity in production, never as a
    false multiple).
 
-**Tier decision: NOT YET — but the decision surface is now fully characterized.** Remaining:
+**Tier decision: MADE — Tier A ACCEPTED for staged rollout (product owner, 2026-10-15; D1
+closed, plan §44).** Item history:
 
 - ~~C/D episode-level validation~~ **DONE — Run 4 (live)**; the synthetic replay path
   (C.3c) remains available as optional corroboration but no longer gates anything.
@@ -892,17 +895,22 @@ scattered under-detections do not prevent episode formation, matching the 6/6
 - ~~G/H lighting reruns~~ **DONE — 2026-10-14, STREAMING: G (poor lighting) 99.56 % over
   455 frames, H (strong backlight) 100 % over 325 frames, 0 errors / 0 FP / 0 sanitized in
   both; lighting conditions operator-attested (luma not in the export).**
-- A second, lower-end device class for the device floor (§24) — the Nord is the reference
-  point, not the lower bound. **The last remaining item.**
+- ~~A second, lower-end device class for the device floor (§24)~~ **WAIVED BY PRODUCT
+  DECISION 2026-10-15** — the floor stays provisional (Android 8+/≥3 GB, bottom edge
+  unverified on hardware). Rationale (plan §44): 4× FPS headroom over the ≥2 fps line on the
+  reference class; fail-closed precheck + accommodation for below-floor devices; real
+  student-device telemetry in precheck reports replaces the synthetic floor at rollout. A
+  candidate device (OPPO CPH2321, Android 13, ~8 GB — above the floor) was prepared but
+  unavailable before measurement; no data claimed.
 
 - Provisional device floor (§24): unchanged hypothesis (Android 8+/≥3 GB); the Nord
   comfortably exceeds it, so this data neither confirms nor refutes the floor.
-- Verdict: **remains CONDITIONAL GO — one item left (low-end device floor).** On the
+- Verdict: **ACCEPTED BY THE PRODUCT OWNER 2026-10-15 (D1 closed — plan §44).** On the
   reference device: FPS via the STREAMING transport sustained 7.4–8.2 fps across the
   §43.2/§43.3 gates (the snapshot-transport failure is settled history — streaming is the
   production path), inference p95 misses the Phase 0 spike target but yields 7–8 fps
   analysis (acceptable), multi-face confirmed at BOTH levels (per-frame D ≥ 95 % in Run 4;
   episode-level live PASS), extreme-edge under-detection characterized and fail-safe,
   head-pose/recovery/prevention drills PASS, and BOTH lighting scenarios (G/H) ≥ 99.5 % with
-  zero false positives on the streaming transport. Unmeasured: the low-end device floor only
-  (plus the honestly-not-captured ancillary soak observations, C.2).
+  zero false positives on the streaming transport. Unmeasured by decision: the low-end
+  device floor (plus the honestly-not-captured ancillary soak observations, C.2).

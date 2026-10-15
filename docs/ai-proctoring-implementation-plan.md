@@ -465,7 +465,8 @@ the student fleet). The spike answers that with numbers.
 > New Architecture with ML Kit resolved). **On-device measurement runbook pending** — see
 > `docs/phase-0-cv-spike-report.md` for results, the CONDITIONAL GO verdict, and the exact
 > acceptance numbers still to be collected. D1 remains open until the product owner accepts that
-> report.
+> report. **D1 CLOSED 2026-10-15 — the product owner accepted the report with the device floor
+> kept provisional (low-end test waived by decision); see §44.**
 
 ### 5.2 Questions the spike must answer `[PROPOSED]`
 
@@ -3314,3 +3315,48 @@ interplay stands (§38.5): admin proctoring toggles answer 503 until allowlisted
 
 **Track 2b complete.** Next per the continuation plan: Track 3 (runbook refill, close D1),
 then Phase 5 (attention), 7-full, 8–9.
+
+## 44. Track 3 — runbook completion + D1 tier decision (2026-10-15)
+
+**Runbook refill (2026-10-14, reference device, STREAMING transport).** Every Phase 0
+acceptance item that was pending is now measured and recorded in
+`docs/phase-0-cv-spike-report.md` Appendix C: C.2 soak (11.1 min, 8.06 fps, no in-data
+thermal degradation; ancillary operator observations honestly NOT captured), C.4 head-pose
+(8/8 directional, bands respond at thresholds, no track loss at ±40° yaw), C.5 first-detect
+(frame-1 inference ≤169/62/42 ms across 3 cold restarts vs the 10 s budget), C.6 recovery
+(4/4 recovered without an app restart — cover, bg/fg ×5, permission revoke with one-Start-tap
+recovery and no auto-resume, force-stop; the optional airplane item honestly not run — the
+spike screen uses no network), C.7 prevention (0-byte blocked capture / blank recents card /
+restored on finalize, live proctored attempt), and the G/H lighting scenarios (99.56 % over
+455 frames / 100 % over 325, zero false positives, lighting conditions operator-attested).
+
+**D1 DECISION — Tier A (ML Kit face detection, fully on-device, streaming transport)
+ACCEPTED for staged rollout on the reference device class. Product-owner decision,
+2026-10-15.**
+
+Device floor (§24): **provisional — Android 8+ (API 26+), ≥ 3 GB RAM — bottom edge
+UNVERIFIED on hardware, low-end device test WAIVED by product decision**, on a three-part
+rationale:
+
+1. **Headroom:** the reference class sustains 7.4–8.2 fps against the ≥ 2 fps acceptance
+   line — roughly 4× margin; even a substantially weaker device clears the line.
+2. **Fail-closed handling:** a below-floor device is caught by the readiness precheck
+   (`device_capability`, with the server re-verifying against the authoritative floor)
+   BEFORE an attempt starts and routes to the accommodation path — the failure mode is
+   graceful and visible, never a broken or silently-unmonitored attempt.
+3. **Real data replaces the synthetic floor at rollout:** every student precheck report
+   carries device facts, so the fleet's actual floor gets measured from real devices; a
+   genuinely weak model that appears in the data gets tested exactly then.
+
+Honest notes: a candidate second device (OPPO CPH2321, Android 13, ~8 GB RAM, budget SoC —
+ABOVE the provisional floor) was prepared 2026-10-15 (dev build installed, app launched to
+first run) but became unavailable before any measurement — no data is claimed for it.
+Pre-2026 Android 8–10 / 2–3 GB hardware is increasingly absent from the paying student
+population (118 students, Sept 2026), and the product owner judged obtaining one not worth
+the effort against the three safety factors above.
+
+All rollout gates remain OFF (kill switch, `aiProctoring` false in the 3 mirrored files,
+quiz opt-in default false); staging begins only by an explicit future product decision.
+
+**Track 3 complete. Remaining roadmap: Phase 5 (attention), 7-full, 8–9, the optional
+preview attachment, and rollout staging when chosen.**
