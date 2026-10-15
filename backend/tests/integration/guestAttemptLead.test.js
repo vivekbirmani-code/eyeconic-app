@@ -1,4 +1,5 @@
 const request = require('supertest');
+const mongoose = require('mongoose');
 const db = require('../helpers/db');
 const { buildApp, createUser, createSubject } = require('../helpers/testApp');
 const Quiz = require('../../models/Quiz');
@@ -447,5 +448,190 @@ describe('Guest attempts with verified leads', () => {
     expect(stored.status).toBe('completed');
     expect(stored.score).toBe(2);
     expect(stored.marksObtained).toBe(7); // 4 + (-1) + 4
+  });
+
+  describe('concurrent-start uniqueness (one live attempt per owner)', () => {
+    // Regression (Oct 2026): /start's check-then-create raced under load —
+    // five parallel starts could leave 2-3 live attempts for one person,
+    // bouncing progress between resumes (exposed by the full parallel test
+    // suite; passed 12/12 in isolation). Uniqueness is now atomic at the DB
+    // layer (unique partial indexes on GuestAttempt), and losing racers
+    // converge on the winner through the duplicate-key path.
+
+    it('enforces one live attempt per LEAD at the DB layer (unique partial index)', async () => {
+      const { quiz } = await setupPublicQuiz(admin, subject);
+      const { guestToken, lead } = await verifyLead(quiz);
+
+      const start = await request(app)
+        .post(`/api/public/quiz/${quiz.shareToken}/start`)
+        .set('Authorization', `Bearer ${guestToken}`)
+        .send({ guestId: 'device-1' });
+      expect(start.status).toBe(201);
+
+      // Same lead on ANY device — a second live row is rejected no matter
+      // which code path builds it.
+      await expect(
+        GuestAttempt.create({ quiz: quiz._id, guestId: 'device-racer', guest: lead._id })
+      ).rejects.toMatchObject({ code: 11000 });
+
+      // History never blocks a fresh start: finalized rows leave the
+      // partial index.
+      await GuestAttempt.updateOne(
+        { quiz: quiz._id, guest: lead._id, status: 'in_progress' },
+        { $set: { status: 'completed' } }
+      );
+      const again = await GuestAttempt.create({ quiz: quiz._id, guestId: 'device-2', guest: lead._id });
+      expect(again.status).toBe('in_progress');
+    });
+
+    it('enforces one live ANONYMOUS attempt per device+quiz while lead/anonymous rows coexist', async () => {
+      const { quiz } = await setupPublicQuiz(admin, subject);
+      const { lead } = await verifyLead(quiz);
+
+      await GuestAttempt.create({ quiz: quiz._id, guestId: 'anon-dev' });
+      await expect(
+        GuestAttempt.create({ quiz: quiz._id, guestId: 'anon-dev' })
+      ).rejects.toMatchObject({ code: 11000 });
+      // Different device on the same quiz — fine.
+      await GuestAttempt.create({ quiz: quiz._id, guestId: 'anon-dev-2' });
+      // A lead attempt alongside the anonymous row on the same device —
+      // independent keys by design (the lead's resume adopts the anon row).
+      const alongside = await GuestAttempt.create({ quiz: quiz._id, guestId: 'anon-dev', guest: lead._id });
+      expect(alongside.status).toBe('in_progress');
+    });
+
+    it('a losing racer of the unique-slot race converges on the winner (resume answer, no second attempt)', async () => {
+      const { quiz } = await setupPublicQuiz(admin, subject);
+      const { guestToken, lead } = await verifyLead(quiz);
+
+      // Deterministic replay of the micro-race: this racer's resume lookup
+      // found nothing, but another racer's insert wins the unique slot while
+      // this one is in flight — Mongo answers E11000 on save.
+      const winnerId = new mongoose.Types.ObjectId();
+      const saveSpy = jest
+        .spyOn(GuestAttempt.prototype, 'save')
+        .mockImplementationOnce(async function () {
+          // The winning racer's row lands first (native insert bypasses
+          // the spy)…
+          await GuestAttempt.collection.insertOne({
+            _id: winnerId,
+            quiz: quiz._id,
+            guestId: 'racer-winner-device',
+            guest: new mongoose.Types.ObjectId(lead._id),
+            guestName: 'Rahul Sharma',
+            guestEmail: 'rahul.sharma@example.com',
+            guestPhone: '+919876543210',
+            status: 'in_progress',
+            startTime: new Date(),
+            durationDeadline: new Date(Date.now() + 10 * 60 * 1000),
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            answers: [],
+            totalQuestions: 3,
+            totalMarks: 12,
+            score: 0,
+            marksObtained: 0,
+            tabSwitchCount: 0,
+          });
+          // …then this racer's save is rejected by the unique index.
+          const error = new Error(
+            'E11000 duplicate key error collection: test.guestattempts index: guest_attempt_live_lead_unique_1'
+          );
+          error.code = 11000;
+          error.codeName = 'DuplicateKey';
+          throw error;
+        });
+
+      const res = await request(app)
+        .post(`/api/public/quiz/${quiz.shareToken}/start`)
+        .set('Authorization', `Bearer ${guestToken}`)
+        .send({ guestId: 'race-loser-device' });
+      saveSpy.mockRestore();
+
+      expect(res.status).toBe(200);
+      expect(res.body.message).toBe('Resuming existing attempt');
+      expect(String(res.body.attempt._id)).toBe(String(winnerId));
+      expect(res.body.lead).toMatchObject({ name: 'Rahul Sharma' });
+      expect(await GuestAttempt.countDocuments({ quiz: quiz._id, status: 'in_progress' })).toBe(1);
+    });
+
+    it('a losing racer whose winner already finished answers 409 already-attempted (no dead 500)', async () => {
+      const { quiz } = await setupPublicQuiz(admin, subject);
+      const { guestToken, lead } = await verifyLead(quiz);
+
+      const finishedId = new mongoose.Types.ObjectId();
+      const saveSpy = jest
+        .spyOn(GuestAttempt.prototype, 'save')
+        .mockImplementationOnce(async function () {
+          await GuestAttempt.collection.insertOne({
+            _id: finishedId,
+            quiz: quiz._id,
+            guestId: 'racer-winner-device',
+            guest: new mongoose.Types.ObjectId(lead._id),
+            status: 'completed',
+            startTime: new Date(Date.now() - 60 * 1000),
+            endTime: new Date(),
+            createdAt: new Date(Date.now() - 60 * 1000),
+            updatedAt: new Date(),
+            answers: [],
+            totalQuestions: 3,
+            totalMarks: 12,
+            score: 3,
+            marksObtained: 12,
+            tabSwitchCount: 0,
+          });
+          const error = new Error('E11000 duplicate key error collection: test.guestattempts');
+          error.code = 11000;
+          error.codeName = 'DuplicateKey';
+          throw error;
+        });
+
+      const res = await request(app)
+        .post(`/api/public/quiz/${quiz.shareToken}/start`)
+        .set('Authorization', `Bearer ${guestToken}`)
+        .send({ guestId: 'late-loser-device' });
+      saveSpy.mockRestore();
+
+      expect(res.status).toBe(409);
+      expect(res.body.success).toBe(false);
+      expect(res.body.code).toBe('QUIZ_ALREADY_ATTEMPTED');
+      expect(String(res.body.attemptId)).toBe(String(finishedId));
+    });
+
+    it('converges a 12-way concurrent start storm (all devices, one lead) onto a single attempt', async () => {
+      const { quiz } = await setupPublicQuiz(admin, subject, { sections: true });
+      const { guestToken } = await verifyLead(quiz);
+
+      const responses = await Promise.all(
+        Array.from({ length: 12 }, (_, n) =>
+          request(app)
+            .post(`/api/public/quiz/${quiz.shareToken}/start`)
+            .set('Authorization', `Bearer ${guestToken}`)
+            .send({ guestId: `storm-device-${n}` })
+        )
+      );
+      responses.forEach((res) => expect(res.status).toBeLessThan(400));
+
+      const attemptIds = new Set(responses.map((r) => r.body.attempt?._id).filter(Boolean));
+      expect(attemptIds.size).toBe(1);
+      expect(await GuestAttempt.countDocuments({ quiz: quiz._id, status: 'in_progress' })).toBe(1);
+    });
+
+    it('converges concurrent ANONYMOUS starts on one device onto a single attempt', async () => {
+      const { quiz } = await setupPublicQuiz(admin, subject);
+
+      const responses = await Promise.all(
+        Array.from({ length: 8 }, () =>
+          request(app)
+            .post(`/api/public/quiz/${quiz.shareToken}/start`)
+            .send({ guestId: 'anon-storm-device' })
+        )
+      );
+      responses.forEach((res) => expect(res.status).toBeLessThan(400));
+
+      const attemptIds = new Set(responses.map((r) => r.body.attempt?._id).filter(Boolean));
+      expect(attemptIds.size).toBe(1);
+      expect(await GuestAttempt.countDocuments({ quiz: quiz._id, status: 'in_progress' })).toBe(1);
+    });
   });
 });

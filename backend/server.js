@@ -253,11 +253,79 @@ const migrateGuestIdentityIndexes = async () => {
   }
 };
 
+// One-time migration for the guest-attempt live-uniqueness fix: /start's
+// check-then-create raced under load (double-tap, two tabs, StrictMode
+// double-mount) and could leave one person with several in_progress
+// attempts whose resumes bounced between them. The schema now builds
+// unique partial indexes enforcing one live attempt per owner — (quiz,
+// guest) for verified leads on any device, (quiz, guestId) for anonymous
+// device-keyed attempts. On existing deployments this migration (a)
+// removes legacy duplicate live attempts BEFORE the unique indexes build
+// (otherwise the build fails), keeping the oldest as the survivor — the
+// same earliest-wins rule the /start route applies — and (b) makes sure
+// both indexes exist afterwards (mongoose's auto-build can race this
+// migration's dedup and fail; an explicit createIndex with the identical
+// name+spec repairs it). Idempotent: guarded on what actually exists, so
+// later boots no-op.
+const migrateGuestAttemptIndexes = async () => {
+  try {
+    const collection = mongoose.connection.collection('guestattempts');
+
+    const dedupeLive = async (ownerFilter, groupBy) => {
+      const duplicates = await collection.aggregate([
+        { $match: { status: 'in_progress', ...ownerFilter } },
+        { $group: { _id: groupBy, ids: { $push: '$_id' }, count: { $sum: 1 } } },
+        { $match: { count: { $gt: 1 } } },
+      ]).toArray();
+
+      for (const group of duplicates) {
+        // Oldest attempt wins — same tiebreak the /start route uses.
+        const docs = await collection
+          .find({ _id: { $in: group.ids } })
+          .sort({ createdAt: 1, _id: 1 })
+          .toArray();
+        const losers = docs.slice(1).map((d) => d._id);
+        await collection.deleteMany({ _id: { $in: losers } });
+        logger.info('Removed duplicate live guest attempt', {
+          kept: String(docs[0]._id),
+          removed: losers.map(String),
+        });
+      }
+    };
+
+    // (a) Dedupe live attempts per owner key before the unique builds.
+    await dedupeLive({ guest: { $type: 'objectId' } }, { quiz: '$quiz', guest: '$guest' });
+    await dedupeLive({ guest: null }, { quiz: '$quiz', guestId: '$guestId' });
+
+    // (b) Ensure the indexes landed (same names+specs the schema declares,
+    // so deployments where mongoose already built them no-op here).
+    await collection.createIndex(
+      { quiz: 1, guest: 1 },
+      {
+        unique: true,
+        name: 'guest_attempt_live_lead_unique_1',
+        partialFilterExpression: { status: 'in_progress', guest: { $type: 'objectId' } },
+      }
+    );
+    await collection.createIndex(
+      { quiz: 1, guestId: 1 },
+      {
+        unique: true,
+        name: 'guest_attempt_live_anon_unique_1',
+        partialFilterExpression: { status: 'in_progress', guest: null },
+      }
+    );
+  } catch (error) {
+    logger.warn('Guest attempt live-uniqueness migration skipped', { errorMessage: error.message });
+  }
+};
+
 const startDatabase = async () => {
   try {
     await connectDatabase(async () => {
       await migrateGuestOtpCollection();
       await migrateGuestIdentityIndexes();
+      await migrateGuestAttemptIndexes();
       cleanupExpiredMedia();
       setInterval(cleanupExpiredMedia, 24 * 60 * 60 * 1000);
 

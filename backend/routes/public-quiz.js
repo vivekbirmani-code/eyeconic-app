@@ -302,6 +302,160 @@ const leadSummary = (guest) => ({
     phoneMasked: maskPhone(guest.phone),
 });
 
+// Resumable-attempt lookup for /start (used by the initial lookup AND the
+// duplicate-key convergence path). With a verified lead (guest), ONLY that
+// lead's own attempts — on any device — plus anonymous (guest:null)
+// attempts on THIS device (legacy mobile flow, or a web attempt created
+// while the guest token was expired and then rescued by re-verification)
+// are resumable: a shared browser must never hand one student another
+// student's live attempt. Anonymous requests keep the plain device-keyed
+// behavior (legacy mobile flow). All lookups sort OLDEST-first: if
+// duplicate live attempts exist, every observer resolves the same survivor
+// instead of an arbitrary one, and the prune below removes the doomed
+// duplicates. Returns the oldest live attempt, or null.
+const findResumableGuestAttempt = async (quizId, guestId, guest) => {
+    const ownerSort = { createdAt: 1, _id: 1 };
+    let attempt = await GuestAttempt.findOne({
+        quiz: quizId,
+        guestId,
+        ...(guest ? { guest: null } : {}),
+        status: 'in_progress'
+    }).sort(ownerSort);
+
+    if (!attempt && guest) {
+        attempt = await GuestAttempt.findOne({
+            quiz: quizId,
+            guest: guest._id,
+            status: 'in_progress'
+        }).sort(ownerSort);
+
+        // Self-heal duplicates under the lead: keep the oldest live
+        // attempt, delete the rest. Scoped to the lead's own attempts
+        // (plus anonymous ones on this device) so a second student on
+        // on a shared computer can never delete the first student's live work.
+        // Safe against concurrent observers — everyone sorts the same
+        // way, so no observer can be holding a duplicate this loop
+        // deletes (they'd have the oldest too). Legacy duplicates only:
+        // the unique live-attempt indexes now prevent new ones.
+        if (attempt) {
+            await GuestAttempt.deleteMany({
+                quiz: quizId,
+                status: 'in_progress',
+                _id: { $ne: attempt._id },
+                $or: [
+                    { guestId: attempt.guestId, guest: null },
+                    { guest: guest._id },
+                ],
+            });
+        }
+    }
+
+    return attempt;
+};
+
+// Resume answer for /start, shared by the initial resume path and the
+// duplicate-key convergence path of the create flow: lazily enforces the
+// effective deadline, then returns the section-locked or flat resume shape.
+const respondResumingGuestAttempt = async (res, quiz, attempt, guest) => {
+    // First lazily enforce the effective deadline — min(stored duration
+    // deadline, link expiry) or the section cascade. The enforcement keys
+    // on the ATTEMPT's own guestId — a cross-device resume under the
+    // verified lead may carry a different device UUID than the one that
+    // created the attempt (same contract as the submit routes; keying on
+    // the caller's guestId would make the sync find nothing and falsely
+    // report the attempt as ended).
+    const enforcement = await enforceGuestAttemptDeadlines(attempt, quiz);
+    if (enforcement.attempt && enforcement.attempt.status !== 'in_progress') {
+        return res.json({
+            success: true,
+            message: 'This quiz attempt has ended and has been submitted',
+            attemptFinalized: true,
+            status: enforcement.attempt.status || 'auto_submitted',
+            // The finalized attempt's own id — the client routes
+            // to its result page without guessing from storage.
+            attemptId: enforcement.attempt._id || attempt._id,
+            ...(guest ? { lead: leadSummary(guest) } : {}),
+        });
+    }
+    if (enforcement.attempt) attempt = enforcement.attempt;
+
+    if (isSectionLockEnforced(attempt)) {
+        return res.json({
+            success: true,
+            message: 'Resuming existing attempt',
+            ...(guest ? { lead: leadSummary(guest) } : {}),
+            attempt: {
+                _id: attempt._id,
+                startTime: attempt.startTime,
+                answers: attempt.answers,
+                sectionLockEnabled: true,
+                sectionDefinitions: attempt.sectionDefinitions,
+                sectionStates: attempt.sectionStates,
+                serverNow: new Date().toISOString()
+            },
+            quiz: {
+                _id: quiz._id,
+                title: quiz.title,
+                duration: quiz.duration,
+                questions: quiz.questions.map(q => ({
+                    _id: q._id,
+                    questionText: q.question,
+                    subjectName: q.subject?.name || 'Uncategorized',
+                    questionType: q.questionType,
+                    options: q.options,
+                    questionImage: q.questionImage,
+                    optionImages: q.optionImages,
+                    assertion: q.assertion,
+                    reason: q.reason,
+                    columnA: q.columnA,
+                    columnB: q.columnB,
+                    marks: q.marks || 1
+                })),
+                totalMarks: quiz.totalMarks
+            }
+        });
+    }
+
+    // Resume existing attempt (flat / non-locked)
+    return res.json({
+        success: true,
+        message: 'Resuming existing attempt',
+        ...(guest ? { lead: leadSummary(guest) } : {}),
+        attempt: {
+            _id: attempt._id,
+            startTime: attempt.startTime,
+            answers: attempt.answers,
+            // Server-authoritative flat deadline (display-only
+            // countdown; server-side enforcement caps it by the
+            // link's live expiry).
+            ...(attempt.durationDeadline ? { durationDeadline: attempt.durationDeadline } : {}),
+            // Client-side timers are computed against the server
+            // clock so device clock skew cannot extend/shrink them.
+            serverNow: new Date().toISOString()
+        },
+        quiz: {
+            _id: quiz._id,
+            title: quiz.title,
+            duration: quiz.duration,
+            questions: quiz.questions.map(q => ({
+                _id: q._id,
+                questionText: q.question,
+                subjectName: q.subject?.name || 'Uncategorized',
+                questionType: q.questionType,
+                options: q.options,
+                questionImage: q.questionImage,
+                optionImages: q.optionImages,
+                assertion: q.assertion,
+                reason: q.reason,
+                columnA: q.columnA,
+                columnB: q.columnB,
+                marks: q.marks || 1
+            })),
+            totalMarks: quiz.totalMarks
+        }
+    });
+};
+
 // ============ PUBLIC ROUTES (No Authentication Required) ============
 
 /**
@@ -439,151 +593,12 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
             }
         }
 
-        // Check for existing in-progress attempt. With a verified lead
-        // (req.guest), ONLY that lead's own attempts — on any device — plus
-        // anonymous (guest:null) attempts on THIS device (legacy mobile flow,
-        // or a web attempt created while the guest token was expired and then
-        // rescued by re-verification) are resumable: a shared browser must
-        // never hand one student another student's live attempt. Anonymous
-        // requests keep the plain device-keyed behavior (legacy mobile flow).
-        // All lookups sort OLDEST-first: if duplicate live attempts exist,
-        // every observer resolves the same survivor instead of an arbitrary
-        // one, and the prune below removes the doomed duplicates so the race
-        // is self-healing.
-        const ownerSort = { createdAt: 1, _id: 1 };
-        let attempt = await GuestAttempt.findOne({
-            quiz: quiz._id,
-            guestId,
-            ...(req.guest ? { guest: null } : {}),
-            status: 'in_progress'
-        }).sort(ownerSort);
-
-        if (!attempt && req.guest) {
-            attempt = await GuestAttempt.findOne({
-                quiz: quiz._id,
-                guest: req.guest._id,
-                status: 'in_progress'
-            }).sort(ownerSort);
-
-            // Self-heal duplicates under the lead: keep the oldest live
-            // attempt, delete the rest. Scoped to the lead's own attempts
-            // (plus anonymous ones on this device) so a second student on a
-            // shared browser can never delete the first student's live work.
-            // Safe against concurrent observers — everyone sorts the same
-            // way, so no observer can be holding a duplicate this loop
-            // deletes (they'd have the oldest too).
-            if (attempt) {
-                await GuestAttempt.deleteMany({
-                    quiz: quiz._id,
-                    status: 'in_progress',
-                    _id: { $ne: attempt._id },
-                    $or: [
-                        { guestId: attempt.guestId, guest: null },
-                        { guest: req.guest._id },
-                    ],
-                });
-            }
-        }
+        // Check for an existing in-progress attempt to resume (see
+        // findResumableGuestAttempt for the scoping/self-heal contract).
+        let attempt = await findResumableGuestAttempt(quiz._id, guestId, req.guest);
 
         if (attempt) {
-            // Resume existing attempt. First lazily enforce the effective
-            // deadline — min(stored duration deadline, link expiry) or the
-            // section cascade. The enforcement keys on the ATTEMPT's own
-            // guestId — a cross-device resume under the verified lead may
-            // carry a different device UUID than the one that created the
-            // attempt (same contract as the submit routes; keying on the
-            // caller's guestId would make the sync find nothing and falsely
-            // report the attempt as ended).
-            const enforcement = await enforceGuestAttemptDeadlines(attempt, quiz);
-            if (enforcement.attempt && enforcement.attempt.status !== 'in_progress') {
-                return res.json({
-                    success: true,
-                    message: 'This quiz attempt has ended and has been submitted',
-                    attemptFinalized: true,
-                    status: enforcement.attempt.status || 'auto_submitted',
-                    // The finalized attempt's own id — the client routes
-                    // to its result page without guessing from storage.
-                    attemptId: enforcement.attempt._id || attempt._id,
-                    ...(req.guest ? { lead: leadSummary(req.guest) } : {}),
-                });
-            }
-            if (enforcement.attempt) attempt = enforcement.attempt;
-
-            if (isSectionLockEnforced(attempt)) {
-                return res.json({
-                    success: true,
-                    message: 'Resuming existing attempt',
-                    ...(req.guest ? { lead: leadSummary(req.guest) } : {}),
-                    attempt: {
-                        _id: attempt._id,
-                        startTime: attempt.startTime,
-                        answers: attempt.answers,
-                        sectionLockEnabled: true,
-                        sectionDefinitions: attempt.sectionDefinitions,
-                        sectionStates: attempt.sectionStates,
-                        serverNow: new Date().toISOString()
-                    },
-                    quiz: {
-                        _id: quiz._id,
-                        title: quiz.title,
-                        duration: quiz.duration,
-                        questions: quiz.questions.map(q => ({
-                            _id: q._id,
-                            questionText: q.question,
-                            subjectName: q.subject?.name || 'Uncategorized',
-                            questionType: q.questionType,
-                            options: q.options,
-                            questionImage: q.questionImage,
-                            optionImages: q.optionImages,
-                            assertion: q.assertion,
-                            reason: q.reason,
-                            columnA: q.columnA,
-                            columnB: q.columnB,
-                            marks: q.marks || 1
-                        })),
-                        totalMarks: quiz.totalMarks
-                    }
-                });
-            }
-
-            // Resume existing attempt (flat / non-locked)
-            return res.json({
-                success: true,
-                message: 'Resuming existing attempt',
-                ...(req.guest ? { lead: leadSummary(req.guest) } : {}),
-                attempt: {
-                    _id: attempt._id,
-                    startTime: attempt.startTime,
-                    answers: attempt.answers,
-                    // Server-authoritative flat deadline (display-only
-                    // countdown; server-side enforcement caps it by the
-                    // link's live expiry).
-                    ...(attempt.durationDeadline ? { durationDeadline: attempt.durationDeadline } : {}),
-                    // Client-side timers are computed against the server
-                    // clock so device clock skew cannot extend/shrink them.
-                    serverNow: new Date().toISOString()
-                },
-                quiz: {
-                    _id: quiz._id,
-                    title: quiz.title,
-                    duration: quiz.duration,
-                    questions: quiz.questions.map(q => ({
-                        _id: q._id,
-                        questionText: q.question,
-                        subjectName: q.subject?.name || 'Uncategorized',
-                        questionType: q.questionType,
-                        options: q.options,
-                        questionImage: q.questionImage,
-                        optionImages: q.optionImages,
-                        assertion: q.assertion,
-                        reason: q.reason,
-                        columnA: q.columnA,
-                        columnB: q.columnB,
-                        marks: q.marks || 1
-                    })),
-                    totalMarks: quiz.totalMarks
-                }
-            });
+            return respondResumingGuestAttempt(res, quiz, attempt, req.guest);
         }
 
         // Create new attempt. Section-locking snapshot is frozen here (same
@@ -625,22 +640,59 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
             }))
         });
 
-        await attempt.save();
+        try {
+            await attempt.save();
+        } catch (saveError) {
+            // The unique live-attempt indexes (models/GuestAttempt.js) make
+            // "one in-progress attempt per owner" atomic at the DB layer.
+            // When parallel /start calls (double-tap, multiple tabs, React
+            // StrictMode's dev double-mount) race past the resume lookup
+            // above, exactly one insert wins; every loser fails HERE with a
+            // duplicate-key error instead of leaving a second live attempt
+            // (the old post-hoc reconciliation could not close that window
+            // under load). Converge on the winner and answer with the normal
+            // resume payload so every racer names the same attempt.
+            if (!(saveError?.code === 11000 || saveError?.codeName === 'DuplicateKey')) {
+                throw saveError;
+            }
+            const winner = await findResumableGuestAttempt(quiz._id, guestId, req.guest);
+            if (winner) {
+                return respondResumingGuestAttempt(res, quiz, winner, req.guest);
+            }
+            // The winner was finalized (submitted / deadline-swept) between
+            // the failed insert and this lookup — answer with the
+            // completed-attempt payload so the client still lands on the
+            // result instead of a dead 500.
+            if (req.guest) {
+                const completed = await findCompletedAttemptByIdentity(
+                    quiz._id,
+                    identityFromLead(req.guest)
+                );
+                if (completed) {
+                    return res.status(409).json({
+                        success: false,
+                        ...buildAlreadyAttemptedPayload(completed, req.guest),
+                    });
+                }
+            }
+            throw saveError;
+        }
 
-        // Concurrent-start reconciliation. Two parallel /start calls (double
-        // tap, multiple tabs, React StrictMode's dev double-mount) can both
-        // pass the findOne above before either save commits, leaving the
-        // guest with two live attempts — resume would then bounce between
-        // them, resetting visible progress. Earliest-wins: whichever request
-        // did NOT create the oldest in-progress attempt deletes its own and
-        // answers with the oldest instead. Both racers converge on the same
-        // survivor deterministically. (Residual micro-window: a racer whose
-        // resume-findOne lands between another racer's save and its
-        // self-delete can observe the doomed duplicate — every observer now
-        // sorts oldest-first, so it resolves the survivor on its next
-        // request.) Scoped to the caller's OWN attempts (lead's, plus
-        // anonymous ones on this device) so two different students starting
-        // on one shared browser never delete or adopt each other's work.
+        // Legacy coexistence reconciliation. With the unique live-attempt
+        // indexes, same-owner duplicates can no longer be created; what can
+        // still coexist in-progress is one LEAD attempt plus one ANONYMOUS
+        // attempt on the same device (independent index keys, and the lead's
+        // resume lookup adopts the anonymous row). Earliest-wins across that
+        // pair: whichever request did NOT create the oldest in-progress
+        // attempt deletes its own and answers with the oldest instead, so
+        // both racers converge on the same survivor deterministically.
+        // (Residual micro-window: a racer whose resume lookup lands between
+        // another racer's save and its self-delete can observe the doomed
+        // duplicate — every observer sorts oldest-first, so it resolves the
+        // survivor on its next request.) Scoped to the caller's OWN attempts
+        // (lead's, plus anonymous ones on this device) so two different
+        // students starting on one shared browser never delete or adopt each
+        // other's work.
         const liveIds = await GuestAttempt.find({
             quiz: quiz._id,
             status: 'in_progress',

@@ -181,4 +181,36 @@ guestAttemptSchema.index({ linkedUser: 1 });
 guestAttemptSchema.index({ guest: 1 });
 guestAttemptSchema.index({ quiz: 1, status: 1, guest: 1 });
 
+// One LIVE attempt per owner — enforced atomically at the DB layer.
+// The /start route's check-then-create raced under load (double-tap, two
+// tabs, StrictMode double-mount): parallel starts all passed the resume
+// findOne before any save committed, leaving one person with several
+// in_progress attempts whose resumes bounced between them. Partial unique
+// indexes scope the constraint to in-progress rows only, so history
+// (completed / auto_submitted attempts) never blocks a fresh start:
+//   - verified-lead flow: one live attempt per (quiz, guest) on ANY device
+//   - legacy anonymous flow: one live attempt per (quiz, guestId) device key
+// Anonymous and lead attempts may still coexist on one device (the lead's
+// resume lookup adopts the anonymous row), so the keys are independent.
+// New key patterns are named so they never collide with the legacy
+// non-unique quiz_1_guestId_1 index still present on older deployments;
+// server.js migrateGuestAttemptIndexes() dedupes legacy live duplicates
+// before these build.
+guestAttemptSchema.index(
+    { quiz: 1, guest: 1 },
+    {
+        unique: true,
+        name: 'guest_attempt_live_lead_unique_1',
+        partialFilterExpression: { status: 'in_progress', guest: { $type: 'objectId' } },
+    }
+);
+guestAttemptSchema.index(
+    { quiz: 1, guestId: 1 },
+    {
+        unique: true,
+        name: 'guest_attempt_live_anon_unique_1',
+        partialFilterExpression: { status: 'in_progress', guest: null },
+    }
+);
+
 module.exports = mongoose.model('GuestAttempt', guestAttemptSchema);

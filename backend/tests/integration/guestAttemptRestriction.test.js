@@ -284,14 +284,22 @@ describe('Public quiz one-attempt-per-person restriction', () => {
   it('refuses the loser of two concurrently-started attempts at submit time', async () => {
     const { quiz, questions } = await setupPublicQuiz(admin, subject);
 
-    // The same person can end up with two LIVE attempts when both starts
-    // land before either saves (double tab / two tabs / the pre-fix
-    // concurrent-start race residue). The email-keyed verify can no longer
-    // produce two leads for one mailbox, so the duplicate live attempt is
-    // seeded directly — exactly the state this submit-time defense closes.
+    // The same person can end up with two LIVE attempts through pre-index
+    // concurrent-start races (double tab / two tabs — the residue this
+    // submit-time defense closes for legacy rows; the unique live-attempt
+    // indexes now prevent NEW duplicates, so the state is seeded directly).
+    // The duplicate is seeded only after the winner finalizes, because the
+    // index forbids two in-progress rows for one (quiz, lead) — the defense
+    // under test is stateless and keys on finalized-by-identity at submit
+    // time, not on creation order.
     const lead = await verifyLead(quiz, { email: 'shared@example.com', phone: '+919876111111' });
     const attemptA = await startAttempt(quiz, lead.guestToken, 'device-a');
     expect(attemptA.status).toBe(201);
+
+    // A finalizes first and wins.
+    const submitA = await submitAttempt(quiz, lead.guestToken, attemptA.body.attempt._id, questions, 'device-a');
+    expect(submitA.status).toBe(200);
+
     const attemptB = await GuestAttempt.create({
       quiz: quiz._id,
       guestId: 'device-b',
@@ -303,10 +311,6 @@ describe('Public quiz one-attempt-per-person restriction', () => {
       totalMarks: 12,
       answers: questions.map((q, i) => ({ questionIndex: i, questionId: q._id, selectedAnswer: -1 })),
     });
-
-    // A finalizes first and wins.
-    const submitA = await submitAttempt(quiz, lead.guestToken, attemptA.body.attempt._id, questions, 'device-a');
-    expect(submitA.status).toBe(200);
 
     // The duplicate's submit is refused instead of producing a second graded result.
     const submitB = await submitAttempt(quiz, lead.guestToken, attemptB._id, questions, 'device-b');
@@ -402,11 +406,26 @@ describe('Public quiz one-attempt-per-person restriction', () => {
 
     const lead = await verifyLead(quiz, { email: 'shared@example.com', phone: '+919876111111' });
 
-    // Live attempt A via the API, plus a seeded duplicate under the SAME
-    // person (the concurrent-start residue this defense closes — the
-    // email-keyed verify can no longer construct it through two leads).
+    // Live attempt A via the API; A completes the whole quiz section-by-
+    // section first. The seeded duplicate under the SAME person represents
+    // legacy concurrent-start residue (the unique live-attempt indexes now
+    // prevent new duplicates, so the row can only be seeded once no other
+    // in_progress attempt exists for this (quiz, lead)); the defense under
+    // test refuses its NEXT touch regardless of when it was created.
     const attemptA = await startAttempt(quiz, lead.guestToken, 'device-a');
     expect(attemptA.status).toBe(201);
+
+    for (const [index, answers] of [
+      [0, [{ questionIndex: 0, questionId: questions[0]._id, selectedAnswer: 1 }]],
+      [1, [{ questionIndex: 2, questionId: questions[2]._id, selectedAnswer: 1 }]],
+    ]) {
+      const res = await request(app)
+        .post(`/api/public/quiz/${quiz.shareToken}/sections/${index}/submit`)
+        .set('Authorization', `Bearer ${lead.guestToken}`)
+        .send({ guestId: 'device-a', attemptId: attemptA.body.attempt._id, answers });
+      expect(res.status).toBe(200);
+    }
+
     const attemptB = await GuestAttempt.create({
       quiz: quiz._id,
       guestId: 'device-b',
@@ -428,20 +447,7 @@ describe('Public quiz one-attempt-per-person restriction', () => {
       answers: questions.map((q, i) => ({ questionIndex: i, questionId: q._id, selectedAnswer: -1 })),
     });
 
-    // A completes the whole quiz section-by-section.
-    for (const [index, answers] of [
-      [0, [{ questionIndex: 0, questionId: questions[0]._id, selectedAnswer: 1 }]],
-      [1, [{ questionIndex: 2, questionId: questions[2]._id, selectedAnswer: 1 }]],
-    ]) {
-      const res = await request(app)
-        .post(`/api/public/quiz/${quiz.shareToken}/sections/${index}/submit`)
-        .set('Authorization', `Bearer ${lead.guestToken}`)
-        .send({ guestId: 'device-a', attemptId: attemptA.body.attempt._id, answers });
-      expect(res.status).toBe(200);
-    }
-
-    // The duplicate was mid-quiz the whole time (started before the other
-    // finished); its next section submit must be refused, not graded into a
+    // The duplicate's next section submit must be refused, not graded into a
     // second result.
     const res = await request(app)
       .post(`/api/public/quiz/${quiz.shareToken}/sections/0/submit`)
