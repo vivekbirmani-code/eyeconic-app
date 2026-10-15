@@ -6,6 +6,7 @@
 import {
   aggregateFaceFrames,
   buildPrecheckReport,
+  deriveAttentionBaseline,
   PRECHECK_CHECK_IDS,
 } from '../proctoring/precheck';
 import { PROCTORING_COPY, CONSENT_TEXT_VERSION } from '../../utils/proctoringCopy';
@@ -13,6 +14,8 @@ import { PROCTORING_COPY, CONSENT_TEXT_VERSION } from '../../utils/proctoringCop
 const frame = (faceCountClass: 'none' | 'one' | 'multiple', visibility: 'none' | 'ok' | 'partial' | 'small' | 'multiple') => ({
   faceCountClass,
   visibility,
+  // Phase 5: no usable pose by default (baseline derivation returns null).
+  headPose: null,
 });
 
 describe('aggregateFaceFrames', () => {
@@ -118,5 +121,64 @@ describe('proctoringCopy (D7 centralized copy)', () => {
     const source = fs.readFileSync(screenPath, 'utf8');
     expect(source).toContain('PROCTORING_COPY');
     expect(source).toContain("from '@/utils/proctoringCopy'");
+  });
+});
+
+// ===== Phase 5 — attention baseline derivation (D11 calibration-lite) =====
+
+describe('deriveAttentionBaseline', () => {
+  const poseFrame = (yaw: number, pitch: number, roll = 0) => ({
+    faceCountClass: 'one' as const,
+    visibility: 'ok' as const,
+    headPose: { yaw, pitch, roll },
+  });
+
+  test('median nominal pose over the agreed frames', () => {
+    const baseline = deriveAttentionBaseline([
+      poseFrame(4, -2), poseFrame(-8, 3), poseFrame(10, -5), poseFrame(2, 1),
+    ]);
+    // yaw median of [-8, 2, 4, 10] = 3; pitch median of [-5, -2, 1, 3] = -0.5
+    expect(baseline).toEqual({ yaw: 3, pitch: -0.5, roll: 0, frames: 4 });
+  });
+
+  test('null when fewer than minFrames agreed frames carried a usable pose', () => {
+    expect(deriveAttentionBaseline([poseFrame(1, 1), poseFrame(2, 2)], 3)).toBeNull();
+    expect(deriveAttentionBaseline([], 3)).toBeNull();
+  });
+
+  test('frames without pose are ignored, not fatal', () => {
+    const baseline = deriveAttentionBaseline([
+      poseFrame(5, 0), { faceCountClass: 'one', visibility: 'ok', headPose: null },
+      poseFrame(7, 0), poseFrame(9, 0),
+    ]);
+    expect(baseline).toEqual({ yaw: 7, pitch: 0, roll: 0, frames: 3 });
+  });
+
+  test('rounds to 0.1° (server-side storage precision parity)', () => {
+    const baseline = deriveAttentionBaseline([
+      poseFrame(1.234, -2.345), poseFrame(1.222, -2.333), poseFrame(1.238, -2.351),
+    ]);
+    expect(baseline!.yaw).toBe(1.2);
+    expect(baseline!.pitch).toBe(-2.3);
+  });
+});
+
+describe('aggregateFaceFrames — Phase 5 baseline attachment', () => {
+  test('a PASS carries the derived baseline in the face_readiness metadata', () => {
+    const result = aggregateFaceFrames([
+      { faceCountClass: 'one', visibility: 'ok', headPose: { yaw: 5, pitch: -3, roll: 1 } },
+      { faceCountClass: 'one', visibility: 'ok', headPose: { yaw: 7, pitch: -3, roll: 1 } },
+      { faceCountClass: 'one', visibility: 'ok', headPose: { yaw: 9, pitch: -3, roll: 1 } },
+    ]);
+    expect(result.status).toBe('PASS');
+    expect(result.metadata!.attentionBaseline).toEqual({ yaw: 7, pitch: -3, roll: 1, frames: 3 });
+  });
+
+  test('a PASS without usable poses omits the baseline (fallback path)', () => {
+    const result = aggregateFaceFrames([
+      frame('one', 'ok'), frame('one', 'ok'), frame('one', 'ok'),
+    ]);
+    expect(result.status).toBe('PASS');
+    expect(result.metadata!.attentionBaseline).toBeUndefined();
   });
 });

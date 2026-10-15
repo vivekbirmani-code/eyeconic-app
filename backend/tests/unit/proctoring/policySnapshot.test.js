@@ -194,6 +194,84 @@ describe('parseProctoringConfig (quiz authoring validation)', () => {
     });
   });
 
+  describe('attention shaping thresholds (Phase 5, §13.2 — shaping only, D6 untouched)', () => {
+    it('accepts and echoes valid threshold groups', () => {
+      const result = parseProctoringConfig({
+        enabled: true,
+        attention: {
+          mode: 'record',
+          thresholds: {
+            turnedDeg: 30,
+            extreme: { yawDeg: 55, pitchDeg: 45, sustainMs: 6000 },
+            repeatedHeadPose: { minEpisodes: 4, minEpisodeMs: 2500, windowMs: 600000 },
+            deviation: { deg: 40, sustainMs: 5000 },
+            repeatedDeviation: { minEpisodes: 5, minEpisodeMs: 1200, windowMs: 600000 },
+            fallbackPadDeg: 15,
+          },
+        },
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.value.attention.thresholds).toEqual({
+        turnedDeg: 30,
+        extreme: { yawDeg: 55, pitchDeg: 45, sustainMs: 6000 },
+        repeatedHeadPose: { minEpisodes: 4, minEpisodeMs: 2500, windowMs: 600000 },
+        deviation: { deg: 40, sustainMs: 5000 },
+        repeatedDeviation: { minEpisodes: 5, minEpisodeMs: 1200, windowMs: 600000 },
+        fallbackPadDeg: 15,
+      });
+    });
+
+    it('still rejects escalation even alongside valid thresholds (D6 first)', () => {
+      const result = parseProctoringConfig({
+        enabled: true,
+        attention: { mode: 'warn', thresholds: { turnedDeg: 30 } },
+      });
+      expect(result.error).toMatch(/attention\.mode is locked to "record"/);
+    });
+
+    it('bounds every numeric field (out-of-range rejected, never clamped silently)', () => {
+      const cases = [
+        [{ turnedDeg: 0 }, /turnedDeg/],
+        [{ turnedDeg: 91 }, /turnedDeg/],
+        [{ fallbackPadDeg: -5 }, /fallbackPadDeg/],
+        [{ extreme: { yawDeg: 120 } }, /extreme\.yawDeg/],
+        [{ extreme: { sustainMs: -1 } }, /extreme\.sustainMs/],
+        [{ deviation: { deg: 'wide' } }, /deviation\.deg/],
+        [{ repeatedHeadPose: { minEpisodes: 1 } }, /repeatedHeadPose\.minEpisodes/],
+        [{ repeatedDeviation: { windowMs: 10 } }, /repeatedDeviation\.windowMs/],
+      ];
+      for (const [thresholds, pattern] of cases) {
+        const result = parseProctoringConfig({ enabled: true, attention: { thresholds } });
+        expect(result.error).toMatch(pattern);
+      }
+    });
+
+    it('rejects non-object threshold groups', () => {
+      expect(parseProctoringConfig({ enabled: true, attention: { thresholds: 35 } }).error)
+        .toMatch(/attention\.thresholds must be an object/);
+      expect(parseProctoringConfig({ enabled: true, attention: { thresholds: { extreme: 50 } } }).error)
+        .toMatch(/extreme must be an object/);
+      expect(parseProctoringConfig({ enabled: true, attention: { thresholds: { repeatedHeadPose: 3 } } }).error)
+        .toMatch(/repeatedHeadPose must be an object/);
+    });
+
+    it('fills the documented defaults into the EFFECTIVE policy (older quizzes unchanged)', () => {
+      const effective = buildEffectiveProctoringPolicy({
+        proctoring: { enabled: true, attention: { mode: 'record' } },
+      });
+      expect(effective.policy.attention.thresholds).toEqual(
+        DEFAULT_PROCTORING_CONFIG.attention.thresholds
+      );
+      // A quiz overriding one leaf keeps the rest of the defaults.
+      const partial = buildEffectiveProctoringPolicy({
+        proctoring: { enabled: true, attention: { thresholds: { deviation: { deg: 20 } } } },
+      });
+      expect(partial.policy.attention.thresholds.deviation).toEqual({ deg: 20, sustainMs: 4000 });
+      expect(partial.policy.attention.thresholds.turnedDeg)
+        .toBe(DEFAULT_PROCTORING_CONFIG.attention.thresholds.turnedDeg);
+    });
+  });
+
   describe('CV auto-submit is not a per-quiz setting (D8)', () => {
     it('rejects multipleFaces.mode "submit"', () => {
       const result = parseProctoringConfig({ enabled: true, multipleFaces: { mode: 'submit' } });

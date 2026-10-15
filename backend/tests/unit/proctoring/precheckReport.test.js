@@ -186,3 +186,48 @@ describe('evaluatePrecheckReport — verdict mapping', () => {
     expect(evaluation.verdict).toBe('FAIL');
   });
 });
+
+// ===== Phase 5 — attention baseline validation (D11, plan §13.4) =====
+
+describe('parsePrecheckReport — attentionBaseline in face_readiness metadata', () => {
+  const withBaseline = (baseline) => {
+    const checks = allPassChecks();
+    checks[3] = passCheck('face_readiness', {
+      metadata: {
+        frames: 5, agreedFrames: 4, faceCountClass: 'one', visibility: 'ok',
+        attentionBaseline: baseline,
+      },
+    });
+    return { ...validReport(), checks };
+  };
+
+  it('accepts a well-formed baseline and rounds to 0.1 degrees', () => {
+    const result = parsePrecheckReport(withBaseline({ yaw: 12.34, pitch: -7.86, roll: 1.11, frames: 4 }));
+    expect(result.error).toBeUndefined();
+    expect(result.value.checks[3].metadata.attentionBaseline).toEqual({
+      yaw: 12.3, pitch: -7.9, roll: 1.1, frames: 4,
+    });
+  });
+
+  it('keeps the baseline OPTIONAL (older clients / fallback sessions)', () => {
+    const result = parsePrecheckReport(validReport());
+    expect(result.error).toBeUndefined();
+    expect(result.value.checks[3].metadata.attentionBaseline).toBeUndefined();
+  });
+
+  it.each([
+    ['yaw beyond 180', { yaw: 181, pitch: 0, roll: 0, frames: 4 }],
+    ['pitch beyond 90', { yaw: 0, pitch: -91, roll: 0, frames: 4 }],
+    ['roll beyond 180', { yaw: 0, pitch: 0, roll: 200, frames: 4 }],
+    ['non-numeric pose', { yaw: 'left', pitch: 0, roll: 0, frames: 4 }],
+    ['NaN yaw', { yaw: Number.NaN, pitch: 0, roll: 0, frames: 4 }],
+    ['frames below the readiness minimum', { yaw: 5, pitch: 5, roll: 0, frames: 2 }],
+    ['frames above agreedFrames', { yaw: 5, pitch: 5, roll: 0, frames: 5 }],
+    ['non-integer frames', { yaw: 5, pitch: 5, roll: 0, frames: 3.5 }],
+    ['non-object baseline', 35],
+  ])('rejects %s', (_name, baseline) => {
+    const result = parsePrecheckReport(withBaseline(baseline));
+    expect(result.error).toMatch(/attentionBaseline/);
+    expect(result.value).toBeUndefined();
+  });
+});

@@ -3360,3 +3360,147 @@ quiz opt-in default false); staging begins only by an explicit future product de
 
 **Track 3 complete. Remaining roadmap: Phase 5 (attention), 7-full, 8–9, the optional
 preview attachment, and rollout staging when chosen.**
+
+---
+
+## 45. Phase 5 — Head pose + record-only attention estimation (2026-10-15)
+
+Implemented per the §Phase 5 roadmap entry + §13, with the five user clarifications
+from the approval (fallback semantics, deterministic repeated-event logic, ingest-level
+D6 verification, baseline persistence matrix, automated-vs-device test separation).
+
+### 45.1 What shipped
+
+**Policy thresholds (server-authoritative, shaping-only).**
+`defaults.js` `attention.thresholds` (§13.2 illustrative values: turned 25°, extreme
+50°/5 s, repeated head-pose 3×2 s/5 min, deviation 35°/4 s, repeated deviation
+4×1.5 s/5 min, fallbackPadDeg 10); `parseProctoringConfig` validates + bounds every
+leaf (mode stays LOCKED to `'record'`, D6); the Quiz schema stores the new nested
+paths (types only — no mongoose defaults; the effective-policy merge fills documented
+defaults, so quizzes authored before Phase 5 are unchanged); `mergeSection` freezes
+thresholds into new snapshots. AC-3 (thresholds from the snapshot, never hardcoded
+angles) holds by construction + the `deviation.deg: 10` client test.
+
+**Baseline round-trip (D11).** Precheck readiness frames now carry the primary-face
+pose; `deriveAttentionBaseline` (pure, median over the AGREED one-face-'ok' frames,
+≥ minFrames) rides the `face_readiness` check metadata → server validates shape
+(|yaw|,|roll| ≤ 180, |pitch| ≤ 90, frames within agreed) → SIGNED precheck-token
+summary → `ProctoringConsent.precheckSummary.attentionBaseline` → frozen onto
+`ProctoringSession.baseline` (the schema field reserved since Phase 1) at /start →
+returned as `proctoringAttentionBaseline` on /start AND the session-resync endpoint
+(app-restart path). Any gap anywhere → client arms with global bands + the pad +
+`calibration:'fallback'` markers; never blocked, zero student-facing difference.
+
+**Fallback semantics (clarification 1).** `fallbackPadDeg` adds ONLY to the
+baseline-relative deviation threshold (35 → 45): the pad raises a threshold, so
+fallback can only suppress episodes, never add sensitivity. Absolute bands
+(turned/extreme) never reference the baseline and are never padded. Fallback
+episodes carry `calibration:'fallback'` + `baseline:{yaw:0,pitch:0}` in metadata.
+
+**Client derivation (`episodeTracker.ts`).** Two families — extreme/turned
+(HEAD_POSE_EXTREME, HEAD_POSE_REPEATED) and deviation (ATTENTION_DEVIATION_SUSTAINED,
+ATTENTION_DEVIATION_REPEATED) — evaluated ONLY on one-face ok/partial frames with a
+usable pose, and dropped while any technical condition is open (§17.5). Sustained
+episodes reuse the §10.3 debounce/hysteresis/cooldown contract (persist ≥ sustainMs
+to open, clear ≥ 1 s to close, 10 s cooldown merge — one event per sustained
+interval). REPEATED events are deterministic pattern reports (clarification 2):
+a segment spans consecutive active frames (sub-second gaps do not split it), must
+cover ≥ 2 frames AND ≥ minEpisodeMs; qualifying segments fill a sliding window
+(counted while their end is within windowMs of the newest end); at minEpisodes
+exactly ONE event is emitted (openedAt = first segment start, closedAt = newest
+end, episodes count in metadata) and the window is CONSUMED. Sustained intervals
+are ordinary qualifying segments and count toward patterns. An open extreme
+episode owns its frames — deviation is inactive in the extreme band (no
+double-counting). `attention.enabled:false` (accommodation) disables the family
+entirely. §13.3 protections are structural: eye-open probability feeds only
+qualityProxy (blink never events); single frames never qualify (≥ 2-frame guard
+protects even at snapshot cadence); sub-minEpisodeMs glances never count.
+
+**Record-only enforcement (clarification 3).** Unchanged D6 locks re-verified at
+every layer: rulesEngine skips all four types structurally; riskScore weight 0;
+policySnapshot rejects any non-'record' mode. NEW: integration + verify-script
+ingest-level proof — all four types through the real batch endpoint (the only
+client event path), flooded beyond every threshold: 0 actions, 0 violations,
+risk 0, attempt stays in_progress, replays are duplicate no-ops, stored as
+probabilistic cv_observation/info with confidence enforced.
+
+### 45.2 Evidence (all executed 2026-10-15)
+
+- Backend: 81/81 suites, 1125/1125 tests (incl. new policySnapshot threshold cases,
+  precheckReport baseline validation, `proctoringAttention.test.js` round-trip +
+  D6 integration). `verifyProctoringFlow.js`: 38/38 (11 new Phase 5 checks:
+  malformed-baseline 400, baseline through token→consent→session→response→resync,
+  four-type inert ingest + flood, replay no-op, thresholds accepted vs escalation
+  400 through the real authoring route).
+- Client (root ts-jest): 23/23 suites, 273/273 tests — new
+  `proctoringAttentionTracker.test.ts` (27 tests: §29.4 normal-behavior rows incl.
+  blink/drift/posture/single-frame/glance, policy-driven thresholds, sustained +
+  repeated derivation, window reset, hysteresis + cooldown merge, precedence/gating,
+  fallback pair, confidence floor, bit-stable determinism, closeAll semantics),
+  engine wiring tests (pose → 'cv'-stamped events, captured/fallback markers),
+  precheck baseline-derivation tests. Strict-mode tsc over every touched file: clean.
+- One regression the integration suite caught and fixed en route: the Quiz schema
+  initially stripped the nested `thresholds` paths (Mongoose strict mode) — schemas
+  now store them; no behavior change for pre-Phase-5 quizzes.
+
+**NOT covered by automation (honest limits):** all of the above feeds the derivation
+synthetic frames — no real-camera run has happened for Phase 5. Device validation
+(user drives the Nord, agent verifies from the driver/state) remains open: real-pose
+baseline capture at precheck, a sustained look-away producing one timeline episode,
+§29.4 lighting/pose rows on the streaming transport, and the spike-screen readout
+(the spike's metricsTracker now feeds the tracker the same way, so its episode
+readout gains the attention types live). Thresholds remain §13.2 illustrative values
+until the §19.5 calibration round — tuning is data work, not code.
+
+All rollout gates remain OFF. Next roadmap items: 7-full, 8–9, optional preview
+attachment, rollout staging when chosen.
+
+### 45.3 Phase 5 device validation (2026-10-15, Nord `ec0bfad7`, dev build)
+
+One user-driven session over the Phase 4 device driver (in-memory backend, gates ON
+in-process, streaming transport throughout). The user drove the phone; the agent
+verified from the sidecar/driver + timeline endpoints. CONFIRMED = observed on
+device; NOT CAPTURED = honestly absent (never back-filled).
+
+**CONFIRMED on device:**
+
+- **Baseline round-trip, twice.** Precheck → signed token → consent →
+  `ProctoringSession.baseline` → `/start` + resync responses. Run 1: yaw −3.3 /
+  pitch 13.7 / roll 2.1; run 2: −1.6 / 11.3 / 1.7 — consistent with the spike
+  screen's later live centered reading (−3.3 / 15.6 / 1.9). Client confirmed
+  armed in `captured` mode via event metadata echo (baseline + marker).
+- **HEAD_POSE_EXTREME ×4** (durations 5.2–18.4 s, peaks 66.5–84.4°, confidence
+  1.0, calibration + basis metadata intact) and **HEAD_POSE_REPEATED ×3**
+  (deterministic one-event-per-window; window reset verified — a second event
+  required a fresh full window; episodes count + thresholds in metadata).
+- **D6 live.** Across all attention episodes in the final run: **0 violations,
+  0 warnings, 0 risk contribution** — and every time a turn overshot into the
+  extreme band, the deviation condition stayed suppressed (§17.5 within-family
+  precedence observed, not just tested).
+- **Normal-behavior silence.** Minutes of natural quiz use (reading, blinking,
+  posture shifts, screen glances) produced zero attention events; sustained
+  silence also through the cover-test cascade (FACE_PARTIALLY_VISIBLE →
+  FACE_NOT_DETECTED → face-presence WARN — pre-existing behavior unchanged).
+- **Transport health.** ~3.6 FPS streaming, qualityProxy 0.9, face `one·ok`
+  tracking solid to ~58° yaw; classification flicker only past ~80°.
+
+**Spike-screen yaw mapping (the §19.5 calibration seed, operator = one adult,
+front camera, phone propped):** centered −3.3° · small turn −18.4° · medium
+−38.5° · large −57.6° · shoulder-turn peak 82–84°. Angles read honestly and
+near-linearly; the 35–50° deviation band is a ~15°-wide physical pocket.
+
+**NOT CAPTURED on device:** `ATTENTION_DEVIATION_SUSTAINED` / `_REPEATED`
+episodes. Every deliberate turn measured either <35° deviation (natural
+"medium" ≈ the band's lower edge) or ≥50° (extreme band legally owns those
+frames — the suppression that fired instead is the precedence rule working).
+The exact trigger is unit-locked with synthetic angles, and both shared
+mechanisms are device-proven (sustained-episode path via the extreme family;
+band-vs-baseline evaluation via the 38.5° reading landing exactly on the edge).
+Also not exercised on device: the `calibration:'fallback'` path (needs a
+baseline-less session; unit-covered only).
+
+**Calibration note for §19.5:** for this operator/camera the default 35°
+deviation band sits immediately above a natural conversational turn — brief
+brushing is expected and harmless (record-only + 4 s sustain + confidence
+floor), but the band/pocket width is a first tuning candidate once shadow data
+exists.

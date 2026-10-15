@@ -140,6 +140,29 @@ const asBoolean = (value) => value === true || value === 'true';
 
 const oneOf = (value, allowed) => allowed.includes(value);
 
+// {minEpisodes, minEpisodeMs, windowMs} — the shared shape of the two
+// repeated-pattern threshold groups (attention shaping only, plan §13.2).
+const parseRepeatedGroup = (raw, label) => {
+  if (!isPlainObject(raw)) return { error: `proctoring.attention.thresholds.${label} must be an object` };
+  const parsed = {};
+  if (raw.minEpisodes !== undefined) {
+    const r = clampInt(raw.minEpisodes, 2, 50, null);
+    if (r.error) return { error: `proctoring.attention.thresholds.${label}.minEpisodes must be an integer between 2 and 50` };
+    parsed.minEpisodes = r.value;
+  }
+  if (raw.minEpisodeMs !== undefined) {
+    const r = clampInt(raw.minEpisodeMs, 0, 60 * 60 * 1000, null);
+    if (r.error) return { error: `proctoring.attention.thresholds.${label}.minEpisodeMs must be between 0 and 3600000` };
+    parsed.minEpisodeMs = r.value;
+  }
+  if (raw.windowMs !== undefined) {
+    const r = clampInt(raw.windowMs, 1000, 24 * 60 * 60 * 1000, null);
+    if (r.error) return { error: `proctoring.attention.thresholds.${label}.windowMs must be between 1000 and 86400000` };
+    parsed.windowMs = r.value;
+  }
+  return { value: Object.keys(parsed).length > 0 ? parsed : null };
+};
+
 /**
  * Validates + normalizes a `proctoring` payload submitted to quiz
  * create/update routes. Returns { value } with a fully-populated normalized
@@ -252,6 +275,8 @@ const parseProctoringConfig = (raw) => {
 
   // D6: attention is record-only in V1 — reject any attempt to configure it
   // otherwise at authoring time. (There is deliberately no "submit" option.)
+  // Phase 5 adds SHAPING thresholds only (plan §13.2): they decide when a
+  // record-only observation episode opens and can never attach a consequence.
   if (attention !== undefined) {
     if (!isPlainObject(attention)) return { error: 'proctoring.attention must be an object' };
     const section = {};
@@ -263,6 +288,79 @@ const parseProctoringConfig = (raw) => {
         return { error: 'proctoring.attention.mode is locked to "record" in V1 (attention observations can never trigger actions)' };
       }
       section.mode = attention.mode;
+    }
+    if (attention.thresholds !== undefined) {
+      if (!isPlainObject(attention.thresholds)) {
+        return { error: 'proctoring.attention.thresholds must be an object' };
+      }
+      const t = attention.thresholds;
+      const parsedThresholds = {};
+      const angle = (value, label, max) => {
+        const parsed = clampInt(value, 1, max, null);
+        if (parsed.error) return { error: `proctoring.attention.thresholds.${label} must be an integer between 1 and ${max}` };
+        return { value: parsed.value };
+      };
+      const ms = (value, label, max) => {
+        const parsed = clampInt(value, 0, max, null);
+        if (parsed.error) return { error: `proctoring.attention.thresholds.${label} must be between 0 and ${max}` };
+        return { value: parsed.value };
+      };
+      if (t.turnedDeg !== undefined) {
+        const parsed = angle(t.turnedDeg, 'turnedDeg', 90);
+        if (parsed.error) return { error: parsed.error };
+        parsedThresholds.turnedDeg = parsed.value;
+      }
+      if (t.extreme !== undefined) {
+        if (!isPlainObject(t.extreme)) return { error: 'proctoring.attention.thresholds.extreme must be an object' };
+        const parsed = {};
+        if (t.extreme.yawDeg !== undefined) {
+          const r = angle(t.extreme.yawDeg, 'extreme.yawDeg', 90);
+          if (r.error) return { error: r.error };
+          parsed.yawDeg = r.value;
+        }
+        if (t.extreme.pitchDeg !== undefined) {
+          const r = angle(t.extreme.pitchDeg, 'extreme.pitchDeg', 90);
+          if (r.error) return { error: r.error };
+          parsed.pitchDeg = r.value;
+        }
+        if (t.extreme.sustainMs !== undefined) {
+          const r = ms(t.extreme.sustainMs, 'extreme.sustainMs', 60 * 60 * 1000);
+          if (r.error) return { error: r.error };
+          parsed.sustainMs = r.value;
+        }
+        if (Object.keys(parsed).length > 0) parsedThresholds.extreme = parsed;
+      }
+      if (t.repeatedHeadPose !== undefined) {
+        const parsed = parseRepeatedGroup(t.repeatedHeadPose, 'repeatedHeadPose');
+        if (parsed.error) return { error: parsed.error };
+        if (parsed.value) parsedThresholds.repeatedHeadPose = parsed.value;
+      }
+      if (t.deviation !== undefined) {
+        if (!isPlainObject(t.deviation)) return { error: 'proctoring.attention.thresholds.deviation must be an object' };
+        const parsed = {};
+        if (t.deviation.deg !== undefined) {
+          const r = angle(t.deviation.deg, 'deviation.deg', 90);
+          if (r.error) return { error: r.error };
+          parsed.deg = r.value;
+        }
+        if (t.deviation.sustainMs !== undefined) {
+          const r = ms(t.deviation.sustainMs, 'deviation.sustainMs', 60 * 60 * 1000);
+          if (r.error) return { error: r.error };
+          parsed.sustainMs = r.value;
+        }
+        if (Object.keys(parsed).length > 0) parsedThresholds.deviation = parsed;
+      }
+      if (t.repeatedDeviation !== undefined) {
+        const parsed = parseRepeatedGroup(t.repeatedDeviation, 'repeatedDeviation');
+        if (parsed.error) return { error: parsed.error };
+        if (parsed.value) parsedThresholds.repeatedDeviation = parsed.value;
+      }
+      if (t.fallbackPadDeg !== undefined) {
+        const parsed = angle(t.fallbackPadDeg, 'fallbackPadDeg', 90);
+        if (parsed.error) return { error: parsed.error };
+        parsedThresholds.fallbackPadDeg = parsed.value;
+      }
+      if (Object.keys(parsedThresholds).length > 0) section.thresholds = parsedThresholds;
     }
     if (Object.keys(section).length > 0) config.attention = section;
   }

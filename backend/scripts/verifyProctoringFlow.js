@@ -320,6 +320,121 @@ async function main() {
     && lateAttempt.autoSubmitReason?.kind === 'duration',
     `${lateSubmit.status} ${lateAttempt.status}`);
 
+  // ---- 8. Phase 5: attention baseline round-trip + record-only guarantee ----
+  const attStudent = await User.create({ name: 'V Attention', email: 'vattention@run.test', password: 'Vpassw0rd23', role: 'student' });
+  await Quiz.updateOne({ _id: quiz._id }, { $addToSet: { assignedStudents: attStudent._id } });
+  const attToken = tokenFor(attStudent);
+
+  const BASELINE = { yaw: 7.2, pitch: -3.4, roll: 1.1, frames: 4 };
+  const baselineReport = {
+    device: { platform: 'android', osVersion: 33 },
+    network: { reachable: true, authedPingMs: 120 },
+    checks: [
+      { id: 'device_capability', status: 'PASS' },
+      { id: 'camera_permission', status: 'PASS' },
+      { id: 'camera_availability', status: 'PASS' },
+      {
+        id: 'face_readiness', status: 'PASS',
+        metadata: { frames: 5, agreedFrames: 4, faceCountClass: 'one', visibility: 'ok', attentionBaseline: BASELINE },
+      },
+      { id: 'network', status: 'PASS' },
+    ],
+  };
+  const badBaselineReport = {
+    ...baselineReport,
+    checks: baselineReport.checks.map((c) => (
+      c.id === 'face_readiness'
+        ? { ...c, metadata: { ...c.metadata, attentionBaseline: { yaw: 400, pitch: 0, roll: 0, frames: 4 } } }
+        : c
+    )),
+  };
+  const malformed = await api('POST', `/api/quizzes/${quiz._id}/proctoring/precheck-report`, {
+    token: attToken, body: badBaselineReport,
+  });
+  check('malformed baseline rejects the report (400)', malformed.status === 400,
+    `${malformed.status} ${JSON.stringify(malformed.body?.message)}`);
+
+  const attPre = await api('POST', `/api/quizzes/${quiz._id}/proctoring/precheck-report`, {
+    token: attToken, body: baselineReport,
+  });
+  check('precheck with a valid baseline passes', attPre.status === 200 && attPre.body.verdict === 'PASS');
+  await api('POST', `/api/quizzes/${quiz._id}/proctoring/consent`, {
+    token: attToken,
+    body: { precheckToken: attPre.body.precheckToken, consentTextVersion: '2026-09-v1', surface: 'app-android' },
+  });
+  const attStart = await api('POST', `/api/quizzes/${quiz._id}/start`, {
+    token: attToken, body: { precheckToken: attPre.body.precheckToken },
+  });
+  check('/start response carries the frozen attention baseline + Phase 5 thresholds',
+    attStart.status === 201
+    && attStart.body.proctoringAttentionBaseline?.calibration === 'captured'
+    && attStart.body.proctoringAttentionBaseline?.yaw === 7.2
+    && attStart.body.proctoringPolicy?.attention?.thresholds?.deviation?.deg === 35,
+    JSON.stringify(attStart.body?.proctoringAttentionBaseline));
+
+  const attSession = await ProctoringSession.findById(attStart.body.proctoringSessionId);
+  check('session doc froze the baseline (D11)',
+    attSession?.baseline?.nominalHeadPose?.yaw === 7.2 && attSession?.baseline?.calibration === 'captured');
+
+  const attResync = await api('GET', `/api/quizzes/attempt/${attStart.body.attemptId}/proctoring/session`, { token: attToken });
+  check('resync endpoint re-serves the baseline (app-restart path)',
+    attResync.status === 200 && attResync.body.proctoringAttentionBaseline?.yaw === 7.2
+    && attResync.body.policy?.attention?.mode === 'record');
+
+  // All four record-only types through the REAL ingest path: never any
+  // action, violation, risk or finalize — D6 end-to-end (Phase 5 AC 4).
+  const attAttemptId = attStart.body.attemptId;
+  const attSessionId = attStart.body.proctoringSessionId;
+  const postAttEvents = (events) => api('POST', `/api/quizzes/${quiz._id}/attempt/${attAttemptId}/proctoring/events`, {
+    token: attToken, body: { sessionId: attSessionId, heartbeat: true, events },
+  });
+  const attentionEvent = (type, i) => ({
+    type, source: 'cv',
+    openedAt: Date.now() - 60_000 + i * 3000,
+    closedAt: Date.now() - 60_000 + i * 3000 + 8000,
+    confidence: 0.82,
+    idempotencyKey: `vf-att-${type}-${i}`, clientSeq: i,
+    metadata: { basis: 'head_pose', calibration: 'captured', durationMs: 8000 },
+  });
+  const attentionTypes = ['HEAD_POSE_EXTREME', 'HEAD_POSE_REPEATED', 'ATTENTION_DEVIATION_SUSTAINED', 'ATTENTION_DEVIATION_REPEATED'];
+  const firstAttBatch = attentionTypes.map((type, i) => attentionEvent(type, i));
+  const attIngest = await postAttEvents(firstAttBatch);
+  check('all four attention types ingest with ZERO actions',
+    attIngest.status === 200 && attIngest.body.accepted === 4 && !attIngest.body.actions
+    && attIngest.body.attemptFinalized === undefined,
+    JSON.stringify(attIngest.body?.actions));
+  for (let round = 1; round <= 5; round += 1) {
+    const flood = await postAttEvents(attentionTypes.map((type, i) => attentionEvent(type, round * 10 + i)));
+    if (flood.status !== 200 || flood.body.actions || flood.body.attemptFinalized !== undefined) {
+      check(`attention flood round ${round} stays inert`, false, JSON.stringify(flood.body?.actions));
+    }
+  }
+  check('attention floods beyond every threshold stay inert (D6)',
+    (await ProctoringViolation.countDocuments({ session: attSessionId })) === 0);
+  const attSessionAfter = await ProctoringSession.findById(attSessionId);
+  const attAttemptAfter = await QuizAttempt.findById(attAttemptId);
+  check('attention events add zero risk and never finalize',
+    attSessionAfter.riskScore === 0 && attAttemptAfter.status === 'in_progress');
+  const attReplay = await postAttEvents(firstAttBatch);
+  check('attention replays are duplicate no-ops',
+    attReplay.status === 200 && attReplay.body.accepted === 0 && attReplay.body.duplicates?.length === 4);
+
+  // Policy authoring: thresholds accepted, escalation still impossible (D6).
+  const thresholdUpdate = await api('PUT', `/api/quizzes/${quiz._id}`, {
+    token: adminToken,
+    body: { proctoring: { enabled: true, attention: { mode: 'record', thresholds: { deviation: { deg: 20 } } } } },
+  });
+  check('quiz authoring accepts attention thresholds (shaping only)',
+    thresholdUpdate.status === 200
+    && thresholdUpdate.body.quiz?.proctoring?.attention?.thresholds?.deviation?.deg === 20,
+    `${thresholdUpdate.status}`);
+  const escalationUpdate = await api('PUT', `/api/quizzes/${quiz._id}`, {
+    token: adminToken,
+    body: { proctoring: { enabled: true, attention: { mode: 'warn', thresholds: { deviation: { deg: 20 } } } } },
+  });
+  check('attention escalation through the real route still 400s (D6)',
+    escalationUpdate.status === 400, `${escalationUpdate.status}`);
+
   // ---- Report ----
   console.log('\n[verify] ========= RESULT =========');
   console.log(`[verify] passed: ${passed}  failed: ${failures.length}`);

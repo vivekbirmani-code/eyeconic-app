@@ -38,6 +38,32 @@ const DEFAULT_PROCTORING_CONFIG = {
   attention: {
     enabled: true,
     mode: ATTENTION_MODE_RECORD_ONLY, // LOCKED in V1 (D6)
+    // Phase 5 derivation thresholds (plan §13.2 illustrative values —
+    // PROVISIONAL until the §19.5 calibration round, like every number in
+    // this file). Shaping-only: they govern WHEN a record-only observation
+    // episode opens, never any consequence (D6 — mode above stays locked).
+    thresholds: {
+      // |yaw|/|pitch| beyond this counts as an orient-away segment (feeds
+      // HEAD_POSE_REPEATED counting). Half the extreme band, mirroring the
+      // spike's 'turned' band.
+      turnedDeg: 25,
+      // Sustained extreme absolute orientation → HEAD_POSE_EXTREME.
+      extreme: { yawDeg: 50, pitchDeg: 50, sustainMs: 5000 },
+      // ≥ minEpisodes orient-away segments ≥ minEpisodeMs within windowMs
+      // → HEAD_POSE_REPEATED (one event per window-ful).
+      repeatedHeadPose: { minEpisodes: 3, minEpisodeMs: 2000, windowMs: 300000 },
+      // Deviation from the student's own precheck baseline beyond deg for
+      // ≥ sustainMs → ATTENTION_DEVIATION_SUSTAINED.
+      deviation: { deg: 35, sustainMs: 4000 },
+      // ≥ minEpisodes deviation segments ≥ minEpisodeMs within windowMs
+      // → ATTENTION_DEVIATION_REPEATED (one event per window-ful).
+      repeatedDeviation: { minEpisodes: 4, minEpisodeMs: 1500, windowMs: 300000 },
+      // D11 fallback pad: when NO baseline was captured, deviation is measured
+      // from neutral (0°) with deg + fallbackPadDeg — a WIDER tolerance that
+      // can only suppress episodes, never add sensitivity. Absolute bands
+      // (turned/extreme) never reference the baseline and are never padded.
+      fallbackPadDeg: 10,
+    },
   },
   cameraHealth: {
     lossWarnAfterMs: 10000,

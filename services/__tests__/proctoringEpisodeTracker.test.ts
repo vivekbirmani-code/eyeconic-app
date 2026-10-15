@@ -26,6 +26,9 @@ const frame = (overrides: Partial<ProctoringFrameObservation> = {}): ProctoringF
   largestFaceRatio: 0.35,
   meanLuma: 120,
   sanitized: false,
+  // Phase 5: pose defaults to "unusable" so pre-Phase-5 test scenarios keep
+  // their exact behavior (attention conditions inactive without a pose).
+  headPose: null,
   ...overrides,
 });
 

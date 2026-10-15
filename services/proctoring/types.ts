@@ -20,7 +20,25 @@ export interface ProctoringPolicy {
   };
   multipleFaces?: { mode?: 'record' | 'warn'; minDurationMs?: number };
   facePresence?: { mode?: 'record' | 'warn'; minAbsentMs?: number };
-  attention?: { enabled?: boolean; mode?: 'record' };
+  /**
+   * Phase 5 shaping thresholds (plan §13.2). They decide WHEN a record-only
+   * attention observation episode opens — never any consequence (mode stays
+   * LOCKED to 'record' in V1, D6). Sessions frozen before Phase 5 carry no
+   * thresholds; the tracker then falls back to the documented client
+   * defaults, which mirror backend defaults.js exactly.
+   */
+  attention?: {
+    enabled?: boolean;
+    mode?: 'record';
+    thresholds?: {
+      turnedDeg?: number;
+      extreme?: { yawDeg?: number; pitchDeg?: number; sustainMs?: number };
+      repeatedHeadPose?: { minEpisodes?: number; minEpisodeMs?: number; windowMs?: number };
+      deviation?: { deg?: number; sustainMs?: number };
+      repeatedDeviation?: { minEpisodes?: number; minEpisodeMs?: number; windowMs?: number };
+      fallbackPadDeg?: number;
+    };
+  };
   cameraHealth?: {
     lossWarnAfterMs?: number;
     lossSubmitAfterMs?: number;
@@ -56,6 +74,10 @@ export type ProctoringEventType =
   | 'FACE_PARTIALLY_VISIBLE'
   | 'FACE_OUT_OF_FRAME'
   | 'MULTIPLE_FACES_DETECTED'
+  | 'HEAD_POSE_EXTREME'
+  | 'HEAD_POSE_REPEATED'
+  | 'ATTENTION_DEVIATION_SUSTAINED'
+  | 'ATTENTION_DEVIATION_REPEATED'
   | 'APP_BACKGROUND'
   | 'EXIT_ATTEMPTED';
 
@@ -99,6 +121,26 @@ export interface ProctoringFrameObservation {
   meanLuma: number | null;
   /** Frame carried malformed native output that had to be sanitized. */
   sanitized: boolean;
+  /**
+   * Phase 5: primary-face head pose (deg) — null when the frame carries no
+   * single usable face (attention conditions are simply inactive then).
+   */
+  headPose: { yaw: number | null; pitch: number | null; roll: number | null } | null;
+}
+
+/**
+ * The seated attention baseline (D11 calibration-lite, plan §13.4). Derived
+ * at precheck from the agreed readiness frames, frozen onto the session
+ * server-side, re-served at /start + resync. `calibration:'fallback'` marks
+ * the conservative global-bands path — same record-only behavior, wider
+ * tolerance, never a student-facing difference.
+ */
+export interface ProctoringAttentionBaseline {
+  yaw: number;
+  pitch: number;
+  roll?: number;
+  calibration: 'captured' | 'fallback';
+  detectorTier?: string;
 }
 
 /** Result of one transport send (mapped from the HTTP outcome by the caller). */

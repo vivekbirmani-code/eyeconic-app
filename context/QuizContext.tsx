@@ -62,6 +62,12 @@ interface QuizAttempt {
   proctoringSessionId?: string;
   proctoringPolicy?: Record<string, unknown>;
   /**
+   * Phase 5 (D11): the seated attention baseline frozen onto the session at
+   * /start — deviation is measured against the student's own precheck pose
+   * (record-only observations). Absent → global-bands fallback client-side.
+   */
+  proctoringAttentionBaseline?: { yaw: number; pitch: number; roll?: number; calibration?: string };
+  /**
    * How this attempt object entered the app session: a direct /start response
    * ('start') or a restore/resync ('resume' — AsyncStorage reload, app
    * relaunch, re-navigation). Drives SESSION_STARTED vs SESSION_RESUMED.
@@ -200,6 +206,7 @@ export const QuizProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ...(response.data.proctoringSessionId ? {
           proctoringSessionId: response.data.proctoringSessionId,
           proctoringPolicy: response.data.proctoringPolicy,
+          proctoringAttentionBaseline: response.data.proctoringAttentionBaseline ?? undefined,
           proctoringArm: 'start' as const,
         } : {}),
       };

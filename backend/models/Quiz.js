@@ -181,6 +181,33 @@ const quizSchema = new mongoose.Schema({
         type: String,
         enum: [ATTENTION_MODE_RECORD_ONLY],
         default: ATTENTION_MODE_RECORD_ONLY
+      },
+      // Phase 5 SHAPING thresholds (plan §13.2): when a record-only
+      // observation episode opens — never a consequence (D6). No mongoose
+      // defaults here on purpose: only values parseProctoringConfig accepted
+      // are stored; the effective-policy merge fills the documented defaults.
+      thresholds: {
+        turnedDeg: { type: Number, min: 1, max: 90 },
+        extreme: {
+          yawDeg: { type: Number, min: 1, max: 90 },
+          pitchDeg: { type: Number, min: 1, max: 90 },
+          sustainMs: { type: Number, min: 0, max: 60 * 60 * 1000 }
+        },
+        repeatedHeadPose: {
+          minEpisodes: { type: Number, min: 2, max: 50 },
+          minEpisodeMs: { type: Number, min: 0, max: 60 * 60 * 1000 },
+          windowMs: { type: Number, min: 1000, max: 24 * 60 * 60 * 1000 }
+        },
+        deviation: {
+          deg: { type: Number, min: 1, max: 90 },
+          sustainMs: { type: Number, min: 0, max: 60 * 60 * 1000 }
+        },
+        repeatedDeviation: {
+          minEpisodes: { type: Number, min: 2, max: 50 },
+          minEpisodeMs: { type: Number, min: 0, max: 60 * 60 * 1000 },
+          windowMs: { type: Number, min: 1000, max: 24 * 60 * 60 * 1000 }
+        },
+        fallbackPadDeg: { type: Number, min: 1, max: 90 }
       }
     },
     cameraHealth: {

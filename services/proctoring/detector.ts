@@ -28,6 +28,12 @@ export type { FaceCountClass, FaceVisibilityClass };
 export interface FaceReadinessFrame {
   faceCountClass: FaceCountClass;
   visibility: FaceVisibilityClass;
+  /**
+   * Phase 5 (D11): the primary face's head pose (deg) — present exactly when
+   * the classifier had a single face to measure; null otherwise. Feeds the
+   * precheck attention-baseline derivation; never any decision.
+   */
+  headPose: { yaw: number | null; pitch: number | null; roll: number | null } | null;
 }
 
 export interface FaceReadinessDetector {
@@ -58,6 +64,13 @@ export function createMlKitFaceReadinessDetector(): FaceReadinessDetector {
       return {
         faceCountClass: classified.faceCountClass,
         visibility: classified.visibility,
+        headPose: classified.faceCountClass === 'one'
+          ? {
+            yaw: classified.headPose.yaw,
+            pitch: classified.headPose.pitch,
+            roll: classified.headPose.roll,
+          }
+          : null,
       };
     },
   };

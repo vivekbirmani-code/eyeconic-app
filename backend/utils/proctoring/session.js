@@ -17,15 +17,38 @@ const { freezeSessionSummary } = require('./summary');
 const SESSION_STATUSES = ['ACTIVE', 'DEGRADED', 'CLOSED', 'CLOSED_FAILED'];
 
 /**
+ * Client-facing shape of the session's D11 attention baseline: null when the
+ * session has none (older/self-healed sessions → the client arms with
+ * conservative global bands + a calibration:'fallback' marker).
+ */
+const shapeAttentionBaseline = (session) => {
+  const pose = session?.baseline?.nominalHeadPose;
+  if (!pose || typeof pose.yaw !== 'number' || typeof pose.pitch !== 'number') return null;
+  return {
+    yaw: pose.yaw,
+    pitch: pose.pitch,
+    ...(typeof pose.roll === 'number' ? { roll: pose.roll } : {}),
+    calibration: session.baseline.calibration === 'captured' ? 'captured' : 'fallback',
+    detectorTier: session.baseline.detectorTier ?? 'headpose',
+  };
+};
+
+/**
  * Idempotently returns the session for an attempt, creating it (status
  * ACTIVE) when missing. `policySnapshot` is the attempt's frozen policy
  * snapshot ({version, hash}) — the session stores its identity, the full
  * policy lives on the attempt.
  *
+ * Phase 5 (D11): `attentionBaseline` ({yaw, pitch, roll, frames} from the
+ * signed precheck-token summary) is frozen onto the session at creation so
+ * the client can re-arm with the SAME seated baseline after an app restart.
+ * Absent on self-heal paths — those sessions fall back to conservative
+ * global bands client-side (calibration:'fallback'), never blocked.
+ *
  * @returns {Promise<object|null>} the session doc, or null on unexpected
  *          failure (session problems must never block a quiz — plan §7.2).
  */
-const ensureProctoringSession = async (attempt, { policySnapshot, reason = 'start' } = {}) => {
+const ensureProctoringSession = async (attempt, { policySnapshot, reason = 'start', attentionBaseline } = {}) => {
   if (!attempt?._id) return null;
 
   const existing = await ProctoringSession.findOne({ attempt: attempt._id });
@@ -43,6 +66,20 @@ const ensureProctoringSession = async (attempt, { policySnapshot, reason = 'star
         version: policySnapshot?.version ?? null,
         hash: policySnapshot?.hash ?? null,
       },
+      // D11 baseline — captured at precheck, signed into the token, frozen
+      // here at session creation (the reserved schema field, plan §26.1).
+      ...(attentionBaseline ? {
+        baseline: {
+          capturedAt: startedAt,
+          nominalHeadPose: {
+            yaw: attentionBaseline.yaw,
+            pitch: attentionBaseline.pitch,
+            roll: attentionBaseline.roll,
+          },
+          detectorTier: 'headpose',
+          calibration: 'captured',
+        },
+      } : {}),
       startedAt,
       transitions: [{ from: null, to: 'ACTIVE', reason, at: startedAt }],
     });
@@ -93,5 +130,6 @@ const closeProctoringSessionForAttempt = async (attempt, { reason } = {}) => {
 module.exports = {
   SESSION_STATUSES,
   ensureProctoringSession,
+  shapeAttentionBaseline,
   closeProctoringSessionForAttempt,
 };

@@ -597,3 +597,98 @@ describe('ProctoringEngine — streaming frameSource seam', () => {
     expect(rig.transportCalls.length).toBe(callsAtStop);
   });
 });
+
+// ===== Phase 5 — attention wiring (head pose → tracker → transport) =====
+
+describe('ProctoringEngine — Phase 5 attention derivation wiring', () => {
+  let hooks2: {
+    onFrame: (frame: SpikeFrameResult) => void;
+    onError: (error: Error, consecutiveFailures: number) => void;
+    onStatus: (status: SpikeEngineStatus) => void;
+  } | null = null;
+
+  const buildAttentionEngine = (baseline?: { yaw: number; pitch: number } | null) => {
+    const transportCalls: ProctoringBatchPayload[] = [];
+    const sourceState = { started: false, stopped: false };
+    const engine = new ProctoringEngine({
+      session: { quizId: 'q1', attemptId: 'a1', sessionId: 's1' },
+      // Fast policy-shaped thresholds so the test runs in milliseconds.
+      policy: {
+        attention: {
+          enabled: true,
+          mode: 'record',
+          thresholds: { deviation: { deg: 10, sustainMs: 300 } },
+        },
+      },
+      attentionBaseline: baseline,
+      frameSource: (received) => {
+        hooks2 = received;
+        return {
+          async start() { sourceState.started = true; received.onStatus('running'); },
+          pause() { received.onStatus('paused'); },
+          async resume() { received.onStatus('running'); },
+          async stop() { sourceState.stopped = true; received.onStatus('stopped'); },
+          get status(): SpikeEngineStatus {
+            return sourceState.stopped ? 'stopped' : 'running';
+          },
+        };
+      },
+      transport: async (payload) => {
+        transportCalls.push(payload);
+        return { kind: 'accepted', duplicates: 0 };
+      },
+      heartbeatIntervalMs: 0,
+    });
+    const pushPose = (yaw: number) => hooks2!.onFrame({
+      frameIndex: 0, tsMs: Date.now(),
+      faceCount: 1, faceCountClass: 'one', visibility: 'ok',
+      headPose: { band: 'centered', yaw, pitch: 0, roll: 0 },
+      landmarkCount: 8, qualityProxy: 0.9, largestFaceRatio: 0.35,
+      latencies: { captureMs: 0, decodeMs: 0, inferenceMs: 0 },
+      meanLuma: 120, sanitized: false,
+    } as SpikeFrameResult);
+    /** Frames carry real timestamps — pace them so sustain windows elapse. */
+    const pushPosesSpaced = async (yaw: number, count: number, gapMs: number) => {
+      for (let i = 0; i < count; i += 1) {
+        rig0.pushPose(yaw);
+        await new Promise((resolve) => setTimeout(resolve, gapMs));
+      }
+    };
+    const rig0 = { pushPose };
+    return { engine, transportCalls, pushPose, pushPosesSpaced };
+  };
+
+  afterEach(async () => {
+    hooks2 = null;
+  });
+
+  it('derives ATTENTION_DEVIATION_SUSTAINED from streamed head pose and stamps source cv', async () => {
+    const rig = buildAttentionEngine({ yaw: 0, pitch: 0 });
+    await rig.engine.start();
+    // ~600 ms of 20° deviation (policy deg:10, sustain:300ms), then the
+    // session-end stop() whose closeAll flush is what emits the episode
+    // (the §23 finalize path — exactly how a real attempt delivers it).
+    await rig.pushPosesSpaced(20, 16, 40);
+    await rig.engine.stop();
+    await waitFor(() => eventTypes(rig.transportCalls).includes('ATTENTION_DEVIATION_SUSTAINED'));
+    const batch = rig.transportCalls.find((call) =>
+      call.events.some((event) => event.type === 'ATTENTION_DEVIATION_SUSTAINED'));
+    const event = batch!.events.find((e) => e.type === 'ATTENTION_DEVIATION_SUSTAINED')!;
+    expect(event.source).toBe('cv');
+    expect(event.confidence).toBeGreaterThan(0);
+    expect(event.metadata).toMatchObject({ basis: 'head_pose', calibration: 'captured' });
+  });
+
+  it('marks fallback calibration when no baseline is provided', async () => {
+    const rig = buildAttentionEngine(null);
+    await rig.engine.start();
+    // No baseline → padded threshold 10+10=20; 25° clears it.
+    await rig.pushPosesSpaced(25, 16, 40);
+    await rig.engine.stop();
+    await waitFor(() => eventTypes(rig.transportCalls).includes('ATTENTION_DEVIATION_SUSTAINED'));
+    const batch = rig.transportCalls.find((call) =>
+      call.events.some((event) => event.type === 'ATTENTION_DEVIATION_SUSTAINED'));
+    const event = batch!.events.find((e) => e.type === 'ATTENTION_DEVIATION_SUSTAINED')!;
+    expect(event.metadata).toMatchObject({ calibration: 'fallback' });
+  });
+});

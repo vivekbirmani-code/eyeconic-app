@@ -47,7 +47,7 @@ const {
   computeRiskScore,
 } = require('../utils/proctoring/riskScore');
 const { computeSessionSummary } = require('../utils/proctoring/summary');
-const { ensureProctoringSession } = require('../utils/proctoring/session');
+const { ensureProctoringSession, shapeAttentionBaseline } = require('../utils/proctoring/session');
 const {
   computeHeartbeatGap,
   buildGapEventRecord,
@@ -684,6 +684,10 @@ const buildSessionRouter = () => {
         // it is data the student already consented to, and the server never
         // trusts client conclusions derived from it.
         policy: attempt.proctoringSnapshot?.policy || null,
+        // Phase 5 (D11): the session's frozen attention baseline (null for
+        // older/self-healed sessions → client arms with global bands +
+        // calibration:'fallback', never blocked).
+        proctoringAttentionBaseline: shapeAttentionBaseline(session),
         attemptStatus: attempt.status,
         serverNow: new Date().toISOString(),
         requestId: req.requestId,

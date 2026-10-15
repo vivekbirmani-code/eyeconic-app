@@ -40,6 +40,10 @@ const proctoringConsentSchema = new mongoose.Schema({
       detail: { type: String },
     }],
     networkProbe: { type: mongoose.Schema.Types.Mixed },
+    // Phase 5 (D11): precheck-captured attention baseline (median nominal
+    // head pose over the agreed readiness frames) — copied from the signed
+    // precheck-token summary; absent for older clients (fallback sessions).
+    attentionBaseline: { type: mongoose.Schema.Types.Mixed },
   },
   surface: {
     type: String,

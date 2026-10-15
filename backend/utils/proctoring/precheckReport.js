@@ -8,6 +8,7 @@ const {
   PRECHECK_CHECK_IDS,
   PRECHECK_CHECK_STATUSES,
   PROVISIONAL_DEVICE_FLOOR,
+  FACE_READINESS_MIN_FRAMES,
 } = require('./defaults');
 
 const MAX_DETAIL_LENGTH = 300;
@@ -102,6 +103,33 @@ const parsePrecheckReport = (raw) => {
         return { error: 'face_readiness metadata is malformed' };
       }
       metadata = { frames, agreedFrames, faceCountClass, visibility };
+
+      // Phase 5 attention baseline (D11 calibration-lite, plan §13.4): the
+      // seated nominal head pose derived from the AGREED readiness frames.
+      // Optional — its absence is always legal (older clients / fallback
+      // sessions proceed with conservative global bands, never blocked).
+      const baseline = check.metadata.attentionBaseline;
+      if (baseline !== undefined && baseline !== null) {
+        if (!isPlainObject(baseline)) {
+          return { error: 'face_readiness metadata attentionBaseline must be an object' };
+        }
+        const yaw = Number(baseline.yaw);
+        const pitch = Number(baseline.pitch);
+        const roll = Number(baseline.roll);
+        const baselineFrames = Number(baseline.frames);
+        if (!Number.isFinite(yaw) || Math.abs(yaw) > 180 ||
+            !Number.isFinite(pitch) || Math.abs(pitch) > 90 ||
+            !Number.isFinite(roll) || Math.abs(roll) > 180 ||
+            !Number.isInteger(baselineFrames) || baselineFrames < FACE_READINESS_MIN_FRAMES || baselineFrames > agreedFrames) {
+          return { error: 'face_readiness metadata attentionBaseline is malformed' };
+        }
+        metadata.attentionBaseline = {
+          yaw: Math.round(yaw * 10) / 10,
+          pitch: Math.round(pitch * 10) / 10,
+          roll: Math.round(roll * 10) / 10,
+          frames: baselineFrames,
+        };
+      }
     }
 
     normalizedChecks.push({ id, status, detail, ...(metadata ? { metadata } : {}) });

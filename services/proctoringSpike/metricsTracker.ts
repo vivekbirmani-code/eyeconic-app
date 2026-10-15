@@ -162,6 +162,9 @@ export class SpikeMetricsTracker {
       largestFaceRatio: frame.largestFaceRatio,
       meanLuma: frame.meanLuma,
       sanitized: frame.sanitized,
+      // Phase 5: the pose feeds the record-only attention derivation (the
+      // spike screen's readout gains the same observation set as the engine).
+      headPose: frame.headPose,
     });
 
     const run = this.activeScenario;

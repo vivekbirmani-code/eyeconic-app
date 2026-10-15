@@ -51,6 +51,13 @@ export interface UseProctoringSessionParams {
   /** Present only for proctored attempts (frozen snapshot at /start). */
   sessionId?: string;
   policy?: Record<string, unknown> | null;
+  /**
+   * Phase 5 (D11): the seated attention baseline from the /start response —
+   * deviation is measured against the student's own precheck pose. Absent on
+   * resume paths → the resync endpoint re-serves it; still absent → the
+   * tracker arms with conservative global bands (calibration:'fallback').
+   */
+  attentionBaseline?: { yaw: number; pitch: number; roll?: number } | null;
   /** 'start' = fresh /start this app session; 'resume' = restored/relaunched. */
   arm?: 'start' | 'resume';
   cameraRef: React.RefObject<CameraView | null>;
@@ -154,6 +161,7 @@ export function useProctoringSession({
   attemptId,
   sessionId,
   policy,
+  attentionBaseline,
   arm,
   cameraRef,
 }: UseProctoringSessionParams): UseProctoringSessionResult {
@@ -228,6 +236,7 @@ export function useProctoringSession({
       // policy fallbacks keep thresholds sane if this fails.
       let effectivePolicy: ProctoringPolicy | undefined =
         (policy as ProctoringPolicy | undefined) ?? undefined;
+      let effectiveBaseline = attentionBaseline ?? null;
       if (!effectivePolicy) {
         try {
           const resync = await api.get(`/quizzes/attempt/${attemptId}/proctoring/session`);
@@ -239,6 +248,12 @@ export function useProctoringSession({
             return;
           }
           effectivePolicy = resync.data?.policy ?? undefined;
+          // Phase 5 (D11): re-serve the session's frozen baseline so a
+          // resumed attempt keeps measuring against the same seated pose.
+          const resyncBaseline = resync.data?.proctoringAttentionBaseline;
+          if (resyncBaseline && Number.isFinite(resyncBaseline.yaw) && Number.isFinite(resyncBaseline.pitch)) {
+            effectiveBaseline = resyncBaseline;
+          }
         } catch {
           // Offline: arm with defaults; events buffer and retry anyway.
         }
@@ -258,6 +273,7 @@ export function useProctoringSession({
         session: { quizId, attemptId, sessionId },
         policy: effectivePolicy,
         detectorTier: 'headpose',
+        attentionBaseline: effectiveBaseline,
         ...(useStreamingSource
           ? {
             frameSource: (hooks) => new StreamingCameraSource(hooks),

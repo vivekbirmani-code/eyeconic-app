@@ -174,6 +174,12 @@ router.post('/precheck-report', auth, authorize('student'), precheckReportRateLi
           pass: check.status === 'PASS' || (evaluation.cameraBypassed && check.id !== 'device_capability' && check.id !== 'network'),
           detail: check.detail,
         })),
+        // Phase 5 (D11): the server-validated baseline from the face_readiness
+        // metadata, when the client captured one — absent for older clients
+        // (fallback sessions proceed without it, never blocked).
+        ...(parsed.value.checks.find((c) => c.id === 'face_readiness')?.metadata?.attentionBaseline
+          ? { attentionBaseline: parsed.value.checks.find((c) => c.id === 'face_readiness').metadata.attentionBaseline }
+          : {}),
       },
     });
 
@@ -263,6 +269,12 @@ router.post('/consent', auth, authorize('student'), async (req, res) => {
         networkProbe: {
           cameraBypassed: verified.payload.summary?.cameraBypassed === true,
         },
+        // Phase 5 (D11): the precheck-captured attention baseline, persisted
+        // from the SIGNED token summary so /start can freeze it onto the
+        // session without trusting a fresh client claim.
+        ...(verified.payload.summary?.attentionBaseline ? {
+          attentionBaseline: verified.payload.summary.attentionBaseline,
+        } : {}),
       },
       ...(surface ? { surface } : {}),
     };

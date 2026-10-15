@@ -67,6 +67,10 @@ const EVENT_SOURCE_BY_TYPE: Record<ProctoringEventType, EventSourceValue> = {
   FACE_PARTIALLY_VISIBLE: 'cv',
   FACE_OUT_OF_FRAME: 'cv',
   MULTIPLE_FACES_DETECTED: 'cv',
+  HEAD_POSE_EXTREME: 'cv',
+  HEAD_POSE_REPEATED: 'cv',
+  ATTENTION_DEVIATION_SUSTAINED: 'cv',
+  ATTENTION_DEVIATION_REPEATED: 'cv',
   APP_BACKGROUND: 'os',
   EXIT_ATTEMPTED: 'os',
 };
@@ -146,6 +150,13 @@ export interface ProctoringEngineOptions {
   analysisIntervalMs?: number;
   /** Test seam: per-type episode threshold overrides (tracker option). */
   episodeThresholdOverrides?: Record<string, Record<string, number>>;
+  /**
+   * Phase 5 (D11): the seated attention baseline frozen onto the session at
+   * /start (re-served by the resync endpoint after app restarts). Absent →
+   * the tracker arms with conservative global bands + a
+   * calibration:'fallback' marker; never a student-facing difference.
+   */
+  attentionBaseline?: { yaw: number; pitch: number; roll?: number } | null;
   /** <= 0 disables the heartbeat timer (tests drive heartbeatTick manually). */
   heartbeatIntervalMs?: number;
   /**
@@ -198,6 +209,7 @@ export class ProctoringEngine {
       detectorTier: options.detectorTier,
       now: this.now,
       thresholdOverrides: options.episodeThresholdOverrides,
+      attentionBaseline: options.attentionBaseline,
     });
     this.buffer = new ProctoringEventBuffer({ storage: options.storage });
     this.loop = options.frameSource ? options.frameSource({
@@ -398,15 +410,16 @@ export class ProctoringEngine {
         frame.faceCount,
         frame.faceCountClass,
         frame.visibility,
-        frame.headPose.yaw?.toFixed(1) ?? 'x',
-        frame.headPose.pitch?.toFixed(1) ?? 'x',
-        frame.headPose.roll?.toFixed(1) ?? 'x',
+        frame.headPose?.yaw?.toFixed(1) ?? 'x',
+        frame.headPose?.pitch?.toFixed(1) ?? 'x',
+        frame.headPose?.roll?.toFixed(1) ?? 'x',
         frame.qualityProxy.toFixed(3),
         frame.largestFaceRatio?.toFixed(4) ?? 'x',
         frame.meanLuma ?? 'x',
       ].join('|')
     );
 
+    const pose = frame.headPose;
     const episodes = this.tracker.observeFrame({
       tsMs: frame.tsMs,
       faceCount: frame.faceCount,
@@ -416,6 +429,11 @@ export class ProctoringEngine {
       largestFaceRatio: frame.largestFaceRatio,
       meanLuma: frame.meanLuma,
       sanitized: frame.sanitized,
+      // Phase 5: the primary-face pose feeds the (record-only) attention
+      // derivation — null when the frame carries no single usable face.
+      headPose: pose && (pose.yaw !== null || pose.pitch !== null)
+        ? { yaw: pose.yaw, pitch: pose.pitch, roll: pose.roll }
+        : null,
     });
     this.emitEpisodes(episodes);
     this.recomputeState();

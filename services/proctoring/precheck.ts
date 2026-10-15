@@ -18,7 +18,14 @@ export interface PrecheckCheckResult {
   status: PrecheckCheckStatus;
   detail?: string;
   /** Face-readiness frame-agreement facts (validated by the server). */
-  metadata?: { frames: number; agreedFrames: number; faceCountClass: string; visibility: string };
+  metadata?: {
+    frames: number;
+    agreedFrames: number;
+    faceCountClass: string;
+    visibility: string;
+    /** Phase 5 (D11): seated attention baseline derived from agreed frames. */
+    attentionBaseline?: { yaw: number; pitch: number; roll: number; frames: number };
+  };
 }
 
 export const PRECHECK_CHECK_IDS = [
@@ -51,7 +58,7 @@ export interface PrecheckReportPayload {
 export function aggregateFaceFrames(
   frames: FaceReadinessFrame[],
   minFrames = 3
-): { status: PrecheckCheckStatus; reasonCode?: string; detail?: string; metadata?: { frames: number; agreedFrames: number; faceCountClass: string; visibility: string } } {
+): { status: PrecheckCheckStatus; reasonCode?: string; detail?: string; metadata?: { frames: number; agreedFrames: number; faceCountClass: string; visibility: string; attentionBaseline?: { yaw: number; pitch: number; roll: number; frames: number } } } {
   const usable = frames.filter(
     (f) => f.faceCountClass !== undefined && f.visibility !== undefined
   );
@@ -75,7 +82,12 @@ export function aggregateFaceFrames(
   };
 
   if (agreed.length > usable.length / 2) {
-    return { status: 'PASS', metadata };
+    // Phase 5 (D11): derive the seated baseline from the agreed frames.
+    // Absent when too few agreed frames carried pose — the session then
+    // proceeds with conservative global bands (calibration:'fallback'),
+    // never blocked (students are never punished for calibration failure).
+    const baseline = deriveAttentionBaseline(agreed, minFrames);
+    return { status: 'PASS', metadata: baseline ? { ...metadata, attentionBaseline: baseline } : metadata };
   }
 
   // Failure reason from the dominant non-passing shape — actionable guidance.
@@ -92,6 +104,38 @@ export function aggregateFaceFrames(
     return { status: 'FAIL', reasonCode: 'multiple_faces', metadata };
   }
   return { status: 'FAIL', reasonCode: 'face_visibility', metadata };
+}
+
+/**
+ * Phase 5 attention baseline (D11 calibration-lite, plan §13.4): the MEDIAN
+ * nominal head pose over the agreed one-face-'ok' readiness frames — the
+ * student's own seated reference deviation is measured against. Pure; returns
+ * null when fewer than `minFrames` agreed frames carried a usable pose (the
+ * caller treats that as "no baseline captured" → global-bands fallback).
+ */
+export function deriveAttentionBaseline(
+  agreedFrames: FaceReadinessFrame[],
+  minFrames = 3
+): { yaw: number; pitch: number; roll: number; frames: number } | null {
+  const poses = agreedFrames
+    .map((f) => f.headPose)
+    .filter((p): p is NonNullable<FaceReadinessFrame['headPose']> =>
+      p !== null && p.yaw !== null && p.pitch !== null);
+  if (poses.length < minFrames) return null;
+  const medianOf = (values: number[]): number => {
+    const sorted = [...values].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 === 1
+      ? sorted[mid]
+      : (sorted[mid - 1] + sorted[mid]) / 2;
+  };
+  const round1 = (value: number) => Math.round(value * 10) / 10;
+  return {
+    yaw: round1(medianOf(poses.map((p) => p.yaw as number))),
+    pitch: round1(medianOf(poses.map((p) => p.pitch as number))),
+    roll: round1(medianOf(poses.map((p) => p.roll ?? 0))),
+    frames: poses.length,
+  };
 }
 
 /**

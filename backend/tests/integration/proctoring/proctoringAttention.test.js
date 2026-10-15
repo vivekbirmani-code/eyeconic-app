@@ -1,0 +1,329 @@
+// Integration tests for Phase 5 — head pose + record-only attention
+// (plan §13, D6/D11): the precheck-baseline round-trip (report → signed
+// token → consent → /start → session doc → resync), threshold-bearing policy
+// snapshots, and the ingest-level D6 guarantee that ALL FOUR attention event
+// types can never produce warnings, violations, risk or auto-submit through
+// the batch endpoint (the only client event ingestion path).
+
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret';
+
+let mockAiProctoringFlag = false;
+jest.mock('../../../config/featureAvailability', () => {
+  const actual = jest.requireActual('../../../config/featureAvailability');
+  return {
+    ...actual,
+    isFeatureEnabled: (feature) =>
+      feature === 'aiProctoring' ? mockAiProctoringFlag : actual.isFeatureEnabled(feature),
+  };
+});
+
+const request = require('supertest');
+const db = require('../../helpers/db');
+const { buildApp, createUser, createSubject } = require('../../helpers/testApp');
+const Quiz = require('../../../models/Quiz');
+const QuizAttempt = require('../../../models/QuizAttempt');
+const QuestionBank = require('../../../models/QuestionBank');
+const ProctoringSession = require('../../../models/ProctoringSession');
+const ProctoringEvent = require('../../../models/ProctoringEvent');
+const ProctoringViolation = require('../../../models/ProctoringViolation');
+const ProctoringConsent = require('../../../models/ProctoringConsent');
+const { setProctoringEnabled } = require('../../../utils/appSettings');
+const {
+  resetPrecheckRateLimits,
+  resetProctoringEventRateLimits,
+} = require('../../../middleware/proctoringRateLimit');
+
+let app;
+
+beforeAll(async () => {
+  await db.connect();
+  app = buildApp();
+});
+
+afterAll(async () => {
+  await db.closeDatabase();
+});
+
+const reportWith = (attentionBaseline) => ({
+  device: { platform: 'android', osVersion: 33 },
+  network: { reachable: true, authedPingMs: 120 },
+  checks: [
+    { id: 'device_capability', status: 'PASS' },
+    { id: 'camera_permission', status: 'PASS' },
+    { id: 'camera_availability', status: 'PASS' },
+    {
+      id: 'face_readiness', status: 'PASS',
+      metadata: {
+        frames: 5, agreedFrames: 4, faceCountClass: 'one', visibility: 'ok',
+        ...(attentionBaseline ? { attentionBaseline } : {}),
+      },
+    },
+    { id: 'network', status: 'PASS' },
+  ],
+});
+
+const BASELINE = { yaw: 7.2, pitch: -3.4, roll: 1.1, frames: 4 };
+
+describe('Phase 5 — attention baseline round-trip (D11, plan §13.4)', () => {
+  let admin;
+  let student;
+  let quiz;
+
+  beforeEach(async () => {
+    await db.clearDatabase();
+    resetPrecheckRateLimits();
+    resetProctoringEventRateLimits();
+    mockAiProctoringFlag = true;
+    admin = await createUser({ role: 'admin' });
+    student = await createUser({ role: 'student' });
+    const subject = await createSubject('Physiology');
+
+    const questions = [];
+    for (let i = 0; i < 2; i += 1) {
+      questions.push(await QuestionBank.create({
+        subject: subject._id,
+        topicName: 'Neuro', subtopicName: 'Reflexes',
+        system: 'Neural', questionType: 'mcq_single', difficulty: 'medium',
+        question: `Q ${i}`, options: ['A', 'B', 'C', 'D'], correctAnswer: 1,
+      }));
+    }
+    quiz = await Quiz.create({
+      title: `Attention Quiz ${Date.now()}`,
+      subject: subject._id, testType: 'daily', duration: 20,
+      questions: questions.map((q) => q._id),
+      assignedStudents: [student.user._id],
+      createdBy: admin.user._id,
+      proctoring: { enabled: true },
+    });
+    await setProctoringEnabled(true, admin.user._id);
+  });
+
+  /** Runs precheck + consent + start with the given report body. */
+  const startAttempt = async (report) => {
+    const pre = await request(app)
+      .post(`/api/quizzes/${quiz._id}/proctoring/precheck-report`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send(report);
+    if (pre.status !== 200 || pre.body.verdict !== 'PASS') {
+      return { pre, consent: null, start: null };
+    }
+    const consent = await request(app)
+      .post(`/api/quizzes/${quiz._id}/proctoring/consent`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({ precheckToken: pre.body.precheckToken, consentTextVersion: '2026-09-v1', surface: 'app-android' });
+    const start = await request(app)
+      .post(`/api/quizzes/${quiz._id}/start`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({ precheckToken: pre.body.precheckToken });
+    return { pre, consent, start };
+  };
+
+  it('carries a valid baseline: report → token → consent → session → /start response', async () => {
+    const { pre, consent, start } = await startAttempt(reportWith(BASELINE));
+    expect(pre.status).toBe(200);
+    expect(pre.body.verdict).toBe('PASS');
+    expect(consent.status).toBe(200);
+    expect(start.status).toBe(201);
+
+    // The consent record persisted the baseline from the SIGNED token summary.
+    const consentDoc = await ProctoringConsent.findOne({ quiz: quiz._id, student: student.user._id });
+    expect(consentDoc.precheckSummary.attentionBaseline).toMatchObject(BASELINE);
+
+    // The session froze it (D11) with the calibration marker.
+    const session = await ProctoringSession.findById(start.body.proctoringSessionId);
+    expect(session.baseline).toMatchObject({
+      nominalHeadPose: { yaw: 7.2, pitch: -3.4, roll: 1.1 },
+      calibration: 'captured',
+      detectorTier: 'headpose',
+    });
+
+    // The /start response re-serves it next to the frozen policy.
+    expect(start.body.proctoringAttentionBaseline).toEqual({
+      yaw: 7.2, pitch: -3.4, roll: 1.1, calibration: 'captured', detectorTier: 'headpose',
+    });
+
+    // And the frozen policy snapshot carries the Phase 5 thresholds.
+    expect(start.body.proctoringPolicy.attention.thresholds).toMatchObject({
+      turnedDeg: 25,
+      extreme: { yawDeg: 50, pitchDeg: 50, sustainMs: 5000 },
+      deviation: { deg: 35, sustainMs: 4000 },
+      fallbackPadDeg: 10,
+    });
+  });
+
+  it('re-serves the baseline on the resync endpoint (app restart path)', async () => {
+    const { start } = await startAttempt(reportWith(BASELINE));
+    expect(start.status).toBe(201);
+    const resync = await request(app)
+      .get(`/api/quizzes/attempt/${start.body.attemptId}/proctoring/session`)
+      .set('Authorization', `Bearer ${student.token}`);
+    expect(resync.status).toBe(200);
+    expect(resync.body.proctoringAttentionBaseline).toEqual({
+      yaw: 7.2, pitch: -3.4, roll: 1.1, calibration: 'captured', detectorTier: 'headpose',
+    });
+    expect(resync.body.policy.attention.mode).toBe('record'); // D6 lock intact
+  });
+
+  it('a report WITHOUT a baseline still passes — the client falls back, never blocked', async () => {
+    const { pre, start } = await startAttempt(reportWith(null));
+    expect(pre.status).toBe(200);
+    expect(pre.body.verdict).toBe('PASS');
+    expect(start.status).toBe(201);
+
+    const session = await ProctoringSession.findById(start.body.proctoringSessionId);
+    // Mongoose instantiates the subdoc as {} — the pose is simply absent.
+    expect(session.baseline?.nominalHeadPose).toBeUndefined();
+    // Honest null → the client arms with global bands + calibration:'fallback'.
+    expect(start.body.proctoringAttentionBaseline).toBeNull();
+  });
+
+  it('a MALFORMED baseline rejects the whole report (server owns the schema)', async () => {
+    const { pre } = await startAttempt(reportWith({ yaw: 400, pitch: 0, roll: 0, frames: 4 }));
+    expect(pre.status).toBe(400);
+    expect(pre.body.code).toBe('VALIDATION_ERROR');
+    // Nothing was consumed — no consent, no attempt, no session.
+    expect(await ProctoringConsent.countDocuments({})).toBe(0);
+    expect(await QuizAttempt.countDocuments({})).toBe(0);
+    expect(await ProctoringSession.countDocuments({})).toBe(0);
+  });
+
+  it('a quiz authored with Phase 5 thresholds freezes them into the snapshot', async () => {
+    await Quiz.updateOne({ _id: quiz._id }, {
+      $set: { 'proctoring.attention.thresholds': { deviation: { deg: 20, sustainMs: 2500 } } },
+    });
+    const { start } = await startAttempt(reportWith(BASELINE));
+    expect(start.status).toBe(201);
+    const attempt = await QuizAttempt.findById(start.body.attemptId);
+    expect(attempt.proctoringSnapshot.policy.attention.thresholds.deviation)
+      .toEqual({ deg: 20, sustainMs: 2500 });
+    // Untouched leaves keep the documented defaults.
+    expect(attempt.proctoringSnapshot.policy.attention.thresholds.turnedDeg).toBe(25);
+  });
+});
+
+describe('Phase 5 — all four attention types are record-only through ingest (D6)', () => {
+  let admin;
+  let student;
+  let quiz;
+  let started;
+
+  beforeEach(async () => {
+    await db.clearDatabase();
+    resetPrecheckRateLimits();
+    resetProctoringEventRateLimits();
+    mockAiProctoringFlag = true;
+    admin = await createUser({ role: 'admin' });
+    student = await createUser({ role: 'student' });
+    const subject = await createSubject('Anatomy');
+    const questions = [];
+    for (let i = 0; i < 2; i += 1) {
+      questions.push(await QuestionBank.create({
+        subject: subject._id, topicName: 'Limbs', subtopicName: 'Upper',
+        system: 'Muscular', questionType: 'mcq_single', difficulty: 'medium',
+        question: `Q ${i}`, options: ['A', 'B', 'C', 'D'], correctAnswer: 1,
+      }));
+    }
+    quiz = await Quiz.create({
+      title: `D6 Quiz ${Date.now()}`,
+      subject: subject._id, testType: 'daily', duration: 20,
+      questions: questions.map((q) => q._id),
+      assignedStudents: [student.user._id],
+      createdBy: admin.user._id,
+      proctoring: { enabled: true },
+    });
+    await setProctoringEnabled(true, admin.user._id);
+
+    const { start } = await startAttemptOnce();
+    started = { attemptId: start.body.attemptId, sessionId: start.body.proctoringSessionId };
+  });
+
+  const startAttemptOnce = async () => {
+    const pre = await request(app)
+      .post(`/api/quizzes/${quiz._id}/proctoring/precheck-report`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send(reportWith(BASELINE));
+    expect(pre.status).toBe(200);
+    await request(app)
+      .post(`/api/quizzes/${quiz._id}/proctoring/consent`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({ precheckToken: pre.body.precheckToken, consentTextVersion: '2026-09-v1', surface: 'app-android' });
+    const start = await request(app)
+      .post(`/api/quizzes/${quiz._id}/start`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({ precheckToken: pre.body.precheckToken });
+    expect(start.status).toBe(201);
+    return { start };
+  };
+
+  const postEvents = (events) =>
+    request(app)
+      .post(`/api/quizzes/${quiz._id}/attempt/${started.attemptId}/proctoring/events`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({ sessionId: started.sessionId, heartbeat: true, events });
+
+  it('ingests all four types: stored as cv observations, ZERO actions/violations/risk', async () => {
+    const attentionEvent = (type, i) => ({
+      type, source: 'cv',
+      openedAt: Date.now() - 60_000 + i * 3000,
+      closedAt: Date.now() - 60_000 + i * 3000 + 8000,
+      confidence: 0.82,
+      idempotencyKey: `att5-${type}-${i}-${Math.random().toString(36).slice(2, 8)}`,
+      clientSeq: i,
+      metadata: {
+        basis: 'head_pose', calibration: 'captured', durationMs: 8000,
+        baseline: { yaw: 7.2, pitch: -3.4 }, thresholds: {},
+      },
+    });
+
+    const types = [
+      'HEAD_POSE_EXTREME', 'HEAD_POSE_REPEATED',
+      'ATTENTION_DEVIATION_SUSTAINED', 'ATTENTION_DEVIATION_REPEATED',
+    ];
+    const firstBatch = types.map((type, i) => attentionEvent(type, i));
+    const res = await postEvents(firstBatch);
+    expect(res.status).toBe(200);
+    expect(res.body.accepted).toBe(4);
+    expect(res.body.actions).toBeUndefined();       // no warning, no FINAL_WARN
+    expect(res.body.attemptFinalized).toBeUndefined(); // no auto-submit
+
+    for (let round = 0; round < 5; round += 1) {
+      // More of every type, beyond every plausible threshold — still nothing.
+      const flood = await postEvents(types.map((type, i) => attentionEvent(type, round * 10 + i + 10)));
+      expect(flood.status).toBe(200);
+      expect(flood.body.actions).toBeUndefined();
+      expect(flood.body.attemptFinalized).toBeUndefined();
+    }
+
+    expect(await ProctoringViolation.countDocuments({})).toBe(0);
+    const session = await ProctoringSession.findById(started.sessionId);
+    expect(session.riskScore).toBe(0);
+    expect(session.violationsCount || 0).toBe(0);
+    const attempt = await QuizAttempt.findById(started.attemptId);
+    expect(attempt.status).toBe('in_progress');
+
+    // Stored honestly as probabilistic cv observations with the provenance.
+    const stored = await ProctoringEvent.find({ session: started.sessionId }).lean();
+    expect(stored).toHaveLength(24);
+    expect(stored.every((e) => e.category === 'cv_observation')).toBe(true);
+    expect(stored.every((e) => e.confidence === 0.82)).toBe(true);
+    expect(stored.every((e) => e.severity === 'info')).toBe(true); // record-only label
+    expect(stored.every((e) => e.metadata.basis === 'head_pose')).toBe(true);
+
+    // Replays stay duplicates and never re-evaluate into anything.
+    const replay = await postEvents(firstBatch);
+    expect(replay.status).toBe(200);
+    expect(replay.body.accepted).toBe(0);
+    expect(replay.body.duplicates).toHaveLength(4);
+    expect(replay.body.actions).toBeUndefined();
+  });
+
+  it('a missing confidence on an attention event is rejected (probabilistic rules)', async () => {
+    const res = await postEvents([{
+      type: 'HEAD_POSE_EXTREME', source: 'cv',
+      openedAt: Date.now() - 30_000, closedAt: Date.now() - 22_000,
+      idempotencyKey: `att5-noc-${Date.now()}`, clientSeq: 0,
+      metadata: { basis: 'head_pose' },
+    }]);
+    expect(res.status).toBe(400);
+  });
+});

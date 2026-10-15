@@ -96,6 +96,7 @@ const {
 const {
   ensureProctoringSession,
   closeProctoringSessionForAttempt,
+  shapeAttentionBaseline,
 } = require('../utils/proctoring/session');
 const {
   buildEffectiveProctoringPolicy,
@@ -3156,6 +3157,9 @@ router.post('/:id/start', auth, authorize('student'), async (req, res) => {
           proctoringSessionId: proctoringSession._id,
           proctoringPolicyDigest: attempt.proctoringSnapshot?.hash,
           proctoringPolicy: attempt.proctoringSnapshot?.policy,
+          // Phase 5 (D11): re-serve the session's frozen baseline so a
+          // resumed attempt keeps measuring against the same seated pose.
+          proctoringAttentionBaseline: shapeAttentionBaseline(proctoringSession),
         } : {}),
       });
     }
@@ -3186,6 +3190,9 @@ router.post('/:id/start', auth, authorize('student'), async (req, res) => {
     const effectiveProctoringPolicy = proctoringEligibility.enabled
       ? buildEffectiveProctoringPolicy(quiz)
       : null;
+    // Phase 5 (D11): the precheck-captured attention baseline from the
+    // VERIFIED token payload — frozen onto the session at creation below.
+    let proctoringAttentionBaseline = null;
     if (effectiveProctoringPolicy) {
       const gate = await assertProctoringStartPrerequisites(
         quiz,
@@ -3199,6 +3206,7 @@ router.post('/:id/start', auth, authorize('student'), async (req, res) => {
           errorCode: gate.code,
         });
       }
+      proctoringAttentionBaseline = gate.precheck?.summary?.attentionBaseline ?? null;
     }
 
     // Create new attempt. The section-locking snapshot is frozen here: the
@@ -3254,6 +3262,7 @@ router.post('/:id/start', auth, authorize('student'), async (req, res) => {
       proctoringSession = await ensureProctoringSession(attempt, {
         policySnapshot: attempt.proctoringSnapshot,
         reason: 'start',
+        ...(proctoringAttentionBaseline ? { attentionBaseline: proctoringAttentionBaseline } : {}),
       });
     }
 
@@ -3278,6 +3287,10 @@ router.post('/:id/start', auth, authorize('student'), async (req, res) => {
         // (Phase 3 engine). Additive; the server never trusts conclusions a
         // client derives from it.
         proctoringPolicy: attempt.proctoringSnapshot?.policy,
+        // Phase 5 (D11): the seated attention baseline frozen onto the
+        // session — the client measures deviation against the student's own
+        // precheck pose (record-only observations, never consequences).
+        proctoringAttentionBaseline: shapeAttentionBaseline(proctoringSession),
       } : {}),
     });
   } catch (error) {

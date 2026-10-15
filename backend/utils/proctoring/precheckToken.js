@@ -12,6 +12,9 @@ const { PRECHECK_TOKEN_TTL_MS } = require('./defaults');
 
 const PRECHECK_TOKEN_KIND = 'proctoring_precheck';
 
+const isPlainObject = (value) =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
 /**
  * @param {object} binding values the token is bound to (all required)
  * @param {string} binding.studentId
@@ -36,6 +39,12 @@ const issuePrecheckToken = ({ studentId, quizId, policyHash, policyVersion, summ
         deviceClass: summary.deviceClass ?? null,
         cameraBypassed: summary.cameraBypassed === true,
         checks: Array.isArray(summary.checks) ? summary.checks.slice(0, 20) : [],
+        // Phase 5 (D11): the precheck-captured attention baseline rides the
+        // SIGNED token so the consent record and /start can carry it without
+        // ever trusting an unsigned client claim.
+        ...(isPlainObject(summary.attentionBaseline) ? {
+          attentionBaseline: summary.attentionBaseline,
+        } : {}),
       },
     },
     process.env.JWT_SECRET,

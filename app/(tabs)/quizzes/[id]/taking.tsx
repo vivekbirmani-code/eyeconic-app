@@ -118,6 +118,7 @@ function QuizTakingContent() {
     attemptId: currentAttempt?.attemptId,
     sessionId: currentAttempt?.proctoringSessionId,
     policy: currentAttempt?.proctoringPolicy,
+    attentionBaseline: currentAttempt?.proctoringAttentionBaseline,
     arm: currentAttempt?.proctoringArm,
     cameraRef: proctoringCameraRef,
   });
