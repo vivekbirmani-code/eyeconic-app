@@ -62,6 +62,8 @@ const { buildCohortComparison } = require('../utils/cohortComparison');
 const { fetchGuestParticipants, fetchGuestAttemptDocs, countGuestAttempts } = require('../utils/guestAnalytics');
 const { collectTestReportData } = require('../utils/testReportData');
 const { buildTestReportWorkbook } = require('../utils/testReportExcel');
+const { collectAttemptQuestionReport } = require('../utils/attemptQuestionReport');
+const { buildAttemptQuestionReportWorkbook } = require('../utils/attemptQuestionReportExcel');
 const {
   buildLeaderboardWorkbook,
   buildGuestLeaderboardWorkbook,
@@ -2353,6 +2355,188 @@ router.get('/analytics/test-report/:testId/excel', auth, authorize('admin', 'men
     res.send(buffer);
   } catch (error) {
     console.error('Excel export error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Single-attempt question-level report (student-specific analytics).
+// Shared collector for the JSON view and both export formats — the admin
+// attempt-detail modal renders the JSON, and the CSV/Excel downloads come
+// from the same payload so screen and files can never disagree.
+// ---------------------------------------------------------------------------
+
+// Resolves + authorizes the attempt, or responds with the failure and returns
+// null (registered attempts scope mentors via assertStudentPerformanceAccess;
+// guest attempts resolve for admins only).
+async function fetchQuestionReportOrRespond(req, res) {
+  if (!mongoose.Types.ObjectId.isValid(req.params.attemptId)) {
+    res.status(404).json({ message: 'Attempt not found' });
+    return null;
+  }
+  const report = await collectAttemptQuestionReport({
+    attemptId: req.params.attemptId,
+    user: req.user,
+  });
+  if (!report.ok) {
+    res.status(report.statusCode).json({
+      message: report.message,
+      ...(report.errorCode ? { errorCode: report.errorCode } : {}),
+    });
+    return null;
+  }
+  return report;
+}
+
+router.get('/analytics/attempt/:attemptId/question-report', auth, authorize('admin', 'mentor'), async (req, res) => {
+  try {
+    const report = await fetchQuestionReportOrRespond(req, res);
+    if (!report) return;
+    res.json(report);
+  } catch (error) {
+    console.error('Question report error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+router.get('/analytics/attempt/:attemptId/question-report/csv', auth, authorize('admin', 'mentor'), async (req, res) => {
+  try {
+    const report = await fetchQuestionReportOrRespond(req, res);
+    if (!report) return;
+
+    const csvLines = [];
+    const isoOrNull = (value) => (value ? new Date(value).toISOString() : '');
+
+    csvLines.push(toCsvRow(['Student Question Report']));
+    csvLines.push(toCsvRow(['Generated At', report.generatedAt.toISOString()]));
+    csvLines.push('');
+
+    csvLines.push(toCsvRow(['Student & Test']));
+    csvLines.push(toCsvRow(['Student Name', report.student.name]));
+    csvLines.push(toCsvRow(['Email', report.student.email || '']));
+    csvLines.push(toCsvRow(['Participant Type', report.participantType === 'guest' ? 'Public quiz guest' : 'Registered']));
+    csvLines.push(toCsvRow(['Test', report.quiz.title]));
+    csvLines.push(toCsvRow(['Test Type', report.quiz.testType]));
+    csvLines.push(toCsvRow(['Subjects', report.quiz.subjectNames.join('; ')]));
+    csvLines.push(toCsvRow(['Attempt Status', report.attempt.status]));
+    csvLines.push(toCsvRow(['Attempted At', isoOrNull(report.attempt.endTime)]));
+    csvLines.push(toCsvRow(['Marking', `+${report.marking.positiveMarks} / -${report.marking.negativeMarks}`]));
+    csvLines.push('');
+
+    csvLines.push(toCsvRow(['Attempt Summary']));
+    csvLines.push(toCsvRow([
+      'Score (Questions Correct)',
+      'Marks Obtained',
+      'Total Marks',
+      'Score Percentage',
+      'Accuracy',
+      'Correct',
+      'Incorrect',
+      'Skipped',
+      'Attempted',
+      'Total Questions',
+      'Time Taken (min)',
+      'Tab Switches',
+    ]));
+    csvLines.push(toCsvRow([
+      report.attempt.score,
+      report.attempt.marksObtained,
+      report.attempt.totalMarks,
+      report.attempt.scorePercentage ?? '',
+      report.attempt.accuracy ?? '',
+      report.attempt.correct,
+      report.attempt.incorrect,
+      report.attempt.skipped,
+      report.attempt.attempted,
+      report.attempt.totalQuestions,
+      roundTo2((report.attempt.timeTakenSeconds || 0) / 60),
+      report.attempt.tabSwitchCount,
+    ]));
+    csvLines.push('');
+
+    csvLines.push(toCsvRow(['Question-Level Report']));
+    csvLines.push(toCsvRow([
+      'Question No',
+      'Section',
+      'Subject',
+      'Topic',
+      'Type',
+      'Question',
+      'Student Response',
+      'Result',
+      'Correct Answer',
+      'Marks',
+      'Time Spent (s)',
+    ]));
+
+    report.questions.forEach((q) => {
+      csvLines.push(toCsvRow([
+        q.questionNumber,
+        q.section,
+        q.subjectName,
+        q.topicName,
+        q.questionTypeLabel,
+        q.questionUnavailable ? 'Question no longer available (removed from question bank)' : q.question,
+        q.studentResponseLabel && q.studentResponseText && q.studentResponseLabel !== q.studentResponseText
+          ? `${q.studentResponseLabel} - ${q.studentResponseText}`
+          : (q.studentResponseText || q.studentResponseLabel),
+        q.resultLabel,
+        q.correctAnswerText || q.correctAnswerLabel,
+        q.marks,
+        q.timeSpent,
+      ]));
+    });
+
+    if (report.missingQuestionCount > 0) {
+      csvLines.push('');
+      csvLines.push(toCsvRow([
+        `${report.missingQuestionCount} question${report.missingQuestionCount === 1 ? '' : 's'} could not be shown (removed from the question bank after this attempt).`,
+      ]));
+    }
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader(
+      'Content-Disposition',
+      contentDispositionAttachment(
+        `${report.student.name} ${report.quiz.title}`,
+        'question-report',
+        `_QuestionReport_${new Date().toISOString().slice(0, 10)}`,
+        'csv'
+      )
+    );
+    res.send(csvLines.join('\n'));
+  } catch (error) {
+    console.error('Question report CSV export error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Styled single-sheet Excel (.xlsx) download of the same question report —
+// same collector as the JSON/CSV routes, so data is identical; this route
+// only changes presentation.
+router.get('/analytics/attempt/:attemptId/question-report/excel', auth, authorize('admin', 'mentor'), async (req, res) => {
+  try {
+    const report = await fetchQuestionReportOrRespond(req, res);
+    if (!report) return;
+
+    const workbook = buildAttemptQuestionReportWorkbook(report);
+    const buffer = await workbook.xlsx.writeBuffer();
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader(
+      'Content-Disposition',
+      contentDispositionAttachment(
+        `${report.student.name} ${report.quiz.title}`,
+        'question-report',
+        `_QuestionReport_${new Date().toISOString().slice(0, 10)}`,
+        'xlsx'
+      )
+    );
+    res.send(buffer);
+  } catch (error) {
+    console.error('Question report Excel export error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

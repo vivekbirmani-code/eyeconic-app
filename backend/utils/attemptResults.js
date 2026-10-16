@@ -95,6 +95,10 @@ const formatAnswerForDisplay = (questionType, selectedAnswer, options = [], colu
  * @param {boolean} [params.includeStudentHistory] false for guest attempts —
  *   skips the per-student history/frequently-missed aggregations (guests have
  *   no cross-attempt student identity to aggregate).
+ * @param {boolean} [params.includeSolutions] STAFF-ONLY override used by the
+ *   admin question-report collector: always emits correctAnswer/explanation
+ *   regardless of the quiz's shareSolution setting (admins/mentors inspecting
+ *   an attempt must see the key; student-facing routes never pass this).
  * @param {object|null} [params.student] overrides the emitted `student` field
  *   (guest flows pass a { _id, name } like object).
  * @returns the response body (identical shape to the historical registered
@@ -105,6 +109,7 @@ const buildAttemptResults = async ({
   quiz,
   groupBy: requestedGroupBy,
   includeStudentHistory = true,
+  includeSolutions = false,
   student = undefined,
 }) => {
   const requested = String(requestedGroupBy || '').toLowerCase().trim();
@@ -118,8 +123,10 @@ const buildAttemptResults = async ({
   }
 
   // SECURITY CRITICAL: shareSolution comes from the fresh quiz document so
-  // no cached response can bypass solution hiding.
+  // no cached response can bypass solution hiding. includeSolutions is the
+  // explicit staff-only override (see JSDoc) — student routes never set it.
   const shareSolution = quiz.shareSolution !== undefined ? quiz.shareSolution : true;
+  const showSolution = shareSolution || includeSolutions === true;
 
   // Calculate grouped performance data.
   // The groupBy dimension is honoured for every quiz shape: on sectioned
@@ -218,8 +225,10 @@ const buildAttemptResults = async ({
       group.timeSpent += answer.timeSpent || 0;
     }
 
-    // Build question data
-    const baseData = {
+    // Build question data. A null `q` is a question deleted from the bank
+    // after the attempt (populate of a dead ref): keep the row so the report
+    // still represents every answered slot, marked as unavailable.
+    const baseData = q ? {
       _id: q._id,
       question: q.question,
       questionImage: q.questionImage,
@@ -244,9 +253,21 @@ const buildAttemptResults = async ({
       section: name,
       sectionQuestionIndex,
       globalIndex
+    } : {
+      _id: null,
+      question: null,
+      questionUnavailable: true,
+      questionType: resolveQuestionType(answer, null),
+      userAnswer: answer?.selectedAnswer,
+      isCorrect: answer?.isCorrect,
+      timeSpent: answer?.timeSpent,
+      markedForReview: answer?.markedForReview,
+      section: name,
+      sectionQuestionIndex,
+      globalIndex
     };
 
-    if (shareSolution) {
+    if (showSolution && q) {
       baseData.correctAnswer = q.correctAnswer;
       baseData.explanation = q.explanation;
       baseData.explanationImage = q.explanationImage;
@@ -339,7 +360,7 @@ const buildAttemptResults = async ({
         question.columnB
       );
 
-      const correct = shareSolution
+      const correct = showSolution
         ? formatAnswerForDisplay(
           question.questionType,
           question.correctAnswer,
@@ -362,11 +383,11 @@ const buildAttemptResults = async ({
         selectedAnswer: question.userAnswer,
         selectedAnswerLabel: selected.label,
         selectedAnswerText: selected.text,
-        correctAnswer: shareSolution ? question.correctAnswer : undefined,
+        correctAnswer: showSolution ? question.correctAnswer : undefined,
         correctAnswerLabel: correct?.label,
         correctAnswerText: correct?.text,
-        explanation: shareSolution ? question.explanation : undefined,
-        explanationImage: shareSolution ? question.explanationImage : undefined,
+        explanation: showSolution ? question.explanation : undefined,
+        explanationImage: showSolution ? question.explanationImage : undefined,
         timeSpent: question.timeSpent || 0,
         history: {
           ...history,
@@ -445,5 +466,6 @@ const buildAttemptResults = async ({
 
 module.exports = {
   buildAttemptResults,
+  formatAnswerForDisplay,
   ALLOWED_GROUP_BY,
 };

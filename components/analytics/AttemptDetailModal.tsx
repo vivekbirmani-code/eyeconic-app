@@ -14,6 +14,7 @@ import {
 import { X, CheckCircle, XCircle, MinusCircle, Clock, Award, BarChart3, FileText, ChevronDown, ShieldAlert } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { DataTable, DataTableColumn } from '@/components/DataTable';
+import AttemptQuestionReport from './AttemptQuestionReport';
 
 interface AttemptDetailModalProps {
     attemptId: string | null;
@@ -593,6 +594,16 @@ export default function AttemptDetailModal({ attemptId, visible, onClose, userRo
                                     keyExtractor={(_row, index) => `perf-${index}`}
                                     style={styles.tableContainer}
                                 />
+                            </View>
+
+                            {/* Question-Level Report — every question with the
+                                student's response, the answer key and the
+                                per-question verdict; Excel/CSV downloads ride
+                                the same server collector (both analytics tabs
+                                reach this modal, so the report is identical
+                                from either entry point). */}
+                            <View style={styles.sectionContainer}>
+                                <AttemptQuestionReport attemptId={attemptId} />
                             </View>
 
                             {/* Tab Switch Warning */}
