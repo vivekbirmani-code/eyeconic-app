@@ -117,6 +117,22 @@ const proctoringSessionSchema = new mongoose.Schema({
     enum: ['pending', 'clean', 'reviewed_ok', 'reviewed_concern'],
     default: 'pending',
   },
+  // Phase 7 (§25.4) — the human review decision of record. Admin-written
+  // only; the platform NEVER alters marks (reviewAdjustedScore is a
+  // display-only value shown alongside the original).
+  review: {
+    status: {
+      type: String,
+      enum: ['confirmed', 'dismissed', 'escalated'],
+    },
+    reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    reviewedAt: { type: Date },
+    note: { type: String, maxlength: 1000 },
+  },
+  reviewAdjustedScore: {
+    score: { type: Number, min: 0 },
+    totalMarks: { type: Number, min: 0 },
+  },
   transitions: [transitionSchema],
 }, {
   timestamps: true,

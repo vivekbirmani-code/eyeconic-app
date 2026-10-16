@@ -710,6 +710,10 @@ function QuizTakingContent() {
             style: 'destructive',
             onPress: async () => {
               try {
+                // Land the final monitoring observations while the session
+                // is still ACTIVE — after submit the server closes it and a
+                // late flush is discarded (409).
+                await proctoring.stopMonitoring();
                 const result = await submitSection(activeSectionIndex, false);
                 setShowReviewModal(false);
                 const finalized =
@@ -740,6 +744,9 @@ function QuizTakingContent() {
           style: 'destructive',
           onPress: async () => {
             try {
+              // Land the final monitoring observations while the session is
+              // still ACTIVE — the post-submit teardown flush is discarded.
+              await proctoring.stopMonitoring();
               const result = await submitQuiz(false);
               setShowReviewModal(false);
               router.replace(`/quizzes/${id}/result/${result.attemptId || currentAttempt?.attemptId}`);
@@ -750,7 +757,7 @@ function QuizTakingContent() {
         }
       ]
     );
-  }, [sectionLockOn, activeSectionIndex, isLastSection, activeSectionDef, submitSection, submitQuiz, id, currentAttempt, router]);
+  }, [sectionLockOn, activeSectionIndex, isLastSection, activeSectionDef, submitSection, submitQuiz, id, currentAttempt, router, proctoring.stopMonitoring]);
 
   // Section locking: the section timer hit zero — the server is the truth.
   // Submit the section as auto; the response either advances to the next
@@ -758,6 +765,8 @@ function QuizTakingContent() {
   const handleSectionTimeUp = useCallback(async () => {
     if (!sectionLockOn || activeSectionIndex < 0) return;
     try {
+      // Final monitoring flush before the server closes the session.
+      await proctoring.stopMonitoring();
       const result = await submitSection(activeSectionIndex, true);
       const finalized =
         result.attemptFinalized === true ||
@@ -800,10 +809,12 @@ function QuizTakingContent() {
         [{ text: 'OK' }]
       );
     }
-  }, [sectionLockOn, activeSectionIndex, submitSection, loadAttempt, id, currentAttempt, router]);
+  }, [sectionLockOn, activeSectionIndex, submitSection, loadAttempt, id, currentAttempt, router, proctoring.stopMonitoring]);
 
   const handleTimeUp = useCallback(async () => {
     try {
+      // Final monitoring flush before the server closes the session.
+      await proctoring.stopMonitoring();
       const result = await submitQuiz(true);
       
       // Handle case where quiz was already submitted
@@ -857,7 +868,7 @@ function QuizTakingContent() {
         );
       }
     }
-  }, [submitQuiz, id, currentAttempt, router]);
+  }, [submitQuiz, id, currentAttempt, router, proctoring.stopMonitoring]);
 
   const handleSectionChange = useCallback((section: string) => {
     // Section locking: only the active section is navigable (tabs are

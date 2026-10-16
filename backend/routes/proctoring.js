@@ -334,3 +334,171 @@ router.post('/consent', auth, authorize('student'), async (req, res) => {
 });
 
 module.exports = router;
+
+// ===== Phase 7 (§25.4/§26.5) — accommodation overrides, admin CRUD =====
+//
+// Accessibility accommodations (e.g. attention observations disabled or
+// thresholds relaxed for a student). ADMIN ONLY. Stored overrides are
+// interpreted by a STRICT WHITELIST at /start snapshot-freeze time (see
+// utils/proctoring/policySnapshot.js applyProctoringOverrides) — unlisted
+// reasonCodes store but never apply (fail-closed). Expiry is honored at
+// application time, not by background deletion (rows are small + auditable).
+const ProctoringOverride = require('../models/ProctoringOverride');
+const User = require('../models/User');
+
+const OVERRIDE_REASONS = ['attention_disabled', 'relaxed_thresholds'];
+
+// Malformed ids must fail as 400/404, never as a CastError 500.
+const OBJECT_ID_PATTERN = /^[0-9a-fA-F]{24}$/;
+
+const overridesRouter = require('express').Router();
+
+overridesRouter.use(auth, authorize('admin'));
+
+// List: all overrides, or one student's (?studentId=), newest first.
+overridesRouter.get('/', async (req, res) => {
+  try {
+    const query = {};
+    if (req.query.studentId) {
+      if (!OBJECT_ID_PATTERN.test(String(req.query.studentId))) {
+        return res.status(400).json({
+          success: false, message: 'studentId must be a valid id.',
+          code: 'VALIDATION_ERROR', requestId: req.requestId,
+        });
+      }
+      query.student = req.query.studentId;
+    }
+    const overrides = await ProctoringOverride.find(query)
+      .populate('student', 'name email')
+      .populate('grantedBy', 'name email')
+      .populate('quiz', 'title')
+      .sort({ createdAt: -1 })
+      .limit(200)
+      .lean();
+    return res.status(200).json({ success: true, overrides, requestId: req.requestId });
+  } catch (error) {
+    logger.error('Proctoring overrides list failed', {
+      requestId: req.requestId, errorMessage: error?.message,
+    });
+    return res.status(500).json({
+      success: false, message: 'Server error', code: 'INTERNAL_ERROR', requestId: req.requestId,
+    });
+  }
+});
+
+// Create. Body: { studentId, quizId?, reasonCode, overrides?, expiresAt? }.
+overridesRouter.post('/', async (req, res) => {
+  try {
+    const { studentId, quizId, reasonCode, overrides, expiresAt } = req.body || {};
+    if (!studentId || !String(studentId).match(/^[0-9a-fA-F]{12,32}$/)) {
+      return res.status(400).json({
+        success: false, message: 'studentId is required.',
+        code: 'VALIDATION_ERROR', requestId: req.requestId,
+      });
+    }
+    const student = await User.findOne({ _id: studentId, role: 'student' });
+    if (!student) {
+      return res.status(404).json({
+        success: false, message: 'Student not found.',
+        code: 'STUDENT_NOT_FOUND', requestId: req.requestId,
+      });
+    }
+    if (!OVERRIDE_REASONS.includes(reasonCode)) {
+      return res.status(400).json({
+        success: false,
+        message: `reasonCode must be one of ${OVERRIDE_REASONS.join('|')}.`,
+        code: 'VALIDATION_ERROR', requestId: req.requestId,
+      });
+    }
+    // A quiz-scoped override must reference a real quiz — anything malformed
+    // or unknown stores inert, so refuse it loudly instead.
+    if (quizId !== undefined && quizId !== null && quizId !== '') {
+      if (!OBJECT_ID_PATTERN.test(String(quizId))) {
+        return res.status(400).json({
+          success: false, message: 'quizId must be a valid id.',
+          code: 'VALIDATION_ERROR', requestId: req.requestId,
+        });
+      }
+      const scopedQuiz = await Quiz.findById(quizId).select('_id').lean();
+      if (!scopedQuiz) {
+        return res.status(404).json({
+          success: false, message: 'Quiz not found.',
+          code: 'QUIZ_NOT_FOUND', requestId: req.requestId,
+        });
+      }
+    }
+    if (overrides !== undefined && overrides !== null && typeof overrides !== 'object') {
+      return res.status(400).json({
+        success: false, message: 'overrides must be an object.',
+        code: 'VALIDATION_ERROR', requestId: req.requestId,
+      });
+    }
+    let expiry = null;
+    if (expiresAt !== undefined && expiresAt !== null && expiresAt !== '') {
+      expiry = new Date(expiresAt);
+      if (Number.isNaN(expiry.getTime())) {
+        return res.status(400).json({
+          success: false, message: 'expiresAt must be a parseable date.',
+          code: 'VALIDATION_ERROR', requestId: req.requestId,
+        });
+      }
+    }
+    const created = await ProctoringOverride.create({
+      student: student._id,
+      ...(quizId ? { quiz: quizId } : {}),
+      reasonCode,
+      grantedBy: req.user._id,
+      ...(expiry ? { expiresAt: expiry } : {}),
+      ...(overrides ? { overrides } : {}),
+    });
+    logger.info('Proctoring override granted', {
+      requestId: req.requestId,
+      overrideId: created._id,
+      studentId: student._id,
+      reasonCode,
+    });
+    return res.status(201).json({ success: true, override: created, requestId: req.requestId });
+  } catch (error) {
+    logger.error('Proctoring override create failed', {
+      requestId: req.requestId, errorMessage: error?.message,
+    });
+    return res.status(500).json({
+      success: false, message: 'Server error', code: 'INTERNAL_ERROR', requestId: req.requestId,
+    });
+  }
+});
+
+// Revoke (hard delete — the doc is small and the audit trail lives in logs;
+// history of revoked accommodations is not a §25.4 requirement).
+overridesRouter.delete('/:overrideId', async (req, res) => {
+  try {
+    if (!OBJECT_ID_PATTERN.test(String(req.params.overrideId || ''))) {
+      return res.status(404).json({
+        success: false, message: 'Override not found.',
+        code: 'OVERRIDE_NOT_FOUND', requestId: req.requestId,
+      });
+    }
+    const deleted = await ProctoringOverride.findByIdAndDelete(req.params.overrideId);
+    if (!deleted) {
+      return res.status(404).json({
+        success: false, message: 'Override not found.',
+        code: 'OVERRIDE_NOT_FOUND', requestId: req.requestId,
+      });
+    }
+    logger.info('Proctoring override revoked', {
+      requestId: req.requestId, overrideId: deleted._id,
+    });
+    return res.status(200).json({ success: true, requestId: req.requestId });
+  } catch (error) {
+    logger.error('Proctoring override delete failed', {
+      requestId: req.requestId, errorMessage: error?.message,
+    });
+    return res.status(500).json({
+      success: false, message: 'Server error', code: 'INTERNAL_ERROR', requestId: req.requestId,
+    });
+  }
+});
+
+module.exports = router;
+module.exports.overridesRouter = overridesRouter;
+module.exports.OVERRIDE_REASONS = OVERRIDE_REASONS;

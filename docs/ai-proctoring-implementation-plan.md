@@ -3568,3 +3568,99 @@ run: 4 attention episodes, 0 violations/0 warnings/0 risk); AC-5
 exercised on device. **Phase 5 meets its documented acceptance criteria with
 two explicitly unit-only verification gaps (DEVIATION_* device capture,
 fallback path device capture) recorded here and in §45.3.**
+
+---
+
+## 46. Phase 7 — Admin + mentor analytics, review workflow, exports, overrides (2026-10-15)
+
+Implemented per the Phase 7 roadmap + §25, on the 7-lite baseline (timeline
+endpoint + modal labels). Plan approved as presented; no scope changes.
+
+### 46.1 What shipped
+
+**Per-test rollup + analytics block (§25.2).** `buildProctoringSummary(attemptIds)`
+in summary.js reads ONLY the denormalized session fields (§26.1) and derives
+the §25.2 export columns (riskCategory · totalViolations · focusLossExits ·
+multipleFaceEvents · faceAbsentTotal · cameraIncidents · heartbeatGaps) plus a
+test rollup (risk distribution, flagged count = the §26.1 review-queue
+definition, integrity counts). `GET /analytics/test/:testId` carries the block
+through the SAME `buildTestAttemptScope` cohort — mentor scoping is inherited,
+not re-implemented (D14).
+
+**Export parity (§25.2 AC-3).** `collectTestReportData` joins the same rollup
+into every student row (guests + non-proctored attempts carry empty columns);
+CSV gained the 7 headers/rows; the Excel sheet gained the 7 columns. Parity is
+structural (one collector) and proven by test (analytics rows == collector rows
+== CSV headers == Excel headers).
+
+**Review workflow (§25.4).** `POST /quizzes/attempt/:id/proctoring/review` —
+admin-only, closed-session-only (409 while active), decision
+confirm|dismiss|escalate + note (≤1000) + optional adjustedScore/TotalMarks
+(validated as a pair, 0 ≤ score ≤ total; display-only — marks are never
+altered). Writes session.review + integrityStatus (dismiss → reviewed_ok,
+confirm/escalate → reviewed_concern), stamps every violation's review subdoc,
+mirrors integrityStatus to the attempt (§26.5), and re-review overwrites while
+clearing a stale adjusted score. Sessions that close unflagged (0 violations +
+normal/low risk) go `clean` automatically at finalize, mirrored to the attempt.
+The timeline serves the live review trail + adjusted score.
+
+**Accommodation overrides (§26.5).** Admin CRUD at
+`/api/quizzes/proctoring-overrides` (list/create/delete; mounted before the
+single-segment /:id routes; mentors/students 403). Application is a STRICT
+whitelist in `applyProctoringOverrides`, applied to the FROZEN snapshot only at
+/start: `attention_disabled` → attention.enabled:false (D6 mode lock
+untouched); `relaxed_thresholds` → the payload re-validated through
+parseProctoringConfig (same clamps) and merged leaf-by-leaf. Expired and
+other-quiz rows never apply; unknown reasonCodes store but stay inert;
+consequence-bearing policy sections are not overridable (accommodations relax
+observation, never enforcement). The quiz-level hash + consent binding are
+untouched; the snapshot's own hash is recomputed over the final policy.
+
+**Frontend.** 'proctoring' tab in student-analytics (same test picker + same
+analytics payload; `ProctoringOverview` renders StatCardGrid KPIs + a DataTable
+of attempts sorted by risk with modal drill-in — teal design system).
+AttemptDetailModal gains the integrity chip in the header, the review trail
+card, and the admin review panel (three decisions + note + optional adjusted
+score, userRole-gated). The student result screen gains
+`MonitoringSummaryCard` — plain-English own-session transparency (D7 copy in
+proctoringCopy.studentSummary; hidden for non-proctored attempts; nothing about
+other students). Server-side owner access to /timeline already existed (7-lite).
+
+### 46.2 Evidence (executed 2026-10-15)
+
+- `proctoringAnalytics.test.js` (11 tests): analytics↔collector↔CSV↔Excel
+  parity, mentor D14 scoping (assigned-only rows), review permissions
+  (student/mentor 403, active-session 409), dismiss round-trip (violation
+  stamping + mirror + timeline trail + re-review clearing the stale adjusted
+  score), adjusted-score validation, clean-at-close, override CRUD auth +
+  whitelist application (enabled:false, merged thresholds, expiry/other-quiz/
+  unknown-reasonCode inert).
+- `verifyProctoringFlow.js`: **49/49** (11 new Phase 7 checks incl. the review
+  round-trip on the auto-submitted attempt, mentor block scoping vs the
+  unassigned attention student, CSV columns, override create/refuse/apply/revoke).
+- Backend full: 82/82 suites, 1142/1142. Root client: 23/23, 278/278. Strict
+  tsc over every touched frontend file: clean (4 type errors caught + fixed
+  during the pass: duplicate import, missing payload type, DataTable `header`
+  vs `title`, durationMs narrowing).
+- One unexplained transient: a single early full-proctoring run reported 8
+  failures that never reproduced across 5 subsequent identical runs (incl.
+  3×integration-only and 2×full-load) — recorded as environment flakiness
+  (memory-server contention under first-run compile load), not a code defect;
+  all affected suites pass deterministically since.
+
+### 46.3 Honest limits
+
+- No device/emulator pass on the new UI yet (analytics tab, review panel,
+  student card) — verified by tests + typecheck only; visual check pending the
+  next device session. The review workflow's marks-never-altered rule is
+  enforced server-side and test-locked regardless.
+- Overrides: end-to-end accommodation verification (a real accommodated
+  student run) stays a Phase 8 §29.4 row; here the application is proven at
+  the snapshot level.
+- Excel parity asserted at header level + collector-row level (values are
+  structurally identical through the shared collector; per-cell rendering
+  beyond headers is the exceljs layer already covered by export conventions).
+
+All rollout gates remain OFF. Remaining roadmap: Phase 8 (hardening matrix,
+security pass, calibration round 1) → Phase 9 (staged rollout), the optional
+preview attachment, and the Phase 5 anchored device protocol (§45.4).

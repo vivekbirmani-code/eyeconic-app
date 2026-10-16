@@ -49,7 +49,7 @@ const buildSessionSummary = ({ session, events = [], violations = [], risk }) =>
     endedAt: endedAt ? endedAt.toISOString() : null,
     monitoredMs: startedAt ? ((endedAt ? endedAt.getTime() : Date.now()) - startedAt.getTime()) : 0,
     // Review outcome (§25.4) — display only; the platform never alters marks.
-    integrityStatus: 'pending',
+    integrityStatus: session?.integrityStatus ?? 'pending',
   };
 };
 
@@ -97,7 +97,8 @@ const computeSessionSummary = async (session, { policy = {} } = {}) => {
     endedAt: endedAt ? endedAt.toISOString() : null,
     monitoredMs: startedAt ? ((endedAt ? endedAt.getTime() : Date.now()) - startedAt.getTime()) : 0,
     // Review outcome (§25.4) — display only; the platform never alters marks.
-    integrityStatus: 'pending',
+    // Reflects the LIVE session field so a post-close review decision shows.
+    integrityStatus: session?.integrityStatus ?? 'pending',
   };
   return { risk, summary };
 };
@@ -130,8 +131,97 @@ const freezeSessionSummary = async (session, { policy = {} } = {}) => {
   }
 };
 
+/**
+ * Per-test proctoring rollup (plan §25.2, Phase 7): one row per proctored
+ * attempt in the caller's cohort + test-level aggregates. Reads ONLY the
+ * denormalized session fields (§26.1 "cheap summaries") — no per-event
+ * aggregation — and derives the export columns listed in §25.2 so the
+ * analytics block, CSV and Excel are identical by construction:
+ *
+ *   riskCategory · totalViolations · focusLossExits (APP_BACKGROUND)
+ *   multipleFaceEvents (MULTIPLE_FACES_DETECTED) · faceAbsentTotal
+ *   (FACE_NOT_DETECTED) · cameraIncidents (CAMERA_* + MODEL_UNAVAILABLE)
+ *   heartbeatGaps (HEARTBEAT_GAP)
+ *
+ * @param {Array<string|objectid>} attemptIds the cohort's attempt ids
+ * (already mentor-scoped by the caller — this layer never re-scopes)
+ */
+const buildProctoringSummary = async (attemptIds) => {
+  const ids = (attemptIds || []).map((id) => id).filter(Boolean);
+  if (ids.length === 0) {
+    return { attempts: [], rollup: emptyProctoringRollup() };
+  }
+  const sessions = await ProctoringSession.find({ attempt: { $in: ids } })
+    .select('attempt status riskScore riskCategory violationsCount eventCounts integrityStatus startedAt endedAt')
+    .lean();
+
+  const attempts = sessions.map((session) => ({
+    attemptId: String(session.attempt),
+    sessionId: String(session._id),
+    sessionStatus: session.status,
+    riskScore: session.riskScore ?? 0,
+    riskCategory: session.riskCategory ?? 'normal',
+    totalViolations: session.violationsCount ?? 0,
+    integrityStatus: session.integrityStatus ?? 'pending',
+    startedAt: session.startedAt,
+    endedAt: session.endedAt || null,
+    ...proctoringColumns(session.eventCounts || {}),
+  }));
+
+  return { attempts, rollup: rollupProctoringRows(attempts) };
+};
+
+/** The §25.2 export columns, derived from one session's denormalized counts. */
+const proctoringColumns = (eventCounts) => ({
+  focusLossExits: eventCounts.APP_BACKGROUND || 0,
+  multipleFaceEvents: eventCounts.MULTIPLE_FACES_DETECTED || 0,
+  faceAbsentTotal: eventCounts.FACE_NOT_DETECTED || 0,
+  cameraIncidents: (eventCounts.CAMERA_UNAVAILABLE || 0)
+    + (eventCounts.CAMERA_PERMISSION_REVOKED || 0)
+    + (eventCounts.CAMERA_TRACK_ENDED || 0)
+    + (eventCounts.CAMERA_FEED_DARK || 0)
+    + (eventCounts.CAMERA_FEED_FROZEN || 0)
+    + (eventCounts.MODEL_UNAVAILABLE || 0),
+  heartbeatGaps: eventCounts.HEARTBEAT_GAP || 0,
+});
+
+const emptyProctoringRollup = () => ({
+  proctoredAttempts: 0,
+  riskDistribution: { normal: 0, low: 0, moderate: 0, high: 0, critical: 0 },
+  totalViolations: 0,
+  focusLossExits: 0,
+  multipleFaceEvents: 0,
+  faceAbsentTotal: 0,
+  cameraIncidents: 0,
+  heartbeatGaps: 0,
+  flaggedAttempts: 0,
+  integrityCounts: { pending: 0, clean: 0, reviewed_ok: 0, reviewed_concern: 0 },
+});
+
+const rollupProctoringRows = (rows) => {
+  const rollup = emptyProctoringRollup();
+  for (const row of rows) {
+    rollup.proctoredAttempts += 1;
+    rollup.riskDistribution[row.riskCategory] = (rollup.riskDistribution[row.riskCategory] || 0) + 1;
+    rollup.totalViolations += row.totalViolations;
+    rollup.focusLossExits += row.focusLossExits;
+    rollup.multipleFaceEvents += row.multipleFaceEvents;
+    rollup.faceAbsentTotal += row.faceAbsentTotal;
+    rollup.cameraIncidents += row.cameraIncidents;
+    rollup.heartbeatGaps += row.heartbeatGaps;
+    // "Flagged" = the review queue's definition (§26.1 {quiz, riskCategory}
+    // index): any violation or a moderate+ risk band.
+    if (row.totalViolations > 0 || ['moderate', 'high', 'critical'].includes(row.riskCategory)) {
+      rollup.flaggedAttempts += 1;
+    }
+    rollup.integrityCounts[row.integrityStatus] = (rollup.integrityCounts[row.integrityStatus] || 0) + 1;
+  }
+  return rollup;
+};
+
 module.exports = {
   buildSessionSummary,
   computeSessionSummary,
   freezeSessionSummary,
+  buildProctoringSummary,
 };

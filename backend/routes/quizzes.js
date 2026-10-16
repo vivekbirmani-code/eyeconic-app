@@ -97,6 +97,7 @@ const {
   ensureProctoringSession,
   closeProctoringSessionForAttempt,
   shapeAttentionBaseline,
+  loadActiveProctoringOverrides,
 } = require('../utils/proctoring/session');
 const {
   buildEffectiveProctoringPolicy,
@@ -105,6 +106,7 @@ const {
   assertProctoringStartPrerequisites,
 } = require('../utils/proctoring/startGating');
 const { resolveEligibilityForQuiz } = require('../utils/proctoring/rollout');
+const { buildProctoringSummary } = require('../utils/proctoring/summary');
 const { buildEventRecord } = require('../utils/proctoring/eventIngest');
 const { tabSwitchRateLimit } = require('../middleware/proctoringRateLimit');
 
@@ -122,6 +124,9 @@ const router = express.Router();
 // + consent. They never create attempts or sessions; /start enforces both
 // before creating anything (utils/proctoring/startGating.js).
 router.use('/:id/proctoring', require('./proctoring'));
+// Phase 7 (§26.5) — admin accommodation-override CRUD. Mounted BEFORE the
+// single-segment /:id routes so the literal path always wins.
+router.use('/proctoring-overrides', require('./proctoring').overridesRouter);
 
 const roundTo2 = (value) => {
   const num = Number(value);
@@ -2158,7 +2163,8 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
     const csvLines = [];
     const isoOrNull = (value) => (value ? new Date(value).toISOString() : '');
     // Public-quiz guests ride AFTER the ranked registered rows — admin only
-    // (mentor CSVs stay byte-identical to the historical export).
+    // (mentor CSVs keep the historical lead-column shape: no guest rows, no
+    // lead columns — though Phase 7 added the proctoring columns for both).
     const participantRows = [...data.students, ...(data.includeLeadColumns ? data.guests : [])];
 
     csvLines.push(toCsvRow(['Test Report']));
@@ -2221,6 +2227,15 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
       'Started At',
       'Completed At',
       'Section Breakdown',
+      // Phase 7 (§25.2) proctoring columns — identical values in the app's
+      // analytics block and the Excel export (shared collector).
+      'Risk Category',
+      'Total Violations',
+      'Focus-loss Exits',
+      'Multiple-Face Events',
+      'Face-Absent Total',
+      'Camera Incidents',
+      'Heartbeat Gaps',
       // Admin-only lead columns — mentors get the historical header/rows.
       ...(data.includeLeadColumns ? ['Participant Type', 'Phone', 'Phone Verified', 'Email Verified', 'Marketing Consent'] : [])
     ]));
@@ -2250,6 +2265,13 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
         isoOrNull(row.startedAt),
         isoOrNull(row.completedAt),
         row.sectionBreakdown,
+        row.riskCategory,
+        row.totalViolations,
+        row.focusLossExits,
+        row.multipleFaceEvents,
+        row.faceAbsentTotal,
+        row.cameraIncidents,
+        row.heartbeatGaps,
         ...(data.includeLeadColumns
           ? [row.participantType, row.phone, row.phoneVerified, row.emailVerified, row.marketingConsent]
           : [])
@@ -3233,7 +3255,12 @@ router.post('/:id/start', auth, authorize('student'), async (req, res) => {
     // the aiProctoring feature flag (gating above already verified consent
     // and the precheck token for this same eligibility).
     const proctoringSnapshot = proctoringEligibility.enabled
-      ? freezeProctoringPolicySnapshot(quiz, startedAt)
+      ? freezeProctoringPolicySnapshot(quiz, startedAt, {
+        // Phase 7 (§26.5): the student's active accommodations shape the
+        // FROZEN copy only (whitelist-applied); the quiz-level hash and the
+        // consent binding are untouched.
+        overrides: await loadActiveProctoringOverrides(req.user._id, quiz._id),
+      })
       : null;
 
     attempt = new QuizAttempt({
@@ -4365,6 +4392,12 @@ router.get('/analytics/test/:testId', auth, authorize('admin', 'mentor'), async 
 
     const studentPerformance = rankStudentAttempts(attempts, quiz.questions);
 
+    // Phase 7 (§25.2): per-test proctoring rollup over the SAME cohort —
+    // mentor scoping comes free from buildTestAttemptScope, so the proctoring
+    // block can never disagree with the rest of this response about who is
+    // in the test. Proctoring is registered-only in V1 (no guest rows).
+    const proctoring = await buildProctoringSummary(attempts.map((a) => a._id));
+
     // Public-quiz participants: a SEPARATE, unranked list for admins only.
     // Admins get the full lead phone (same follow-up policy as the CSV
     // export).
@@ -4388,6 +4421,7 @@ router.get('/analytics/test/:testId', auth, authorize('admin', 'mentor'), async 
       hardestQuestion,
       scoreDistribution,
       studentPerformance,
+      proctoring,
       ...(guestParticipants !== null ? { guestParticipants } : {})
     });
   } catch (error) {

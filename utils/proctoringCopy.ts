@@ -80,6 +80,59 @@ export const PROCTORING_COPY = {
     recovered: 'Monitoring restored',
   },
   /**
+   * Student's own monitoring summary on the result screen (Phase 7, §25.1
+   * transparency). Plain English only — no risk jargon; students see their
+   * own notes and nothing about anyone else.
+   */
+  studentSummary: {
+    title: 'Monitoring summary',
+    subtitle: 'How your test monitoring went — for your transparency. It does not change your score.',
+    monitoredFor: 'Monitored for the full test',
+    monitoredPartial: 'Monitoring had interruptions',
+    closedClean: 'Session closed normally',
+    /** Each line renders as "· <line>" under the summary; omitted when 0. */
+    lines: {
+      leftApp: 'Times you left the app',
+      faceNotVisible: 'Times your face was not clearly visible',
+      multipleFaces: 'Times more than one person may have been visible',
+      cameraIssues: 'Camera or lighting hiccups',
+      attentionNotes: 'Head-turn notes (recorded for transparency only)',
+      connectionGaps: 'Connection gaps',
+    },
+    reviewed: {
+      reviewed_ok: 'A reviewer looked at this test and found no concern.',
+      reviewed_concern: 'A reviewer noted a concern with this test — your mentor may contact you.',
+    } as Record<string, string>,
+    showDetails: 'Show details',
+    hideDetails: 'Hide details',
+    /**
+     * Short plain-English labels for the details list — one line per recorded
+     * observation. Students never see event-type codes (those are reviewer
+     * vocabulary); unknown future types fall back to a prettified code.
+     */
+    eventLabels: {
+      APP_BACKGROUND: 'Left the app',
+      EXIT_ATTEMPTED: 'Tried to leave the test',
+      FACE_NOT_DETECTED: 'Face not clearly visible',
+      FACE_PARTIALLY_VISIBLE: 'Face partly visible',
+      FACE_OUT_OF_FRAME: 'Face moved out of view',
+      MULTIPLE_FACES_DETECTED: 'More than one person may have been visible',
+      HEAD_POSE_EXTREME: 'Head turned far',
+      HEAD_POSE_REPEATED: 'Repeated head turns',
+      ATTENTION_DEVIATION_SUSTAINED: 'Looked away for a while',
+      ATTENTION_DEVIATION_REPEATED: 'Looked away several times',
+      CAMERA_UNAVAILABLE: 'Camera problem',
+      CAMERA_PERMISSION_REVOKED: 'Camera permission lost',
+      CAMERA_TRACK_ENDED: 'Camera stopped unexpectedly',
+      CAMERA_FEED_DARK: 'Camera image too dark',
+      CAMERA_FEED_FROZEN: 'Camera image froze',
+      MODEL_UNAVAILABLE: 'Face detection unavailable',
+      HEARTBEAT_GAP: 'Connection gap',
+      SESSION_DEGRADED: 'Monitoring interrupted',
+      WARNING_DELIVERED: 'Heads-up shown during the test',
+    } as Record<string, string>,
+  },
+  /**
    * Server-driven policy warnings (Phase 6, plan §20.2). The rules engine
    * selects the CODE; this module owns the words. Rendered verbatim by the
    * banner — keyed by the server's WARN_CODES so backend and client can

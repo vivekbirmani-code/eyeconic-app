@@ -8,7 +8,8 @@ import {
     ScrollView,
     ActivityIndicator,
     Platform,
-    StatusBar
+    StatusBar,
+    TextInput
 } from 'react-native';
 import { X, CheckCircle, XCircle, MinusCircle, Clock, Award, BarChart3, FileText, ChevronDown, ShieldAlert } from 'lucide-react-native';
 import { api } from '@/services/api';
@@ -18,6 +19,8 @@ interface AttemptDetailModalProps {
     attemptId: string | null;
     visible: boolean;
     onClose: () => void;
+    /** Viewer role — Phase 7 (§25.4): only admins see the review actions. */
+    userRole?: string;
 }
 
 type GroupBy = 'section' | 'subject' | 'topic' | 'tag';
@@ -63,6 +66,14 @@ const TIMELINE_LABELS: Record<string, string> = {
     WARNING_DELIVERED: 'Warning shown',
     AUTO_SUBMITTED: 'Submitted automatically (policy)',
     POLICY_ACTION_SKIPPED: 'Policy action skipped',
+};
+
+/** §25.4 integrity statuses, chip-length for the timeline header. */
+const INTEGRITY_SHORT: Record<string, string> = {
+    pending: 'pending review',
+    clean: 'clean',
+    reviewed_ok: 'reviewed OK',
+    reviewed_concern: 'reviewed concern',
 };
 
 interface AttemptDetail {
@@ -123,7 +134,7 @@ interface AttemptDetail {
     questions: any[];
 }
 
-export default function AttemptDetailModal({ attemptId, visible, onClose }: AttemptDetailModalProps) {
+export default function AttemptDetailModal({ attemptId, visible, onClose, userRole }: AttemptDetailModalProps) {
     const [loading, setLoading] = useState(false);
     const [attemptData, setAttemptData] = useState<AttemptDetail | null>(null);
     const [groupBy, setGroupBy] = useState<GroupBy>('section');
@@ -133,6 +144,13 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
     const [hasProctoring, setHasProctoring] = useState(false);
     const [showTimeline, setShowTimeline] = useState(false);
     const [timelineLoading, setTimelineLoading] = useState(false);
+    // Phase 7 (§25.4) review state — admin actions on the closed session.
+    const [reviewNote, setReviewNote] = useState('');
+    const [adjustedScore, setAdjustedScore] = useState('');
+    const [adjustedTotal, setAdjustedTotal] = useState('');
+    const [reviewSubmitting, setReviewSubmitting] = useState(false);
+    const [reviewError, setReviewError] = useState<string | null>(null);
+    const [showAdjustInputs, setShowAdjustInputs] = useState(false);
     const [timeline, setTimeline] = useState<any | null>(null);
 
     useEffect(() => {
@@ -147,6 +165,16 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
         }
     }, [groupBy]);
 
+    useEffect(() => {
+        if (!visible) {
+            setReviewNote('');
+            setAdjustedScore('');
+            setAdjustedTotal('');
+            setReviewError(null);
+            setShowAdjustInputs(false);
+        }
+    }, [visible]);
+
     const fetchTimeline = async () => {
         if (!attemptId) return;
         setTimelineLoading(true);
@@ -158,6 +186,34 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
             setTimeline(null);
         } finally {
             setTimelineLoading(false);
+        }
+    };
+
+    // Phase 7 (§25.4): record the human review decision of record. Marks are
+    // NEVER altered — an optional adjusted score is stored display-only.
+    const submitReview = async (decision: 'confirm' | 'dismiss' | 'escalate') => {
+        if (!attemptId || reviewSubmitting) return;
+        setReviewSubmitting(true);
+        setReviewError(null);
+        try {
+            const hasScore = adjustedScore.trim() !== '' && adjustedTotal.trim() !== '';
+            await api.post(`/quizzes/attempt/${attemptId}/proctoring/review`, {
+                decision,
+                ...(reviewNote.trim() ? { note: reviewNote.trim() } : {}),
+                ...(hasScore ? {
+                    adjustedScore: Number(adjustedScore),
+                    adjustedTotalMarks: Number(adjustedTotal),
+                } : {}),
+            });
+            await fetchTimeline();
+            setReviewNote('');
+            setAdjustedScore('');
+            setAdjustedTotal('');
+            setShowAdjustInputs(false);
+        } catch (error: any) {
+            setReviewError(error?.response?.data?.message ?? 'Could not record the review.');
+        } finally {
+            setReviewSubmitting(false);
         }
     };
 
@@ -564,6 +620,9 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
                                         {timeline?.summary && (
                                             <Text style={styles.timelineChips}>
                                                 {timeline.summary.violationCount} violations · risk {timeline.summary.riskCategory}
+                                                {timeline.session?.integrityStatus
+                                                    ? ` · ${INTEGRITY_SHORT[timeline.session.integrityStatus] ?? timeline.session.integrityStatus}`
+                                                    : ''}
                                             </Text>
                                         )}
                                         <ChevronDown
@@ -622,9 +681,115 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
                                                     {(timeline.violations ?? []).length > 0 && (
                                                         <Text style={styles.timelineViolations}>
                                                             Violations: {(timeline.violations ?? [])
-                                                                .map((v: any) => v.ruleId)
+                                                                .map((v: any) => `${v.ruleId}${v.review?.status ? ` (${v.review.status})` : ''}`)
                                                                 .join(', ')}
                                                         </Text>
+                                                    )}
+
+                                                    {/* §25.4 review trail — the decision of record. */}
+                                                    {timeline.session?.review?.status && (
+                                                        <View style={styles.reviewTrailCard}>
+                                                            <Text style={styles.reviewTrailTitle}>
+                                                                Review: {timeline.session.review.status}
+                                                                {' · '}{new Date(timeline.session.review.reviewedAt).toLocaleString([], {
+                                                                    dateStyle: 'medium', timeStyle: 'short',
+                                                                })}
+                                                            </Text>
+                                                            {timeline.session.review.note ? (
+                                                                <Text style={styles.reviewTrailNote}>
+                                                                    "{timeline.session.review.note}"
+                                                                </Text>
+                                                            ) : null}
+                                                            {timeline.session.reviewAdjustedScore ? (
+                                                                <Text style={styles.reviewTrailAdjusted}>
+                                                                    Adjusted score (display only): {timeline.session.reviewAdjustedScore.score}
+                                                                    {' / '}{timeline.session.reviewAdjustedScore.totalMarks}
+                                                                </Text>
+                                                            ) : null}
+                                                        </View>
+                                                    )}
+
+                                                    {/* §25.4 review actions — admins only, closed sessions only. */}
+                                                    {userRole === 'admin'
+                                                        && timeline.session?.status
+                                                        && !['ACTIVE', 'DEGRADED'].includes(timeline.session.status) && (
+                                                        <View style={styles.reviewPanel}>
+                                                            <Text style={styles.reviewPanelTitle}>Review decision</Text>
+                                                            {reviewError && (
+                                                                <Text style={styles.reviewError}>{reviewError}</Text>
+                                                            )}
+                                                            <TextInput
+                                                                style={styles.reviewNoteInput}
+                                                                placeholder="Note (optional, e.g. sibling walked by)"
+                                                                placeholderTextColor="#9CA3AF"
+                                                                value={reviewNote}
+                                                                onChangeText={setReviewNote}
+                                                                multiline
+                                                                maxLength={1000}
+                                                            />
+                                                            <TouchableOpacity
+                                                                style={styles.reviewAdjustToggle}
+                                                                onPress={() => setShowAdjustInputs((prev) => !prev)}
+                                                            >
+                                                                <Text style={styles.reviewAdjustToggleText}>
+                                                                    {showAdjustInputs ? '- Hide adjusted score' : '+ Record adjusted score (optional)'}
+                                                                </Text>
+                                                            </TouchableOpacity>
+                                                            {showAdjustInputs && (
+                                                                <View style={styles.reviewAdjustRow}>
+                                                                    <TextInput
+                                                                        style={styles.reviewAdjustInput}
+                                                                        placeholder="Score"
+                                                                        placeholderTextColor="#9CA3AF"
+                                                                        value={adjustedScore}
+                                                                        onChangeText={setAdjustedScore}
+                                                                        keyboardType="numeric"
+                                                                    />
+                                                                    <Text style={styles.reviewAdjustSlash}>/</Text>
+                                                                    <TextInput
+                                                                        style={styles.reviewAdjustInput}
+                                                                        placeholder="Total"
+                                                                        placeholderTextColor="#9CA3AF"
+                                                                        value={adjustedTotal}
+                                                                        onChangeText={setAdjustedTotal}
+                                                                        keyboardType="numeric"
+                                                                    />
+                                                                </View>
+                                                            )}
+                                                            <Text style={styles.reviewAdjustHint}>
+                                                                Display only — the original marks are never changed.
+                                                            </Text>
+                                                            {reviewSubmitting ? (
+                                                                <ActivityIndicator size="small" color="#6D28D9" style={{ marginTop: 8 }} />
+                                                            ) : (
+                                                                <View style={styles.reviewButtonRow}>
+                                                                    <TouchableOpacity
+                                                                        style={[styles.reviewButton, styles.reviewButtonConfirm]}
+                                                                        onPress={() => submitReview('confirm')}
+                                                                        accessibilityRole="button"
+                                                                        accessibilityLabel="Confirm proctoring concerns"
+                                                                    >
+                                                                        <Text style={styles.reviewButtonText}>Confirm</Text>
+                                                                    </TouchableOpacity>
+                                                                    <TouchableOpacity
+                                                                        style={[styles.reviewButton, styles.reviewButtonDismiss]}
+                                                                        onPress={() => submitReview('dismiss')}
+                                                                        accessibilityRole="button"
+                                                                        accessibilityLabel="Dismiss proctoring concerns"
+                                                                    >
+                                                                        <Text style={[styles.reviewButtonText, styles.reviewButtonTextDismiss]}>Dismiss</Text>
+                                                                    </TouchableOpacity>
+                                                                    <TouchableOpacity
+                                                                        style={[styles.reviewButton, styles.reviewButtonEscalate]}
+                                                                        onPress={() => submitReview('escalate')}
+                                                                        accessibilityRole="button"
+                                                                        accessibilityLabel="Escalate proctoring concerns"
+                                                                    >
+                                                                        <Text style={[styles.reviewButtonText, styles.reviewButtonTextEscalate]}>Escalate</Text>
+                                                                    </TouchableOpacity>
+                                                                </View>
+                                                            )}
+                                                        </View>
                                                     )}
                                                 </>
                                             )}
@@ -647,6 +812,66 @@ export default function AttemptDetailModal({ attemptId, visible, onClose }: Atte
 }
 
 const styles = StyleSheet.create({
+    reviewTrailCard: {
+        backgroundColor: '#F9FAFB',
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: '#E5E7EB',
+        padding: 10,
+        marginTop: 10,
+    },
+    reviewTrailTitle: { fontSize: 12, fontWeight: '700', color: '#374151' },
+    reviewTrailNote: { fontSize: 12, color: '#6B7280', marginTop: 4, fontStyle: 'italic' },
+    reviewTrailAdjusted: { fontSize: 12, color: '#0D9488', marginTop: 4, fontWeight: '600' },
+    reviewPanel: {
+        borderTopWidth: 1,
+        borderTopColor: '#E5E7EB',
+        marginTop: 12,
+        paddingTop: 12,
+    },
+    reviewPanelTitle: { fontSize: 12.5, fontWeight: '700', color: '#374151', marginBottom: 6 },
+    reviewError: { fontSize: 12, color: '#DC2626', marginBottom: 6 },
+    reviewNoteInput: {
+        borderWidth: 1,
+        borderColor: '#D1D5DB',
+        borderRadius: 8,
+        padding: 8,
+        backgroundColor: '#FFF',
+        fontSize: 12.5,
+        color: '#1F2937',
+        minHeight: 36,
+        textAlignVertical: 'top',
+    },
+    reviewAdjustToggle: { marginTop: 8, alignSelf: 'flex-start' },
+    reviewAdjustToggleText: { fontSize: 12, color: '#0D9488', fontWeight: '600' },
+    reviewAdjustRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
+    reviewAdjustInput: {
+        borderWidth: 1,
+        borderColor: '#D1D5DB',
+        borderRadius: 8,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        fontSize: 12.5,
+        color: '#1F2937',
+        backgroundColor: '#FFF',
+        width: 90,
+    },
+    reviewAdjustSlash: { fontSize: 13, color: '#6B7280', marginHorizontal: 8 },
+    reviewAdjustHint: { fontSize: 11, color: '#9CA3AF', marginTop: 6 },
+    reviewButtonRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
+    reviewButton: {
+        flex: 1,
+        borderRadius: 8,
+        paddingVertical: 9,
+        alignItems: 'center',
+        borderWidth: 1,
+    },
+    reviewButtonConfirm: { backgroundColor: '#FEF2F2', borderColor: '#FECACA' },
+    reviewButtonDismiss: { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' },
+    reviewButtonEscalate: { backgroundColor: '#FFFBEB', borderColor: '#FDE68A' },
+    reviewButtonText: { fontSize: 12.5, fontWeight: '700', color: '#DC2626' },
+    reviewButtonTextDismiss: { color: '#059669' },
+    reviewButtonTextEscalate: { color: '#D97706' },
     timelineContainer: {
         backgroundColor: '#FFFFFF',
         borderRadius: 12,

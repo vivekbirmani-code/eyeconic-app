@@ -27,6 +27,7 @@ import { buildPerformanceChartData, mapQuizResultsResponse } from '@/utils/quizR
 import { DataTable, DataTableColumn } from '@/components/DataTable';
 import { PerformanceMetricGrid } from '@/components/quiz/PerformanceMetricGrid';
 import { PerformanceChart } from '@/components/quiz/PerformanceChart';
+import MonitoringSummaryCard from '@/components/proctoring/MonitoringSummaryCard';
 import { WrongQuestionSection } from '@/components/quiz/WrongQuestionSection';
 import { FrequentlyMissedSection } from '@/components/quiz/FrequentlyMissedSection';
 import { QuestionPerformanceList } from '@/components/quiz/QuestionPerformanceList';
@@ -317,6 +318,10 @@ export default function QuizResult() {
             <Text style={styles.percentageLabel}>Overall Score</Text>
           </View>
         </View>
+
+        {/* Phase 7 (§25.1): the student's own monitoring transparency card —
+            renders nothing for non-proctored attempts. */}
+        <MonitoringSummaryCard quizId={String(id)} attemptId={String(attemptId)} />
 
         <PerformanceMetricGrid metrics={metricRows} columns={3} />
         <PerformanceChart data={chartData} />

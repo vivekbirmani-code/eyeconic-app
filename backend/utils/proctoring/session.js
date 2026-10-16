@@ -12,7 +12,24 @@
 // asserted by the server only — clients observe it, they never claim it.
 
 const ProctoringSession = require('../../models/ProctoringSession');
+const QuizAttempt = require('../../models/QuizAttempt');
+const ProctoringOverride = require('../../models/ProctoringOverride');
 const { freezeSessionSummary } = require('./summary');
+
+/**
+ * Phase 7 (§26.5): the student's ACTIVE accommodation overrides for a quiz —
+ * quiz-scoped rows plus quiz-agnostic rows, expiry honored here (no
+ * background deletion). Application happens under a strict whitelist in
+ * policySnapshot.applyProctoringOverrides.
+ */
+const loadActiveProctoringOverrides = async (studentId, quizId, { now = new Date() } = {}) => {
+  if (!studentId) return [];
+  const rows = await ProctoringOverride.find({
+    student: studentId,
+    $or: [{ quiz: null }, ...(quizId ? [{ quiz: quizId }] : [])],
+  }).lean();
+  return rows.filter((row) => !row.expiresAt || new Date(row.expiresAt).getTime() > now.getTime());
+};
 
 const SESSION_STATUSES = ['ACTIVE', 'DEGRADED', 'CLOSED', 'CLOSED_FAILED'];
 
@@ -121,9 +138,27 @@ const closeProctoringSessionForAttempt = async (attempt, { reason } = {}) => {
     { new: true }
   );
   const target = closed || existing;
-  await freezeSessionSummary(target, {
+  const frozen = await freezeSessionSummary(target, {
     policy: attempt.proctoringSnapshot?.policy || {},
   });
+
+  // Phase 7 (§25.4): sessions that closed with nothing worth a human look
+  // (zero violations AND below the flagged risk bands — the same definition
+  // as the review queue) go straight to 'clean'; anything else stays
+  // 'pending' for the review workflow. Mirrored onto the attempt (§26.5).
+  const integrityStatus = frozen
+    && frozen.summary.violationCount === 0
+    && ['normal', 'low'].includes(frozen.risk.riskCategory)
+    ? 'clean'
+    : 'pending';
+  await ProctoringSession.updateOne(
+    { _id: target._id, integrityStatus: 'pending' },
+    { $set: { integrityStatus } }
+  ).exec();
+  await QuizAttempt.updateOne(
+    { _id: attempt._id },
+    { $set: { integrityStatus } }
+  ).exec();
   return target;
 };
 
@@ -132,4 +167,5 @@ module.exports = {
   ensureProctoringSession,
   shapeAttentionBaseline,
   closeProctoringSessionForAttempt,
+  loadActiveProctoringOverrides,
 };

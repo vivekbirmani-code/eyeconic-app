@@ -773,6 +773,13 @@ const buildSessionRouter = () => {
             status: session.status,
             startedAt: session.startedAt,
             endedAt: session.endedAt || null,
+            // Phase 7 (§25.4): live review state — the decision of record
+            // plus the display-only adjusted score (originals never altered).
+            integrityStatus: session.integrityStatus ?? 'pending',
+            ...(session.review?.status ? { review: session.review } : {}),
+            ...(session.reviewAdjustedScore?.score !== undefined
+              ? { reviewAdjustedScore: session.reviewAdjustedScore }
+              : {}),
             lastSeenAt: session.sessionHealth?.lastSeenAt || null,
             deterrence: session.deterrence?.screenCapturePrevention || null,
             integrity: session.integrity || {},
@@ -787,6 +794,178 @@ const buildSessionRouter = () => {
       });
     } catch (error) {
       logger.error('Proctoring timeline fetch failed', {
+        requestId: req.requestId, errorMessage: error?.message,
+      });
+      return res.status(500).json({
+        success: false, message: 'Server error', code: 'INTERNAL_ERROR', requestId: req.requestId,
+      });
+    }
+  });
+
+  /**
+   * POST /review — the Phase 7 human review decision of record (plan §25.4).
+   * ADMIN ONLY: mentors and students read timelines but never write review
+   * outcomes. Confirm / Dismiss / Escalate + note; an optional adjusted score
+   * is recorded DISPLAY-ONLY alongside the original (§25.4: the platform
+   * never alters marks). Every violation of the session is stamped with the
+   * same decision, the session's integrityStatus updates, and the attempt's
+   * §26.5 mirror follows. Re-review overwrites (admins correct decisions);
+   * the review subdoc always carries the latest reviewer + timestamp.
+   */
+  router.post('/review', auth, async (req, res) => {
+    const { attemptId } = req.params;
+    try {
+      if (req.user.role !== 'admin') {
+        return res.status(403).json({
+          success: false,
+          message: 'Only administrators can record proctoring review decisions.',
+          code: 'FORBIDDEN',
+          requestId: req.requestId,
+        });
+      }
+
+      const attempt = await QuizAttempt.findById(attemptId);
+      if (!attempt) {
+        return res.status(404).json({
+          success: false, message: 'Attempt not found', code: 'ATTEMPT_NOT_FOUND', requestId: req.requestId,
+        });
+      }
+      if (!attempt.proctoringSnapshot) {
+        return res.status(400).json({
+          success: false,
+          message: 'Proctoring is not enabled for this quiz.',
+          code: 'PROCTORING_NOT_ENABLED_FOR_QUIZ',
+          requestId: req.requestId,
+        });
+      }
+
+      const session = await ProctoringSession.findOne({ attempt: attempt._id });
+      if (!session) {
+        return res.status(404).json({
+          success: false, message: 'No proctoring session for this attempt',
+          code: 'SESSION_NOT_FOUND', requestId: req.requestId,
+        });
+      }
+      // Reviews attach to finished attempts; an in-flight session's story is
+      // still being written.
+      if (session.status === 'ACTIVE' || session.status === 'DEGRADED') {
+        return res.status(409).json({
+          success: false,
+          message: 'This attempt is still in progress — review it after it finishes.',
+          code: 'SESSION_STILL_ACTIVE',
+          requestId: req.requestId,
+        });
+      }
+
+      const { decision, note, adjustedScore, adjustedTotalMarks } = req.body || {};
+      if (!['confirm', 'dismiss', 'escalate'].includes(decision)) {
+        return res.status(400).json({
+          success: false,
+          message: 'decision must be "confirm", "dismiss" or "escalate".',
+          code: 'VALIDATION_ERROR',
+          requestId: req.requestId,
+        });
+      }
+      if (note !== undefined && note !== null && String(note).length > 1000) {
+        return res.status(400).json({
+          success: false, message: 'note must be at most 1000 characters',
+          code: 'VALIDATION_ERROR', requestId: req.requestId,
+        });
+      }
+      const hasScore = adjustedScore !== undefined && adjustedScore !== null;
+      const hasTotal = adjustedTotalMarks !== undefined && adjustedTotalMarks !== null;
+      if ((hasScore || hasTotal) && !(hasScore && hasTotal)) {
+        return res.status(400).json({
+          success: false,
+          message: 'adjustedScore and adjustedTotalMarks must be provided together.',
+          code: 'VALIDATION_ERROR',
+          requestId: req.requestId,
+        });
+      }
+      if (hasScore && (!Number.isFinite(Number(adjustedScore)) || Number(adjustedScore) < 0
+        || !Number.isFinite(Number(adjustedTotalMarks)) || Number(adjustedTotalMarks) < 0
+        || Number(adjustedScore) > Number(adjustedTotalMarks))) {
+        return res.status(400).json({
+          success: false,
+          message: 'adjustedScore must be a number between 0 and adjustedTotalMarks.',
+          code: 'VALIDATION_ERROR',
+          requestId: req.requestId,
+        });
+      }
+
+      const reviewedAt = new Date();
+      // §25.4: dismissal clears the concern; confirm/escalate record it.
+      const integrityStatus = decision === 'dismiss' ? 'reviewed_ok' : 'reviewed_concern';
+
+      await ProctoringSession.updateOne(
+        { _id: session._id },
+        {
+          $set: {
+            integrityStatus,
+            review: {
+              status: decision,
+              reviewedBy: req.user._id,
+              reviewedAt,
+              ...(note ? { note: String(note) } : {}),
+            },
+            ...(hasScore ? {
+              reviewAdjustedScore: {
+                score: Number(adjustedScore),
+                totalMarks: Number(adjustedTotalMarks),
+              },
+            } : {}),
+          },
+          // A re-review without an adjusted score clears any stale one.
+          ...(hasScore ? {} : { $unset: { reviewAdjustedScore: 1 } }),
+        }
+      ).exec();
+
+      // Stamp the session's violations with the same decision (the trail).
+      await ProctoringViolation.updateMany(
+        { session: session._id },
+        {
+          $set: {
+            review: {
+              status: decision === 'confirm' ? 'confirmed' : decision === 'dismiss' ? 'dismissed' : 'escalated',
+              reviewedBy: req.user._id,
+              reviewedAt,
+              ...(note ? { note: String(note) } : {}),
+            },
+          },
+        }
+      ).exec();
+
+      // §26.5 mirror on the attempt.
+      await QuizAttempt.updateOne(
+        { _id: attempt._id },
+        { $set: { integrityStatus } }
+      ).exec();
+
+      logger.info('Proctoring review recorded', {
+        requestId: req.requestId,
+        sessionId: session._id,
+        attemptId: attempt._id,
+        decision,
+        integrityStatus,
+      });
+
+      return res.status(200).json({
+        success: true,
+        review: {
+          status: decision,
+          reviewedAt: reviewedAt.toISOString(),
+          integrityStatus,
+          ...(hasScore ? {
+            reviewAdjustedScore: {
+              score: Number(adjustedScore),
+              totalMarks: Number(adjustedTotalMarks),
+            },
+          } : {}),
+        },
+        requestId: req.requestId,
+      });
+    } catch (error) {
+      logger.error('Proctoring review failed', {
         requestId: req.requestId, errorMessage: error?.message,
       });
       return res.status(500).json({

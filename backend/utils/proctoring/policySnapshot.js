@@ -114,17 +114,71 @@ const buildEffectiveProctoringPolicy = (quiz) => {
  * attempt has no snapshot yet; it is never recomputed for an existing
  * attempt.
  *
+ * Phase 7 (§26.5): `overrides` (the student's ACTIVE accommodation rows,
+ * loaded by the caller) are applied to the frozen copy ONLY — the quiz-level
+ * effective policy and its consent-binding hash are untouched, and the
+ * snapshot's hash is recomputed over the FINAL policy so the digest stays
+ * truthful for this attempt.
+ *
  * @returns {{version: number, hash: string, policy: object, frozenAt: Date}}
  */
-const freezeProctoringPolicySnapshot = (quiz, now = new Date()) => {
+const freezeProctoringPolicySnapshot = (quiz, now = new Date(), { overrides } = {}) => {
   const effective = buildEffectiveProctoringPolicy(quiz);
   if (!effective) return null;
+  const policy = Array.isArray(overrides) && overrides.length > 0
+    ? applyProctoringOverrides(effective.policy, overrides)
+    : effective.policy;
   return {
     version: effective.version,
-    hash: effective.hash,
-    policy: effective.policy,
+    hash: hashPolicy(policy),
+    policy,
     frozenAt: new Date(now),
   };
+};
+
+/**
+ * Phase 7 (§26.5) — applies accommodation overrides to a frozen policy copy
+ * under a STRICT whitelist; anything unrecognized is skipped fail-closed:
+ *
+ *   attention_disabled  → attention.enabled = false (observations stop
+ *                         entirely; mode stays locked to 'record', D6)
+ *   relaxed_thresholds  → the override's `overrides.thresholds` object is
+ *                         re-validated through parseProctoringConfig (same
+ *                         clamps as authoring) and merged leaf-by-leaf
+ *
+ * Consequence-bearing sections (focusEvents, multipleFaces, cameraHealth…)
+ * are deliberately NOT overridable here — accommodations relax observation,
+ * they never weaken enforcement.
+ */
+const applyProctoringOverrides = (policy, overrides) => {
+  const merged = JSON.parse(JSON.stringify(policy ?? {}));
+  for (const override of overrides) {
+    if (!override || typeof override !== 'object') continue;
+    if (override.expiresAt && new Date(override.expiresAt).getTime() <= Date.now()) continue;
+    if (override.reasonCode === 'attention_disabled') {
+      merged.attention = { ...(merged.attention ?? {}), enabled: false };
+      continue;
+    }
+    if (override.reasonCode === 'relaxed_thresholds' && override.overrides?.thresholds) {
+      // Re-validate through the authoring parser — the same bounds, enums
+      // and D6 lock apply; a malformed override payload is skipped, never
+      // half-applied.
+      const parsed = parseProctoringConfig({
+        enabled: true,
+        attention: { mode: 'record', thresholds: override.overrides.thresholds },
+      });
+      if (parsed.error || !parsed.value?.attention?.thresholds) continue;
+      merged.attention = {
+        ...(merged.attention ?? {}),
+        thresholds: {
+          ...(merged.attention?.thresholds ?? {}),
+          ...parsed.value.attention.thresholds,
+        },
+      };
+    }
+    // Unlisted reasonCodes store but never apply (fail-closed).
+  }
+  return merged;
 };
 
 // ---------- authoring-side validation (quiz create/update payloads) ----------
@@ -457,5 +511,6 @@ module.exports = {
   hashPolicy,
   buildEffectiveProctoringPolicy,
   freezeProctoringPolicySnapshot,
+  applyProctoringOverrides,
   parseProctoringConfig,
 };

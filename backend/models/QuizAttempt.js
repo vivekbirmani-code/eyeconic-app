@@ -172,6 +172,14 @@ const attemptSchema = new mongoose.Schema({
   autoSubmitReason: {
     type: mongoose.Schema.Types.Mixed
   },
+  // Phase 7 (§26.5): mirror of the proctoring session's integrity status so
+  // result/analytics surfaces can filter without a join. Written only by the
+  // proctoring layer (session close + review decisions).
+  integrityStatus: {
+    type: String,
+    enum: ['pending', 'clean', 'reviewed_ok', 'reviewed_concern'],
+    default: 'pending',
+  },
 
   // ===== Section locking (snapshot copied from the quiz at /start) =====
   // Deliberately defaults to false: attempts created before this feature (and

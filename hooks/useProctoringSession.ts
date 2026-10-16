@@ -75,6 +75,17 @@ export interface UseProctoringSessionResult {
    */
   recordExitAttempted: () => void;
   /**
+   * Finalizes monitoring BEFORE the attempt is submitted. The unmount
+   * teardown races the server: submit closes the session first, so the
+   * teardown's final flush 409s and the buffer is reset — every episode
+   * still open at submit (an in-flight glance, a face-absence just opened,
+   * a background excursion) was silently lost. Closing the trackers and
+   * flushing here, while the session is still ACTIVE, lands those final
+   * observations before the close. Idempotent and best-effort with a
+   * bounded wait — monitoring can never delay or block submission (§7.2).
+   */
+  stopMonitoring: () => Promise<void>;
+  /**
    * The latest undelivered-yet policy warning (Phase 6, §20.2) — rendered by
    * the banner from the centralized copy module. WARN variants auto-dismiss;
    * FINAL_WARN persists until replaced or the attempt ends.
@@ -391,6 +402,27 @@ export function useProctoringSession({
     engine.recordEpisodes(focusTracker.onExitAttempted());
   }, []);
 
+  // Same sequence as the unmount teardown (close focus excursions so they
+  // ride the final flush, then stop+flush), pulled BEFORE submit while the
+  // server still considers the session ACTIVE. Never throws and never waits
+  // unboundedly: a monitoring problem must not block the quiz (§7.2).
+  const stopMonitoring = useCallback(async () => {
+    try {
+      const engine = engineRef.current;
+      if (!engine) return;
+      const focusTracker = focusTrackerRef.current;
+      if (focusTracker) {
+        engine.recordEpisodes(focusTracker.closeAll());
+      }
+      await Promise.race([
+        engine.stop(),
+        new Promise<void>((resolve) => setTimeout(resolve, 2500)),
+      ]);
+    } catch {
+      // Best-effort by design — the unmount teardown remains as backstop.
+    }
+  }, []);
+
   // Instant warning delivery (§20.2): the socket nudge carries no payload
   // data beyond the action identity — the same funnel as batch responses, so
   // the banner is deduped by warnId and never trusts socket data beyond the
@@ -417,6 +449,7 @@ export function useProctoringSession({
     status: state.status,
     cameraIssue: state.cameraIssue,
     recordExitAttempted,
+    stopMonitoring,
     warning,
     autoSubmitted,
   };

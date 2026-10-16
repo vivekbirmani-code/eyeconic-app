@@ -18,6 +18,20 @@ const {
   rankStudentAttempts,
 } = require('./analytics');
 const { fetchGuestParticipants, fetchGuestAttemptDocs } = require('./guestAnalytics');
+const { buildProctoringSummary } = require('./proctoring/summary');
+
+// Phase 7 (§25.2) proctoring export columns. Empty strings for non-proctored
+// attempts and guests (proctoring is registered-only in V1) — the historical
+// CSV convention for absent values.
+const EMPTY_PROCTORING_COLUMNS = {
+  riskCategory: '',
+  totalViolations: '',
+  focusLossExits: '',
+  multipleFaceEvents: '',
+  faceAbsentTotal: '',
+  cameraIncidents: '',
+  heartbeatGaps: '',
+};
 
 const optionLabelFromIndex = (index) => {
   const idx = Number(index);
@@ -126,6 +140,27 @@ async function collectTestReportData({ testId, user }) {
   const total = sortedByMarks.length;
   const attemptById = new Map(attempts.map((a) => [String(a._id), a]));
 
+  // Phase 7 (§25.2): per-attempt proctoring columns from the SAME rollup the
+  // app's analytics block uses — CSV and Excel render these rows verbatim, so
+  // the three surfaces cannot drift.
+  const proctoring = await buildProctoringSummary(attempts.map((a) => a._id));
+  const proctoringByAttempt = new Map(
+    proctoring.attempts.map((row) => [row.attemptId, row])
+  );
+  const proctoringColumnsFor = (attemptId) => {
+    const row = proctoringByAttempt.get(String(attemptId));
+    if (!row) return EMPTY_PROCTORING_COLUMNS;
+    return {
+      riskCategory: row.riskCategory,
+      totalViolations: row.totalViolations,
+      focusLossExits: row.focusLossExits,
+      multipleFaceEvents: row.multipleFaceEvents,
+      faceAbsentTotal: row.faceAbsentTotal,
+      cameraIncidents: row.cameraIncidents,
+      heartbeatGaps: row.heartbeatGaps,
+    };
+  };
+
   const students = ranked.map((entry, idx) => {
     const attempt = attemptById.get(String(entry._id));
     // Percentile relative to the registered cohort (guests are unranked and
@@ -164,6 +199,7 @@ async function collectTestReportData({ testId, user }) {
       phoneVerified: '',
       emailVerified: '',
       marketingConsent: '',
+      ...proctoringColumnsFor(entry._id),
     };
   });
 
@@ -198,6 +234,8 @@ async function collectTestReportData({ testId, user }) {
         phoneVerified: guest.phoneVerified ? 'Yes' : 'No',
         emailVerified: guest.emailVerified ? 'Yes' : 'No',
         marketingConsent: guest.marketingConsent ? 'Yes' : 'No',
+        // Proctoring never applies to guest attempts (§4.4/V1 scope).
+        ...EMPTY_PROCTORING_COLUMNS,
       }))
     : [];
 
@@ -248,6 +286,9 @@ async function collectTestReportData({ testId, user }) {
     students,
     guests,
     questions,
+    // Test-level proctoring rollup (§25.2) — same source as the per-row
+    // columns above and the app's analytics block.
+    proctoring: proctoring.rollup,
     includeLeadColumns: isAdmin,
     generatedAt: new Date(),
   };

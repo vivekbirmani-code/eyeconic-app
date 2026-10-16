@@ -435,6 +435,94 @@ async function main() {
   check('attention escalation through the real route still 400s (D6)',
     escalationUpdate.status === 400, `${escalationUpdate.status}`);
 
+  // ---- 9. Phase 7: review workflow + analytics parity + overrides ----
+  // The main student's attempt auto-submitted with 5 violations (§4) — review it.
+  const reviewDismiss = await api('POST', `/api/quizzes/attempt/${attemptId}/proctoring/review`, {
+    token: adminToken,
+    body: { decision: 'dismiss', note: 'verify-run: sibling walked by', adjustedScore: 2, adjustedTotalMarks: 12 },
+  });
+  check('admin review dismiss recorded with a display-only adjusted score',
+    reviewDismiss.status === 200 && reviewDismiss.body.review.integrityStatus === 'reviewed_ok',
+    JSON.stringify(reviewDismiss.body));
+
+  const reviewedSession = await ProctoringSession.findById(sessionId);
+  check('session carries the review decision + attempt mirror (§26.5)',
+    reviewedSession.review?.status === 'dismiss'
+    && reviewedSession.reviewAdjustedScore?.score === 2
+    && reviewedSession.integrityStatus === 'reviewed_ok'
+    && (await QuizAttempt.findById(attemptId)).integrityStatus === 'reviewed_ok');
+
+  const timelineAfterReview = await api('GET', `/api/quizzes/attempt/${attemptId}/proctoring/timeline`, { token: adminToken });
+  check('timeline serves the review trail + adjusted score',
+    timelineAfterReview.body?.timeline?.session?.review?.status === 'dismiss'
+    && timelineAfterReview.body?.timeline?.session?.reviewAdjustedScore?.score === 2);
+
+  const reviewAsStudent = await api('POST', `/api/quizzes/attempt/${attemptId}/proctoring/review`, {
+    token: studentToken, body: { decision: 'confirm' },
+  });
+  const reviewAsMentor = await api('POST', `/api/quizzes/attempt/${attemptId}/proctoring/review`, {
+    token: mentorToken, body: { decision: 'confirm' },
+  });
+  check('review stays admin-only (student + mentor 403)',
+    reviewAsStudent.status === 403 && reviewAsMentor.status === 403);
+
+  // Analytics block + export parity (§25.2 AC-3).
+  const analyticsAdmin = await api('GET', `/api/quizzes/analytics/test/${quiz._id}`, { token: adminToken });
+  const proctoringBlock = analyticsAdmin.body?.proctoring;
+  check('analytics response carries the proctoring rollup',
+    analyticsAdmin.status === 200
+    && proctoringBlock?.attempts?.length >= 2
+    && proctoringBlock.rollup.totalViolations >= 5,
+    JSON.stringify({ attempts: proctoringBlock?.attempts?.length, rollup: proctoringBlock?.rollup?.totalViolations }));
+
+  const analyticsMentor = await api('GET', `/api/quizzes/analytics/test/${quiz._id}`, { token: mentorToken });
+  const mentorAttemptIds = (analyticsMentor.body?.proctoring?.attempts ?? []).map((a) => String(a.attemptId));
+  check('mentor analytics block is scoped to assigned students (D14)',
+    analyticsMentor.status === 200
+    && mentorAttemptIds.includes(String(attemptId))
+    && !mentorAttemptIds.includes(String(attAttemptId)),
+    JSON.stringify(mentorAttemptIds));
+
+  const reportCsv = await api('GET', `/api/quizzes/analytics/test-report/${quiz._id}/csv`, { token: adminToken });
+  const csvText = typeof reportCsv.body === 'string' ? reportCsv.body : JSON.stringify(reportCsv.body);
+  check('CSV export carries the proctoring columns',
+    reportCsv.status === 200 && csvText.includes('Risk Category') && csvText.includes('Total Violations'));
+
+  // Overrides CRUD + snapshot application (§26.5).
+  const ovrStudent = await User.create({ name: 'V Override', email: 'voverride@run.test', password: 'Vpassw0rd23', role: 'student' });
+  await Quiz.updateOne({ _id: quiz._id }, { $addToSet: { assignedStudents: ovrStudent._id } });
+  const ovrToken = tokenFor(ovrStudent);
+  const ovrCreate = await api('POST', '/api/quizzes/proctoring-overrides', {
+    token: adminToken,
+    body: { studentId: String(ovrStudent._id), reasonCode: 'attention_disabled' },
+  });
+  check('override created (admin only surface)', ovrCreate.status === 201, JSON.stringify(ovrCreate.body?.message));
+  const ovrAsMentor = await api('POST', '/api/quizzes/proctoring-overrides', {
+    token: mentorToken,
+    body: { studentId: String(ovrStudent._id), reasonCode: 'attention_disabled' },
+  });
+  check('override creation refuses mentors', ovrAsMentor.status === 403);
+
+  const ovrPre = await api('POST', `/api/quizzes/${quiz._id}/proctoring/precheck-report`, {
+    token: ovrToken, body: baselineReport,
+  });
+  await api('POST', `/api/quizzes/${quiz._id}/proctoring/consent`, {
+    token: ovrToken,
+    body: { precheckToken: ovrPre.body.precheckToken, consentTextVersion: '2026-09-v1', surface: 'app-android' },
+  });
+  const ovrStart = await api('POST', `/api/quizzes/${quiz._id}/start`, {
+    token: ovrToken, body: { precheckToken: ovrPre.body.precheckToken },
+  });
+  check('attention_disabled shapes the FROZEN snapshot (enabled false, D6 lock intact)',
+    ovrStart.status === 201
+    && ovrStart.body.proctoringPolicy?.attention?.enabled === false
+    && ovrStart.body.proctoringPolicy?.attention?.mode === 'record');
+
+  const ovrDelete = await api('DELETE', `/api/quizzes/proctoring-overrides/${ovrCreate.body.override._id}`, {
+    token: adminToken,
+  });
+  check('override revoked', ovrDelete.status === 200);
+
   // ---- Report ----
   console.log('\n[verify] ========= RESULT =========');
   console.log(`[verify] passed: ${passed}  failed: ${failures.length}`);

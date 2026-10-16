@@ -40,8 +40,16 @@ async function main() {
   const server3000 = http.createServer(app);
   server3000.on('request', traceRequest);
   await new Promise((resolve) => server.listen(3100, resolve));
-  await new Promise((resolve) => server3000.listen(3000, resolve));
-  console.log('[driver] backend on :3100 and :3000');
+  // :3000 is best-effort: the user's own server.js often holds it. The app
+  // reaches the driver on :3100 either way (.env points here).
+  await new Promise((resolve) => {
+    server3000.once('error', (err) => {
+      console.log('[driver] :3000 busy (' + err.code + ') — serving on :3100 only');
+      resolve();
+    });
+    server3000.listen(3000, resolve);
+  });
+  console.log('[driver] backend on :3100' + (server3000.listening ? ' and :3000' : ' only'));
 
   const User = require(path.join(BACKEND, 'models/User'));
   const Subject = require(path.join(BACKEND, 'models/Subject'));

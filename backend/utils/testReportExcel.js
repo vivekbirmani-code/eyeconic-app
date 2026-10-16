@@ -63,6 +63,16 @@ const STUDENT_COLUMNS = [
   { header: 'Percentile', width: 10, value: (r) => r.percentile, numFmt: '0.0' },
   { header: 'Time (min)', width: 9, value: (r) => r.timeSpentMinutes, numFmt: '0.00' },
   { header: 'Tab Switches', width: 9, value: (r) => r.tabSwitchCount, numFmt: '0' },
+  // Phase 7 (§25.2) proctoring columns — identical values in the app's
+  // analytics block and the CSV export (shared collector). Empty for
+  // non-proctored attempts and guests.
+  { header: 'Risk Category', width: 12, value: (r) => r.riskCategory, align: 'center' },
+  { header: 'Total Violations', width: 10, value: (r) => r.totalViolations, numFmt: '0', align: 'center' },
+  { header: 'Focus-loss Exits', width: 10, value: (r) => r.focusLossExits, numFmt: '0', align: 'center' },
+  { header: 'Multiple-Face Events', width: 11, value: (r) => r.multipleFaceEvents, numFmt: '0', align: 'center' },
+  { header: 'Face-Absent Total', width: 10, value: (r) => r.faceAbsentTotal, numFmt: '0', align: 'center' },
+  { header: 'Camera Incidents', width: 10, value: (r) => r.cameraIncidents, numFmt: '0', align: 'center' },
+  { header: 'Heartbeat Gaps', width: 10, value: (r) => r.heartbeatGaps, numFmt: '0', align: 'center' },
   { header: 'Status', width: 13, value: (r) => r.status },
   { header: 'Started At', width: 17, value: (r) => r.startedAt, numFmt: DATETIME_FORMAT },
   { header: 'Completed At', width: 17, value: (r) => r.completedAt, numFmt: DATETIME_FORMAT },

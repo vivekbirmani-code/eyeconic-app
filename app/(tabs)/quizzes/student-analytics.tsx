@@ -21,7 +21,8 @@ import {
   Clock,
   AlertTriangle,
   Download,
-  Grid3X3
+  Grid3X3,
+  ShieldCheck
 } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { downloadApiReport, getReportDownloadErrorMessage } from '@/services/downloads';
@@ -35,6 +36,7 @@ import QuestionAnalytics from '@/components/analytics/test-analytics/QuestionAna
 import LiveLeaderboard from '@/components/analytics/test-analytics/LiveLeaderboard';
 import GuestParticipantList, { type GuestParticipant } from '@/components/analytics/GuestParticipantList';
 import AttemptDetailModal from '@/components/analytics/AttemptDetailModal';
+import ProctoringOverview from '@/components/analytics/ProctoringOverview';
 import QuestionBankPerformance from '@/components/analytics/QuestionBankPerformance';
 import AnalyticsKpiGrid from '@/components/analytics/AnalyticsKpiGrid';
 import DateRangeFilter from '@/components/analytics/DateRangeFilter';
@@ -94,6 +96,37 @@ interface TestListItem {
 }
 
 interface TestAnalyticsData {
+  /** Phase 7 (§25.2): per-test proctoring rollup (attempts + aggregates). */
+  proctoring?: {
+    attempts: Array<{
+      attemptId: string;
+      sessionId: string;
+      sessionStatus: string;
+      riskScore: number;
+      riskCategory: string;
+      totalViolations: number;
+      integrityStatus: string;
+      focusLossExits: number;
+      multipleFaceEvents: number;
+      faceAbsentTotal: number;
+      cameraIncidents: number;
+      heartbeatGaps: number;
+      startedAt: string | null;
+      endedAt: string | null;
+    }>;
+    rollup: {
+      proctoredAttempts: number;
+      riskDistribution: Record<string, number>;
+      totalViolations: number;
+      focusLossExits: number;
+      multipleFaceEvents: number;
+      faceAbsentTotal: number;
+      cameraIncidents: number;
+      heartbeatGaps: number;
+      flaggedAttempts: number;
+      integrityCounts: Record<string, number>;
+    };
+  };
   test: {
     _id: string;
     title: string;
@@ -131,7 +164,7 @@ export default function Analytics() {
   };
 
   // Tab state
-  const [activeTab, setActiveTab] = useState<'test' | 'student' | 'heatmap'>('test');
+  const [activeTab, setActiveTab] = useState<'test' | 'student' | 'proctoring' | 'heatmap'>('test');
 
   // Test Analytics state
   const [tests, setTests] = useState<TestListItem[]>([]);
@@ -172,6 +205,10 @@ export default function Analytics() {
       fetchTests();
     } else if (activeTab === 'student') {
       fetchStudents();
+    } else if (activeTab === 'proctoring') {
+      // Same test picker (and the same analytics payload) as the Test tab —
+      // the proctoring block rides /analytics/test/:testId.
+      fetchTests();
     } else if (activeTab === 'heatmap') {
       fetchHeatmap();
     }
@@ -403,6 +440,9 @@ export default function Analytics() {
   const tabs = [
     { key: 'test', label: 'Test Analytics' },
     { key: 'student', label: 'Student Analytics' },
+    // Phase 7 (§25.3): the proctoring rollup tab — mentor scoping comes from
+    // the shared /analytics/test payload (D14).
+    { key: 'proctoring', label: 'Proctoring' },
   ];
 
   if (user?.role === 'admin') {
@@ -424,7 +464,7 @@ export default function Analytics() {
       <TabSwitcher
         tabs={tabs}
         activeTab={activeTab}
-        onTabChange={(key) => setActiveTab(key as 'test' | 'student' | 'heatmap')}
+        onTabChange={(key) => setActiveTab(key as 'test' | 'student' | 'proctoring' | 'heatmap')}
       />
 
       {/* Content */}
@@ -521,6 +561,36 @@ export default function Analytics() {
             <View style={styles.emptyContainer}>
               <BookOpen color="#9CA3AF" size={48} />
               <Text style={styles.emptyText}>Select a test to view analytics</Text>
+            </View>
+          )}
+
+          <View style={{ height: 40 }} />
+        </ScrollView>
+      ) : activeTab === 'proctoring' ? (
+        // PROCTORING TAB (Phase 7, §25.2/§25.3) — same test picker and the
+        // SAME analytics payload as the Test tab; the proctoring block
+        // renders the rollup + flagged-attempt table with modal drill-in.
+        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+          <TestDropdown
+            tests={tests}
+            selectedTest={selectedTest}
+            onTestSelect={setSelectedTest}
+            loading={loadingTests}
+          />
+
+          {selectedTest && (
+            <ProctoringOverview
+              proctoring={testAnalytics?.proctoring ?? null}
+              studentPerformance={testAnalytics?.studentPerformance ?? null}
+              loading={loadingTestAnalytics}
+              onAttemptClick={handleStudentAttemptClick}
+            />
+          )}
+
+          {!selectedTest && !loadingTests && (
+            <View style={styles.emptyContainer}>
+              <ShieldCheck color="#9CA3AF" size={48} />
+              <Text style={styles.emptyText}>Select a test to view proctoring</Text>
             </View>
           )}
 
@@ -901,6 +971,7 @@ export default function Analytics() {
       {/* Attempt Detail Modal */}
       <AttemptDetailModal
         attemptId={selectedAttemptId}
+        userRole={user?.role}
         visible={modalVisible}
         onClose={() => {
           setModalVisible(false);
