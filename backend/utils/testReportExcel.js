@@ -1,4 +1,4 @@
-// Styled two-sheet Excel workbook for the test report export. Built from the
+// Styled three-sheet Excel workbook for the test report export. Built from the
 // exact rows collectTestReportData() feeds the CSV export, so both formats
 // always carry identical data — this module only owns presentation.
 //
@@ -9,6 +9,7 @@ const Excel = require('exceljs');
 
 const STUDENT_SHEET_NAME = 'Student Performance';
 const QUESTION_SHEET_NAME = 'Question-wise Analytics';
+const RESPONSES_SHEET_NAME = 'User Responses';
 
 // Analytics UI palette (see components/analytics/* + student-analytics.tsx).
 const COLORS = {
@@ -240,6 +241,275 @@ function buildStudentSheet(workbook, data) {
 }
 
 // ---------------------------------------------------------------------------
+// User Responses sheet
+// ---------------------------------------------------------------------------
+
+// One row per user-question response per attempt. Identity columns repeat on
+// every row (normalized table — filters and pivots stay correct); they are
+// frozen together with the header so wide question columns scroll under a
+// pinned participant block.
+const RESPONSE_COLUMNS = [
+  { header: 'Student Name', width: 22, value: (b) => b.studentName, bold: true, color: COLORS.DARK, wrapChars: 21 },
+  { header: 'Email', width: 26, value: (b) => b.studentEmail, wrapChars: 25 },
+  // Phone/Participant Type are lead-adjacent data: hidden for mentors exactly
+  // like the Student Performance lead columns (guests never reach mentor
+  // exports at all).
+  { header: 'Phone', width: 15, value: (b) => b.studentPhone || '', adminOnly: true },
+  { header: 'Participant Type', width: 13, value: (b) => b.participantType, align: 'center', adminOnly: true },
+  { header: 'Rank', width: 6, value: (b) => b.rank, numFmt: '0', align: 'center' },
+  { header: 'Attempt No', width: 8, value: (b) => b.attemptNumber, numFmt: '0', align: 'center' },
+  { header: 'Attempt ID', width: 26, value: (b) => b.attemptId, identity: true },
+  // Attempt-level totals mirror the Student Performance sheet by
+  // construction (joined from the same collector rows).
+  { header: 'Score (%)', width: 9, value: (b) => b.scorePercentage, numFmt: PERCENT_FORMAT, bold: true, color: COLORS.TEAL },
+  { header: 'Marks Obtained', width: 12, value: (b) => b.marksObtained },
+  { header: 'Total Marks', width: 10, value: (b) => b.totalMarks },
+  { header: 'Correct', width: 7, value: (b) => b.correct, numFmt: '0', align: 'center' },
+  { header: 'Wrong', width: 7, value: (b) => b.incorrect, numFmt: '0', align: 'center' },
+  { header: 'Skipped', width: 7, value: (b) => b.skipped, numFmt: '0', align: 'center' },
+  { header: 'Submitted At', width: 17, value: (b) => b.submittedAt, numFmt: DATETIME_FORMAT },
+  // Question-level columns.
+  { header: 'Q No', width: 6, value: (b, q) => q?.questionNumber, numFmt: '0', align: 'center' },
+  { header: 'Section', width: 14, value: (b, q) => q?.section || '', wrapChars: 13 },
+  { header: 'Subject', width: 13, value: (b, q) => q?.subjectName || '', wrapChars: 12 },
+  { header: 'Topic', width: 15, value: (b, q) => q?.topicName || '', wrapChars: 14 },
+  { header: 'Type', width: 14, value: (b, q) => q?.questionTypeLabel || '', wrapChars: 13 },
+  { header: 'Question', width: 50, value: (b, q) => (q ? (q.questionUnavailable ? 'Question no longer available (removed from question bank)' : q.question) : 'Attempt data no longer available'), wrap: true, wrapChars: 48, questionColumn: true },
+  { header: 'Selected Option', width: 12, value: (b, q) => selectedOptionOf(q), align: 'center', wrap: true, wrapChars: 11 },
+  { header: 'Selected Answer', width: 28, value: (b, q) => selectedAnswerOf(q), wrap: true, wrapChars: 27 },
+  { header: 'Correct Option', width: 12, value: (b, q) => (q && !q.questionUnavailable ? q.correctAnswerLabel : ''), align: 'center', wrap: true, wrapChars: 11 },
+  { header: 'Correct Answer', width: 28, value: (b, q) => (q && !q.questionUnavailable ? (q.correctAnswerText || q.correctAnswerLabel || '') : ''), wrap: true, wrapChars: 27 },
+  { header: 'Status', width: 11, value: (b, q) => q?.resultLabel, align: 'center', statusColor: true },
+  { header: 'Marks', width: 7, value: (b, q) => q?.marks, numFmt: '+0;-0;0', align: 'center' },
+  { header: 'Time (s)', width: 7, value: (b, q) => q?.timeSpent, numFmt: '0', align: 'center' },
+];
+
+// Skipped questions show the app's established "Not answered" wording in the
+// answer column and nothing in the option column — the Status column carries
+// the explicit "Skipped" verdict, so an empty selection is never mistaken
+// for missing data. Answered-but-unresolvable selections fall back to the
+// raw stored value (the shared formatter's behavior).
+const selectedOptionOf = (q) => {
+  if (!q || q.result === 'skipped') return '';
+  return q.studentResponseLabel || '';
+};
+const selectedAnswerOf = (q) => {
+  if (!q) return '';
+  if (q.result === 'skipped') return 'Not answered';
+  return q.studentResponseText || q.studentResponseLabel || '';
+};
+
+const RESPONSES_TITLE_ROW = 1;
+const RESPONSES_META_ROW = 2;
+const RESPONSES_GENERATED_ROW = 3;
+const RESPONSES_HEADER_ROW = 5;
+
+function buildUserResponsesSheet(workbook, data) {
+  const sheet = workbook.addWorksheet(RESPONSES_SHEET_NAME, {
+    properties: { tabColor: { argb: COLORS.TEAL } },
+  });
+
+  const columns = RESPONSE_COLUMNS.filter(
+    (col) => !col.adminOnly || data.includeLeadColumns
+  );
+  columns.forEach((col, i) => {
+    sheet.getColumn(i + 1).width = col.width;
+  });
+
+  const responses = data.userResponses;
+
+  const title = sheet.getCell(RESPONSES_TITLE_ROW, 1);
+  title.value = `User Responses — ${data.test.title || 'Test Report'}`;
+  title.font = { name: FONT, size: 14, bold: true, color: COLORS.DARK };
+  sheet.getRow(RESPONSES_TITLE_ROW).height = 22;
+
+  const meta = sheet.getCell(RESPONSES_META_ROW, 1);
+  meta.value = responses
+    ? `Question-level responses from ${responses.attemptCount} completed attempt${responses.attemptCount === 1 ? '' : 's'} by ${responses.participantCount} participant${responses.participantCount === 1 ? '' : 's'}  ·  +${responses.marking.positiveMarks} / -${responses.marking.negativeMarks} marking`
+    : 'Question-level responses for every completed attempt';
+  meta.font = { name: FONT, size: 9, color: COLORS.MUTED };
+
+  const generated = sheet.getCell(RESPONSES_GENERATED_ROW, 1);
+  generated.value = `Generated ${data.generatedAt.toISOString().replace('T', ' ').slice(0, 16)} UTC`;
+  generated.font = { name: FONT, size: 9, color: COLORS.FAINT };
+
+  // Table header — solid teal band with white bold labels.
+  const headerRow = sheet.getRow(RESPONSES_HEADER_ROW);
+  headerRow.height = 30;
+  columns.forEach((col, i) => {
+    const cell = headerRow.getCell(i + 1);
+    cell.value = col.header;
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.TEAL } };
+    cell.font = { name: FONT, size: 10, bold: true, color: COLORS.WHITE };
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
+  });
+
+  // Flatten to one entry per response row; an attempt whose doc vanished
+  // still keeps a single honest placeholder row. Guest blocks are lead data —
+  // never rendered in mentor exports even if rows leaked into the payload
+  // (the collector already leaves guests out for mentors; same guard as the
+  // Student Performance sheet).
+  const rowEntries = [];
+  (responses?.attempts || []).forEach((block) => {
+    if (block.participantType === 'Guest' && !data.includeLeadColumns) return;
+    if (block.attemptUnavailable || !block.rows || block.rows.length === 0) {
+      rowEntries.push({ block, q: null, placeholder: true });
+      return;
+    }
+    block.rows.forEach((q) => rowEntries.push({ block, q }));
+  });
+
+  // Prebuilt shared style objects (identity × banding × variant): this sheet
+  // can carry tens of thousands of rows, and per-cell property assignment
+  // (cell.font = …, cell.border = …) is several times slower than one
+  // wholesale cell.style reference the Cell constructor itself uses.
+  const styleFor = (col, { band = false, font = null }) => {
+    const style = {
+      font: font || {
+        name: FONT,
+        size: 10,
+        bold: Boolean(col.bold),
+        // Wholesale cell.style assignment skips ExcelJS's per-property color
+        // normalization, so colors must already be {argb} objects — a bare
+        // ARGB string here writes fine in memory but silently drops from the
+        // serialized file.
+        color: { argb: col.color || COLORS.BODY },
+      },
+      alignment: col.wrap
+        ? { horizontal: 'left', vertical: 'top', wrapText: true }
+        : { horizontal: col.align || 'left', vertical: 'middle' },
+      border: { bottom: thinBorder(COLORS.BORDER) },
+    };
+    if (col.numFmt) style.numFmt = col.numFmt;
+    if (band) {
+      style.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.BAND } };
+    }
+    return style;
+  };
+
+  const verdictFont = (argb) => ({ name: FONT, size: 10, bold: true, color: { argb } });
+
+  // One base style per column per banding state…
+  const plainStyles = columns.map((col) => styleFor(col, {}));
+  const bandStyles = columns.map((col) => styleFor(col, { band: true }));
+  // …plus the per-variant overrides the data decides row by row.
+  const statusStyles = {};
+  const unavailableStyles = {};
+  columns.forEach((col, i) => {
+    if (col.statusColor) {
+      statusStyles[i] = {
+        plain: {
+          correct: styleFor(col, { font: verdictFont(COLORS.GREEN) }),
+          incorrect: styleFor(col, { font: verdictFont(COLORS.RED) }),
+          skipped: styleFor(col, { font: verdictFont(COLORS.AMBER) }),
+        },
+        band: {
+          correct: styleFor(col, { band: true, font: verdictFont(COLORS.GREEN) }),
+          incorrect: styleFor(col, { band: true, font: verdictFont(COLORS.RED) }),
+          skipped: styleFor(col, { band: true, font: verdictFont(COLORS.AMBER) }),
+        },
+      };
+    }
+    if (col.questionColumn) {
+      unavailableStyles[i] = {
+        plain: styleFor(col, { font: { name: FONT, size: 10, italic: true, color: { argb: COLORS.MUTED } } }),
+        band: styleFor(col, { band: true, font: { name: FONT, size: 10, italic: true, color: { argb: COLORS.MUTED } } }),
+      };
+    }
+  });
+
+  const wrapColumns = columns
+    .map((col, i) => ({ col, i }))
+    .filter(({ col }) => col.wrapChars || col.wrap);
+
+  // Banding is per ATTEMPT (all rows of one attempt share the shade) so a
+  // participant's block reads as one unit — filters still work row by row.
+  let attemptSeen = -1;
+  let banded = false;
+  rowEntries.forEach((entry, idx) => {
+    if (entry.block !== rowEntries[idx - 1]?.block) {
+      attemptSeen += 1;
+      banded = attemptSeen % 2 === 1;
+    }
+    entry.band = banded;
+  });
+
+  rowEntries.forEach((entry, idx) => {
+    const excelRow = sheet.getRow(RESPONSES_HEADER_ROW + 1 + idx);
+    const isLast = idx === rowEntries.length - 1;
+    const { block, q, band } = entry;
+
+    columns.forEach((col, i) => {
+      const cell = excelRow.getCell(i + 1);
+      cell.value = col.value(block, q);
+
+      let style;
+      if (col.statusColor && q) {
+        const variants = statusStyles[i][band ? 'band' : 'plain'];
+        style = variants[q.result] || variants.skipped;
+      } else if (col.statusColor) {
+        style = (band ? bandStyles : plainStyles)[i];
+      } else if (q?.questionUnavailable && unavailableStyles[i]) {
+        style = unavailableStyles[i][band ? 'band' : 'plain'];
+      } else {
+        style = (band ? bandStyles : plainStyles)[i];
+      }
+      // Strong hairline closes the table.
+      if (isLast) {
+        style = { ...style, border: { bottom: thinBorder(COLORS.BORDER_STRONG) } };
+      }
+      cell.style = style;
+    });
+
+    const wrapNeeded = Math.max(
+      1,
+      ...wrapColumns.map(({ col }) => wrapLines(col.value(block, q), col.wrapChars || 80))
+    );
+    excelRow.height = boundedRowHeight(wrapNeeded);
+  });
+
+  if (rowEntries.length === 0) {
+    const noteCell = sheet.getCell(RESPONSES_HEADER_ROW + 1, 1);
+    noteCell.value = 'No responses available for this test yet.';
+    noteCell.font = { name: FONT, size: 10, italic: true, color: COLORS.MUTED };
+    noteCell.alignment = { horizontal: 'left', vertical: 'middle' };
+    sheet.mergeCells(
+      RESPONSES_HEADER_ROW + 1, 1,
+      RESPONSES_HEADER_ROW + 1, Math.min(columns.length, 6)
+    );
+  }
+
+  // Deleted-question honesty note rides after the table.
+  const missingQuestionCount = responses?.missingQuestionCount || 0;
+  if (missingQuestionCount > 0) {
+    const noteRow = sheet.getRow(RESPONSES_HEADER_ROW + rowEntries.length + 2);
+    const noteCell = noteRow.getCell(1);
+    noteCell.value = `${missingQuestionCount} response row${missingQuestionCount === 1 ? '' : 's'} could not show the question (removed from the question bank after the attempt).`;
+    noteCell.font = { name: FONT, size: 9, italic: true, color: COLORS.MUTED };
+    sheet.mergeCells(noteRow.number, 1, noteRow.number, 8);
+  }
+
+  const lastDataRow = RESPONSES_HEADER_ROW + Math.max(rowEntries.length, 1);
+  // Freeze the identity block (through Attempt ID) together with the header
+  // row — column counts differ between admin and mentor exports.
+  const identitySplit = columns.filter((col) => col.identity).length
+    ? columns.findIndex((col) => col.identity) + 1
+    : 0;
+  sheet.views = [{
+    state: 'frozen',
+    xSplit: identitySplit,
+    ySplit: RESPONSES_HEADER_ROW,
+    topLeftCell: sheet.getCell(RESPONSES_HEADER_ROW + 1, identitySplit + 1).address,
+  }];
+  sheet.autoFilter = {
+    from: { row: RESPONSES_HEADER_ROW, column: 1 },
+    to: { row: lastDataRow, column: columns.length },
+  };
+
+  return sheet;
+}
+
+// ---------------------------------------------------------------------------
 // Question-wise Analytics sheet
 // ---------------------------------------------------------------------------
 
@@ -354,11 +624,13 @@ function buildQuestionSheet(workbook, data) {
 }
 
 /**
- * Builds the two-sheet test report workbook.
+ * Builds the three-sheet test report workbook.
  *
  * @param {object} data the payload returned by collectTestReportData()
  *   ({ test, overview, metrics, students, guests, questions,
- *   includeLeadColumns, generatedAt })
+ *   includeLeadColumns, generatedAt, userResponses? }) — the User Responses
+ *   sheet renders an explicit empty state when userResponses is absent
+ *   (collectors only populate it for the Excel route)
  * @returns {Excel.Workbook} unserialized workbook — callers write it with
  *   workbook.xlsx.writeBuffer()
  */
@@ -369,6 +641,7 @@ function buildTestReportWorkbook(data) {
 
   buildStudentSheet(workbook, data);
   buildQuestionSheet(workbook, data);
+  buildUserResponsesSheet(workbook, data);
 
   return workbook;
 }
@@ -377,4 +650,5 @@ module.exports = {
   buildTestReportWorkbook,
   STUDENT_SHEET_NAME,
   QUESTION_SHEET_NAME,
+  RESPONSES_SHEET_NAME,
 };

@@ -22,7 +22,9 @@ const countGuestAttempts = (quizId) =>
 // (computeTestAnalytics). Same cohort rule as fetchGuestParticipants —
 // completed/auto_submitted lead attempts only; legacy anonymous device-keyed
 // attempts stay out. The projection carries exactly the fields the analytics
-// helpers read on a QuizAttempt (graded answers, marks, timing).
+// helpers read on a QuizAttempt (graded answers, marks, timing) plus the
+// lead-ref and identity snapshots the test report's User Responses sheet
+// joins on (inert for the analytics consumers).
 const fetchGuestAttemptDocs = (quizId) =>
   GuestAttempt.find({
     quiz: quizId,
@@ -30,7 +32,7 @@ const fetchGuestAttemptDocs = (quizId) =>
     guest: { $ne: null },
   })
     .select(
-      'answers totalQuestions score marksObtained totalMarks startTime endTime status sectionPerformance'
+      'answers totalQuestions score marksObtained totalMarks startTime endTime status sectionPerformance guest guestName guestEmail guestPhone'
     )
     .lean();
 

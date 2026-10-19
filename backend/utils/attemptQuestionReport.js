@@ -13,35 +13,12 @@ const Quiz = require('../models/Quiz');
 const QuizAttempt = require('../models/QuizAttempt');
 const GuestAttempt = require('../models/GuestAttempt');
 const QuestionBank = require('../models/QuestionBank');
-const { QUESTION_TYPE_LABELS, QUESTION_TYPES } = require('../constants/question');
 const { assertStudentPerformanceAccess } = require('./studentPerformanceAuth');
-const { buildAttemptResults, formatAnswerForDisplay } = require('./attemptResults');
-const { resolveQuestionType } = require('./analytics');
-const { isAnswerRecorded } = require('./questionHistory');
-
-const roundTo2 = (value) => {
-  const num = Number(value);
-  if (!Number.isFinite(num)) return 0;
-  return Math.round((num + Number.EPSILON) * 100) / 100;
-};
-
-// Human labels for the report's Result column — wording follows the app's
-// Correct/Incorrect/Skipped convention (ScoreLegend + metric cards).
-const RESULT_LABELS = {
-  correct: 'Correct',
-  incorrect: 'Incorrect',
-  skipped: 'Skipped',
-};
-
-// Per-question marks follow finalizeQuizAttempt's exact scheme: correct ->
-// +positiveMarks, incorrect -> -negativeMarks, skipped -> 0. Computed from the
-// CURRENT quiz marking scheme (the scheme is quiz-level, not snapshotted);
-// the attempt summary always shows the marksObtained stored at submission.
-const marksForResult = (result, positiveMarks, negativeMarks) => {
-  if (result === 'correct') return roundTo2(positiveMarks);
-  if (result === 'incorrect') return -roundTo2(negativeMarks);
-  return 0;
-};
+const { buildAttemptResults } = require('./attemptResults');
+const {
+  buildAttemptQuestionRows,
+  RESULT_LABELS,
+} = require('./attemptQuestionRows');
 
 /**
  * Resolve one attempt (registered first, then admin-only guest fallback) and
@@ -156,149 +133,18 @@ async function collectAttemptQuestionReport({ attemptId, user }) {
   const positiveMarks = Number.isFinite(Number(freshQuiz.positiveMarks)) ? Number(freshQuiz.positiveMarks) : 4;
   const negativeMarks = Number.isFinite(Number(freshQuiz.negativeMarks)) ? Math.abs(Number(freshQuiz.negativeMarks)) : 1;
 
-  // ---------------------------------------------------------------------------
-  // Question-row assembly. Rows are paired by STABLE identity, not by
-  // position in the populated array: mongoose populate OMITS refs whose
-  // QuestionBank doc was deleted after the attempt, which would silently
-  // shift positions and mispair every later answer. The fresh (unpopulated)
-  // quiz keeps the original id list/order, and answers carry questionId
-  // (backfilled at submit) — pair on that first, fall back to questionIndex
-  // only for legacy answers created before questionId existed.
-  // ---------------------------------------------------------------------------
-  const answerByQuestionId = new Map(
-    (Array.isArray(attempt.answers) ? attempt.answers : [])
-      .filter((a) => a.questionId)
-      .map((a) => [String(a.questionId), a])
-  );
-  const answerByIndex = new Map(
-    (Array.isArray(attempt.answers) ? attempt.answers : [])
-      .map((a) => [Number(a.questionIndex), a])
-  );
-  const docById = new Map(
-    (attempt.quiz.questions || [])
-      .filter(Boolean)
-      .map((q) => [String(q._id), q])
-  );
-  // Sectioned quizzes name the section the question sat in; flat quizzes
-  // follow the results screen's subject-group convention.
-  const hasSections = Array.isArray(freshQuiz.sections) && freshQuiz.sections.length > 0;
-  const sectionNameFor = (doc) => {
-    if (hasSections) {
-      const section = freshQuiz.sections.find((s) =>
-        (s.questions || []).some((id) => String(id) === String(doc._id))
-      );
-      if (section) return section.name || '';
-    }
-    return doc.subject?.name || 'General';
-  };
-
-  const rowForQuestion = (doc, index, answer) => {
-    // Same classification rule as computeAttemptStats: stored isCorrect with
-    // type-aware isAnswered — never re-graded against the live bank.
-    const questionType = resolveQuestionType(answer, doc);
-    const answered = answer ? isAnswerRecorded(answer.selectedAnswer) : false;
-    const result = !answered ? 'skipped' : (answer.isCorrect === true ? 'correct' : 'incorrect');
-
-    const response = formatAnswerForDisplay(
-      questionType,
-      answer?.selectedAnswer,
-      doc.options,
-      doc.columnA,
-      doc.columnB
-    );
-    // Distinguish "no key on record" from a key that legitimately formats to
-    // an empty string — numerical 0 is a valid key, so test != null.
-    const hasAnswerKey = doc.correctAnswer !== undefined && doc.correctAnswer !== null;
-    const correct = hasAnswerKey
-      ? formatAnswerForDisplay(
-        questionType,
-        doc.correctAnswer,
-        doc.options,
-        doc.columnA,
-        doc.columnB
-      )
-      : { label: '', text: 'Answer key unavailable' };
-
-    return {
-      questionNumber: index + 1,
-      section: sectionNameFor(doc),
-      subjectName: doc.subject?.name || answer?.metadataSnapshot?.subjectName || 'General',
-      topicName: doc.topicName || '',
-      questionType,
-      questionTypeLabel: QUESTION_TYPE_LABELS[questionType] || questionType,
-      question: doc.question || '',
-      questionUnavailable: false,
-      hasQuestionImage: Boolean(doc.questionImage),
-      questionImage: doc.questionImage || null,
-      studentResponseLabel: response.label,
-      studentResponseText: response.text,
-      correctAnswerLabel: correct.label,
-      correctAnswerText: correct.text,
-      result,
-      resultLabel: RESULT_LABELS[result],
-      marks: marksForResult(result, positiveMarks, negativeMarks),
-      timeSpent: answer?.timeSpent || 0,
-    };
-  };
-
-  // Row for a slot whose QuestionBank doc is gone (deleted after the
-  // attempt): the report still represents the question, honestly marked
-  // unavailable, with the verdict from the stored answer.
-  const unavailableRowFor = (index, answer) => {
-    const questionType = answer?.metadataSnapshot?.questionType || QUESTION_TYPES.MCQ_SINGLE;
-    const answered = answer ? isAnswerRecorded(answer.selectedAnswer) : false;
-    const result = !answered ? 'skipped' : (answer.isCorrect === true ? 'correct' : 'incorrect');
-    // Without the question doc there are no options to resolve against — the
-    // formatter still yields the raw label/numeric value where it can.
-    const response = formatAnswerForDisplay(questionType, answer?.selectedAnswer, [], [], []);
-
-    return {
-      questionNumber: index + 1,
-      section: '',
-      subjectName: answer?.metadataSnapshot?.subjectName || 'General',
-      topicName: answer?.metadataSnapshot?.topicName || '',
-      questionType,
-      questionTypeLabel: QUESTION_TYPE_LABELS[questionType] || questionType,
-      question: null,
-      questionUnavailable: true,
-      hasQuestionImage: false,
-      questionImage: null,
-      studentResponseLabel: response.label,
-      studentResponseText: response.text,
-      correctAnswerLabel: '',
-      correctAnswerText: '',
-      result,
-      resultLabel: RESULT_LABELS[result],
-      marks: marksForResult(result, positiveMarks, negativeMarks),
-      timeSpent: answer?.timeSpent || 0,
-    };
-  };
-
-  // One row per slot of the attempt (stored totalQuestions — appended-after
-  // questions never appear). Order follows the quiz's current question list,
-  // the same order every existing results surface uses.
-  const quizQuestionIds = Array.isArray(freshQuiz.questions) ? freshQuiz.questions : [];
-  const summaryTotal = results.summary.totalQuestions || 0;
-  const questions = [];
-  const usedAnswers = new Set();
-  for (let index = 0; index < summaryTotal; index += 1) {
-    const id = quizQuestionIds[index] ? String(quizQuestionIds[index]) : null;
-    const doc = id ? docById.get(id) : undefined;
-    const answer = (id ? answerByQuestionId.get(id) : undefined) ?? answerByIndex.get(index);
-    if (answer) usedAnswers.add(answer);
-    questions.push(doc
-      ? rowForQuestion(doc, index, answer)
-      : unavailableRowFor(index, answer));
-  }
-  // Legacy edge: answers whose slot fell outside the current list (quiz
-  // shortened after the attempt) still belong to THIS attempt — append them
-  // so no submitted response is silently dropped.
-  const extraAnswers = (Array.isArray(attempt.answers) ? attempt.answers : [])
-    .filter((a) => !usedAnswers.has(a));
-  extraAnswers.forEach((answer) => {
-    questions.push(unavailableRowFor(Number(answer.questionIndex), answer));
+  // Question-row assembly lives in the shared attemptQuestionRows module —
+  // the SAME builder the test report's User Responses export uses — so the
+  // two question-level surfaces cannot drift (pairing by questionId against
+  // the fresh quiz's raw id list, stored-isCorrect verdicts, deleted-question
+  // honesty rows, legacy index fallback; see that module's header).
+  const { questions, missingQuestionCount } = buildAttemptQuestionRows({
+    attempt,
+    freshQuiz,
+    populatedQuestions: attempt.quiz.questions || [],
+    positiveMarks,
+    negativeMarks,
   });
-  const missingQuestionCount = questions.filter((q) => q.questionUnavailable).length;
 
   const student = studentOverride !== undefined ? studentOverride : {
     _id: results.student?._id,
@@ -343,5 +189,7 @@ async function collectAttemptQuestionReport({ attemptId, user }) {
 
 module.exports = {
   collectAttemptQuestionReport,
+  // Re-exported for existing importers; the definition lives in
+  // utils/attemptQuestionRows.js (shared with the User Responses export).
   RESULT_LABELS,
 };

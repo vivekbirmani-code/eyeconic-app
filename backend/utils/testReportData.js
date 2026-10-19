@@ -19,6 +19,7 @@ const {
 } = require('./analytics');
 const { fetchGuestParticipants, fetchGuestAttemptDocs } = require('./guestAnalytics');
 const { buildProctoringSummary } = require('./proctoring/summary');
+const { collectUserResponses } = require('./userResponsesReport');
 
 // Phase 7 (§25.2) proctoring export columns. Empty strings for non-proctored
 // attempts and guests (proctoring is registered-only in V1) — the historical
@@ -78,10 +79,13 @@ const attemptDurationMinutes = (start, end) => roundTo2(rawDurationMinutes(start
  * @param {object} params
  * @param {string} params.testId quiz id from the route
  * @param {object} params.user authenticated req.user (role drives scoping)
+ * @param {boolean} [params.includeUserResponses] also collect the per-question
+ *   response rows for every attempt (the Excel export's User Responses
+ *   sheet). Costs nothing on the CSV/JSON paths, which never ask for it.
  * @returns {Promise<object|null>} report payload, or null when the quiz does
  *   not exist
  */
-async function collectTestReportData({ testId, user }) {
+async function collectTestReportData({ testId, user, includeUserResponses = false }) {
   const quiz = await Quiz.findById(testId)
     .populate('subject', 'name')
     .populate('questions');
@@ -113,7 +117,10 @@ async function collectTestReportData({ testId, user }) {
 
   const attempts = await QuizAttempt.find(attemptQuery).populate(
     'student',
-    'name email profilePicture'
+    // phone feeds only the User Responses sheet — mentors already see their
+    // assigned students' phones in-app (mentor-students route), so the field
+    // rides along for every exporter without changing existing outputs.
+    'name email phone profilePicture'
   );
 
   // Public participants are first-class attempts for admins: guest attempts
@@ -259,6 +266,24 @@ async function collectTestReportData({ testId, user }) {
     };
   });
 
+  // User Responses payload (Excel export only). Collected AFTER the shared
+  // aggregates and the questions mapping above: collectUserResponses
+  // populates question subjects on the shared quiz doc, and
+  // computeTestAnalytics/questionAnalytics must keep consuming the
+  // unpopulated docs they have always seen (populating earlier would change
+  // the question-wise subject fallback of the existing sheets). No extra
+  // attempt queries — everything is joined from what this loader fetched.
+  const userResponses = includeUserResponses
+    ? await collectUserResponses({
+        quiz,
+        attempts,
+        students,
+        guests,
+        guestAttempts,
+        isAdmin,
+      })
+    : undefined;
+
   return {
     test: {
       id: String(quiz._id),
@@ -286,6 +311,9 @@ async function collectTestReportData({ testId, user }) {
     students,
     guests,
     questions,
+    // Present only when the caller asked for it (Excel export) — undefined
+    // keeps the CSV/JSON payload shape exactly as before.
+    ...(userResponses ? { userResponses } : {}),
     // Test-level proctoring rollup (§25.2) — same source as the per-row
     // columns above and the app's analytics block.
     proctoring: proctoring.rollup,

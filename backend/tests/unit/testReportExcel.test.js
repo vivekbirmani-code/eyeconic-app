@@ -3,6 +3,7 @@ const {
   buildTestReportWorkbook,
   STUDENT_SHEET_NAME,
   QUESTION_SHEET_NAME,
+  RESPONSES_SHEET_NAME,
 } = require('../../utils/testReportExcel');
 
 // Mirrors the shape returned by collectTestReportData() (utils/testReportData).
@@ -108,6 +109,132 @@ function buildData(overrides = {}) {
     ],
     includeLeadColumns: true,
     generatedAt: new Date('2026-09-11T12:00:00Z'),
+    // Mirrors the userResponses block collectUserResponses() attaches for
+    // the Excel route. One registered attempt (mixed verdicts) + one guest
+    // attempt (all correct) — the same attempts as the sheets above.
+    userResponses: {
+      attempts: [
+        {
+          attemptId: 'att1',
+          participantType: 'Registered',
+          studentName: 'Student One',
+          studentEmail: 'one@example.com',
+          studentPhone: '+919800000001',
+          rank: 1,
+          attemptNumber: 1,
+          score: 1,
+          marksObtained: 4,
+          totalMarks: 8,
+          scorePercentage: 50,
+          correct: 1,
+          incorrect: 1,
+          skipped: 0,
+          submittedAt: new Date('2026-09-01T10:10:00Z'),
+          status: 'completed',
+          rows: [
+            {
+              questionNumber: 1,
+              section: 'Pathology',
+              subjectName: 'Pathology',
+              topicName: 'Genetics',
+              questionType: 'mcq_single',
+              questionTypeLabel: 'MCQ — Single Correct',
+              question: 'Which organelle is the powerhouse of the cell?',
+              questionUnavailable: false,
+              studentResponseLabel: 'B',
+              studentResponseText: 'Mitochondria',
+              correctAnswerLabel: 'B',
+              correctAnswerText: 'Mitochondria',
+              result: 'correct',
+              resultLabel: 'Correct',
+              marks: 4,
+              timeSpent: 30,
+            },
+            {
+              questionNumber: 2,
+              section: 'Pathology',
+              subjectName: 'Pathology',
+              topicName: 'Genetics',
+              questionType: 'numerical',
+              questionTypeLabel: 'Numerical',
+              question: 'How many chambers does the heart have?',
+              questionUnavailable: false,
+              studentResponseLabel: '5',
+              studentResponseText: '5',
+              correctAnswerLabel: '4',
+              correctAnswerText: '4',
+              result: 'incorrect',
+              resultLabel: 'Incorrect',
+              marks: -1,
+              timeSpent: 20,
+            },
+          ],
+          missingQuestionCount: 0,
+        },
+        {
+          attemptId: 'gatt1',
+          participantType: 'Guest',
+          studentName: 'Rahul Sharma',
+          studentEmail: 'rahul.sharma@example.com',
+          studentPhone: '+919876543210',
+          rank: null,
+          attemptNumber: 1,
+          score: 2,
+          marksObtained: 8,
+          totalMarks: 8,
+          scorePercentage: 100,
+          correct: 2,
+          incorrect: 0,
+          skipped: 0,
+          submittedAt: new Date('2026-09-02T09:05:00Z'),
+          status: 'completed',
+          rows: [
+            {
+              questionNumber: 1,
+              section: 'Pathology',
+              subjectName: 'Pathology',
+              topicName: 'Genetics',
+              questionType: 'mcq_single',
+              questionTypeLabel: 'MCQ — Single Correct',
+              question: 'Which organelle is the powerhouse of the cell?',
+              questionUnavailable: false,
+              studentResponseLabel: 'B',
+              studentResponseText: 'Mitochondria',
+              correctAnswerLabel: 'B',
+              correctAnswerText: 'Mitochondria',
+              result: 'correct',
+              resultLabel: 'Correct',
+              marks: 4,
+              timeSpent: 25,
+            },
+            {
+              questionNumber: 2,
+              section: 'Pathology',
+              subjectName: 'Pathology',
+              topicName: 'Genetics',
+              questionType: 'numerical',
+              questionTypeLabel: 'Numerical',
+              question: 'How many chambers does the heart have?',
+              questionUnavailable: false,
+              studentResponseLabel: '',
+              studentResponseText: 'Not answered',
+              correctAnswerLabel: '4',
+              correctAnswerText: '4',
+              result: 'skipped',
+              resultLabel: 'Skipped',
+              marks: 0,
+              timeSpent: 0,
+            },
+          ],
+          missingQuestionCount: 0,
+        },
+      ],
+      attemptCount: 2,
+      participantCount: 2,
+      responseRowCount: 4,
+      missingQuestionCount: 0,
+      marking: { positiveMarks: 4, negativeMarks: 1 },
+    },
     ...overrides,
   };
 }
@@ -150,16 +277,18 @@ const cellValue = (sheet, headerRow, row, header) => {
 const argbOf = (color) => (typeof color === 'string' ? color : color && color.argb);
 
 describe('buildTestReportWorkbook', () => {
-  it('creates exactly two professionally named worksheets', () => {
+  it('creates exactly three professionally named worksheets in order', () => {
     const workbook = buildTestReportWorkbook(buildData());
 
-    expect(workbook.worksheets).toHaveLength(2);
+    expect(workbook.worksheets).toHaveLength(3);
     expect(workbook.worksheets.map((ws) => ws.name)).toEqual([
       STUDENT_SHEET_NAME,
       QUESTION_SHEET_NAME,
+      RESPONSES_SHEET_NAME,
     ]);
     expect(STUDENT_SHEET_NAME).toBe('Student Performance');
     expect(QUESTION_SHEET_NAME).toBe('Question-wise Analytics');
+    expect(RESPONSES_SHEET_NAME).toBe('User Responses');
   });
 
   it('styles, freezes and filters the student table header', () => {
@@ -339,5 +468,158 @@ describe('buildTestReportWorkbook', () => {
     const studentRow = rowOf(sheet, headerRow, 'Student One');
     const scorePctCol = headersOf(sheet, headerRow).indexOf('Score (%)') + 1;
     expect(sheet.getCell(studentRow, scorePctCol).numFmt).toBe('0.0"%"');
+  });
+
+  describe('User Responses sheet', () => {
+    const responsesSheetOf = (workbook) => workbook.getWorksheet(RESPONSES_SHEET_NAME);
+    const responsesHeaderRowOf = (sheet) => headerRowOf(sheet, 'Student Name');
+
+    // Data row lookup by Student Name + Q No pair.
+    const responseRowOf = (sheet, headerRow, name, questionNumber) => {
+      const headers = headersOf(sheet, headerRow);
+      const nameCol = headers.indexOf('Student Name') + 1;
+      const qNoCol = headers.indexOf('Q No') + 1;
+      for (let row = headerRow + 1; row <= headerRow + 500; row += 1) {
+        if (sheet.getCell(row, nameCol).value === name
+          && sheet.getCell(row, qNoCol).value === questionNumber) {
+          return row;
+        }
+      }
+      throw new Error(`Response row for "${name}" Q${questionNumber} not found`);
+    };
+
+    it('styles, freezes identity columns and filters the response table', () => {
+      const workbook = buildTestReportWorkbook(buildData());
+      const sheet = responsesSheetOf(workbook);
+      const headerRow = responsesHeaderRowOf(sheet);
+
+      const headers = headersOf(sheet, headerRow);
+      // Required column contract from the export spec.
+      ['Student Name', 'Email', 'Phone', 'Attempt ID', 'Total Marks',
+        'Q No', 'Question', 'Selected Option', 'Selected Answer',
+        'Correct Option', 'Correct Answer', 'Status'].forEach((header) => {
+        expect(headers).toContain(header);
+      });
+
+      const headerCell = sheet.getCell(headerRow, 1);
+      expect(argbOf(headerCell.style.fill.fgColor).toUpperCase()).toBe('FF01B4AE');
+      expect(argbOf(headerCell.style.font.color).toUpperCase()).toBe('FFFFFFFF');
+      expect(headerCell.style.font.bold).toBe(true);
+
+      const view = sheet.views[0];
+      expect(view.state).toBe('frozen');
+      expect(view.ySplit).toBe(headerRow);
+      // The identity block (through Attempt ID) is frozen left of the split.
+      const identityCols = headers.indexOf('Attempt ID') + 1;
+      expect(view.xSplit).toBe(identityCols);
+
+      expect(sheet.autoFilter).toBeDefined();
+    });
+
+    it('writes one row per response with identity, selection and verdict', () => {
+      const workbook = buildTestReportWorkbook(buildData());
+      const sheet = responsesSheetOf(workbook);
+      const headerRow = responsesHeaderRowOf(sheet);
+
+      // Correct MCQ row: option letter AND text for both selection and key.
+      const correctRow = responseRowOf(sheet, headerRow, 'Student One', 1);
+      expect(cellValue(sheet, headerRow, correctRow, 'Selected Option')).toBe('B');
+      expect(cellValue(sheet, headerRow, correctRow, 'Selected Answer')).toBe('Mitochondria');
+      expect(cellValue(sheet, headerRow, correctRow, 'Correct Option')).toBe('B');
+      expect(cellValue(sheet, headerRow, correctRow, 'Correct Answer')).toBe('Mitochondria');
+      expect(cellValue(sheet, headerRow, correctRow, 'Status')).toBe('Correct');
+      expect(cellValue(sheet, headerRow, correctRow, 'Marks')).toBe(4);
+
+      // Incorrect numerical row keeps the numeric verdict honest.
+      const wrongRow = responseRowOf(sheet, headerRow, 'Student One', 2);
+      expect(cellValue(sheet, headerRow, wrongRow, 'Selected Option')).toBe('5');
+      expect(cellValue(sheet, headerRow, wrongRow, 'Correct Answer')).toBe('4');
+      expect(cellValue(sheet, headerRow, wrongRow, 'Status')).toBe('Incorrect');
+      expect(cellValue(sheet, headerRow, wrongRow, 'Marks')).toBe(-1);
+
+      // Skipped: explicit Skipped status, "Not answered" wording, empty option.
+      const skippedRow = responseRowOf(sheet, headerRow, 'Rahul Sharma', 2);
+      expect(cellValue(sheet, headerRow, skippedRow, 'Status')).toBe('Skipped');
+      expect(cellValue(sheet, headerRow, skippedRow, 'Selected Option')).toBe('');
+      expect(cellValue(sheet, headerRow, skippedRow, 'Selected Answer')).toBe('Not answered');
+      expect(cellValue(sheet, headerRow, skippedRow, 'Marks')).toBe(0);
+
+      // Identity/totals ride on every row and match the attempt block —
+      // including the guest's phone as TEXT (never a number).
+      const guestRow = responseRowOf(sheet, headerRow, 'Rahul Sharma', 1);
+      expect(cellValue(sheet, headerRow, guestRow, 'Phone')).toBe('+919876543210');
+      expect(cellValue(sheet, headerRow, guestRow, 'Participant Type')).toBe('Guest');
+      expect(cellValue(sheet, headerRow, guestRow, 'Marks Obtained')).toBe(8);
+      expect(cellValue(sheet, headerRow, guestRow, 'Score (%)')).toBe(100);
+      expect(cellValue(sheet, headerRow, guestRow, 'Attempt No')).toBe(1);
+
+      // Phone/Attempt ID cells stay strings through serialization.
+      const phoneCol = headersOf(sheet, headerRow).indexOf('Phone') + 1;
+      expect(sheet.getCell(guestRow, phoneCol).type).toBe(Excel.ValueType.String);
+    });
+
+    it('colors the Status column by verdict', () => {
+      const workbook = buildTestReportWorkbook(buildData());
+      const sheet = responsesSheetOf(workbook);
+      const headerRow = responsesHeaderRowOf(sheet);
+      const statusCol = headersOf(sheet, headerRow).indexOf('Status') + 1;
+
+      const correctRow = responseRowOf(sheet, headerRow, 'Student One', 1);
+      expect(argbOf(sheet.getCell(correctRow, statusCol).font.color).toUpperCase()).toBe('FF059669');
+      const wrongRow = responseRowOf(sheet, headerRow, 'Student One', 2);
+      expect(argbOf(sheet.getCell(wrongRow, statusCol).font.color).toUpperCase()).toBe('FFDC2626');
+      const skippedRow = responseRowOf(sheet, headerRow, 'Rahul Sharma', 2);
+      expect(argbOf(sheet.getCell(skippedRow, statusCol).font.color).toUpperCase()).toBe('FFD97706');
+    });
+
+    it('omits lead columns and guest rows for mentor exports', () => {
+      const workbook = buildTestReportWorkbook(buildData({ includeLeadColumns: false }));
+      const sheet = responsesSheetOf(workbook);
+      const headerRow = responsesHeaderRowOf(sheet);
+      const headers = headersOf(sheet, headerRow);
+
+      expect(headers).not.toContain('Participant Type');
+      expect(headers).not.toContain('Phone');
+      expect(() => responseRowOf(sheet, headerRow, 'Rahul Sharma', 1)).toThrow(/not found/);
+
+      // The frozen identity block shrinks with the column set.
+      expect(sheet.views[0].xSplit).toBe(headers.indexOf('Attempt ID') + 1);
+    });
+
+    it('renders an explicit empty state when no responses exist', () => {
+      const workbook = buildTestReportWorkbook(
+        buildData({ userResponses: undefined })
+      );
+      const sheet = responsesSheetOf(workbook);
+      const headerRow = responsesHeaderRowOf(sheet);
+
+      const noteCell = sheet.getCell(headerRow + 1, 1);
+      expect(String(noteCell.value)).toBe('No responses available for this test yet.');
+      expect(sheet.views[0].state).toBe('frozen');
+
+      return expect(workbook.xlsx.writeBuffer()).resolves.toBeDefined();
+    });
+
+    it('survives serialization with freeze, filters, wraps and banding intact', async () => {
+      const workbook = buildTestReportWorkbook(buildData());
+      const buffer = await workbook.xlsx.writeBuffer();
+      const reloaded = await new Excel.Workbook().xlsx.load(buffer);
+
+      const sheet = reloaded.getWorksheet(RESPONSES_SHEET_NAME);
+      const headerRow = responsesHeaderRowOf(sheet);
+      const headers = headersOf(sheet, headerRow);
+
+      expect(argbOf(sheet.getCell(headerRow, 1).fill.fgColor).toUpperCase()).toBe('FF01B4AE');
+      expect(sheet.views[0].state).toBe('frozen');
+      expect(sheet.views[0].ySplit).toBe(headerRow);
+      expect(sheet.views[0].xSplit).toBe(headers.indexOf('Attempt ID') + 1);
+      expect(sheet.autoFilter).toBeDefined();
+
+      const correctRow = responseRowOf(sheet, headerRow, 'Student One', 1);
+      const questionCol = headers.indexOf('Question') + 1;
+      expect(sheet.getCell(correctRow, questionCol).alignment.wrapText).toBe(true);
+      const statusCol = headers.indexOf('Status') + 1;
+      expect(argbOf(sheet.getCell(correctRow, statusCol).font.color).toUpperCase()).toBe('FF059669');
+    });
   });
 });

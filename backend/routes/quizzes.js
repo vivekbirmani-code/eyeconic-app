@@ -2335,12 +2335,17 @@ router.get('/analytics/test-report/:testId/csv', auth, authorize('admin', 'mento
   }
 });
 
-// Styled two-sheet Excel (.xlsx) download of the same test report — the
+// Styled three-sheet Excel (.xlsx) download of the same test report — the
 // mobile/web analytics UI points at this one. Same collector as the CSV, so
-// data is identical; this route only changes presentation.
+// data is identical; this route only changes presentation (the User
+// Responses sheet's question-level rows ride along via the same loader).
 router.get('/analytics/test-report/:testId/excel', auth, authorize('admin', 'mentor'), async (req, res) => {
   try {
-    const data = await collectTestReportData({ testId: req.params.testId, user: req.user });
+    const data = await collectTestReportData({
+      testId: req.params.testId,
+      user: req.user,
+      includeUserResponses: true,
+    });
     if (!data) return res.status(404).json({ message: 'Test not found' });
 
     const workbook = buildTestReportWorkbook(data);
