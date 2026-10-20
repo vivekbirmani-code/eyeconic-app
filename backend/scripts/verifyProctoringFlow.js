@@ -11,6 +11,9 @@
  *   → straggler batch rejection after finalize
  *   → duration-bypass attempt (late manual submit → auto_submitted)
  *   → timeline access control (unassigned mentor 403)
+ *   → Phase 8: digest endpoint (nine §30.2 dimensions, admin only), stray
+ *     ATTENTION_* inertness under attention_disabled, kill-switch mid-attempt
+ *     delivery (§31; last check, state restored immediately)
  *
  * Prints a PASS/FAIL report; exits non-zero on any failure. Family of
  * verifyPublicFlow.js / verify-live-leaderboard.js.
@@ -518,10 +521,70 @@ async function main() {
     && ovrStart.body.proctoringPolicy?.attention?.enabled === false
     && ovrStart.body.proctoringPolicy?.attention?.mode === 'record');
 
+  // Phase 8 WS-E: stray ATTENTION_* from a client that ignored the
+  // accommodation — accepted, stored, provably inert through the real server.
+  const ovrStray = await api('POST', `/api/quizzes/${quiz._id}/attempt/${ovrStart.body.attemptId}/proctoring/events`, {
+    token: ovrToken,
+    body: {
+      sessionId: ovrStart.body.proctoringSessionId, heartbeat: true,
+      events: [{
+        type: 'ATTENTION_DEVIATION_SUSTAINED', source: 'cv',
+        openedAt: new Date(Date.now() - 8000).toISOString(),
+        closedAt: new Date(Date.now() - 1000).toISOString(),
+        confidence: 0.9,
+        idempotencyKey: `verify-stray-${Date.now()}`, clientSeq: 0,
+        metadata: { basis: 'head_pose', calibration: 'captured' },
+      }],
+    },
+  });
+  check('stray attention events under attention_disabled stay inert through the real server',
+    ovrStray.status === 200
+    && ovrStray.body.accepted === 1
+    && !ovrStray.body.actions
+    && (await ProctoringViolation.countDocuments({ session: ovrStart.body.proctoringSessionId })) === 0,
+    JSON.stringify(ovrStray.body));
+
   const ovrDelete = await api('DELETE', `/api/quizzes/proctoring-overrides/${ovrCreate.body.override._id}`, {
     token: adminToken,
   });
   check('override revoked', ovrDelete.status === 200);
+
+  // ---- 10. Phase 8 WS-A: observability digest (§30.2, AC-5) ----
+  const DIGEST_DIMENSIONS = [
+    'falsePositiveRate', 'detectorReliability', 'cameraFailureRate', 'eventAccuracy',
+    'appPerformance', 'crashRate', 'deliveryReliability', 'recoverySuccess',
+    'autoSubmitCorrectness',
+  ];
+  const digestAdmin = await api('GET', '/api/quizzes/proctoring-metrics/digest?days=1', { token: adminToken });
+  const digestDims = digestAdmin.body?.digest?.dimensions ?? {};
+  const digestAsStudent = await api('GET', '/api/quizzes/proctoring-metrics/digest', { token: studentToken });
+  check('proctoring metrics digest endpoint serves all nine §30.2 dimensions (admin only)',
+    digestAdmin.status === 200
+    && DIGEST_DIMENSIONS.every((key) => key in digestDims)
+    && digestAsStudent.status === 403,
+    `admin=${digestAdmin.status} student=${digestAsStudent.status} keys=${Object.keys(digestDims).length}`);
+
+  // LAST CHECK (cheap; state restored immediately after) — the §31 rollback
+  // semantics: gates closed mid-attempt never strand in-flight delivery.
+  await setProctoringEnabled(false, admin._id);
+  const killSwitchBatch = await api('POST', `/api/quizzes/${quiz._id}/attempt/${ovrStart.body.attemptId}/proctoring/events`, {
+    token: ovrToken,
+    body: {
+      sessionId: ovrStart.body.proctoringSessionId, heartbeat: true,
+      events: [{
+        type: 'FACE_NOT_DETECTED', source: 'cv',
+        openedAt: new Date(Date.now() - 7000).toISOString(),
+        closedAt: new Date(Date.now() - 1000).toISOString(),
+        confidence: 0.9,
+        idempotencyKey: `verify-killswitch-${Date.now()}`, clientSeq: 1,
+        metadata: { basis: 'detection_health', faceCountPeak: 1 },
+      }],
+    },
+  });
+  await setProctoringEnabled(true, admin._id); // restore BEFORE recording the check
+  check('kill switch closed mid-attempt keeps event delivery open',
+    killSwitchBatch.status === 200 && killSwitchBatch.body.accepted === 1,
+    JSON.stringify(killSwitchBatch.body));
 
   // ---- Report ----
   console.log('\n[verify] ========= RESULT =========');

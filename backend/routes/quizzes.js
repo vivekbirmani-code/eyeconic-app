@@ -129,6 +129,9 @@ router.use('/:id/proctoring', require('./proctoring'));
 // Phase 7 (§26.5) — admin accommodation-override CRUD. Mounted BEFORE the
 // single-segment /:id routes so the literal path always wins.
 router.use('/proctoring-overrides', require('./proctoring').overridesRouter);
+// Phase 8 (§30.2) — admin observability digest. Same mount-order rule as
+// the overrides router directly above.
+router.use('/proctoring-metrics', require('./proctoring').digestRouter);
 
 const roundTo2 = (value) => {
   const num = Number(value);

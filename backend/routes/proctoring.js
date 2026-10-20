@@ -502,3 +502,40 @@ overridesRouter.delete('/:overrideId', async (req, res) => {
 module.exports = router;
 module.exports.overridesRouter = overridesRouter;
 module.exports.OVERRIDE_REASONS = OVERRIDE_REASONS;
+
+// ===== Phase 8 (§30.2, WS-A) — observability metrics digest, admin only =====
+//
+// On-demand window aggregation of the nine §30.2 monitoring-quality
+// dimensions (utils/proctoring/metricsDigest.js). Every dimension renders an
+// honest verdict — measured / partial / not captured — including at zero
+// data; that IS the AC-5 property. The daily-email half of this feature is
+// dormant server-side machinery (server.js interval) until
+// PROCTORING_DIGEST_RECIPIENTS is configured; this endpoint needs no flag.
+const { buildProctoringMetricsDigest } = require('../utils/proctoring/metricsDigest');
+
+const digestRouter = require('express').Router();
+
+digestRouter.use(auth, authorize('admin'));
+
+// GET /api/quizzes/proctoring-metrics/digest?days=N (default 1, clamp 1–30):
+// window = [startOfDay(now − (days−1) days), now].
+digestRouter.get('/digest', async (req, res) => {
+  try {
+    const days = Math.min(30, Math.max(1, Number(req.query.days) || 1));
+    const now = new Date();
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - (days - 1));
+    const digest = await buildProctoringMetricsDigest({ from: start, to: now });
+    return res.status(200).json({ success: true, digest, requestId: req.requestId });
+  } catch (error) {
+    logger.error('Proctoring metrics digest failed', {
+      requestId: req.requestId, errorMessage: error?.message,
+    });
+    return res.status(500).json({
+      success: false, message: 'Server error', code: 'INTERNAL_ERROR', requestId: req.requestId,
+    });
+  }
+});
+
+module.exports.digestRouter = digestRouter;

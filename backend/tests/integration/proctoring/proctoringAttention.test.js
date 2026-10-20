@@ -327,3 +327,176 @@ describe('Phase 5 — all four attention types are record-only through ingest (D
     expect(res.status).toBe(400);
   });
 });
+
+describe('Phase 8 §32 AC-3 — attention_disabled accommodation end-to-end', () => {
+  let admin;
+  let student;
+  let quiz;
+
+  beforeEach(async () => {
+    await db.clearDatabase();
+    resetPrecheckRateLimits();
+    resetProctoringEventRateLimits();
+    mockAiProctoringFlag = true;
+    admin = await createUser({ role: 'admin' });
+    student = await createUser({ role: 'student' });
+    const subject = await createSubject('Accommodation');
+
+    const questions = [];
+    for (let i = 0; i < 2; i += 1) {
+      questions.push(await QuestionBank.create({
+        subject: subject._id, topicName: 'Acc', subtopicName: 'Mod',
+        system: 'Access', questionType: 'mcq_single', difficulty: 'medium',
+        question: `Acc Q ${i}`, options: ['A', 'B', 'C', 'D'], correctAnswer: 1,
+      }));
+    }
+    quiz = await Quiz.create({
+      title: `AC-3 Quiz ${Date.now()}`,
+      subject: subject._id, testType: 'daily', duration: 20,
+      questions: questions.map((q) => q._id),
+      assignedStudents: [student.user._id],
+      createdBy: admin.user._id,
+      proctoring: { enabled: true },
+    });
+    await setProctoringEnabled(true, admin.user._id);
+  });
+
+  const grantOverride = (body) =>
+    request(app)
+      .post('/api/quizzes/proctoring-overrides')
+      .set('Authorization', `Bearer ${admin.token}`)
+      .send(body);
+
+  /** Full real path: override CRUD → precheck → consent → /start. */
+  const startWithOverride = async (overrideBody) => {
+    const granted = await grantOverride(overrideBody);
+    expect(granted.status).toBe(201);
+    const pre = await request(app)
+      .post(`/api/quizzes/${quiz._id}/proctoring/precheck-report`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send(reportWith(BASELINE));
+    expect(pre.status).toBe(200);
+    const consent = await request(app)
+      .post(`/api/quizzes/${quiz._id}/proctoring/consent`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({ precheckToken: pre.body.precheckToken, consentTextVersion: '2026-09-v1', surface: 'app-android' });
+    expect(consent.status).toBe(200);
+    const start = await request(app)
+      .post(`/api/quizzes/${quiz._id}/start`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({ precheckToken: pre.body.precheckToken });
+    expect(start.status).toBe(201);
+    return start;
+  };
+
+  const postBatch = (events) =>
+    request(app)
+      .post(`/api/quizzes/${quiz._id}/attempt/${startWithOverride.attemptId}/proctoring/events`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({ sessionId: startWithOverride.sessionId, heartbeat: true, events });
+
+  it('an attention_disabled override created via the real CRUD route disables attention in the frozen policy', async () => {
+    const start = await startWithOverride({
+      studentId: student.user._id,
+      reasonCode: 'attention_disabled',
+    });
+    // Locked in jest (the verify script asserts it too — now both channels).
+    expect(start.body.proctoringPolicy.attention.enabled).toBe(false);
+    // Mode stays D6-locked even under the accommodation.
+    expect(start.body.proctoringPolicy.attention.mode).toBe('record');
+  });
+
+  it('stray ATTENTION_* events under an attention_disabled snapshot are stored but provably inert (D6), while the focus ladder still walks', async () => {
+    const start = await startWithOverride({
+      studentId: student.user._id,
+      reasonCode: 'attention_disabled',
+    });
+    startWithOverride.attemptId = start.body.attemptId;
+    startWithOverride.sessionId = start.body.proctoringSessionId;
+
+    // A buggy or hostile client keeps emitting attention events — the server
+    // accepts and stores them (rejecting the batch would endanger the same
+    // batch's focus events) but they can never act.
+    const attentionTypes = [
+      'HEAD_POSE_EXTREME', 'HEAD_POSE_REPEATED',
+      'ATTENTION_DEVIATION_SUSTAINED', 'ATTENTION_DEVIATION_REPEATED',
+    ];
+    const stray = await postBatch(attentionTypes.map((type, i) => ({
+      type, source: 'cv',
+      openedAt: Date.now() - 40_000 + i * 1000,
+      closedAt: Date.now() - 32_000 + i * 1000,
+      confidence: 0.9,
+      idempotencyKey: `ac3-att-${i}-${Math.random().toString(36).slice(2, 8)}`,
+      clientSeq: i,
+      metadata: { basis: 'head_pose', calibration: 'captured' },
+    })));
+    expect(stray.status).toBe(200);
+    expect(stray.body.accepted).toBe(4);
+    expect(stray.body.actions).toBeUndefined();
+
+    // Meanwhile the focus ladder walks EXACTLY as without the accommodation:
+    // default tolerance 3 → WARN ×3, then FINAL_WARN on the 4th episode.
+    const focusKinds = [];
+    for (let i = 0; i < 4; i += 1) {
+      const res = await postBatch([{
+        type: 'APP_BACKGROUND', source: 'os',
+        openedAt: Date.now() - 30_000, closedAt: Date.now() - 27_000,
+        idempotencyKey: `ac3-focus-${i}-${Math.random().toString(36).slice(2, 8)}`,
+        clientSeq: 10 + i,
+        metadata: { pattern: 'single' },
+      }]);
+      expect(res.status).toBe(200);
+      expect(res.body.actions).toHaveLength(1);
+      focusKinds.push(res.body.actions[0].kind);
+    }
+    expect(focusKinds).toEqual(['WARN', 'WARN', 'WARN', 'FINAL_WARN']);
+
+    // Consequences exist ONLY for focus.loss.
+    const violations = await ProctoringViolation.find({ session: startWithOverride.sessionId });
+    expect(violations).toHaveLength(4);
+    expect(violations.every((v) => v.ruleId === 'focus.loss')).toBe(true);
+
+    // Risk: the attention row contributes exactly zero (D6), focus rows do not.
+    const session = await ProctoringSession.findById(startWithOverride.sessionId);
+    const attentionRow = (session.riskBreakdown || []).find((row) => row.input === 'attentionEvent');
+    expect(attentionRow).toMatchObject({ events: 4, points: 0, contribution: 0 });
+
+    // Stored attention events carry no action stamp — stored-inert.
+    const storedAttention = await ProctoringEvent.find({
+      session: startWithOverride.sessionId, type: { $in: attentionTypes },
+    });
+    expect(storedAttention).toHaveLength(4);
+    expect(storedAttention.every((e) => !e.actionTaken)).toBe(true);
+
+    // Timeline keeps the attention rows visible (stored-inert, NOT filtered —
+    // the locked Phase 8 decision) alongside the focus warnings.
+    const timeline = await request(app)
+      .get(`/api/quizzes/attempt/${startWithOverride.attemptId}/proctoring/timeline`)
+      .set('Authorization', `Bearer ${student.token}`);
+    expect(timeline.status).toBe(200);
+    const timelineTypes = timeline.body.timeline.events.map((e) => e.type);
+    expect(timelineTypes).toEqual(expect.arrayContaining(attentionTypes));
+    expect(timelineTypes).toContain('WARNING_DELIVERED');
+    const attentionRows = timeline.body.timeline.events.filter(
+      (e) => attentionTypes.includes(e.type)
+    );
+    expect(attentionRows.every((e) => e.category === 'cv_observation')).toBe(true);
+  });
+
+  it('a relaxed_thresholds override freezes the merged deviation threshold into the session policy', async () => {
+    const start = await startWithOverride({
+      studentId: student.user._id,
+      reasonCode: 'relaxed_thresholds',
+      overrides: { thresholds: { deviation: { deg: 50 } } },
+    });
+    // Attention stays ENABLED (this accommodation relaxes, never disables).
+    expect(start.body.proctoringPolicy.attention.enabled).toBe(true);
+    // Merge semantics (locked here): the override replaces the deviation
+    // SECTION, so an override naming only deg carries only deg into the
+    // frozen snapshot. Effective client behavior is unchanged regardless —
+    // resolveAttentionThresholds resolves every leaf with ?? default, so the
+    // student still gets deg 50 + the default 4000 ms sustain.
+    expect(start.body.proctoringPolicy.attention.thresholds.deviation)
+      .toEqual({ deg: 50 });
+  });
+});

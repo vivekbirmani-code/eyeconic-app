@@ -171,17 +171,23 @@ const buildProctoringSummary = async (attemptIds) => {
   return { attempts, rollup: rollupProctoringRows(attempts) };
 };
 
+// Canonical camera-incident vocabulary (§25.2): the export column and the
+// Phase 8 §30.2 digest dimension share ONE list — never re-spell it inline.
+const CAMERA_INCIDENT_TYPES = [
+  'CAMERA_UNAVAILABLE',
+  'CAMERA_PERMISSION_REVOKED',
+  'CAMERA_TRACK_ENDED',
+  'CAMERA_FEED_DARK',
+  'CAMERA_FEED_FROZEN',
+  'MODEL_UNAVAILABLE',
+];
+
 /** The §25.2 export columns, derived from one session's denormalized counts. */
 const proctoringColumns = (eventCounts) => ({
   focusLossExits: eventCounts.APP_BACKGROUND || 0,
   multipleFaceEvents: eventCounts.MULTIPLE_FACES_DETECTED || 0,
   faceAbsentTotal: eventCounts.FACE_NOT_DETECTED || 0,
-  cameraIncidents: (eventCounts.CAMERA_UNAVAILABLE || 0)
-    + (eventCounts.CAMERA_PERMISSION_REVOKED || 0)
-    + (eventCounts.CAMERA_TRACK_ENDED || 0)
-    + (eventCounts.CAMERA_FEED_DARK || 0)
-    + (eventCounts.CAMERA_FEED_FROZEN || 0)
-    + (eventCounts.MODEL_UNAVAILABLE || 0),
+  cameraIncidents: CAMERA_INCIDENT_TYPES.reduce((sum, type) => sum + (eventCounts[type] || 0), 0),
   heartbeatGaps: eventCounts.HEARTBEAT_GAP || 0,
 });
 
@@ -220,6 +226,7 @@ const rollupProctoringRows = (rows) => {
 };
 
 module.exports = {
+  CAMERA_INCIDENT_TYPES,
   buildSessionSummary,
   computeSessionSummary,
   freezeSessionSummary,

@@ -1522,6 +1522,10 @@ review-triage labels** — never alter scores; `critical` means "priority review
 
 ### 19.5 Calibration process (normative — before aggressive enforcement)
 
+*See `docs/ai-proctoring-calibration-round-1.md` for the executed round 1
+(§47 / Phase 8 WS-D): retained values with rationale, the §29.4 replay
+suite, and the device-session confirmations.*
+
 1. Start with the transparent provisional weights (§19.2) in **shadow mode** (§31 Stage 2).
 2. Collect structured event data from real attempts + supervised test sessions.
 3. Measure false positives per event type (review dismissals / total events of type).
@@ -2116,6 +2120,9 @@ and real devices from the spike matrix.
   client timer → `auto_submitted`; grace window behavior; resume long after deadline.
 - `proctoringFeatureGate.test.js` — flag off → 503 everywhere incl. admin reads; AppSettings
   kill switch overrides quiz config; strict-CV gate off blocks any CV auto-submit path.
+  [Phase 8 reconciliation: flag-off 503 applies to NEW-session surfaces (precheck/consent/
+  start); in-flight event delivery and historical reads (session/timeline/review/analytics)
+  deliberately continue — §31 rollback safety; locked in proctoringSecurity.test.js §47.]
 
 ### 29.3 Client unit tests (root ts-jest)
 
@@ -3664,3 +3671,170 @@ other students). Server-side owner access to /timeline already existed (7-lite).
 All rollout gates remain OFF. Remaining roadmap: Phase 8 (hardening matrix,
 security pass, calibration round 1) → Phase 9 (staged rollout), the optional
 preview attachment, and the Phase 5 anchored device protocol (§45.4).
+
+## 47. Phase 8 — Hardening implementation record (2026-10-20)
+
+Executed per `docs/ai-proctoring-phase-8-execution-plan.md` (workstreams WS-A…WS-I).
+Hardening only: every rollout gate stayed OFF, attention stayed D6-locked
+`record`, and no consequence-path behavior changed anywhere.
+
+### 47.1 What shipped
+
+- **WS-A observability digest (§30.2, AC-5):** NEW
+  `backend/utils/proctoring/metricsDigest.js` (nine-dimension window
+  aggregation — every dimension returns `{verdict, value, basis, note}` with
+  verdict `measured|partial|not_captured`; zero-data digests still carry all
+  nine keys — that IS the AC-5 property; text+HTML renderers; dormant email
+  sender keyed on `PROCTORING_DIGEST_RECIPIENTS`, `PROCTORING_DIGEST_DISABLED=1`
+  kill, failures logged never thrown). `digestRouter` (admin-only
+  `GET /api/quizzes/proctoring-metrics/digest?days=1..30`) appended to
+  `routes/proctoring.js`, mounted in `routes/quizzes.js` before single-segment
+  `/:id` routes. `server.js` schedules the sender every 24 h inside the
+  connectDatabase callback (no immediate first run — a restart loop can never
+  email-storm; interval wiring untested by design, same as the sweep).
+  `summary.js` exports `CAMERA_INCIDENT_TYPES` (pure extraction; the export
+  column and digest dimension-3 share one list).
+- **WS-B §29.7 security suite:** NEW
+  `tests/integration/proctoring/proctoringSecurity.test.js` — guest
+  token-kind confusion (401 across all nine proctoring surfaces), kill-switch
+  §31 semantics (new-session surfaces 503 while in-flight delivery, session/
+  timeline reads, review and analytics continue), deliberate clientSeq-gap
+  flood (10×50 batches → flood-flag at the 500 cap, exactly 500 stored, zero
+  violations, attention risk row 0/0, no actions), rate-limiter isolation
+  (A exhausted / B unaffected, both limiters) + Date.now-spy window-expiry
+  recovery, same-student cross-attempt 409 via two quizzes (retakes refused —
+  ground truth), plausible back-dating (30-min-old APP_BACKGROUND accepted,
+  exactly one WARN, idempotent replay, serverAt-ordered timeline at receipt
+  position — no reorder/amplify; >24 h → 400). Already-covered §29.7 rows
+  cited, not duplicated.
+- **WS-C AC-3 server-side:** three new tests in
+  `proctoringAttention.test.js` — override through the real CRUD → frozen
+  `attention.enabled:false` at /start; stray ATTENTION_* under the
+  accommodation stored-but-inert (all four types accepted, no actions, only
+  focus.loss violations, timeline keeps the rows visible) while the focus
+  ladder walks WARN×3→FINAL_WARN; relaxed_thresholds freeze.
+- **WS-D calibration round 1 (§19.5, AC-4):** NEW root ts-jest suite
+  `services/__tests__/proctoringCalibrationScenarios.test.ts` (13 §29.4 rows
+  + summary-table builder; every row an assertion — a red row means
+  calibration drift) and NEW `docs/ai-proctoring-calibration-round-1.md`
+  (pipeline formula, §45.3 seed evidence, every threshold RETAINED-UNCHANGED
+  with rationale, the printed replay table, not-measurable-now list).
+- **WS-E verify script:** three new checks (digest admin-only with all nine
+  dimensions; stray attention inert through the real server; kill-switch
+  mid-attempt delivery LAST with immediate state restore) → **52/52**.
+- Production-code touches are EXACTLY the sanctioned set (metricsDigest.js
+  new, digestRouter + one mount line, server.js interval,
+  CAMERA_INCIDENT_TYPES extraction). No test forced any other
+  production-code change.
+
+### 47.2 Evidence (WS-F interim + WS-I final runs, 2026-10-20)
+
+- Backend full: **87 suites / 1201 tests green** — one WS-F run completed
+  fully clean; the WS-I final run flagged two suites
+  (leaderboardExport/questionBank) at 202–249 s runtimes that pass solo in
+  53 s (75/75) — the §46.2 mongodb-memory-server contention class, suite
+  identity varies run to run, every flagged suite passes deterministically
+  solo.
+- Root client: **24 suites / 292 tests green** (was 23/278; +calibration
+  suite 14).
+- `backend/scripts/verifyProctoringFlow.js`: **52/52**.
+- Strict tsc over the one touched TS file via the temp no-extends tsconfig:
+  clean. New suites each green in isolation before the full run (plan
+  discipline).
+
+### 47.3 Device session — §29.4 matrix verdicts (WS-G, 2026-10-20, OnePlus Nord, user-driven, single operator, evening)
+
+Harness per the phase-8 plan §WS-G (driver :3100/:3101 in-memory, Metro
+:8081 CI=1, adb reverse; the user drove the phone, the agent verified from
+server truth only). Camera throughput measured 7.4–7.6 fps at p95 ~163 ms
+inter-frame (the §45.3 session measured ~3.6 fps — the Phase 2b streaming
+transport doubled it). Mid-session incidents (USB drop → replug; the
+pre-installed APK silently ignored Metro with its embedded old API URL —
+reinstalled the dev client fresh; recorded as harness lessons, not app
+defects).
+
+| § | Row | Verdict | Evidence |
+|---|---|---|---|
+| P1-1 | Lighting dim→bright | CONFIRMED | one CAMERA_FEED_DARK advisory; zero warnings/violations |
+| P1-1b | Backlight (evening) | CONFIRMED (minimal-impact note) | no camera events; one record-only HEAD_POSE_REPEATED from repositioning |
+| P1-2 | Camera positions ×4 | CONFIRMED | baseline absorbed; one record-only REPEATED total |
+| P1-3 | Distances close/far | CONFIRMED | no visibility markers even at far; zero violations |
+| P1-4 | Lens cover 10 s / 35 s | CONFIRMED | 10 s completely free; 35 s → one facePresence.absent WARN (the cover crossed the 8 s floor — designed ladder), clean re-acquire, NO auto-submit |
+| P1-5 | Person walks behind | NOT CAPTURED | no second person; mechanism unit-locked |
+| P1-6 | Partial face 10 s+ | CONFIRMED | zero events (under the allowed minor marker) |
+| P2-7 | Anchored SUSTAINED hold | NOT CAPTURED on device | 7 calibrated attempts bracketed both pocket edges (<35° and ≥50° repeatedly); HEAD_POSE_EXTREME ×4 + FACE_PARTIALLY_VISIBLE ×2 around the edges; §17.5 extreme-over-deviation precedence observed live repeatedly; mechanism synthetically locked (calibration rows a1/a2) |
+| P2-8 | Repeated glances → DEVIATION_REPEATED | CONFIRMED | captured ON DEVICE ×2 (rehearsal glance patterns; in/out transitions) — the §45.3 device gap for this type is CLOSED; window-consumption semantics cited to suite rows a3/a4 |
+| P2-9 | AC-3 accommodations | CONFIRMED | override via real admin CRUD → frozen attention.enabled:false → attention behavior (incl. extreme turns) emitted NOTHING while a 5 s app-switch was caught + warned; + WS-C jest locks |
+| P3-10 | Network interruption 30 s | CONFIRMED (core) | buffered events delivered after airplane-mode reconnect; correctly NO heartbeat gap at 30 s (< 90 s timeout); incidentally the FULL D3 ladder to a real policy auto-submit (WARN×3 → FINAL_WARN → SUBMIT, autoSubmitReason kind policy / focus.maxViolations) — the 5th qualifying absence was the airplane shade itself |
+| P3-11 | Sub-2 s blips ×10 | CONFIRMED | 7/10 dropped by the 2 s floor; 3 real ≥2 s round trips counted (device switch animation ≈2–3 s) and walked the ladder to FINAL_WARN |
+| P3-12 | Incoming call | NOT CAPTURED | the iPhone is the hotspot — the test would destroy the network path; honestly skipped |
+| P3-13 | Permission-dialog backgrounding | NOT CAPTURED | not staged in the window; honestly skipped |
+| P3-14 | 20-excursion focus run | EVIDENCED IN PART | full ladder to SUBMIT captured with 5 real excursions across the session; 20-excursion volume not run (time); §40.4 evidence stands |
+| P3-15 | Screen-off ≥90 s | CONFIRMED | HEARTBEAT_GAP + ACTIVE→DEGRADED(heartbeat_timeout)→DEGRADED→ACTIVE(heartbeat_recovered) pair, session self-healed; honest note: screen-off is ALSO a real app-away → one gentle focus WARN in the fresh session (dual-signal design, non-accusatory copy) |
+| P3-16 | FLAG_SECURE lifecycle | CONFIRMED | user-observed screenshot block during the attempt + server deterrence stamp android-flagsecure at session start |
+| P3-17 | Glasses / glare | CONFIRMED | glasses worn the entire session, detection flawless; explicit glare hold → zero events (suppression silent) |
+| P3-18 | Fallback-calibration session | NOT CAPTURED | baseline-less precheck not drivable on device this session; unit-locked only (§45.4 precedent) |
+
+Incidental banks: attempt #1 closed at exactly 20:00 by the client timer
+(server autoSubmitReason correctly absent for that path); monitoring
+continued under a stacked route during the spike-screen rehearsal (stack
+navigation keeps the taking screen mounted) — precisely how the
+DEVIATION_REPEATED device captures happened.
+
+### 47.4 Deviations and reviewed decisions
+
+1. **Kill-switch reconciliation vs §29.2:** the shipped semantics is
+   flag-off → 503 on NEW-session surfaces (precheck/consent/start) while
+   in-flight event delivery and historical reads (session/timeline/review/
+   analytics) deliberately continue — §31 rollback safety. §29.2's early
+   "503 everywhere" line is bracketed accordingly (below); the semantics is
+   locked by proctoringSecurity.test.js (WS-B) and the verify script's last
+   check.
+2. **Digest delivery is dormant-until-recipients** — the AC-5 carrier is the
+   admin endpoint + renderers (all nine dimensions at any data volume); no
+   new frontend surface was built (V1.1 scope decision, locked at planning).
+3. **Dimensions 5/6/7 (app performance, crash rate, delivery reliability)
+   render honest not_captured with context** — instrumentation deferred to
+   V1.1; nothing is invented.
+4. **Stray ATTENTION_* under attention_disabled are stored-inert, not
+   rejected** — rejecting a batch would endanger the same batch's focus
+   events from a buggy client; D6 is the guarantee (locked by WS-C + the
+   verify script).
+5. **No threshold was tuned in calibration round 1** — every default
+   recorded RETAINED-UNCHANGED with rationale; the 35° deviation band remains
+   the first tuning candidate once shadow data exists (calibration report
+   §3). The device session's 7-attempt pocket bracketing is recorded there
+   as supporting evidence for that candidacy.
+6. **Device matrix = Nord only; walks-behind NOT CAPTURED** (no second
+   person). One operator, evening lighting — noted per row where it mattered.
+7. **relaxed_thresholds merges per-SECTION, not per-leaf:** an override
+   naming only deviation.deg drops sustainMs from the frozen snapshot.
+   Effective client behavior is identical (resolveAttentionThresholds
+   resolves every leaf with ?? default), so nothing changes for the student;
+   left unchanged (a production fix was not sanctioned in Phase 8) and
+   locked as-is by the WS-C test with an explanatory comment. The §46.1
+   "merged leaf-by-leaf" wording overstates — reconcile in a later phase.
+8. **Digest route is /digest** (plan WS-A wrote '/'; WS-E and the
+   verification section both said '/digest' — implemented per the majority).
+9. **Anchored 2.5 s glances complete BOTH pattern windows** (orient-away at
+   3×2 s AND deviation at 4×1.5 s) — recorded as a calibration observation
+   (report §4): the same physical glances legitimately emit both record-only
+   types; if real reviews ever dismiss one but confirm the other, the two
+   windows are the first place to look.
+
+### 47.5 Honest limits
+
+- ATTENTION_DEVIATION_SUSTAINED remains uncaptured ON DEVICE (unit + suite
+  locked; both band edges bracketed live by the same operator whose turns
+  skip the ~15° pocket — the §45.3 aiming-error lesson, now quantified
+  across 7 calibrated attempts). A future session with a live-readout
+  rehearsal immediately before a single hold remains the way to close it.
+- Single device class (Nord); low-end second device remains waived (D1/§44).
+- Crash-rate, app-performance and delivery-reliability dimensions are not
+  measurable with today's instrumentation (§47.4-3).
+- The 60-batch limiter test and the 10×50 flood are the suite's slowest
+  members; full-suite runtime grew to ~157 s with the usual memory-server
+  contention caveat (§46.2/§47.2).
+
+All rollout gates remain OFF. Remaining roadmap: Phase 9 (staged rollout),
+the optional preview attachment, and a future SUSTAINED-hold device retry.

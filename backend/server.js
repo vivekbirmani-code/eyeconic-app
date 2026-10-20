@@ -344,6 +344,17 @@ const startDatabase = async () => {
         setInterval(runAttemptSweep, sweepIntervalMs);
         logger.info('Overdue-attempt sweep scheduled', { intervalMs: sweepIntervalMs });
       }
+
+      // Phase 8 (§30.2) — daily proctoring metrics digest. Dormant until
+      // PROCTORING_DIGEST_RECIPIENTS is configured (the sender itself logs a
+      // skip when empty); PROCTORING_DIGEST_DISABLED=1 removes the timer
+      // entirely. No immediate first run — first digest 24 h after boot, so a
+      // restart loop can never email-storm.
+      if (process.env.PROCTORING_DIGEST_DISABLED !== '1') {
+        const { sendProctoringMetricsDigest } = require('./utils/proctoring/metricsDigest');
+        setInterval(sendProctoringMetricsDigest, 24 * 60 * 60 * 1000);
+        logger.info('Proctoring metrics digest scheduled (24h)');
+      }
     });
   } catch {
     // Retry initial connection only — ongoing reconnects are handled by mongoose.
