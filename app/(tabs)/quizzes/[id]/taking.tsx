@@ -16,7 +16,7 @@ import {
 } from 'react-native';
 import { ScreenContainer } from '@/components/layout';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { ChevronLeft, ChevronRight, Flag, AlertCircle, X } from 'lucide-react-native';
+import { ChevronLeft, ChevronRight, Flag, AlertCircle, X, MessageSquareWarning } from 'lucide-react-native';
 import type { CameraView } from 'expo-camera';
 import { api } from '@/services/api';
 import { useQuiz } from '@/context/QuizContext';
@@ -33,6 +33,7 @@ import { PROCTORING_COPY } from '@/utils/proctoringCopy';
 import { getSocketURL } from '@/services/config';
 import { formatToIST } from '@/utils/date';
 import QuestionPrompt from '@/components/quiz/QuestionPrompt';
+import { ReportQuestionDialog } from '@/components/quiz/ReportQuestionDialog';
 import { QuestionType, StudentResponse, isResponseAnswered } from '@/types/question';
 
 interface Question {
@@ -104,6 +105,9 @@ function QuizTakingContent() {
   const [saveError, setSaveError] = useState(false);
   const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
   const [showReviewModal, setShowReviewModal] = useState(false);
+  // Report-a-question dialog (side-channel feedback — never touches answers
+  // or submission).
+  const [reportQuestionVisible, setReportQuestionVisible] = useState(false);
 
   // ===== Section locking (the attempt snapshot is the single truth) =====
   const sectionLockOn =
@@ -1130,15 +1134,30 @@ function QuizTakingContent() {
                 onImageError={handleImageError}
               />
 
-              {/* Clear Response */}
-              {isResponseAnswered(currentQuestion.questionType || 'mcq_single', selectedAnswer) && (
+              {/* Per-question actions. Report Question is always available —
+                  an unanswered question can still be incomplete or broken.
+                  It only opens the report dialog; it never touches the
+                  student's answer, navigation or submission. */}
+              <View style={styles.questionActions}>
+                {isResponseAnswered(currentQuestion.questionType || 'mcq_single', selectedAnswer) && (
+                  <TouchableOpacity
+                    style={styles.clearButton}
+                    onPress={() => handleResponseChange(defaultResponseFor(currentQuestion.questionType))}
+                  >
+                    <Text style={styles.clearButtonText}>Clear Response</Text>
+                  </TouchableOpacity>
+                )}
                 <TouchableOpacity
-                  style={styles.clearButton}
-                  onPress={() => handleResponseChange(defaultResponseFor(currentQuestion.questionType))}
+                  style={styles.reportButton}
+                  onPress={() => setReportQuestionVisible(true)}
+                  accessible
+                  accessibilityLabel="Report this question"
+                  accessibilityHint="Opens a dialog to describe an issue with this question"
                 >
-                  <Text style={styles.clearButtonText}>Clear Response</Text>
+                  <MessageSquareWarning color="#6B7280" size={15} />
+                  <Text style={styles.reportButtonText}>Report Question</Text>
                 </TouchableOpacity>
-              )}
+              </View>
             </View>
 
             {/* Spacer for bottom nav */}
@@ -1221,6 +1240,19 @@ function QuizTakingContent() {
             </TouchableOpacity>
           </View>
       </View>
+
+      {/* Report a Question dialog — in-tree overlay at the screen root (NOT
+          inside the review Modal: RN Modals break in-tree overlays and
+          child dialogs on both platforms). */}
+      <ReportQuestionDialog
+        visible={reportQuestionVisible}
+        onClose={() => setReportQuestionVisible(false)}
+        quizId={String(id)}
+        attemptId={currentAttempt?.attemptId || ''}
+        questionIndex={currentQuestionIndex}
+        questionId={getQuestionId(currentQuestion) || undefined}
+        questionLabel={`Question ${Math.max(currentQuestionPosition, 0) + 1}`}
+      />
 
       {/* Review Modal */}
       <Modal
@@ -1555,10 +1587,17 @@ const styles = StyleSheet.create({
     color: '#1F2937',
     fontWeight: '500',
   },
-  clearButton: {
+  questionActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 10,
     marginTop: 16,
+  },
+  clearButton: {
     padding: 12,
     alignItems: 'center',
+    justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#EF4444',
     borderRadius: 8,
@@ -1566,6 +1605,23 @@ const styles = StyleSheet.create({
   },
   clearButtonText: {
     color: '#EF4444',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  reportButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: 8,
+    backgroundColor: '#FFFFFF',
+    minHeight: 48, // Accessibility — matches Clear Response in the shared row
+  },
+  reportButtonText: {
+    color: '#6B7280',
     fontSize: 14,
     fontWeight: '600',
   },

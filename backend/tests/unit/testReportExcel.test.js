@@ -623,3 +623,166 @@ describe('buildTestReportWorkbook', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Student responses stay TEXT through serialization — Excel must never
+// reinterpret them as numbers, dates, percentages or formulas.
+// ---------------------------------------------------------------------------
+describe('User Responses sheet — student responses are preserved as text cells', () => {
+  // Every representation class the export must carry verbatim: leading
+  // zeros, date-like, percent-like, trailing zeros, scientific notation,
+  // negative-with-leading-zero, formula-like (injection), unicode,
+  // separators/newlines, whitespace and a long string.
+  const TRICKY = [
+    '00123',
+    '12/10/2026',
+    '25%',
+    '0.2500',
+    '1E10',
+    '-05',
+    '=1+1',
+    '+55',
+    '@SUM(A1:A9)',
+    'a,b"c\nd',
+    'हिन्दी ✓',
+    '  spaced  ',
+    'L'.repeat(1200),
+  ];
+
+  const dataWithTrickyRows = () => buildData({
+    includeLeadColumns: false,
+    userResponses: {
+      attempts: [
+        {
+          attemptId: 'att-tricky',
+          participantType: 'Registered',
+          studentName: 'Student One',
+          studentEmail: 'one@example.com',
+          studentPhone: '',
+          rank: 1,
+          attemptNumber: 1,
+          score: 1,
+          marksObtained: 4,
+          totalMarks: 52,
+          scorePercentage: 8,
+          correct: 1,
+          incorrect: TRICKY.length - 1,
+          skipped: 0,
+          submittedAt: new Date('2026-09-01T10:10:00Z'),
+          status: 'completed',
+          rows: TRICKY.map((value, i) => ({
+            questionNumber: i + 1,
+            section: '',
+            subjectName: 'Pathology',
+            topicName: 'Genetics',
+            questionType: 'numerical',
+            questionTypeLabel: 'Numerical',
+            question: `Tricky Q${i + 1}`,
+            questionUnavailable: false,
+            studentResponseLabel: value,
+            studentResponseText: value,
+            correctAnswerLabel: '1',
+            correctAnswerText: '1',
+            result: i === 0 ? 'correct' : 'incorrect',
+            resultLabel: i === 0 ? 'Correct' : 'Incorrect',
+            marks: i === 0 ? 4 : -1,
+            timeSpent: 10,
+          })),
+          missingQuestionCount: 0,
+        },
+      ],
+      attemptCount: 1,
+      participantCount: 1,
+      responseRowCount: TRICKY.length,
+      missingQuestionCount: 0,
+      marking: { positiveMarks: 4, negativeMarks: 1 },
+    },
+  });
+
+  // Round-trip through the serialized .xlsx (what the user actually opens),
+  // not just the in-memory objects.
+  // headerRowOf/hdrsOf live at module scope; the responses sheet's header row starts with 'Student Name'.
+  const trickyResponsesHeaderRowOf = (sheet) => headerRowOf(sheet, 'Student Name');
+
+  const reloadResponsesSheet = async () => {
+    const workbook = buildTestReportWorkbook(dataWithTrickyRows());
+    const buffer = await workbook.xlsx.writeBuffer();
+    const reloaded = await new Excel.Workbook().xlsx.load(buffer);
+    const sheet = reloaded.getWorksheet(RESPONSES_SHEET_NAME);
+    const headerRow = trickyResponsesHeaderRowOf(sheet);
+    return { sheet, headerRow, headers: headersOf(sheet, headerRow) };
+  };
+
+  it('writes every response representation as an exact string cell with the Text format', async () => {
+    const { sheet, headerRow, headers } = await reloadResponsesSheet();
+    const optionCol = headers.indexOf('Selected Option') + 1;
+    const answerCol = headers.indexOf('Selected Answer') + 1;
+
+    TRICKY.forEach((expected, i) => {
+      const row = headerRow + 1 + i;
+      const optionCell = sheet.getCell(row, optionCol);
+      const answerCell = sheet.getCell(row, answerCol);
+
+      expect(optionCell.type).toBe(Excel.ValueType.String);
+      expect(answerCell.type).toBe(Excel.ValueType.String);
+      expect(optionCell.value).toBe(expected);
+      expect(answerCell.value).toBe(expected);
+      // '@' = Excel's Text number format: the cell stays text even if the
+      // recipient later edits or re-enters it.
+      expect(optionCell.numFmt).toBe('@');
+      expect(answerCell.numFmt).toBe('@');
+    });
+  });
+
+  it('never emits a formula cell on the responses sheet', async () => {
+    const { sheet, headerRow, headers } = await reloadResponsesSheet();
+    const rowCount = headerRow + TRICKY.length + 1;
+    for (let row = headerRow + 1; row <= rowCount; row += 1) {
+      for (let col = 1; col <= headers.length; col += 1) {
+        expect(sheet.getCell(row, col).type).not.toBe(Excel.ValueType.Formula);
+      }
+    }
+  });
+
+  it('keeps analytics metric cells numeric (Marks, Time, Score %)', async () => {
+    const { sheet, headerRow, headers } = await reloadResponsesSheet();
+    const marksCol = headers.indexOf('Marks') + 1;
+    const timeCol = headers.indexOf('Time (s)') + 1;
+    const scoreCol = headers.indexOf('Score (%)') + 1;
+
+    const firstRow = sheet.getCell(headerRow + 1, marksCol);
+    const secondRow = sheet.getCell(headerRow + 2, marksCol);
+    const timeCell = sheet.getCell(headerRow + 1, timeCol);
+    const scoreCell = sheet.getCell(headerRow + 1, scoreCol);
+
+    expect(firstRow.type).toBe(Excel.ValueType.Number);
+    expect(firstRow.value).toBe(4);
+    expect(secondRow.type).toBe(Excel.ValueType.Number);
+    expect(secondRow.value).toBe(-1);
+    expect(timeCell.type).toBe(Excel.ValueType.Number);
+    expect(timeCell.value).toBe(10);
+    expect(scoreCell.type).toBe(Excel.ValueType.Number);
+  });
+
+  it('coerces a non-string response that leaks through upstream data into a text cell', async () => {
+    const data = dataWithTrickyRows();
+    // Simulate a legacy document where the formatter contract was violated
+    // (numeric option / raw numeric answer stored in the bank or attempt).
+    data.userResponses.attempts[0].rows[0].studentResponseLabel = 206;
+    data.userResponses.attempts[0].rows[0].studentResponseText = 0.25;
+
+    const workbook = buildTestReportWorkbook(data);
+    const buffer = await workbook.xlsx.writeBuffer();
+    const reloaded = await new Excel.Workbook().xlsx.load(buffer);
+    const sheet = reloaded.getWorksheet(RESPONSES_SHEET_NAME);
+    const headerRow = trickyResponsesHeaderRowOf(sheet);
+    const headers = headersOf(sheet, headerRow);
+
+    const optionCell = sheet.getCell(headerRow + 1, headers.indexOf('Selected Option') + 1);
+    const answerCell = sheet.getCell(headerRow + 1, headers.indexOf('Selected Answer') + 1);
+    expect(optionCell.type).toBe(Excel.ValueType.String);
+    expect(optionCell.value).toBe('206');
+    expect(answerCell.type).toBe(Excel.ValueType.String);
+    expect(answerCell.value).toBe('0.25');
+  });
+});

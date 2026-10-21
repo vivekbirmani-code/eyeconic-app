@@ -17,6 +17,9 @@ export default function QuizzesLayout() {
             <Stack.Screen name="rank-predictor-history" />
             <Stack.Screen name="rank-predictor-history/[id]" />
             <Stack.Screen name="retest-requests" />
+            {/* Question reports review (admin) — student "Report Question"
+                submissions from quiz attempts. */}
+            <Stack.Screen name="question-reports" />
             <Stack.Screen name="student-analytics" />
             {/* Phase 0 CV/ML feasibility spike — isolated test surface, no production entry point. */}
             <Stack.Screen name="proctoring-spike" />

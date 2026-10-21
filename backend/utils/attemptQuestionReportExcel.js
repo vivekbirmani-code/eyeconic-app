@@ -33,6 +33,9 @@ const PERCENT_FORMAT = '0.0"%"';
 const DATETIME_FORMAT = 'yyyy-mm-dd hh:mm';
 // Signed marks: +4 / -1 / 0 (matches finalizeQuizAttempt's award scheme).
 const SIGNED_MARKS_FORMAT = '+0;-0;0';
+// Excel's built-in Text format for the student-response column — see
+// asResponseText below.
+const TEXT_FORMAT = '@';
 
 const thinBorder = (color) => ({ style: 'thin', color: { argb: color } });
 
@@ -56,7 +59,10 @@ const QUESTION_COLUMNS = [
   { header: 'Topic', width: 16, value: (q) => q.topicName || '', wrapChars: 15 },
   { header: 'Type', width: 15, value: (q) => q.questionTypeLabel || '', wrapChars: 14 },
   { header: 'Question', width: 52, value: (q) => (q.questionUnavailable ? 'Question no longer available (removed from question bank)' : q.question), wrap: true, wrapChars: 50 },
-  { header: 'Student Response', width: 30, value: (q) => responseCellText(q), wrap: true, wrapChars: 29 },
+  // Student-response column is a text cell by contract (asResponseText +
+  // the '@' numFmt): representations like "00123", "12/10/2026", "25%",
+  // "0.2500", "1E10" and "-05" must survive into Excel verbatim.
+  { header: 'Student Response', width: 30, value: (q) => asResponseText(responseCellText(q)), numFmt: TEXT_FORMAT, text: true, wrap: true, wrapChars: 29 },
   { header: 'Result', width: 11, value: (q) => q.resultLabel, align: 'center', resultColor: true },
   { header: 'Correct Answer', width: 30, value: (q) => (q.correctAnswerText || q.correctAnswerLabel || ''), wrap: true, wrapChars: 29 },
   { header: 'Marks', width: 8, value: (q) => q.marks, numFmt: SIGNED_MARKS_FORMAT, align: 'center' },
@@ -73,6 +79,13 @@ const responseCellText = (q) => {
   }
   return q.studentResponseText || q.studentResponseLabel || '';
 };
+
+// Student responses are exported as TEXT cells — never numeric/date. The
+// collector's label/text contract is already string-typed; this coercion is
+// the guarantee at the workbook layer, so no upstream data shape can land
+// as a numeric or date cell that Excel would reformat (00123 → 123,
+// 12/10/2026 → a date serial, 25% → 0.25).
+const asResponseText = (value) => (value === null || value === undefined ? '' : String(value));
 
 const TITLE_ROW = 1;
 const META_ROW = 2;
@@ -228,7 +241,10 @@ function buildQuestionSheet(workbook, report) {
       if (question.questionUnavailable && col.header === 'Question') {
         cell.font = { name: FONT, size: 10, italic: true, color: COLORS.MUTED };
       }
-      if (col.numFmt && Number.isFinite(Number(cell.value))) cell.numFmt = col.numFmt;
+      // Numeric formats only apply to numeric-valued cells, but text
+      // columns keep their '@' format even though their value is a string
+      // (Number.isFinite alone would skip it).
+      if (col.numFmt && (col.text || Number.isFinite(Number(cell.value)))) cell.numFmt = col.numFmt;
       cell.border = { bottom: thinBorder(isLast ? COLORS.BORDER_STRONG : COLORS.BORDER) };
       if (idx % 2 === 1) {
         cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.BAND } };

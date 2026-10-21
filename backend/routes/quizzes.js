@@ -6,6 +6,7 @@ const QuizAttempt = require('../models/QuizAttempt');
 const GuestAttempt = require('../models/GuestAttempt');
 const Guest = require('../models/Guest');
 const QuestionBank = require('../models/QuestionBank');
+const QuestionReport = require('../models/QuestionReport');
 const { auth, authorize } = require('../middleware/auth');
 const multer = require('multer');
 const { parseExcel } = require('../utils/excelParser');
@@ -211,7 +212,15 @@ const optionTextFromIndex = (options, index) => {
   if (!Array.isArray(options) || !Number.isInteger(idx) || idx < 0 || idx >= options.length) {
     return '';
   }
-  return options[idx] || '';
+  // Coerce BEFORE the empty check: the label/text contract must always be a
+  // string so downstream exports can rely on it. `options[idx] || ''` would
+  // both skip a numeric 0 option (falsy) and leak a non-string value through
+  // — a Number/Date landing in an Excel cell becomes a numeric/date cell
+  // that Excel then reformats (leading zeros, percent, date serials).
+  // Keep in sync with the attemptResults.js copy.
+  const text = options[idx];
+  if (text === null || text === undefined || text === '') return '';
+  return String(text);
 };
 
 const formatAnswerForDisplay = (questionType, selectedAnswer, options = [], columnA = [], columnB = []) => {
@@ -822,6 +831,34 @@ router.get('/retests/pending', auth, authorize('admin', 'mentor'), async (req, r
     res.json(attempts);
   } catch (error) {
     console.error('Pending retests error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Question reports review list (admin) — the review surface for reports
+// students file from inside quiz attempts. Mirrors the retest-requests
+// pattern (admin-only). Single-segment path: must stay before GET /:id.
+// ?status=open (default) | resolved | dismissed | all
+router.get('/question-reports', auth, authorize('admin'), async (req, res) => {
+  try {
+    const requestedStatus = String(req.query.status || 'open');
+    const statusFilter = ['open', 'resolved', 'dismissed'].includes(requestedStatus)
+      ? requestedStatus
+      : null; // anything else (incl. 'all') → no status filter
+    const reports = await QuestionReport.find(
+      statusFilter ? { status: statusFilter } : {}
+    )
+      .populate('student', 'name email')
+      .populate('quiz', 'title testType')
+      .populate('attempt', 'status endTime score totalQuestions')
+      .populate('question', 'question questionType isActive')
+      .populate('resolvedBy', 'name email')
+      .sort({ createdAt: -1 })
+      .limit(500);
+
+    res.json(reports);
+  } catch (error) {
+    console.error('Question reports list error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });
@@ -3727,6 +3764,116 @@ router.put('/:id/attempt/:attemptId/answer', auth, authorize('student'), async (
   }
 });
 
+// Report a question from inside an active attempt — free-text student
+// feedback about a possibly incorrect/ambiguous/incomplete question.
+// Follows the answer write's lifecycle and security skeleton exactly:
+// student-only, attempt ownership built into the lookup, quiz-id binding,
+// lazy deadline enforcement, and server-side question resolution (a
+// client-supplied questionId is only ever a consistency check). Reports are
+// pure side-data: they never touch answers, grading or submission.
+router.post('/:id/attempt/:attemptId/report-question', auth, authorize('student'), async (req, res) => {
+  try {
+    const { questionIndex, comment, questionId } = req.body;
+
+    if (typeof questionIndex !== 'number' || !Number.isInteger(questionIndex) || questionIndex < 0) {
+      return res.status(400).json({ message: 'A valid questionIndex is required' });
+    }
+    // Whitespace-only comments are rejected: a report without any
+    // description is not actionable for review.
+    const trimmedComment = typeof comment === 'string' ? comment.trim() : '';
+    if (!trimmedComment) {
+      return res.status(400).json({ message: 'Please describe the issue with this question' });
+    }
+    if (trimmedComment.length > 1000) {
+      return res.status(400).json({ message: 'Comment must be 1000 characters or fewer' });
+    }
+
+    let attempt = await QuizAttempt.findOne({
+      _id: req.params.attemptId,
+      student: req.user._id,
+      status: 'in_progress'
+    });
+
+    if (!attempt) {
+      return res.status(404).json({ message: 'No active attempt found' });
+    }
+
+    // The attempt must belong to the quiz in the URL — same binding as the
+    // answer write (a report must never be filed against a mismatched pair).
+    if (String(attempt.quiz) !== String(req.params.id)) {
+      return res.status(404).json({ message: 'No active attempt found' });
+    }
+
+    // Deadline enforcement, identical to the answer route: an overdue
+    // attempt converges to its terminal state and rejects the write.
+    const quizForReport = await Quiz.findById(req.params.id).select('questions expiryDate');
+    const enforcement = await enforceAttemptDeadlines(attempt, quizForReport, { req });
+    attempt = enforcement.attempt;
+
+    if (!attempt || attempt.status !== 'in_progress') {
+      return res.status(403).json({
+        message: "This quiz's time has ended and it has been submitted.",
+        errorCode: 'TIME_EXPIRED',
+        attemptFinalized: true,
+      });
+    }
+
+    // Resolve the canonical question id server-side from the quiz's ordered
+    // question list — never trust a client-supplied id.
+    const resolvedQuestionId = quizForReport?.questions?.[questionIndex];
+    if (!resolvedQuestionId) {
+      return res.status(400).json({ message: 'Invalid question index for this quiz' });
+    }
+    if (questionId && String(questionId) !== String(resolvedQuestionId)) {
+      return res.status(400).json({ message: 'questionId does not match the quiz question at this index' });
+    }
+
+    // Snapshot the question's presentation at report time (triage context
+    // if the bank doc is later edited or deleted). A missing doc does not
+    // block the report — it is honestly marked unavailable in the snapshot.
+    const questionDoc = await QuestionBank.findById(resolvedQuestionId)
+      .select('question questionType')
+      .lean();
+
+    // One OPEN report per question per attempt: a double-tap or an offline
+    // retry must not file duplicates. The unique partial index below is the
+    // race backstop (E11000 → same 409).
+    const existing = await QuestionReport.findOne({
+      attempt: attempt._id,
+      question: resolvedQuestionId,
+      status: 'open',
+    }).select('_id').lean();
+    if (existing) {
+      return res.status(409).json({ message: 'You have already reported this question for this attempt' });
+    }
+
+    let report;
+    try {
+      report = await QuestionReport.create({
+        student: req.user._id,
+        quiz: attempt.quiz,
+        attempt: attempt._id,
+        question: resolvedQuestionId,
+        questionIndex,
+        comment: trimmedComment,
+        questionSnapshot: questionDoc
+          ? { question: questionDoc.question || '', questionType: questionDoc.questionType || '', available: true }
+          : { question: '', questionType: '', available: false },
+      });
+    } catch (error) {
+      if (error?.code === 11000 || error?.codeName === 'DuplicateKey') {
+        return res.status(409).json({ message: 'You have already reported this question for this attempt' });
+      }
+      throw error;
+    }
+
+    res.status(201).json({ message: 'Report submitted', reportId: report._id });
+  } catch (error) {
+    console.error('Question report error:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 // Submit a single section (section locking). Server-authoritative: the
 // section must be the currently active one; expired sections are lazily
 // cascaded first; the close is an atomic CAS on the element's status, so
@@ -4235,6 +4382,41 @@ router.get('/retest-requests/pending', auth, authorize('admin'), async (req, res
     res.json(requestsWithSubjects);
   } catch (error) {
     console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Resolve or dismiss a question report (admin). Terminal per report: a
+// resolved/dismissed report frees the (attempt, question) slot, so the
+// student can file a fresh one on a later attempt of the same quiz.
+router.put('/question-reports/:reportId/resolve', auth, authorize('admin'), async (req, res) => {
+  try {
+    const { status, resolutionNote } = req.body;
+
+    if (!['resolved', 'dismissed'].includes(status)) {
+      return res.status(400).json({ message: 'status must be "resolved" or "dismissed"' });
+    }
+    const note = typeof resolutionNote === 'string' ? resolutionNote.trim() : '';
+    if (note.length > 1000) {
+      return res.status(400).json({ message: 'Resolution note must be 1000 characters or fewer' });
+    }
+
+    const report = await QuestionReport.findById(req.params.reportId);
+    if (!report) {
+      return res.status(404).json({ message: 'Report not found' });
+    }
+
+    report.status = status;
+    report.resolutionNote = note;
+    report.resolvedBy = req.user._id;
+    report.resolvedAt = new Date();
+    await report.save();
+
+    res.json({
+      message: status === 'resolved' ? 'Report marked resolved' : 'Report dismissed'
+    });
+  } catch (error) {
+    console.error('Question report decision error:', error);
     res.status(500).json({ message: 'Server error' });
   }
 });

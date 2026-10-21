@@ -42,7 +42,14 @@ const optionTextFromIndex = (options, index) => {
   if (!Array.isArray(options) || !Number.isInteger(idx) || idx < 0 || idx >= options.length) {
     return '';
   }
-  return options[idx] || '';
+  // Coerce BEFORE the empty check: the label/text contract must always be a
+  // string so downstream exports can rely on it. `options[idx] || ''` would
+  // both skip a numeric 0 option (falsy) and leak a non-string value through
+  // — a Number/Date landing in an Excel cell becomes a numeric/date cell
+  // that Excel then reformats (leading zeros, percent, date serials).
+  const text = options[idx];
+  if (text === null || text === undefined || text === '') return '';
+  return String(text);
 };
 
 const formatAnswerForDisplay = (questionType, selectedAnswer, options = [], columnA = [], columnB = []) => {

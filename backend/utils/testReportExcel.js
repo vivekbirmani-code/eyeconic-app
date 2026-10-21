@@ -32,6 +32,11 @@ const COLORS = {
 const FONT = 'Calibri';
 const PERCENT_FORMAT = '0.0"%"';
 const DATETIME_FORMAT = 'yyyy-mm-dd hh:mm';
+// Excel's built-in Text format. Applied to student-response cells so the
+// value stays text end to end: ExcelJS stores JS strings as shared-string
+// cells Excel never reinterprets on open, and the '@' format keeps any
+// later cell edit text-typed too.
+const TEXT_FORMAT = '@';
 
 const thinBorder = (color) => ({ style: 'thin', color: { argb: color } });
 
@@ -276,8 +281,11 @@ const RESPONSE_COLUMNS = [
   { header: 'Topic', width: 15, value: (b, q) => q?.topicName || '', wrapChars: 14 },
   { header: 'Type', width: 14, value: (b, q) => q?.questionTypeLabel || '', wrapChars: 13 },
   { header: 'Question', width: 50, value: (b, q) => (q ? (q.questionUnavailable ? 'Question no longer available (removed from question bank)' : q.question) : 'Attempt data no longer available'), wrap: true, wrapChars: 48, questionColumn: true },
-  { header: 'Selected Option', width: 12, value: (b, q) => selectedOptionOf(q), align: 'center', wrap: true, wrapChars: 11 },
-  { header: 'Selected Answer', width: 28, value: (b, q) => selectedAnswerOf(q), wrap: true, wrapChars: 27 },
+  // Student-response columns are text cells by contract (asResponseText +
+  // the '@' numFmt below): representations like "00123", "12/10/2026",
+  // "25%", "0.2500", "1E10" and "-05" must survive into Excel verbatim.
+  { header: 'Selected Option', width: 12, value: (b, q) => asResponseText(selectedOptionOf(q)), numFmt: TEXT_FORMAT, align: 'center', wrap: true, wrapChars: 11 },
+  { header: 'Selected Answer', width: 28, value: (b, q) => asResponseText(selectedAnswerOf(q)), numFmt: TEXT_FORMAT, wrap: true, wrapChars: 27 },
   { header: 'Correct Option', width: 12, value: (b, q) => (q && !q.questionUnavailable ? q.correctAnswerLabel : ''), align: 'center', wrap: true, wrapChars: 11 },
   { header: 'Correct Answer', width: 28, value: (b, q) => (q && !q.questionUnavailable ? (q.correctAnswerText || q.correctAnswerLabel || '') : ''), wrap: true, wrapChars: 27 },
   { header: 'Status', width: 11, value: (b, q) => q?.resultLabel, align: 'center', statusColor: true },
@@ -290,6 +298,14 @@ const RESPONSE_COLUMNS = [
 // the explicit "Skipped" verdict, so an empty selection is never mistaken
 // for missing data. Answered-but-unresolvable selections fall back to the
 // raw stored value (the shared formatter's behavior).
+// Student responses are exported as TEXT cells — never numeric/date. The
+// row builder's label/text contract is already string-typed; this coercion
+// is the guarantee at the workbook layer, so no upstream data shape (legacy
+// option values, raw stored answers) can ever land as a numeric or date
+// cell that Excel would reformat (00123 → 123, 12/10/2026 → a date serial,
+// 25% → 0.25).
+const asResponseText = (value) => (value === null || value === undefined ? '' : String(value));
+
 const selectedOptionOf = (q) => {
   if (!q || q.result === 'skipped') return '';
   return q.studentResponseLabel || '';

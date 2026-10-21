@@ -525,5 +525,93 @@ describe('Attempt question report', () => {
       const rows = excelRows(res);
       findRowByText(rows, 'Student One');
     });
+
+    it('preserves tricky student responses as exact text cells', async () => {
+      // Option texts and stored answers in every representation Excel loves
+      // to reinterpret; answers stored the way the client stores them
+      // (numbers when parseable, raw strings otherwise).
+      const defs = [
+        { options: ['00123', '12/10/2026', '25%', '0.2500'], selectedAnswer: 0 },
+        { options: ['1E10', '-05', '206', 'normal'], selectedAnswer: 1 },
+        { options: ['=1+1', '@x', 'y', 'z'], selectedAnswer: 0 },
+        { numerical: true, selectedAnswer: '0.2500' },
+        { numerical: true, selectedAnswer: '12/10/2026' },
+      ];
+
+      const questions = [];
+      for (let i = 0; i < defs.length; i += 1) {
+        const def = defs[i];
+        questions.push(await createQuestion(subject, {
+          question: `Tricky report Q${i + 1}? [set ${++fixtureSeq}]`,
+          ...(def.numerical
+            ? { questionType: 'numerical', options: undefined, correctAnswer: 1 }
+            : { options: def.options, correctAnswer: 0 }),
+        }));
+      }
+
+      const quiz = await Quiz.create({
+        title: 'Tricky Report Test',
+        subject: subject._id,
+        testType: 'daily',
+        duration: 30,
+        questions: questions.map((q) => q._id),
+        positiveMarks: 4,
+        negativeMarks: 1,
+        assignedStudents: [student.user._id],
+        createdBy: new mongoose.Types.ObjectId(),
+      });
+
+      const attempt = await QuizAttempt.create({
+        quiz: quiz._id,
+        student: student.user._id,
+        status: 'completed',
+        startTime: new Date(Date.now() - 30 * 60 * 1000),
+        endTime: new Date(),
+        score: 0,
+        totalQuestions: defs.length,
+        marksObtained: 0,
+        totalMarks: defs.length * 4,
+        answers: defs.map((def, i) => ({
+          questionIndex: i,
+          questionId: questions[i]._id,
+          selectedAnswer: def.selectedAnswer,
+          isCorrect: false,
+          timeSpent: 10,
+        })),
+      });
+
+      const res = await getExcel(attempt._id, admin.token);
+      expect(res.status).toBe(200);
+
+      const wb = XLSX.read(res.body, { type: 'buffer' });
+      const sheet = wb.Sheets['Question Report'];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+      const headerRowIndex = rows.findIndex((row) => row.includes('Student Response'));
+      expect(headerRowIndex).toBeGreaterThanOrEqual(0);
+      const headers = rows[headerRowIndex];
+      const responseCol = XLSX.utils.encode_col(headers.indexOf('Student Response'));
+      const marksCol = XLSX.utils.encode_col(headers.indexOf('Marks'));
+
+      // MCQ rows render as label + em-dash + text (the sheet's established
+      // convention); numerical rows are the raw value alone.
+      const expected = ['A — 00123', 'B — -05', 'A — =1+1', '0.2500', '12/10/2026'];
+      expected.forEach((text, i) => {
+        const rowNumber = headerRowIndex + 2 + i;
+        const cell = sheet[`${responseCol}${rowNumber}`];
+        expect(cell).toBeDefined();
+        expect(cell.t).toBe('s'); // shared string — Excel cannot reinterpret
+        expect(cell.v).toBe(text);
+
+        const marksCell = sheet[`${marksCol}${rowNumber}`];
+        expect(marksCell.t).toBe('n');
+        expect(marksCell.v).toBe(-1);
+      });
+
+      // No formula cells anywhere on the sheet (SheetJS marks formulas via .f).
+      Object.keys(sheet).forEach((address) => {
+        if (address[0] === '!') return;
+        expect(sheet[address].f).toBeUndefined();
+      });
+    });
   });
 });

@@ -19,7 +19,8 @@ import {
   Clock,
   ChevronRight,
   BarChart3,
-  Users
+  Users,
+  MessageSquareWarning
 } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
@@ -60,6 +61,7 @@ export default function AdminQuizHub() {
   const [questionStats, setQuestionStats] = useState<QuestionStats>({ total: 0, bySubject: [] });
   const [recentQuizzes, setRecentQuizzes] = useState<RecentQuiz[]>([]);
   const [pendingRetests, setPendingRetests] = useState(0);
+  const [pendingQuestionReports, setPendingQuestionReports] = useState(0);
 
   // Animation refs
   const headerOpacity = useRef(new Animated.Value(0)).current;
@@ -176,6 +178,17 @@ export default function AdminQuizHub() {
       } catch (e) {
         setPendingRetests(0);
       }
+
+      // Fetch pending question reports (student "Report Question" filings)
+      try {
+        const reportsResponse = await api.get('/quizzes/question-reports', {
+          params: { status: 'open' }
+        });
+        const reportList = Array.isArray(reportsResponse.data) ? reportsResponse.data : [];
+        setPendingQuestionReports(reportList.length);
+      } catch (e) {
+        setPendingQuestionReports(0);
+      }
     } catch (error) {
       console.error('Error fetching data:', error);
     } finally {
@@ -241,6 +254,16 @@ export default function AdminQuizHub() {
       color: '#F59E0B',
       route: '/quizzes/retest-requests',
       badge: pendingRetests
+    },
+    {
+      title: 'Question Reports',
+      subtitle: pendingQuestionReports > 0
+        ? `${pendingQuestionReports} pending`
+        : 'No pending reports',
+      icon: MessageSquareWarning,
+      color: '#F59E0B',
+      route: '/quizzes/question-reports',
+      badge: pendingQuestionReports
     },
     {
       title: 'Past Tests',

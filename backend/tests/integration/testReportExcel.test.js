@@ -713,3 +713,138 @@ describe('Test report Excel export', () => {
     ).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Student responses must reach the downloaded .xlsx as TEXT cells — Excel
+// must never reinterpret them (leading zeros, dates, percents, scientific
+// notation, formula-like strings).
+// ---------------------------------------------------------------------------
+describe('Test report Excel export — student responses stay text', () => {
+  let admin;
+  let student;
+  let subject;
+
+  beforeEach(async () => {
+    await db.clearDatabase();
+    admin = await createUser({ role: 'admin' });
+    student = await createUser({ role: 'student', name: 'Student One' });
+    subject = await createSubject('Pathology');
+  });
+
+  // Questions whose option texts / answers are exactly the representations
+  // Excel loves to reinterpret. Answers stored the way the real client
+  // stores them (numbers when parseable, raw strings otherwise).
+  async function createTrickyQuizAndAttempt() {
+    const defs = [
+      { options: ['00123', '12/10/2026', '25%', '0.2500'], selectedAnswer: 0 }, // Q1
+      { options: ['1E10', '-05', '206', 'normal'], selectedAnswer: 1 },         // Q2
+      { options: ['=1+1', '@x', 'y', 'z'], selectedAnswer: 0 },                 // Q3
+      { numerical: true, selectedAnswer: '0.2500' },                            // Q4 raw string
+      { numerical: true, selectedAnswer: '12/10/2026' },                        // Q5 raw string
+      { multiple: true, options: ['25%', '1E10'], selectedAnswer: [0, 1] },     // Q6
+    ];
+
+    const questions = [];
+    let n = 0;
+    for (const def of defs) {
+      n += 1;
+      questions.push(await createQuestion(admin, subject, {
+        question: `Tricky export Q${n}?`,
+        ...(def.numerical
+          ? { questionType: 'numerical', options: undefined, correctAnswer: 1 }
+          : {
+              questionType: def.multiple ? 'multiple_correct' : 'mcq_single',
+              options: def.options,
+              correctAnswer: def.multiple ? [0] : 0,
+            }),
+      }));
+    }
+
+    const quiz = await Quiz.create({
+      title: 'Tricky Export Test',
+      subject: subject._id,
+      testType: 'daily',
+      duration: 30,
+      questions: questions.map((q) => q._id),
+      positiveMarks: 4,
+      negativeMarks: 1,
+      assignedStudents: [student.user._id],
+      createdBy: admin.user._id,
+    });
+
+    await QuizAttempt.create({
+      quiz: quiz._id,
+      student: student.user._id,
+      status: 'completed',
+      startTime: new Date(Date.now() - 60 * 60 * 1000),
+      endTime: new Date(),
+      score: 0,
+      totalQuestions: defs.length,
+      marksObtained: 0,
+      totalMarks: defs.length * 4,
+      answers: defs.map((def, i) => ({
+        questionIndex: i,
+        questionId: questions[i]._id,
+        selectedAnswer: def.selectedAnswer,
+        isCorrect: false,
+      })),
+    });
+
+    return { quiz, defs };
+  }
+
+  it('preserves every tricky representation as an exact string cell', async () => {
+    const { quiz } = await createTrickyQuizAndAttempt();
+    const res = await getExport(quiz._id, admin.token);
+    expect(res.status).toBe(200);
+
+    const wb = readWorkbook(res);
+    const sheet = wb.Sheets['User Responses'];
+    expect(sheet).toBeDefined();
+
+    // Locate the header row and column letters by header text.
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+    const headerRowIndex = rows.findIndex((row) => row.includes('Selected Option'));
+    expect(headerRowIndex).toBeGreaterThanOrEqual(0);
+    const headers = rows[headerRowIndex];
+    const colLetter = (name) => XLSX.utils.encode_col(headers.indexOf(name));
+
+    // Expected Selected Answer text per question row (Q1..Q6), derived from
+    // the same formatter the app uses.
+    const expected = [
+      '00123',        // Q1: option text
+      '-05',          // Q2: option text
+      '=1+1',         // Q3: option text (must NOT become a formula)
+      '0.2500',       // Q4: raw stored string
+      '12/10/2026',   // Q5: raw stored string
+      '25%; 1E10',    // Q6: multi-select option texts joined
+    ];
+
+    const optionCol = colLetter('Selected Option');
+    const answerCol = colLetter('Selected Answer');
+    const marksCol = colLetter('Marks');
+
+    expected.forEach((text, i) => {
+      const rowNumber = headerRowIndex + 2 + i; // +1 for 1-based rows, +1 below header
+      const answerCell = sheet[`${answerCol}${rowNumber}`];
+      expect(answerCell).toBeDefined();
+      expect(answerCell.t).toBe('s'); // shared string — Excel cannot reinterpret
+      expect(answerCell.v).toBe(text);
+
+      const optionCell = sheet[`${optionCol}${rowNumber}`];
+      expect(optionCell.t).toBe('s');
+
+      // Analytical metrics keep their numeric type on the same row.
+      const marksCell = sheet[`${marksCol}${rowNumber}`];
+      expect(marksCell.t).toBe('n');
+      expect(marksCell.v).toBe(-1);
+    });
+
+    // No formula cells anywhere on the responses sheet (SheetJS marks
+    // formulas with the cell's .f property).
+    Object.keys(sheet).forEach((address) => {
+      if (address[0] === '!') return;
+      expect(sheet[address].f).toBeUndefined();
+    });
+  });
+});
