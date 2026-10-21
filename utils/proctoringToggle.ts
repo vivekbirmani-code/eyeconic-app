@@ -1,20 +1,24 @@
 /**
  * Shared payload for the admin "Enable AI Proctoring" toggle on the Create
- * Quiz / Edit Quiz screens (Phase 9 §D, docs/ai-proctoring-phase-9-rollout-plan.md).
+ * Quiz / Edit Quiz screens (Phase 9 §D, docs/ai-proctoring-phase-9-rollout-plan.md;
+ * warn modes per the owner's global rollout order, 2026-10-21).
  *
  * The ON payload is deliberately COMPLETE: a bare `{ enabled: true }` would
- * inherit the schema's focusEvents default 'warn-then-submit' — a quiz that
- * can WARN and AUTO-SUBMIT. Every policy here is silent record-mode and the
- * camera is optional (Stage-2 shadow authoring), so an admin flipping the
- * toggle can never arm consequences by accident. The backend re-validates
- * (parseProctoringConfig) and stays authoritative regardless.
+ * inherit the backend's focusEvents/attention defaults instead of pinning
+ * them here. Since the global rollout it arms Warning Mode everywhere the
+ * toggle is used — focusEvents warn-only (app-away banner, never auto-submit)
+ * + attention 'warn' (head-turn banner on the 3rd look-away) — while
+ * multipleFaces/facePresence stay silent record and the camera stays
+ * optional. Keep in sync with WARN_PAYLOAD in scripts/prod-proctoring-ops.js;
+ * the backend re-validates (parseProctoringConfig) and stays authoritative.
  */
 export const PROCTORING_ON_PAYLOAD = Object.freeze({
   enabled: true,
   camera: 'optional',
-  focusEvents: { mode: 'record' },
+  focusEvents: { mode: 'warn-only' },
   multipleFaces: { mode: 'record' },
   facePresence: { mode: 'record' },
+  attention: { mode: 'warn' },
 });
 
 /** Explicit OFF for edits (create with OFF omits the field entirely). */

@@ -91,7 +91,7 @@ describe('effective policy resolution', () => {
     expect(effective.policy.focusEvents.toleratedViolations).toBe(4);
     expect(effective.policy.focusEvents.mode).toBe(DEFAULT_PROCTORING_CONFIG.focusEvents.mode);
     expect(effective.policy.camera).toBe('required');
-    expect(effective.policy.attention.mode).toBe('record');
+    expect(effective.policy.attention.mode).toBe('warn'); // v3 global warn rollout default
     expect(effective.version).toBe(POLICY_SCHEMA_VERSION);
   });
 

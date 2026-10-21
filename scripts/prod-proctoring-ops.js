@@ -40,16 +40,18 @@ const ON_PAYLOAD = {
   facePresence: { mode: 'record' },
 };
 
-// Owner's warning-path test mode (plan §F.7): same silent-record config
-// except focusEvents warn-only — the app-away ladder WARNS (banner appears
-// ~1–2 s after returning) but NEVER auto-submits. Policy change ⇒ new policy
-// hash ⇒ the student re-consents on the next start (by design, §21.4).
+// Owner's warning-path config (plan §F.7 + the 2026-10-21 global rollout
+// order): focusEvents warn-only (the app-away ladder WARNS — banner appears
+// ~1–2 s after returning — but NEVER auto-submits) + attention 'warn'
+// (Phase 9.1 3-look-away rule: the 3rd qualifying look-away turns into ONE
+// advisory banner per 5-min window; never violation / risk / submit).
+// multipleFaces/facePresence stay silent record; camera stays optional.
+// Policy change ⇒ new policy hash ⇒ the student re-consents on the next
+// start (by design, §21.4).
 //
-// Phase 9.1 (3-look-away rule): attention 'warn' turns the 3rd qualifying
-// look-away into ONE advisory banner per 5-min window (never violation /
-// risk / submit). REQUIRES the Phase 9.1 backend deploy — parseProctoringConfig
-// rejects attention.mode 'warn' on the currently deployed build. Until then,
-// arm-warn arms ONLY the focus ladder.
+// Phase 9.1 backend (e610c67+) is DEPLOYED and verified — attention.mode
+// 'warn' round-trips in prod (arm-warn 200 on Test*, 2026-10-21).
+// Keep in sync with utils/proctoringToggle.ts PROCTORING_ON_PAYLOAD.
 const WARN_PAYLOAD = {
   enabled: true,
   camera: 'optional',
@@ -204,6 +206,32 @@ async function cmdArm(quizId, payload) {
   }
 }
 
+// 2026-10-21 global rollout order: arm WARN_PAYLOAD on EVERY quiz that has
+// already opted into proctoring (enabled === true). Quizzes with proctoring
+// off stay off — enabling those is a separate, explicit decision (old app
+// builds hard-fail /start 403 on newly gated quizzes). Idempotent: re-running
+// on an already-armed quiz writes the same config.
+async function cmdArmWarnAll() {
+  const { token } = await login('admin');
+  const quizzes = await api('GET', '/quizzes', { token });
+  const list = Array.isArray(quizzes.data) ? quizzes.data : quizzes.data?.quizzes || [];
+  const proctored = list.filter((q) => q.proctoring?.enabled === true);
+  console.log(`[arm-warn-all] ${proctored.length} of ${list.length} quizzes have proctoring ON; arming warn modes on each.`);
+  let failures = 0;
+  for (const q of proctored) {
+    const result = await api('PUT', `/quizzes/${q._id}`, { token, body: { proctoring: WARN_PAYLOAD } });
+    const stored = result.status === 200
+      ? (await api('GET', `/quizzes/${q._id}`, { token })).data?.proctoring
+      : null;
+    const ok = stored?.focusEvents?.mode === 'warn-only' && stored?.attention?.mode === 'warn';
+    console.log(`  ${ok ? 'OK ' : 'FAIL'} ${q.title} (${q._id}): HTTP ${result.status}`
+      + (stored ? ` focus=${stored.focusEvents?.mode} attention=${stored.attention?.mode ?? '(default: warn)'}` : ` — ${result.data?.message ?? ''}`));
+    if (!ok) failures += 1;
+  }
+  console.log(`[arm-warn-all] done: ${proctored.length - failures}/${proctored.length} armed, ${failures} failure(s).`);
+  if (failures > 0) process.exitCode = 1;
+}
+
 async function cmdStudentView(quizId) {
   const { token } = await login('student');
   const detail = await api('GET', `/quizzes/${quizId}`, { token });
@@ -264,12 +292,13 @@ async function main() {
     case 'arm': return cmdArm(arg, ON_PAYLOAD);
     case 'arm-warn': return cmdArm(arg, WARN_PAYLOAD);
     case 'arm-warn-focus': return cmdArm(arg, WARN_PAYLOAD_FOCUS_ONLY);
+    case 'arm-warn-all': return cmdArmWarnAll();
     case 'disarm': return cmdArm(arg, { enabled: false });
     case 'student-view': return cmdStudentView(arg);
     case 'inspect': return cmdInspect(arg);
     case 'digest': return cmdDigest(arg || 1);
     default:
-      console.log('commands: diagnose | list-quizzes | quiz <id> | kill-switch on|off | arm <id> | disarm <id> | student-view <id> | inspect <id> | digest [days]');
+      console.log('commands: diagnose | list-quizzes | quiz <id> | kill-switch on|off | arm <id> | arm-warn <id> | arm-warn-focus <id> | arm-warn-all | disarm <id> | student-view <id> | inspect <id> | digest [days]');
       process.exitCode = command ? 1 : 0;
   }
 }

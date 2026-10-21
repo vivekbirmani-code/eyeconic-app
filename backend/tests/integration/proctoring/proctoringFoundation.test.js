@@ -291,12 +291,12 @@ describe('Proctoring at /start — gates, snapshot, session', () => {
     expect(res.body.proctoringPolicyDigest).toMatch(/^[0-9a-f]{64}$/);
 
     const attempt = await QuizAttempt.findById(res.body.attemptId);
-    expect(attempt.proctoringSnapshot.version).toBe(2); // Phase 9.1 schema bump (attention 'warn' + HEAD_POSE_TURNED)
+    expect(attempt.proctoringSnapshot.version).toBe(3); // v3 bump (global warn rollout defaults)
     expect(attempt.proctoringSnapshot.hash).toBe(res.body.proctoringPolicyDigest);
     // Effective policy = quiz override merged over platform defaults.
     expect(attempt.proctoringSnapshot.policy.focusEvents.toleratedViolations).toBe(4);
-    expect(attempt.proctoringSnapshot.policy.focusEvents.mode).toBe('warn-then-submit');
-    expect(attempt.proctoringSnapshot.policy.attention.mode).toBe('record'); // D6 lock
+    expect(attempt.proctoringSnapshot.policy.focusEvents.mode).toBe('warn-only');
+    expect(attempt.proctoringSnapshot.policy.attention.mode).toBe('warn'); // advisory banner, still never submit (D6)
     expect(attempt.proctoringSnapshot.frozenAt).toBeDefined();
 
     const session = await ProctoringSession.findById(res.body.proctoringSessionId);
@@ -533,7 +533,7 @@ describe('Proctoring quiz authoring validation (create/update routes)', () => {
     const stored = await Quiz.findById(withConfig.body.quiz._id);
     expect(stored.proctoring.enabled).toBe(true);
     expect(stored.proctoring.focusEvents.toleratedViolations).toBe(4);
-    expect(stored.proctoring.attention.mode).toBe('record');
+    expect(stored.proctoring.attention.mode).toBe('warn'); // v3 warn-rollout schema default
   });
 
   it.each([

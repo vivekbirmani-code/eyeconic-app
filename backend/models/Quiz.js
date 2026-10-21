@@ -130,7 +130,9 @@ const quizSchema = new mongoose.Schema({
       mode: {
         type: String,
         enum: ['record', 'warn-only', 'warn-then-submit'],
-        default: 'warn-then-submit'
+        // v3 global warn rollout: matches DEFAULT_PROCTORING_CONFIG — a
+        // document created without an explicit mode never auto-submits.
+        default: 'warn-only'
       },
       toleratedViolations: {
         type: Number,
@@ -174,14 +176,15 @@ const quizSchema = new mongoose.Schema({
         type: Boolean,
         default: true
       },
-      // D6 + Phase 9.1: default 'record' (attention can never act beyond an
-      // advisory banner); 'warn' is the explicit per-quiz opt-in that shows a
-      // warn banner on the 3rd-occurrence marker. No submit-flavored value
-      // exists — attention can never cost the student their attempt.
+      // D6 + Phase 9.1 + v3 global warn rollout: default 'warn' — head-turn
+      // detection records and shows the advisory banner on the 3rd-occurrence
+      // marker (never a violation, never risk, never submit). 'record' is the
+      // explicit per-quiz opt-out. No submit-flavored value exists —
+      // attention can never cost the student their attempt.
       mode: {
         type: String,
         enum: ATTENTION_MODES,
-        default: 'record'
+        default: 'warn'
       },
       // Phase 5 SHAPING thresholds (plan §13.2): when a record-only
       // observation episode opens — never a consequence (D6). No mongoose

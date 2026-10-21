@@ -114,7 +114,9 @@ describe('Proctoring warning ladder + policy auto-submit (Phase 6)', () => {
       questions: questions.map((q) => q._id),
       assignedStudents: [student.user._id],
       createdBy: admin.user._id,
-      proctoring: { enabled: true },
+      // Pinned warn-then-submit: this suite proves the D3 submit ladder —
+      // an explicit choice since the v3 rollout made 'warn-only' the default.
+      proctoring: { enabled: true, focusEvents: { mode: 'warn-then-submit' } },
     });
     await setProctoringEnabled(true, admin.user._id);
 
@@ -314,7 +316,7 @@ describe('Proctoring warning ladder + policy auto-submit (Phase 6)', () => {
       ],
       assignedStudents: [student2.user._id],
       createdBy: admin.user._id,
-      proctoring: { enabled: true },
+      proctoring: { enabled: true, focusEvents: { mode: 'warn-then-submit' } },
     });
     const report = await request(app)
       .post(`/api/quizzes/${sectionQuiz._id}/proctoring/precheck-report`)

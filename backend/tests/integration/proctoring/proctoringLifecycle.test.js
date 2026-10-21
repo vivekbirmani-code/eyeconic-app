@@ -279,7 +279,7 @@ describe('Proctoring lifecycle — precheck + consent + gated start (Phase 2)', 
       const res = await giveConsent(student, quiz._id, token);
       expect(res.status).toBe(200);
       expect(res.body.consent).toMatchObject({
-        policyVersion: 2, // Phase 9.1 schema bump
+        policyVersion: 3, // v3 bump (global warn rollout defaults)
         consentTextVersion: '2026-09-v1',
       });
 

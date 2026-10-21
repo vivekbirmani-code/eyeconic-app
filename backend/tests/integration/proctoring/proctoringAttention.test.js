@@ -93,7 +93,9 @@ describe('Phase 5 — attention baseline round-trip (D11, plan §13.4)', () => {
       questions: questions.map((q) => q._id),
       assignedStudents: [student.user._id],
       createdBy: admin.user._id,
-      proctoring: { enabled: true },
+      // Pinned record mode: this describe asserts record-round-trip behavior,
+      // not the v3 platform default (now 'warn').
+      proctoring: { enabled: true, attention: { mode: 'record' } },
     });
     await setProctoringEnabled(true, admin.user._id);
   });
@@ -229,7 +231,9 @@ describe('Phase 5 — all four attention types are record-only through ingest (D
       questions: questions.map((q) => q._id),
       assignedStudents: [student.user._id],
       createdBy: admin.user._id,
-      proctoring: { enabled: true },
+      // Pinned record mode: this describe proves record-mode silence (D6) —
+      // it must not ride the v3 'warn' platform default.
+      proctoring: { enabled: true, attention: { mode: 'record' } },
     });
     await setProctoringEnabled(true, admin.user._id);
 
@@ -356,7 +360,14 @@ describe('Phase 8 §32 AC-3 — attention_disabled accommodation end-to-end', ()
       questions: questions.map((q) => q._id),
       assignedStudents: [student.user._id],
       createdBy: admin.user._id,
-      proctoring: { enabled: true },
+      // Pinned to the pre-v3 policy this scenario was written against:
+      // record attention + the warn-then-submit focus ladder (the
+      // accommodation test's violations/risk come from focus.loss).
+      proctoring: {
+        enabled: true,
+        attention: { mode: 'record' },
+        focusEvents: { mode: 'warn-then-submit' },
+      },
     });
     await setProctoringEnabled(true, admin.user._id);
   });

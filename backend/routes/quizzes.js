@@ -1764,7 +1764,15 @@ router.post('/:id/duplicate', auth, authorize('admin'), async (req, res) => {
       totalMarks: originalQuiz.totalMarks,
       assignedStudents: [], // Do not copy students
       createdBy: req.user._id,
-      isActive: true
+      isActive: true,
+      // v3 global warn rollout: a duplicate inherits the source quiz's
+      // proctoring config verbatim (enabled + modes) — duplicating an armed
+      // quiz must never silently disarm it. Non-proctored sources stay off
+      // (D15 opt-in preserved). Students are not copied, so nothing is
+      // exposed until the admin assigns them.
+      ...(originalQuiz.proctoring?.enabled === true
+        ? { proctoring: originalQuiz.proctoring.toObject() }
+        : {})
     });
 
     await newQuiz.save();

@@ -6,25 +6,25 @@ import {
 } from '../proctoringToggle';
 
 /**
- * The admin toggle payload contract (Phase 9 §D): the Create/Edit screens
- * send these EXACT objects. The ON payload must stay complete — a bare
- * { enabled: true } would inherit the schema's focusEvents default
- * 'warn-then-submit' (a quiz that can warn and auto-submit).
+ * The admin toggle payload contract (Phase 9 §D + the 2026-10-21 global warn
+ * rollout): the Create/Edit screens send these EXACT objects. The ON payload
+ * must stay complete — a bare { enabled: true } would inherit backend
+ * defaults instead of pinning the owner's chosen warn config here.
  */
 describe('proctoring toggle payloads', () => {
-  it('ON payload enables with every policy in silent record mode and an optional camera', () => {
+  it('ON payload arms Warning Mode: focus warn-only + head-turn warn banner, nothing that submits', () => {
     expect(PROCTORING_ON_PAYLOAD).toEqual({
       enabled: true,
       camera: 'optional',
-      focusEvents: { mode: 'record' },
+      focusEvents: { mode: 'warn-only' },
       multipleFaces: { mode: 'record' },
       facePresence: { mode: 'record' },
+      attention: { mode: 'warn' },
     });
   });
 
-  it('never carries warn or submit semantics in any policy', () => {
+  it('never carries submit semantics or a required camera in any policy', () => {
     const modes = JSON.stringify(PROCTORING_ON_PAYLOAD);
-    expect(modes).not.toContain('warn');
     expect(modes).not.toContain('submit');
     expect(modes).not.toContain('required');
   });

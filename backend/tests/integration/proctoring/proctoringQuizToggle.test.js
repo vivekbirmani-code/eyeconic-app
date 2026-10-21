@@ -1,8 +1,9 @@
 // Integration tests for the Phase 9 admin quiz-level AI Proctoring toggle
 // (plan §D): the Create/Edit screens' exact payloads through the real
 // authoring endpoints, quiz isolation (one toggle never touches another
-// quiz), stored-config safety (silent record-mode, never schema defaults),
-// admin-only authorization, global gates overriding the quiz toggle, and the
+// quiz), stored-config safety (the screens' complete warn payload, never
+// bare-default ambiguity), duplicate inheritance (v3 rollout), admin-only
+// authorization, global gates overriding the quiz toggle, and the
 // admin GET /:id proctoringEligibility status surface.
 //
 // The aiProctoring feature flag is a hardcoded const in
@@ -35,13 +36,15 @@ let app;
 // The EXACT payloads the Create/Edit screens send (utils/proctoringToggle.ts
 // on the client). Duplicated here on purpose: if the client module ever
 // drifts from what these tests prove the backend stores, the copy in the
-// test is the tripwire to update.
+// test is the tripwire to update. v3 (2026-10-21 global rollout): the ON
+// payload arms Warning Mode (focusEvents warn-only + attention 'warn').
 const ON_PAYLOAD = {
   enabled: true,
   camera: 'optional',
-  focusEvents: { mode: 'record' },
+  focusEvents: { mode: 'warn-only' },
   multipleFaces: { mode: 'record' },
   facePresence: { mode: 'record' },
+  attention: { mode: 'warn' },
 };
 const OFF_PAYLOAD = { enabled: false };
 
@@ -124,27 +127,61 @@ describe('Quiz-level AI Proctoring toggle — authoring + isolation', () => {
     expect([200, 201]).toContain(start.status);
   });
 
-  it('create with the toggle ON stores exactly the silent-record config (never schema warn defaults)', async () => {
+  it('create with the toggle ON stores exactly the warn config (focus banner + head-turn banner, never submit)', async () => {
     const response = await createQuiz(admin, baseQuizBody(subject, student, questionIds, { proctoring: ON_PAYLOAD }));
     expect([200, 201]).toContain(response.status);
 
     const stored = await Quiz.findById(response.body.quiz._id);
     expect(stored.proctoring.enabled).toBe(true);
     expect(stored.proctoring.camera).toBe('optional');
-    expect(stored.proctoring.focusEvents.mode).toBe('record'); // NOT the 'warn-then-submit' schema default
+    expect(stored.proctoring.focusEvents.mode).toBe('warn-only'); // warns, never auto-submits
     expect(stored.proctoring.multipleFaces.mode).toBe('record');
     expect(stored.proctoring.facePresence.mode).toBe('record');
+    expect(stored.proctoring.attention.mode).toBe('warn'); // head-turn banner on the 3rd look-away
   });
 
-  it('rejects a bare enabled:true? NO — it is stored but inherits warn defaults, which the UI never sends; validation still applies', async () => {
-    // Documents the foot-gun the toggle design exists to prevent: the backend
-    // ACCEPTS a bare {enabled:true} (schema defaults apply). The screens send
-    // the complete ON_PAYLOAD only (utils/proctoringToggle.ts); this test
-    // pins the danger so it stays a conscious decision.
+  it('v3 defaults: a bare {enabled:true} inherits the platform warn defaults (matching the rollout doctrine)', async () => {
+    // Since the v3 global rollout the platform defaults ARE the warn config
+    // (DEFAULT_PROCTORING_CONFIG), so a bare opt-in warns too — no auto-submit
+    // can sneak in through defaults. The screens still send the complete
+    // ON_PAYLOAD only (utils/proctoringToggle.ts); this test pins the
+    // default behavior so it stays a conscious decision.
     const response = await createQuiz(admin, baseQuizBody(subject, student, questionIds, { proctoring: { enabled: true } }));
     expect([200, 201]).toContain(response.status);
     const stored = await Quiz.findById(response.body.quiz._id);
-    expect(stored.proctoring.focusEvents.mode).toBe('warn-then-submit');
+    expect(stored.proctoring.focusEvents.mode).toBe('warn-only');
+    expect(stored.proctoring.attention.mode).toBe('warn');
+  });
+
+  it('duplicate inherits the source quiz proctoring config verbatim (an armed copy stays armed)', async () => {
+    const created = await createQuiz(admin, baseQuizBody(subject, student, questionIds, { proctoring: ON_PAYLOAD }));
+    expect([200, 201]).toContain(created.status);
+
+    const duplicate = await request(app)
+      .post(`/api/quizzes/${created.body.quiz._id}/duplicate`)
+      .set('Authorization', `Bearer ${admin.token}`);
+    expect(duplicate.status).toBe(201);
+
+    const copy = await Quiz.findById(duplicate.body.quiz._id);
+    expect(copy.proctoring.enabled).toBe(true);
+    expect(copy.proctoring.camera).toBe('optional');
+    expect(copy.proctoring.focusEvents.mode).toBe('warn-only');
+    expect(copy.proctoring.attention.mode).toBe('warn');
+    // Duplicates never copy students — nothing is exposed until the admin assigns.
+    expect(copy.assignedStudents).toEqual([]);
+  });
+
+  it('duplicate of a non-proctored quiz stays non-proctored (D15 opt-in preserved)', async () => {
+    const created = await createQuiz(admin, baseQuizBody(subject, student, questionIds));
+    expect([200, 201]).toContain(created.status);
+
+    const duplicate = await request(app)
+      .post(`/api/quizzes/${created.body.quiz._id}/duplicate`)
+      .set('Authorization', `Bearer ${admin.token}`);
+    expect(duplicate.status).toBe(201);
+
+    const copy = await Quiz.findById(duplicate.body.quiz._id);
+    expect(copy.proctoring.enabled).toBe(false);
   });
 
   it('Phase 9.1: attention.mode "warn" round-trips; submit-flavored values are rejected 400', async () => {
@@ -183,9 +220,10 @@ describe('Quiz-level AI Proctoring toggle — authoring + isolation', () => {
     // B keeps its full stored config, field for field.
     expect(storedB.proctoring.enabled).toBe(true);
     expect(storedB.proctoring.camera).toBe('optional');
-    expect(storedB.proctoring.focusEvents.mode).toBe('record');
+    expect(storedB.proctoring.focusEvents.mode).toBe('warn-only');
     expect(storedB.proctoring.multipleFaces.mode).toBe('record');
     expect(storedB.proctoring.facePresence.mode).toBe('record');
+    expect(storedB.proctoring.attention.mode).toBe('warn');
 
     // And turning B back OFF leaves A untouched.
     await request(app)
@@ -208,7 +246,8 @@ describe('Quiz-level AI Proctoring toggle — authoring + isolation', () => {
 
     const stored = await Quiz.findById(quizId);
     expect(stored.proctoring.enabled).toBe(true);
-    expect(stored.proctoring.focusEvents.mode).toBe('record');
+    expect(stored.proctoring.focusEvents.mode).toBe('warn-only');
+    expect(stored.proctoring.attention.mode).toBe('warn');
     expect(stored.duration).toBe(25);
   });
 

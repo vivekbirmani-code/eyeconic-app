@@ -10,12 +10,18 @@
 // v2 (Phase 9.1): attention.mode gains the opt-in 'warn' value (advisory
 // banner on the 3rd-occurrence marker, never violations/submit/risk) and the
 // registry adds HEAD_POSE_TURNED (one event per qualifying occurrence).
-const POLICY_SCHEMA_VERSION = 2;
+// v3 (owner order 2026-10-21, global warn rollout): platform DEFAULTS flip to
+// focusEvents 'warn-only' + attention 'warn' — every opted-in quiz now warns
+// (focus banner + head-turn banner) unless a quiz explicitly sets 'record'.
+// Nothing auto-submits via defaults in either direction (D6 unchanged:
+// attention still has no submit-flavored mode at all).
+const POLICY_SCHEMA_VERSION = 3;
 
 // Attention enforcement vocabulary (plan D6 + Phase 9.1 carve-out): 'record'
-// remains the default and the only value a quiz gets without explicitly
-// opting in; 'warn' is the advisory-banner opt-in. There is deliberately NO
-// submit-flavored attention mode — attention can never cost an attempt.
+// (silent observations) and 'warn' (advisory banner). Since v3 'warn' is the
+// platform default — the owner's global rollout order — and 'record' is the
+// explicit opt-out. There is deliberately NO submit-flavored attention mode:
+// attention can never cost an attempt.
 const ATTENTION_MODES = ['record', 'warn'];
 const ATTENTION_MODE_RECORD_ONLY = ATTENTION_MODES[0];
 
@@ -27,7 +33,9 @@ const DEFAULT_PROCTORING_CONFIG = {
   focusEvents: {
     // D3 ladder: warn each of the first `toleratedViolations` qualifying
     // episodes, then a final warning, then auto-submit.
-    mode: 'warn-then-submit', // 'record' | 'warn-only' | 'warn-then-submit'
+    // v3: the platform default is 'warn-only' — a bare opt-in can never
+    // auto-submit; 'warn-then-submit' requires an explicit per-quiz choice.
+    mode: 'warn-only', // 'record' | 'warn-only' | 'warn-then-submit'
     toleratedViolations: 3,
     minDurationMs: 2000, // blips under this floor never count
     prolongedAbsenceMs: 60000,
@@ -42,7 +50,11 @@ const DEFAULT_PROCTORING_CONFIG = {
   },
   attention: {
     enabled: true,
-    mode: 'record', // default stays record-only (D6); 'warn' is the Phase 9.1 per-quiz advisory opt-in
+    // v3 (global warn rollout): 'warn' is the platform default — head-turn
+    // detection records AND shows the advisory banner on the 3rd-occurrence
+    // marker. 'record' (silent) is now the explicit per-quiz opt-out. D6
+    // unchanged: 'warn' is advisory-only — never a violation, risk or submit.
+    mode: 'warn',
     // Phase 5 derivation thresholds (plan §13.2 illustrative values —
     // PROVISIONAL until the §19.5 calibration round, like every number in
     // this file). Shaping-only: they govern WHEN a record-only observation

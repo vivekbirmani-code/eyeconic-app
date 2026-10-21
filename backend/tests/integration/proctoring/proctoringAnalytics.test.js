@@ -473,8 +473,8 @@ describe('Phase 7 — accommodation overrides (§26.5): CRUD + whitelist applica
     await createOverride({ studentId: student.user._id, reasonCode: 'attention_disabled' });
     const started = await startProctoredAttempt(quiz, student);
     expect(started.policy.attention.enabled).toBe(false);
-    expect(started.policy.attention.mode).toBe('record'); // D6 lock untouched
-    expect(started.policy.focusEvents.mode).toBe('warn-then-submit'); // enforcement untouched
+    expect(started.policy.attention.mode).toBe('warn'); // v3 warn-rollout default; D6 lock (never submit) untouched
+    expect(started.policy.focusEvents.mode).toBe('warn-only'); // enforcement untouched
   });
 
   it('relaxed_thresholds merges validated leaves into the snapshot', async () => {

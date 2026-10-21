@@ -94,7 +94,10 @@ describe('Proctoring timeline endpoint (Phase 7-lite)', () => {
       questions: questions.map((q) => q._id),
       assignedStudents: [student.user._id],
       createdBy: admin.user._id,
-      proctoring: { enabled: true },
+      // Pinned warn-then-submit: these tests exercise the full ladder
+      // (warnings, violations, policy submit) — explicit since the v3
+      // rollout made 'warn-only' the platform default.
+      proctoring: { enabled: true, focusEvents: { mode: 'warn-then-submit' } },
     });
     await setProctoringEnabled(true, admin.user._id);
     await MentorStudentAssignment.create({
