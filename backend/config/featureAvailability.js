@@ -41,7 +41,7 @@ const FEATURE_AVAILABILITY = {
   // (Quiz.proctoring.enabled, default false — D15) must also be on before
   // any quiz is proctored. Precedence: kill switch > this flag > quiz
   // opt-in (utils/proctoring/rollout.js).
-  aiProctoring: false,
+  aiProctoring: true,
 };
 
 /**
