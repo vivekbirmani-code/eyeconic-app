@@ -59,6 +59,18 @@ const WARN_PAYLOAD = {
   attention: { mode: 'warn' },
 };
 
+// PRE-DEPLOY variant: identical to WARN_PAYLOAD minus the attention 'warn'
+// opt-in, which the pre-Phase-9.1 backend rejects with 400 (attention.mode
+// locked to 'record' there). Use until the Phase 9.1 commits are deployed;
+// re-run plain `arm-warn` afterwards to add the head-turn banner.
+const WARN_PAYLOAD_FOCUS_ONLY = {
+  enabled: true,
+  camera: 'optional',
+  focusEvents: { mode: 'warn-only' },
+  multipleFaces: { mode: 'record' },
+  facePresence: { mode: 'record' },
+};
+
 function loadCreds() {
   if (!fs.existsSync(CREDS_FILE)) {
     console.error(`[creds] File not found: ${CREDS_FILE}\n[creds] Create it as {"admin":{"email":"...","password":"..."},"student":{...}}`);
@@ -101,9 +113,13 @@ const fmtQuiz = (q) => ({
     focusEvents: q.proctoring?.focusEvents?.mode,
     multipleFaces: q.proctoring?.multipleFaces?.mode,
     facePresence: q.proctoring?.facePresence?.mode,
+    attention: q.proctoring?.attention?.mode ?? '(schema default: record)',
   },
   eligibility: q.proctoringEligibility ?? '(not in this response)',
   assignedCount: Array.isArray(q.assignedStudents) ? q.assignedStudents.length : undefined,
+  // Cohort-exposure check: a quiz with this flag reaches EVERY free user the
+  // moment proctoring is armed (old app builds then hard-fail /start 403).
+  assignToAllFreeUsers: q.assignToAllFreeUsers === true,
 });
 
 async function cmdDiagnose() {
@@ -247,6 +263,7 @@ async function main() {
     case 'kill-switch': return cmdKillSwitch(arg);
     case 'arm': return cmdArm(arg, ON_PAYLOAD);
     case 'arm-warn': return cmdArm(arg, WARN_PAYLOAD);
+    case 'arm-warn-focus': return cmdArm(arg, WARN_PAYLOAD_FOCUS_ONLY);
     case 'disarm': return cmdArm(arg, { enabled: false });
     case 'student-view': return cmdStudentView(arg);
     case 'inspect': return cmdInspect(arg);

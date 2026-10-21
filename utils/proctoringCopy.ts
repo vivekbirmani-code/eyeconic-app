@@ -101,25 +101,47 @@ export const PROCTORING_COPY = {
   studentSummary: {
     title: 'Monitoring summary',
     subtitle: 'How your test monitoring went — for your transparency. It does not change your score.',
-    monitoredFor: 'Monitored for the full test',
-    monitoredPartial: 'Monitoring had interruptions',
-    closedClean: 'Session closed normally',
-    /** Each line renders as "· <line>" under the summary; omitted when 0. */
-    lines: {
-      leftApp: 'Times you left the app',
-      faceNotVisible: 'Times your face was not clearly visible',
-      multipleFaces: 'Times more than one person may have been visible',
-      headTurns: 'Times you turned your head away',
-      cameraIssues: 'Camera or lighting hiccups',
-      attentionNotes: 'Other attention notes (recorded for transparency)',
-      connectionGaps: 'Connection gaps',
-    },
+    /** Session status chip (header, right) + duration line (collapsed). */
+    statusClosed: 'Closed normally',
+    statusInterrupted: 'Interrupted',
+    monitored: '{minutes} min monitored',
+    /**
+     * Collapsed-state stat chips — short labels paired with bold counts
+     * (rendered by MonitoringSummaryCard; counts always from the server's
+     * eventCounts, zero-count chips suppressed).
+     */
+    chipLabels: {
+      leftApp: 'left the app',
+      faceNotVisible: 'face not visible',
+      multipleFaces: 'extra faces',
+      headTurns: 'head turns',
+      cameraIssues: 'camera / lighting',
+      attentionNotes: 'other attention notes',
+      connectionGaps: 'connection gaps',
+    } as Record<string, string>,
+    /** Clean session (zero recorded events) — positive, never alarming. */
+    noNotes: 'No monitoring notes were recorded.',
     reviewed: {
       reviewed_ok: 'A reviewer looked at this test and found no concern.',
       reviewed_concern: 'A reviewer noted a concern with this test — your mentor may contact you.',
     } as Record<string, string>,
     showDetails: 'Show details',
     hideDetails: 'Hide details',
+    /** Long-history cap (MonitoringSummaryCard renders the first rows only). */
+    showAllEvents: 'Show all {count} events',
+    showFewerEvents: 'Show fewer events',
+    /**
+     * WHICH warning a WARNING_DELIVERED row was (server metadata.code →
+     * phrase); generic fallback lives in eventLabels.WARNING_DELIVERED.
+     */
+    warningDetails: {
+      'warn.focus': 'Heads-up: come back to the test',
+      'warn.final': 'Final warning',
+      'warn.multipleFaces': 'Heads-up: only one person in view',
+      'warn.faceMissing': 'Heads-up: face not clearly visible',
+      'warn.camera': 'Heads-up: camera access lost',
+      'warn.headTurn': 'Heads-up: focus on the screen',
+    } as Record<string, string>,
     /**
      * Short plain-English labels for the details list — one line per recorded
      * observation. Students never see event-type codes (those are reviewer
@@ -146,6 +168,7 @@ export const PROCTORING_COPY = {
       HEARTBEAT_GAP: 'Connection gap',
       SESSION_DEGRADED: 'Monitoring interrupted',
       WARNING_DELIVERED: 'Heads-up shown during the test',
+      AUTO_SUBMITTED: 'Test submitted automatically (policy)',
     } as Record<string, string>,
   },
   /**

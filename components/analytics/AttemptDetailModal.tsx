@@ -6,16 +6,14 @@ import {
     StyleSheet,
     TouchableOpacity,
     ScrollView,
-    ActivityIndicator,
-    Platform,
-    StatusBar,
-    TextInput
+    ActivityIndicator
 } from 'react-native';
-import { X, CheckCircle, XCircle, MinusCircle, Clock, Award, BarChart3, FileText, ChevronDown, ShieldAlert } from 'lucide-react-native';
+import { X, CheckCircle, XCircle, MinusCircle, Clock, Award, BarChart3, FileText, ChevronDown } from 'lucide-react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '@/services/api';
 import { DataTable, DataTableColumn } from '@/components/DataTable';
 import AttemptQuestionReport from './AttemptQuestionReport';
+import ProctoringTimelineSection from './ProctoringTimelineSection';
 
 interface AttemptDetailModalProps {
     attemptId: string | null;
@@ -33,51 +31,6 @@ const GROUP_BY_OPTIONS: Array<{ value: GroupBy; label: string; rowLabel: string 
     { value: 'topic', label: 'By Topic', rowLabel: 'Topic' },
     { value: 'tag', label: 'By Tag', rowLabel: 'Tag' },
 ];
-
-/**
- * Admin/mentor labels for proctoring event types (reviewer-facing, plan
- * §25.3 — observations, never verdicts; student-facing copy lives in
- * utils/proctoringCopy.ts instead). Unmapped types fall back to the raw
- * registry name — honest rather than guessed.
- */
-const TIMELINE_LABELS: Record<string, string> = {
-    SESSION_STARTED: 'Session started',
-    SESSION_RESUMED: 'Session resumed',
-    SESSION_CLOSED: 'Session closed',
-    SESSION_DEGRADED: 'Session degraded',
-    MODEL_UNAVAILABLE: 'Face monitoring unavailable',
-    HEARTBEAT_GAP: 'Connection gap',
-    CAMERA_UNAVAILABLE: 'Camera unavailable',
-    CAMERA_PERMISSION_REVOKED: 'Camera permission lost',
-    CAMERA_TRACK_ENDED: 'Camera stopped',
-    CAMERA_FEED_DARK: 'Camera too dark',
-    CAMERA_FEED_FROZEN: 'Camera frozen',
-    FACE_NOT_DETECTED: 'Face not visible',
-    FACE_PARTIALLY_VISIBLE: 'Face partly visible',
-    FACE_OUT_OF_FRAME: 'Face out of frame',
-    MULTIPLE_FACES_DETECTED: 'More than one face',
-    HEAD_POSE_EXTREME: 'Head turned away (recorded)',
-    HEAD_POSE_TURNED: 'Turned head away (recorded)',
-    HEAD_POSE_REPEATED: 'Repeated head turns (recorded)',
-    ATTENTION_DEVIATION_SUSTAINED: 'Attention deviation (recorded)',
-    ATTENTION_DEVIATION_REPEATED: 'Repeated attention deviation (recorded)',
-    TAB_HIDDEN: 'Tab hidden (web)',
-    WINDOW_BLUR: 'Window lost focus (web)',
-    APP_BACKGROUND: 'Left the test app',
-    APP_INACTIVE: 'App inactive',
-    EXIT_ATTEMPTED: 'Tried to exit',
-    WARNING_DELIVERED: 'Warning shown',
-    AUTO_SUBMITTED: 'Submitted automatically (policy)',
-    POLICY_ACTION_SKIPPED: 'Policy action skipped',
-};
-
-/** §25.4 integrity statuses, chip-length for the timeline header. */
-const INTEGRITY_SHORT: Record<string, string> = {
-    pending: 'pending review',
-    clean: 'clean',
-    reviewed_ok: 'reviewed OK',
-    reviewed_concern: 'reviewed concern',
-};
 
 interface AttemptDetail {
     summary?: {
@@ -143,19 +96,10 @@ export default function AttemptDetailModal({ attemptId, visible, onClose, userRo
     const [attemptData, setAttemptData] = useState<AttemptDetail | null>(null);
     const [groupBy, setGroupBy] = useState<GroupBy>('section');
     const [showDropdown, setShowDropdown] = useState(false);
-    // ===== Proctoring timeline (Phase 7-lite) — rendered only for proctored
-    // attempts (the resync hint decides) and loaded lazily on first expand. =====
+    // ===== Proctoring timeline (Phase 7-lite) — the section renders only for
+    // proctored attempts (the resync hint decides); all timeline and review
+    // state lives in ProctoringTimelineSection. =====
     const [hasProctoring, setHasProctoring] = useState(false);
-    const [showTimeline, setShowTimeline] = useState(false);
-    const [timelineLoading, setTimelineLoading] = useState(false);
-    // Phase 7 (§25.4) review state — admin actions on the closed session.
-    const [reviewNote, setReviewNote] = useState('');
-    const [adjustedScore, setAdjustedScore] = useState('');
-    const [adjustedTotal, setAdjustedTotal] = useState('');
-    const [reviewSubmitting, setReviewSubmitting] = useState(false);
-    const [reviewError, setReviewError] = useState<string | null>(null);
-    const [showAdjustInputs, setShowAdjustInputs] = useState(false);
-    const [timeline, setTimeline] = useState<any | null>(null);
 
     useEffect(() => {
         if (visible && attemptId) {
@@ -168,66 +112,6 @@ export default function AttemptDetailModal({ attemptId, visible, onClose, userRo
             fetchAttemptDetails();
         }
     }, [groupBy]);
-
-    useEffect(() => {
-        if (!visible) {
-            setReviewNote('');
-            setAdjustedScore('');
-            setAdjustedTotal('');
-            setReviewError(null);
-            setShowAdjustInputs(false);
-        }
-    }, [visible]);
-
-    const fetchTimeline = async () => {
-        if (!attemptId) return;
-        setTimelineLoading(true);
-        try {
-            const response = await api.get(`/quizzes/attempt/${attemptId}/proctoring/timeline`);
-            setTimeline(response.data?.timeline ?? null);
-        } catch {
-            // 400 = not a proctored attempt — the section stays hidden anyway.
-            setTimeline(null);
-        } finally {
-            setTimelineLoading(false);
-        }
-    };
-
-    // Phase 7 (§25.4): record the human review decision of record. Marks are
-    // NEVER altered — an optional adjusted score is stored display-only.
-    const submitReview = async (decision: 'confirm' | 'dismiss' | 'escalate') => {
-        if (!attemptId || reviewSubmitting) return;
-        setReviewSubmitting(true);
-        setReviewError(null);
-        try {
-            const hasScore = adjustedScore.trim() !== '' && adjustedTotal.trim() !== '';
-            await api.post(`/quizzes/attempt/${attemptId}/proctoring/review`, {
-                decision,
-                ...(reviewNote.trim() ? { note: reviewNote.trim() } : {}),
-                ...(hasScore ? {
-                    adjustedScore: Number(adjustedScore),
-                    adjustedTotalMarks: Number(adjustedTotal),
-                } : {}),
-            });
-            await fetchTimeline();
-            setReviewNote('');
-            setAdjustedScore('');
-            setAdjustedTotal('');
-            setShowAdjustInputs(false);
-        } catch (error: any) {
-            setReviewError(error?.response?.data?.message ?? 'Could not record the review.');
-        } finally {
-            setReviewSubmitting(false);
-        }
-    };
-
-    const toggleTimeline = () => {
-        const next = !showTimeline;
-        setShowTimeline(next);
-        if (next && !timeline && !timelineLoading) {
-            fetchTimeline();
-        }
-    };
 
     const fetchAttemptDetails = async () => {
         if (!attemptId) return;
@@ -468,6 +352,7 @@ export default function AttemptDetailModal({ attemptId, visible, onClose, userRo
                         <ScrollView
                             style={styles.content}
                             showsVerticalScrollIndicator={false}
+                            keyboardShouldPersistTaps="handled"
                             // Bottom clearance: gesture-nav/system-bar inset plus
                             // breathing room, so the last timeline row and the
                             // review actions are never pinned under device UI.
@@ -606,6 +491,19 @@ export default function AttemptDetailModal({ attemptId, visible, onClose, userRo
                                 />
                             </View>
 
+                            {/* Proctoring timeline (§25.3/§25.4) — the review
+                                surface for proctored attempts, placed between
+                                the grouped performance table and the
+                                question-level report (redesign 2026-10-21).
+                                Renders nothing for non-proctored attempts. */}
+                            {hasProctoring && (
+                                <ProctoringTimelineSection
+                                    key={String(attemptId ?? 'attempt')}
+                                    attemptId={attemptId}
+                                    userRole={userRole}
+                                />
+                            )}
+
                             {/* Question-Level Report — every question with the
                                 student's response, the answer key and the
                                 per-question verdict; Excel/CSV downloads ride
@@ -625,200 +523,6 @@ export default function AttemptDetailModal({ attemptId, visible, onClose, userRo
                                 </View>
                             )}
 
-                            {/* Proctoring timeline (Phase 7-lite) — the review
-                                surface for proctored attempts only. Structured
-                                observations; no images exist anywhere. */}
-                            {hasProctoring && (
-                                <View style={styles.timelineContainer}>
-                                    <TouchableOpacity
-                                        style={styles.timelineHeader}
-                                        onPress={toggleTimeline}
-                                        accessibilityRole="button"
-                                        accessibilityLabel="Toggle proctoring timeline"
-                                    >
-                                        <ShieldAlert size={16} color="#6D28D9" />
-                                        <Text style={styles.timelineTitle}>Proctoring timeline</Text>
-                                        {timeline?.summary && (
-                                            <Text style={styles.timelineChips}>
-                                                {timeline.summary.violationCount} violations · risk {timeline.summary.riskCategory}
-                                                {timeline.session?.integrityStatus
-                                                    ? ` · ${INTEGRITY_SHORT[timeline.session.integrityStatus] ?? timeline.session.integrityStatus}`
-                                                    : ''}
-                                            </Text>
-                                        )}
-                                        <ChevronDown
-                                            size={16}
-                                            color="#6B7280"
-                                            style={[styles.timelineChevron, showTimeline && { transform: [{ rotate: '180deg' }] }]}
-                                        />
-                                    </TouchableOpacity>
-
-                                    {showTimeline && (
-                                        <View style={styles.timelineBody}>
-                                            {timelineLoading && <ActivityIndicator size="small" color="#6D28D9" />}
-                                            {!timelineLoading && !timeline && (
-                                                <Text style={styles.timelineEmpty}>
-                                                    No proctoring timeline available for this attempt.
-                                                </Text>
-                                            )}
-                                            {!timelineLoading && timeline && (
-                                                <>
-                                                    <View style={styles.timelineMetaRow}>
-                                                        <Text style={styles.timelineMeta}>
-                                                            Session {String(timeline.session?.status ?? '—')}
-                                                            {' · '}{Math.round((timeline.summary?.monitoredMs ?? 0) / 60000)} min monitored
-                                                            {timeline.autoSubmitReason
-                                                                ? ' · auto-submitted (policy)'
-                                                                : ''}
-                                                        </Text>
-                                                    </View>
-                                                    {(timeline.events ?? []).map((event: any) => (
-                                                        <View key={event._id} style={styles.timelineRow}>
-                                                            <Text style={styles.timelineTime}>
-                                                                {new Date(event.serverAt).toLocaleTimeString([], {
-                                                                    hour: '2-digit', minute: '2-digit', second: '2-digit',
-                                                                })}
-                                                            </Text>
-                                                            <View style={styles.timelineRowText}>
-                                                                <Text style={[
-                                                                    styles.timelineLabel,
-                                                                    event.type === 'WARNING_DELIVERED' && styles.timelineLabelWarn,
-                                                                    event.type === 'AUTO_SUBMITTED' && styles.timelineLabelFinal,
-                                                                ]}>
-                                                                    {TIMELINE_LABELS[event.type] ?? event.type}
-                                                                    {(event.durationMs ?? 0) > 0 ? ` · ${Math.round(event.durationMs / 1000)}s` : ''}
-                                                                </Text>
-                                                                {event.type === 'WARNING_DELIVERED' && event.metadata?.code === 'warn.final' && (
-                                                                    <Text style={styles.timelineSub}>Final warning</Text>
-                                                                )}
-                                                                {event.type === 'AUTO_SUBMITTED' && event.metadata?.ruleId && (
-                                                                    <Text style={styles.timelineSub}>
-                                                                        Rule: {event.metadata.ruleId}
-                                                                    </Text>
-                                                                )}
-                                                            </View>
-                                                        </View>
-                                                    ))}
-                                                    {(timeline.violations ?? []).length > 0 && (
-                                                        <Text style={styles.timelineViolations}>
-                                                            Violations: {(timeline.violations ?? [])
-                                                                .map((v: any) => `${v.ruleId}${v.review?.status ? ` (${v.review.status})` : ''}`)
-                                                                .join(', ')}
-                                                        </Text>
-                                                    )}
-
-                                                    {/* §25.4 review trail — the decision of record. */}
-                                                    {timeline.session?.review?.status && (
-                                                        <View style={styles.reviewTrailCard}>
-                                                            <Text style={styles.reviewTrailTitle}>
-                                                                Review: {timeline.session.review.status}
-                                                                {' · '}{new Date(timeline.session.review.reviewedAt).toLocaleString([], {
-                                                                    dateStyle: 'medium', timeStyle: 'short',
-                                                                })}
-                                                            </Text>
-                                                            {timeline.session.review.note ? (
-                                                                <Text style={styles.reviewTrailNote}>
-                                                                    "{timeline.session.review.note}"
-                                                                </Text>
-                                                            ) : null}
-                                                            {timeline.session.reviewAdjustedScore ? (
-                                                                <Text style={styles.reviewTrailAdjusted}>
-                                                                    Adjusted score (display only): {timeline.session.reviewAdjustedScore.score}
-                                                                    {' / '}{timeline.session.reviewAdjustedScore.totalMarks}
-                                                                </Text>
-                                                            ) : null}
-                                                        </View>
-                                                    )}
-
-                                                    {/* §25.4 review actions — admins only, closed sessions only. */}
-                                                    {userRole === 'admin'
-                                                        && timeline.session?.status
-                                                        && !['ACTIVE', 'DEGRADED'].includes(timeline.session.status) && (
-                                                        <View style={styles.reviewPanel}>
-                                                            <Text style={styles.reviewPanelTitle}>Review decision</Text>
-                                                            {reviewError && (
-                                                                <Text style={styles.reviewError}>{reviewError}</Text>
-                                                            )}
-                                                            <TextInput
-                                                                style={styles.reviewNoteInput}
-                                                                placeholder="Note (optional, e.g. sibling walked by)"
-                                                                placeholderTextColor="#9CA3AF"
-                                                                value={reviewNote}
-                                                                onChangeText={setReviewNote}
-                                                                multiline
-                                                                maxLength={1000}
-                                                            />
-                                                            <TouchableOpacity
-                                                                style={styles.reviewAdjustToggle}
-                                                                onPress={() => setShowAdjustInputs((prev) => !prev)}
-                                                            >
-                                                                <Text style={styles.reviewAdjustToggleText}>
-                                                                    {showAdjustInputs ? '- Hide adjusted score' : '+ Record adjusted score (optional)'}
-                                                                </Text>
-                                                            </TouchableOpacity>
-                                                            {showAdjustInputs && (
-                                                                <View style={styles.reviewAdjustRow}>
-                                                                    <TextInput
-                                                                        style={styles.reviewAdjustInput}
-                                                                        placeholder="Score"
-                                                                        placeholderTextColor="#9CA3AF"
-                                                                        value={adjustedScore}
-                                                                        onChangeText={setAdjustedScore}
-                                                                        keyboardType="numeric"
-                                                                    />
-                                                                    <Text style={styles.reviewAdjustSlash}>/</Text>
-                                                                    <TextInput
-                                                                        style={styles.reviewAdjustInput}
-                                                                        placeholder="Total"
-                                                                        placeholderTextColor="#9CA3AF"
-                                                                        value={adjustedTotal}
-                                                                        onChangeText={setAdjustedTotal}
-                                                                        keyboardType="numeric"
-                                                                    />
-                                                                </View>
-                                                            )}
-                                                            <Text style={styles.reviewAdjustHint}>
-                                                                Display only — the original marks are never changed.
-                                                            </Text>
-                                                            {reviewSubmitting ? (
-                                                                <ActivityIndicator size="small" color="#6D28D9" style={{ marginTop: 8 }} />
-                                                            ) : (
-                                                                <View style={styles.reviewButtonRow}>
-                                                                    <TouchableOpacity
-                                                                        style={[styles.reviewButton, styles.reviewButtonConfirm]}
-                                                                        onPress={() => submitReview('confirm')}
-                                                                        accessibilityRole="button"
-                                                                        accessibilityLabel="Confirm proctoring concerns"
-                                                                    >
-                                                                        <Text style={styles.reviewButtonText}>Confirm</Text>
-                                                                    </TouchableOpacity>
-                                                                    <TouchableOpacity
-                                                                        style={[styles.reviewButton, styles.reviewButtonDismiss]}
-                                                                        onPress={() => submitReview('dismiss')}
-                                                                        accessibilityRole="button"
-                                                                        accessibilityLabel="Dismiss proctoring concerns"
-                                                                    >
-                                                                        <Text style={[styles.reviewButtonText, styles.reviewButtonTextDismiss]}>Dismiss</Text>
-                                                                    </TouchableOpacity>
-                                                                    <TouchableOpacity
-                                                                        style={[styles.reviewButton, styles.reviewButtonEscalate]}
-                                                                        onPress={() => submitReview('escalate')}
-                                                                        accessibilityRole="button"
-                                                                        accessibilityLabel="Escalate proctoring concerns"
-                                                                    >
-                                                                        <Text style={[styles.reviewButtonText, styles.reviewButtonTextEscalate]}>Escalate</Text>
-                                                                    </TouchableOpacity>
-                                                                </View>
-                                                            )}
-                                                        </View>
-                                                    )}
-                                                </>
-                                            )}
-                                        </View>
-                                    )}
-                                </View>
-                            )}
-
                             <View style={{ height: 8 }} />
                         </ScrollView>
                     ) : (
@@ -833,156 +537,6 @@ export default function AttemptDetailModal({ attemptId, visible, onClose, userRo
 }
 
 const styles = StyleSheet.create({
-    reviewTrailCard: {
-        backgroundColor: '#F9FAFB',
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: '#E5E7EB',
-        padding: 10,
-        marginTop: 10,
-    },
-    reviewTrailTitle: { fontSize: 12, fontWeight: '700', color: '#374151' },
-    reviewTrailNote: { fontSize: 12, color: '#6B7280', marginTop: 4, fontStyle: 'italic' },
-    reviewTrailAdjusted: { fontSize: 12, color: '#0D9488', marginTop: 4, fontWeight: '600' },
-    reviewPanel: {
-        borderTopWidth: 1,
-        borderTopColor: '#E5E7EB',
-        marginTop: 12,
-        paddingTop: 12,
-    },
-    reviewPanelTitle: { fontSize: 12.5, fontWeight: '700', color: '#374151', marginBottom: 6 },
-    reviewError: { fontSize: 12, color: '#DC2626', marginBottom: 6 },
-    reviewNoteInput: {
-        borderWidth: 1,
-        borderColor: '#D1D5DB',
-        borderRadius: 8,
-        padding: 8,
-        backgroundColor: '#FFF',
-        fontSize: 12.5,
-        color: '#1F2937',
-        minHeight: 36,
-        textAlignVertical: 'top',
-    },
-    reviewAdjustToggle: { marginTop: 8, alignSelf: 'flex-start' },
-    reviewAdjustToggleText: { fontSize: 12, color: '#0D9488', fontWeight: '600' },
-    reviewAdjustRow: { flexDirection: 'row', alignItems: 'center', marginTop: 6 },
-    reviewAdjustInput: {
-        borderWidth: 1,
-        borderColor: '#D1D5DB',
-        borderRadius: 8,
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        fontSize: 12.5,
-        color: '#1F2937',
-        backgroundColor: '#FFF',
-        width: 90,
-    },
-    reviewAdjustSlash: { fontSize: 13, color: '#6B7280', marginHorizontal: 8 },
-    reviewAdjustHint: { fontSize: 11, color: '#9CA3AF', marginTop: 6 },
-    reviewButtonRow: { flexDirection: 'row', gap: 8, marginTop: 10 },
-    reviewButton: {
-        flex: 1,
-        borderRadius: 8,
-        paddingVertical: 9,
-        alignItems: 'center',
-        borderWidth: 1,
-    },
-    reviewButtonConfirm: { backgroundColor: '#FEF2F2', borderColor: '#FECACA' },
-    reviewButtonDismiss: { backgroundColor: '#ECFDF5', borderColor: '#A7F3D0' },
-    reviewButtonEscalate: { backgroundColor: '#FFFBEB', borderColor: '#FDE68A' },
-    reviewButtonText: { fontSize: 12.5, fontWeight: '700', color: '#DC2626' },
-    reviewButtonTextDismiss: { color: '#059669' },
-    reviewButtonTextEscalate: { color: '#D97706' },
-    timelineContainer: {
-        backgroundColor: '#FFFFFF',
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: '#E5E7EB',
-        // Same 16 dp page grid as the modal's other sections (score card,
-        // metrics, tables) — without this the card renders full-bleed.
-        marginTop: 12,
-        marginBottom: 4,
-        marginHorizontal: 16,
-        overflow: 'hidden',
-    },
-    timelineHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingHorizontal: 12,
-        paddingVertical: 10,
-    },
-    timelineTitle: {
-        fontSize: 13,
-        fontWeight: '700',
-        color: '#6D28D9',
-        marginLeft: 6,
-    },
-    timelineChips: {
-        flex: 1,
-        fontSize: 11,
-        color: '#6B7280',
-        textAlign: 'right',
-        marginRight: 6,
-    },
-    timelineChevron: {},
-    timelineBody: {
-        borderTopWidth: 1,
-        borderTopColor: '#F3F4F6',
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-    },
-    timelineMetaRow: {
-        marginBottom: 6,
-    },
-    timelineMeta: {
-        fontSize: 11,
-        color: '#6B7280',
-    },
-    timelineRow: {
-        flexDirection: 'row',
-        alignItems: 'flex-start',
-        paddingVertical: 4,
-    },
-    timelineTime: {
-        fontSize: 11,
-        color: '#9CA3AF',
-        fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-        marginRight: 8,
-        marginTop: 1,
-    },
-    timelineRowText: {
-        flex: 1,
-    },
-    timelineLabel: {
-        fontSize: 12,
-        color: '#374151',
-    },
-    timelineLabelWarn: {
-        color: '#B45309',
-        fontWeight: '600',
-    },
-    timelineLabelFinal: {
-        color: '#B91C1C',
-        fontWeight: '700',
-    },
-    timelineSub: {
-        fontSize: 11,
-        color: '#6B7280',
-        marginTop: 1,
-    },
-    timelineViolations: {
-        fontSize: 11,
-        color: '#6B7280',
-        marginTop: 8,
-        paddingTop: 6,
-        borderTopWidth: 1,
-        borderTopColor: '#F3F4F6',
-    },
-    timelineEmpty: {
-        fontSize: 12,
-        color: '#6B7280',
-        paddingVertical: 6,
-    },
     overlay: {
         flex: 1,
         backgroundColor: 'rgba(0, 0, 0, 0.5)',
