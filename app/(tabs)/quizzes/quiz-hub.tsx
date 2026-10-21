@@ -415,7 +415,7 @@ export default function AdminQuizHub() {
                       <View style={styles.subjectIconContainer}>
                         <BookOpen color="#01b4ae" size={16} />
                       </View>
-                      <Text style={styles.subjectName}>{item.subject}</Text>
+                      <Text style={styles.subjectName} numberOfLines={1}>{item.subject}</Text>
                     </View>
                     <View style={styles.subjectCount}>
                       <Text style={styles.subjectCountText}>{item.count}</Text>
@@ -659,6 +659,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
+    // Long subject names ellipsize here instead of pushing the count pill
+    // off the row on narrow screens.
+    flex: 1,
+    minWidth: 0,
   },
   subjectIconContainer: {
     width: 32,
@@ -674,6 +678,8 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   subjectCount: {
+    flexShrink: 0,
+    marginLeft: 12,
     backgroundColor: 'rgba(1, 180, 174, 0.1)',
     paddingHorizontal: 14,
     paddingVertical: 6,

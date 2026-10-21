@@ -322,10 +322,10 @@ export default function QuizReview() {
 
           <View style={styles.chartCard}>
             <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <Text style={styles.chartTitle}>
+              <Text style={[styles.chartTitle, { flex: 1, marginRight: 8 }]}>
                 {groupBy === 'subject' ? 'Subject' : groupBy === 'tag' ? 'Tag' : groupBy === 'topic' ? 'Topic' : 'Section'} Analysis
               </Text>
-              <TouchableOpacity style={styles.filterButton} onPress={() => setShowGroupByDropdown(!showGroupByDropdown)}>
+              <TouchableOpacity style={[styles.filterButton, { flexShrink: 0 }]} onPress={() => setShowGroupByDropdown(!showGroupByDropdown)}>
                 <Text style={styles.filterButtonText}>
                   {groupBy === 'subject' ? 'By Subject' : groupBy === 'tag' ? 'By Tag' : groupBy === 'topic' ? 'By Topic' : 'By Section'}
                 </Text>

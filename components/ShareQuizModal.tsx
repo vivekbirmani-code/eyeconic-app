@@ -26,6 +26,7 @@ import { api } from '@/services/api';
 import * as Clipboard from 'expo-clipboard';
 import useDebounce from '@/hooks/useDebounce';
 import { colors } from '@/utils/theme';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 // Minimal quiz shape the share sheet needs. Both the freshly created quiz
 // (create/import responses) and the Past Tests list rows satisfy this.
@@ -393,6 +394,8 @@ export default function ShareQuizModal({ visible, quiz, onClose, onShareComplete
     }
   };
 
+  const insets = useSafeAreaInsets();
+
   return (
     <Modal
       visible={visible && !!activeQuiz}
@@ -401,7 +404,7 @@ export default function ShareQuizModal({ visible, quiz, onClose, onShareComplete
       onRequestClose={onClose}
     >
       <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
+        <View style={[styles.modalContent, { paddingBottom: Math.max(insets.bottom, 20) }]}>
           <View style={styles.modalHeader}>
             <Text style={styles.modalTitle}>Share Quiz</Text>
             <TouchableOpacity onPress={onClose}>
@@ -572,7 +575,7 @@ export default function ShareQuizModal({ visible, quiz, onClose, onShareComplete
                       </View>
                       <View style={styles.studentInfo}>
                         <Text style={styles.studentName}>{student.name}</Text>
-                        <Text style={styles.studentEmail}>{student.email}</Text>
+                        <Text style={styles.studentEmail} numberOfLines={1} ellipsizeMode='tail'>{student.email}</Text>
                       </View>
                     </TouchableOpacity>
                   ))
@@ -690,6 +693,8 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     padding: 20,
+    // Bottom padding is applied inline with the safe-area inset so the
+    // confirm buttons clear the gesture bar / home indicator.
     maxHeight: '80%',
   },
   modalHeader: {
@@ -727,6 +732,10 @@ const styles = StyleSheet.create({
     color: colors.primary,
     fontWeight: '500',
     marginBottom: 12,
+    // Yields to the Select/Deselect action so neither is pushed off the row
+    // on narrow screens.
+    flex: 1,
+    flexShrink: 1,
   },
   selectionActionRow: {
     flexDirection: 'row',
@@ -744,6 +753,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.primary,
     fontWeight: '600',
+    flexShrink: 1,
   },
   selectAllActionTextDisabled: {
     color: '#9CA3AF',

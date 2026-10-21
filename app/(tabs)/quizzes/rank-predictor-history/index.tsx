@@ -137,7 +137,7 @@ function PredictorHistoryScreen() {
               >
                 <View style={styles.historyTop}>
                   <View style={styles.examChip}>
-                    <Text style={styles.examChipText}>
+                    <Text style={styles.examChipText} numberOfLines={1}>
                       {EXAM_LABELS[item.exam] ?? item.exam}
                     </Text>
                   </View>
@@ -270,6 +270,8 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     paddingVertical: 3,
     paddingHorizontal: 10,
+    // Raw exam ids (fallback label) shrink before the date row does.
+    flexShrink: 1,
   },
   examChipText: {
     fontSize: 12,
@@ -284,6 +286,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 2,
+    flexShrink: 0,
+    marginLeft: 8,
   },
   historyRange: {
     fontSize: 15,

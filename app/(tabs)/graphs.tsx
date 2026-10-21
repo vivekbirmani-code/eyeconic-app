@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   Animated,
   StatusBar,
+  useWindowDimensions,
 } from 'react-native';
 import { ScreenContainer } from '@/components/layout';
 import { useFocusEffect } from '@react-navigation/native';
@@ -34,6 +35,7 @@ const subjectAccuracy = [
 
 function Graphs() {
   const { user } = useAuth();
+  const { fontScale } = useWindowDimensions();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [gtChartData, setGtChartData] = useState<GtChartEntry[]>([]);
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -130,7 +132,7 @@ function Graphs() {
                 </Text>
               </View>
             ) : (
-              <View style={styles.chartContainer}>
+              <View style={[styles.chartContainer, { height: Math.ceil(180 * Math.max(fontScale, 1)) }]}>
                 <View style={styles.yAxis}>
                   <Text style={styles.axisText}>{CHART_Y_AXIS_MAX}</Text>
                   <Text style={styles.axisText}>120</Text>
@@ -151,8 +153,8 @@ function Graphs() {
                             <Text style={styles.barValueText}>{gt.corrects}</Text>
                           </LinearGradient>
                         </View>
-                        <Text style={styles.barLabel} numberOfLines={2}>{gt.testName}</Text>
-                        <Text style={styles.barDate}>{gt.date}</Text>
+                        <Text style={styles.barLabel} numberOfLines={2} maxFontSizeMultiplier={1.3}>{gt.testName}</Text>
+                        <Text style={styles.barDate} numberOfLines={1} maxFontSizeMultiplier={1.3}>{gt.date}</Text>
                       </View>
                     );
                   })}
@@ -314,7 +316,8 @@ const styles = StyleSheet.create({
   },
   chartContainer: {
     flexDirection: 'row',
-    height: 180,
+    // Height is set inline (fontScale-aware): the label/date zone below the
+    // 120dp track must grow with the user's font scale or the date clips.
     paddingTop: 10,
   },
   yAxis: {
@@ -341,7 +344,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flex: 1,
     maxWidth: 72,
-    minWidth: 44,
+    // No minWidth: six columns must be able to compress down to the fixed
+    // 24dp barTrack width on narrow phones — a 44dp floor overflowed the card
+    // at ≤340dp with no wrap or scroll to catch it.
   },
   barTrack: {
     height: 120,

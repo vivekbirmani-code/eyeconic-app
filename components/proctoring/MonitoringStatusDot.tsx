@@ -61,7 +61,9 @@ export function MonitoringStatusDot({ status, cameraIssue }: MonitoringStatusDot
       <Pressable
         ref={dotRef}
         onPress={open ? close : openPopover}
-        hitSlop={12}
+        // 10dp visual dot inflated to a 44dp touch target (10 + 17×2) — the
+        // sole way to open the monitoring popover mid-attempt.
+        hitSlop={17}
         accessibilityRole="button"
         accessibilityLabel={`Monitoring status: ${view.label}`}
         accessibilityHint="Opens a short description of the monitoring status"

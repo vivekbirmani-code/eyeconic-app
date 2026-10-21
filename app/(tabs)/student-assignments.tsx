@@ -183,7 +183,7 @@ function StudentAssignments() {
         <View style={styles.assignmentHeader}>
           <View style={styles.subjectBadge}>
             <BookOpen color="#01b4ae" size={14} />
-            <Text style={styles.subjectText}>{item.subject.name}</Text>
+            <Text style={styles.subjectText} numberOfLines={1}>{item.subject.name}</Text>
           </View>
           <View style={[styles.statusBadge, { backgroundColor: getStatusBgColor(item.status) }]}>
             {getStatusIcon(item.status)}
@@ -388,8 +388,16 @@ function StudentAssignments() {
         ))}
       </ScrollView>
 
-      {/* Tab Navigation */}
-      <View style={styles.tabContainer}>
+      {/* Tab Navigation — horizontally scrollable with a per-tab floor, so
+          single-word labels ("Completed") never break mid-word on narrow
+          phones or at large font scales (same pattern as mentor-dashboard's
+          tab bar). */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.tabContainer}
+        contentContainerStyle={styles.tabContainerContent}
+      >
         <TouchableOpacity
           style={[styles.tab, activeTab === 'all' && styles.tabActive]}
           onPress={() => {
@@ -397,7 +405,7 @@ function StudentAssignments() {
             Haptics.selectionAsync();
           }}
         >
-          <Text style={[styles.tabText, activeTab === 'all' && styles.tabTextActive]}>
+          <Text style={[styles.tabText, activeTab === 'all' && styles.tabTextActive]} numberOfLines={1}>
             All ({assignments.length})
           </Text>
         </TouchableOpacity>
@@ -410,7 +418,7 @@ function StudentAssignments() {
           }}
         >
           <Calendar color={activeTab === 'thisWeek' ? '#01b4ae' : '#6B7280'} size={16} />
-          <Text style={[styles.tabText, activeTab === 'thisWeek' && styles.tabTextActive]}>
+          <Text style={[styles.tabText, activeTab === 'thisWeek' && styles.tabTextActive]} numberOfLines={1}>
             This Week
           </Text>
         </TouchableOpacity>
@@ -423,11 +431,11 @@ function StudentAssignments() {
           }}
         >
           <CheckCircle color={activeTab === 'completed' ? '#01b4ae' : '#6B7280'} size={16} />
-          <Text style={[styles.tabText, activeTab === 'completed' && styles.tabTextActive]}>
+          <Text style={[styles.tabText, activeTab === 'completed' && styles.tabTextActive]} numberOfLines={1}>
             Completed
           </Text>
         </TouchableOpacity>
-      </View>
+      </ScrollView>
 
       {/* Content */}
       <View style={styles.content}>
@@ -494,18 +502,25 @@ const styles = StyleSheet.create({
     alignItems: 'flex-start',
   },
   tabContainer: {
-    flexDirection: 'row',
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E5E7EB',
+    flexGrow: 0,
+  },
+  tabContainerContent: {
+    flexDirection: 'row',
     paddingHorizontal: 4,
   },
   tab: {
-    flex: 1,
+    // Natural width with a floor, instead of flex:1 equal cells — the floor
+    // keeps single-word labels on one line; the horizontal ScrollView above
+    // takes over when even the floors don't fit.
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     paddingVertical: 14,
+    paddingHorizontal: 8,
+    minWidth: 88,
     gap: 6,
     borderBottomWidth: 2,
     borderBottomColor: 'transparent',
@@ -558,6 +573,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
+    // Shrinks before the status badge does, so long subject names ("Forensic
+    // Medicine & Toxicology") ellipsize inside the pill instead of pushing
+    // the badge off the card on narrow screens.
+    flexShrink: 1,
   },
   subjectText: {
     fontSize: 12,
@@ -571,6 +590,9 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 10,
     gap: 4,
+    // The subject pill yields first; the badge keeps its size.
+    flexShrink: 0,
+    marginLeft: 8,
   },
   statusText: {
     fontSize: 10,

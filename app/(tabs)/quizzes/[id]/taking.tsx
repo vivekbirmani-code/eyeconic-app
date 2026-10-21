@@ -1308,7 +1308,7 @@ function QuizTakingContent() {
                         setShowReviewModal(false);
                       }}
                     >
-                      <Text style={[styles.gridItemText, { color: textColor }]}>
+                      <Text style={[styles.gridItemText, { color: textColor }]} maxFontSizeMultiplier={1.4}>
                         {index + 1}
                       </Text>
                     </TouchableOpacity>
@@ -1682,6 +1682,10 @@ const styles = StyleSheet.create({
   },
   modalSummaryBox: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    // At large font scales the four items wrap to a second line as whole
+    // units instead of overflowing the sheet or breaking mid-word.
+    rowGap: 8,
     justifyContent: 'space-between',
     backgroundColor: '#F3F4F6',
     borderRadius: 12,

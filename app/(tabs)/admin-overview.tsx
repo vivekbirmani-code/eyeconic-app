@@ -221,19 +221,19 @@ function AdminOverview() {
       <View style={styles.statsGrid}>
         <View style={styles.statBox}>
           <Text style={styles.statValue}>{item.stats.total}</Text>
-          <Text style={styles.statLabel}>Total</Text>
+          <Text style={styles.statLabel} numberOfLines={1} maxFontSizeMultiplier={1.4}>Total</Text>
         </View>
         <View style={styles.statBox}>
           <Text style={[styles.statValue, { color: '#F59E0B' }]}>{item.stats.pending}</Text>
-          <Text style={styles.statLabel}>Pending</Text>
+          <Text style={styles.statLabel} numberOfLines={1} maxFontSizeMultiplier={1.4}>Pending</Text>
         </View>
         <View style={styles.statBox}>
           <Text style={[styles.statValue, { color: '#10B981' }]}>{item.stats.verified}</Text>
-          <Text style={styles.statLabel}>Done</Text>
+          <Text style={styles.statLabel} numberOfLines={1} maxFontSizeMultiplier={1.4}>Done</Text>
         </View>
         <View style={styles.statBox}>
           <Text style={[styles.statValue, { color: '#EF4444' }]}>{item.stats.redo}</Text>
-          <Text style={styles.statLabel}>Redo</Text>
+          <Text style={styles.statLabel} numberOfLines={1} maxFontSizeMultiplier={1.4}>Redo</Text>
         </View>
       </View>
 
@@ -294,23 +294,23 @@ function AdminOverview() {
           <Text style={[styles.statValue, { color: '#2563EB' }]}>
             {item.stats.assignedStudents}
           </Text>
-          <Text style={styles.statLabel}>Students</Text>
+          <Text style={styles.statLabel} numberOfLines={1} maxFontSizeMultiplier={1.4}>Students</Text>
         </View>
         <View style={styles.statBox}>
           <Text style={styles.statValue}>{item.stats.totalAssignments}</Text>
-          <Text style={styles.statLabel}>Tasks</Text>
+          <Text style={styles.statLabel} numberOfLines={1} maxFontSizeMultiplier={1.4}>Tasks</Text>
         </View>
         <View style={styles.statBox}>
           <Text style={[styles.statValue, { color: '#10B981' }]}>
             {item.stats.verifiedThisWeek}
           </Text>
-          <Text style={styles.statLabel}>This Week</Text>
+          <Text style={styles.statLabel} numberOfLines={1} maxFontSizeMultiplier={1.4}>This Week</Text>
         </View>
         <View style={styles.statBox}>
           <Text style={[styles.statValue, { color: '#01b4ae' }]}>
             {item.stats.avgStudentCompletionRate}%
           </Text>
-          <Text style={styles.statLabel}>Avg Rate</Text>
+          <Text style={styles.statLabel} numberOfLines={1} maxFontSizeMultiplier={1.4}>Avg Rate</Text>
         </View>
       </View>
     </TouchableOpacity>
@@ -693,6 +693,9 @@ const styles = StyleSheet.create({
     borderBottomColor: '#F3F4F6',
   },
   statBox: {
+    // Equal shares so labels ellipsize inside their own cell instead of
+    // overflowing the row at large font scales.
+    flex: 1,
     alignItems: 'center',
   },
   statValue: {

@@ -282,19 +282,19 @@ export default function MentorDashboard() {
       <View style={styles.statsGrid}>
         <View style={styles.statItem}>
           <Text style={styles.statValue}>{item.stats.total}</Text>
-          <Text style={styles.statLabel}>Total</Text>
+          <Text style={styles.statLabel} numberOfLines={1} maxFontSizeMultiplier={1.4}>Total</Text>
         </View>
         <View style={styles.statItem}>
           <Text style={[styles.statValue, { color: '#F59E0B' }]}>{item.stats.pending}</Text>
-          <Text style={styles.statLabel}>Pending</Text>
+          <Text style={styles.statLabel} numberOfLines={1} maxFontSizeMultiplier={1.4}>Pending</Text>
         </View>
         <View style={styles.statItem}>
           <Text style={[styles.statValue, { color: '#10B981' }]}>{item.stats.verified}</Text>
-          <Text style={styles.statLabel}>Verified</Text>
+          <Text style={styles.statLabel} numberOfLines={1} maxFontSizeMultiplier={1.4}>Verified</Text>
         </View>
         <View style={styles.statItem}>
           <Text style={[styles.statValue, { color: '#01b4ae' }]}>{item.stats.completionPercentage}%</Text>
-          <Text style={styles.statLabel}>Completion</Text>
+          <Text style={styles.statLabel} numberOfLines={1} maxFontSizeMultiplier={1.4}>Completion</Text>
         </View>
       </View>
     </TouchableOpacity>
@@ -305,7 +305,7 @@ export default function MentorDashboard() {
       <View style={styles.assignmentHeader}>
         <View style={styles.assignmentSubject}>
           <BookOpen color="#01b4ae" size={16} />
-          <Text style={styles.assignmentSubjectText}>{item.subject.name}</Text>
+          <Text style={styles.assignmentSubjectText} numberOfLines={1}>{item.subject.name}</Text>
         </View>
         <View style={[styles.statusBadge, { backgroundColor: getStatusBgColor(item.status) }]}>
           <Text style={[styles.statusText, { color: getStatusColor(item.status) }]}>
@@ -798,6 +798,9 @@ const styles = StyleSheet.create({
     borderTopColor: '#F3F4F6',
   },
   statItem: {
+    // Equal shares so the single-word labels ("Completion") can wrap inside
+    // their own cell instead of overflowing the row at large font scales.
+    flex: 1,
     alignItems: 'center',
   },
   statValue: {
@@ -827,6 +830,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
+    // Long subject names ("Forensic Medicine & Toxicology") ellipsize here
+    // instead of pushing the status badge off the card on narrow screens.
+    flexShrink: 1,
   },
   assignmentSubjectText: {
     fontSize: 12,
@@ -837,6 +843,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 10,
+    // The subject yields first; the badge keeps its size.
+    flexShrink: 0,
+    marginLeft: 8,
   },
   statusText: {
     fontSize: 10,
@@ -862,7 +871,10 @@ const styles = StyleSheet.create({
   metaLabel: {
     fontSize: 12,
     color: '#9CA3AF',
-    width: 80,
+    // Floor, not fixed width: at large font scales "Scheduled:" would break
+    // mid-word inside a hard 80dp column; it can grow while metaValue
+    // (flex: 1) absorbs the difference.
+    minWidth: 80,
   },
   metaValue: {
     fontSize: 12,

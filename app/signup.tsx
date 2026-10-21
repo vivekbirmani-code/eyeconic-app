@@ -7,14 +7,13 @@ import {
   StyleSheet,
   Alert,
   KeyboardAvoidingView,
-  Platform,
   ActivityIndicator,
   Animated,
   Pressable,
   ScrollView,
-  Modal,
 } from 'react-native';
 import { FullScreenContainer } from '@/components/layout';
+import { KeyboardAvoidingDialog } from '@/components/KeyboardAvoidingDialog';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/context/AuthContext';
 import { Eye, EyeOff, ShieldCheck, Mail, Phone, User, Lock, ChevronLeft, Check } from 'lucide-react-native';
@@ -221,9 +220,13 @@ export default function Signup() {
 
   return (
     <FullScreenContainer>
+      {/* Android runs edge-to-edge on Expo SDK 54, so the window is never
+          resized for the keyboard and JS must compensate — 'padding' keeps
+          the form above the keyboard and resets cleanly on dismissal (same
+          treatment as the login screen). */}
       <KeyboardAvoidingView
         style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        behavior="padding"
       >
       {/* Background Gradient */}
       <LinearGradient
@@ -443,92 +446,87 @@ export default function Signup() {
         </View>
       </ScrollView>
 
-      {/* OTP Verification Modal */}
-      <Modal
+      {/* OTP Verification dialog — an in-tree overlay (not a RN Modal) so it
+          renders in the main window: under Android edge-to-edge (Expo SDK 54,
+          enforced on Android 15+) RN Modal windows get neither keyboard resize
+          nor keyboard events, so the keyboard covered the OTP input and the
+          Verify button. Slides up from the bottom like the old Modal did. */}
+      <KeyboardAvoidingDialog
         visible={otpModalVisible}
+        onClose={() => setOtpModalVisible(false)}
         animationType="slide"
-        transparent={true}
-        onRequestClose={() => setOtpModalVisible(false)}
+        cardStyle={[styles.modalCard, styles.modalCardSize]}
       >
-        <View style={styles.modalOverlay}>
-          <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            style={styles.modalContainer}
-          >
-            <View style={styles.modalCard}>
-              <View style={styles.modalBadge}>
-                <ShieldCheck color="#01b4ae" size={32} />
-              </View>
-
-              <Text style={styles.modalTitle}>Verification Required</Text>
-              <Text style={styles.modalSubtitle}>
-                We've sent a 6-digit confirmation code to:
-              </Text>
-              <Text style={styles.modalEmail}>{email}</Text>
-
-              {/* OTP Input */}
-              <View style={styles.otpInputWrapper}>
-                <TextInput
-                  style={[
-                    styles.otpInput,
-                    otpFocused && styles.otpInputFocused
-                  ]}
-                  placeholder="Enter 6-digit code"
-                  placeholderTextColor="#9CA3AF"
-                  value={otp}
-                  onChangeText={(text) => setOtp(text.replace(/[^0-9]/g, ''))}
-                  onFocus={() => setOtpFocused(true)}
-                  onBlur={() => setOtpFocused(false)}
-                  keyboardType="numeric"
-                  maxLength={6}
-                  autoFocus={true}
-                  editable={!isVerifying}
-                />
-              </View>
-
-              {/* Verify Button */}
-              <Pressable
-                onPressIn={() => handleButtonPressIn(otpButtonScale)}
-                onPressOut={() => handleButtonPressOut(otpButtonScale)}
-                onPress={handleVerifyAndSignup}
-                disabled={isVerifying}
-              >
-                <Animated.View
-                  style={[
-                    styles.verifyBtn,
-                    isVerifying && styles.btnDisabled,
-                    { transform: [{ scale: otpButtonScale }] }
-                  ]}
-                >
-                  {isVerifying ? (
-                    <View style={styles.loadingWrapper}>
-                      <ActivityIndicator color="#FFFFFF" size="small" />
-                      <Text style={styles.verifyBtnText}>Creating Account...</Text>
-                    </View>
-                  ) : (
-                    <Text style={styles.verifyBtnText}>Verify & Sign Up</Text>
-                  )}
-                </Animated.View>
-              </Pressable>
-
-              {/* Resend and Cancel */}
-              <View style={styles.modalFooter}>
-                <TouchableOpacity onPress={handleResendOtp} disabled={isVerifying}>
-                  <Text style={styles.resendText}>Resend Code</Text>
-                </TouchableOpacity>
-
-                <TouchableOpacity 
-                  onPress={() => setOtpModalVisible(false)} 
-                  disabled={isVerifying}
-                  style={styles.cancelLink}
-                >
-                  <Text style={styles.cancelText}>Cancel</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </KeyboardAvoidingView>
+        <View style={styles.modalBadge}>
+          <ShieldCheck color="#01b4ae" size={32} />
         </View>
-      </Modal>
+
+        <Text style={styles.modalTitle}>Verification Required</Text>
+        <Text style={styles.modalSubtitle}>
+          We've sent a 6-digit confirmation code to:
+        </Text>
+        <Text style={styles.modalEmail}>{email}</Text>
+
+        {/* OTP Input */}
+        <View style={styles.otpInputWrapper}>
+          <TextInput
+            style={[
+              styles.otpInput,
+              otpFocused && styles.otpInputFocused
+            ]}
+            placeholder="Enter 6-digit code"
+            placeholderTextColor="#9CA3AF"
+            value={otp}
+            onChangeText={(text) => setOtp(text.replace(/[^0-9]/g, ''))}
+            onFocus={() => setOtpFocused(true)}
+            onBlur={() => setOtpFocused(false)}
+            keyboardType="numeric"
+            maxLength={6}
+            autoFocus={true}
+            editable={!isVerifying}
+          />
+        </View>
+
+        {/* Verify Button */}
+        <Pressable
+          onPressIn={() => handleButtonPressIn(otpButtonScale)}
+          onPressOut={() => handleButtonPressOut(otpButtonScale)}
+          onPress={handleVerifyAndSignup}
+          disabled={isVerifying}
+        >
+          <Animated.View
+            style={[
+              styles.verifyBtn,
+              isVerifying && styles.btnDisabled,
+              { transform: [{ scale: otpButtonScale }] }
+            ]}
+          >
+            {isVerifying ? (
+              <View style={styles.loadingWrapper}>
+                <ActivityIndicator color="#FFFFFF" size="small" />
+                <Text style={styles.verifyBtnText}>Creating Account...</Text>
+              </View>
+            ) : (
+              <Text style={styles.verifyBtnText}>Verify & Sign Up</Text>
+            )}
+          </Animated.View>
+        </Pressable>
+
+        {/* Resend and Cancel */}
+        <View style={styles.modalFooter}>
+          <TouchableOpacity onPress={handleResendOtp} disabled={isVerifying}>
+            <Text style={styles.resendText}>Resend Code</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => setOtpModalVisible(false)}
+            disabled={isVerifying}
+            style={styles.cancelLink}
+          >
+            <Text style={styles.cancelText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingDialog>
     </KeyboardAvoidingView>
     </FullScreenContainer>
   );
@@ -708,17 +706,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   // Modal Styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    padding: 20,
-  },
-  modalContainer: {
-    width: '100%',
-    maxWidth: 400,
-  },
   modalCard: {
     backgroundColor: '#FFFFFF',
     borderRadius: 24,
@@ -729,6 +716,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.25,
     shadowRadius: 15,
     elevation: 10,
+  },
+  // Width sizing for the OTP dialog card (was the RN Modal's container).
+  modalCardSize: {
+    width: '100%',
+    maxWidth: 400,
   },
   modalBadge: {
     width: 64,

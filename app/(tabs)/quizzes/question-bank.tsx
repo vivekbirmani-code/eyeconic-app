@@ -13,6 +13,8 @@ import {
   Image,
   Animated,
   Pressable,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { ScreenContainer } from '@/components/layout';
 import { useRouter } from 'expo-router';
@@ -655,21 +657,21 @@ export default function QuestionBankManagement() {
         </View>
         <View style={styles.questionMeta}>
           <View style={styles.badgeContainer}>
-            <Text style={styles.badgeText}>{item.subject?.name || 'Unknown Subject'}</Text>
+            <Text style={styles.badgeText} numberOfLines={1}>{item.subject?.name || 'Unknown Subject'}</Text>
           </View>
           {item.topicName && (
             <View style={[styles.badgeContainer, styles.topicBadge]}>
-              <Text style={styles.topicBadgeText}>{item.topicName}</Text>
+              <Text style={styles.topicBadgeText} numberOfLines={1}>{item.topicName}</Text>
             </View>
           )}
           {item.subtopicName && (
             <View style={[styles.badgeContainer, styles.subtopicBadge]}>
-              <Text style={styles.subtopicBadgeText}>{item.subtopicName}</Text>
+              <Text style={styles.subtopicBadgeText} numberOfLines={1}>{item.subtopicName}</Text>
             </View>
           )}
           {item.system && (
             <View style={[styles.badgeContainer, styles.systemBadge]}>
-              <Text style={styles.systemBadgeText}>{item.system}</Text>
+              <Text style={styles.systemBadgeText} numberOfLines={1}>{item.system}</Text>
             </View>
           )}
           {item.difficulty && (
@@ -1121,8 +1123,16 @@ export default function QuestionBankManagement() {
             </TouchableOpacity>
           </LinearGradient>
 
-          <ScrollView
+          {/* 'height' behavior is never used on Android (this app runs
+              edge-to-edge, where RN Modal windows are not resized for the
+              keyboard and receive no keyboard events); iOS keeps 'padding' so
+              the lower form fields stay reachable above the keyboard. */}
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
             style={styles.modalContent}
+          >
+          <ScrollView
+            style={{ flex: 1 }}
             contentContainerStyle={{ flexGrow: 1 }}
             showsVerticalScrollIndicator={false}
             keyboardShouldPersistTaps="handled"
@@ -1139,7 +1149,7 @@ export default function QuestionBankManagement() {
                 accessibilityRole="button"
                 accessibilityLabel="Select subject"
               >
-                <Text style={newQuestion.subject ? styles.dropdownText : styles.placeholderText}>
+                <Text style={newQuestion.subject ? styles.dropdownText : styles.placeholderText} numberOfLines={1}>
                   {(Array.isArray(subjects) ? subjects : []).find(s => s._id === newQuestion.subject)?.name || 'Select Subject'}
                 </Text>
                 <ChevronDown color="#6B7280" size={20} />
@@ -1208,7 +1218,7 @@ export default function QuestionBankManagement() {
                 accessibilityRole="button"
                 accessibilityLabel="Select question type"
               >
-                <Text style={styles.dropdownText}>{QUESTION_TYPE_LABELS[newQuestion.questionType]}</Text>
+                <Text style={styles.dropdownText} numberOfLines={1}>{QUESTION_TYPE_LABELS[newQuestion.questionType]}</Text>
                 <ChevronDown color="#6B7280" size={20} />
               </TouchableOpacity>
               {showTypeDropdown && (
@@ -1237,7 +1247,7 @@ export default function QuestionBankManagement() {
                 accessibilityRole="button"
                 accessibilityLabel="Select difficulty"
               >
-                <Text style={styles.dropdownText}>{DIFFICULTY_LABELS[newQuestion.difficulty]}</Text>
+                <Text style={styles.dropdownText} numberOfLines={1}>{DIFFICULTY_LABELS[newQuestion.difficulty]}</Text>
                 <ChevronDown color="#6B7280" size={20} />
               </TouchableOpacity>
               {showDifficultyDropdown && (
@@ -1351,6 +1361,7 @@ export default function QuestionBankManagement() {
 
             <View style={{ height: 40 }} />
           </ScrollView>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
 
@@ -1912,6 +1923,7 @@ const styles = StyleSheet.create({
   dropdownText: {
     fontSize: 16,
     color: '#1F2937',
+    flex: 1,
   },
   placeholderText: {
     fontSize: 16,

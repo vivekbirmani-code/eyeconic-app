@@ -298,7 +298,7 @@ export default function QuizResult() {
               <XCircle color="#EF4444" size={64} />
             )}
           </View>
-          <Text style={styles.scoreText}>
+          <Text style={styles.scoreText} maxFontSizeMultiplier={1.4}>
             {summary.correct}/{summary.totalQuestions}
           </Text>
           <Text style={styles.scoreSubtext}>{questionLabel} Correct</Text>

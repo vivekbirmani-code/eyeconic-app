@@ -78,10 +78,10 @@ export default function GtInputSection({ gt, title, subtitle }: Props) {
                 />
                 <View style={styles.gtMeta}>
                   {row.title ? <Text style={styles.gtMetaStrong} numberOfLines={1}>{row.title}</Text> : null}
-                  {row.dateLabel ? <Text style={styles.gtMetaText}> · {row.dateLabel}</Text> : null}
-                  {row.attemptsNote ? <Text style={styles.gtMetaText}> · {row.attemptsNote}</Text> : null}
+                  {row.dateLabel ? <Text style={styles.gtMetaText} numberOfLines={1}> · {row.dateLabel}</Text> : null}
+                  {row.attemptsNote ? <Text style={styles.gtMetaText} numberOfLines={1}> · {row.attemptsNote}</Text> : null}
                   {row.origin === 'auto' && row.edited ? (
-                    <Text style={styles.gtMetaEdited}> · edited → self-reported</Text>
+                    <Text style={styles.gtMetaEdited} numberOfLines={1}> · edited → self-reported</Text>
                   ) : null}
                 </View>
                 <TouchableOpacity

@@ -214,7 +214,7 @@ export default function MentorSelectionModal({
                           <Text style={[styles.mentorName, isSelected && styles.mentorNameSelected]}>
                             {mentor.name}
                           </Text>
-                          <Text style={styles.mentorEmail}>{mentor.email}</Text>
+                          <Text style={styles.mentorEmail} numberOfLines={1} ellipsizeMode='tail'>{mentor.email}</Text>
                           {mentor.phone ? <Text style={styles.mentorPhone}>{mentor.phone}</Text> : null}
                         </View>
                       </TouchableOpacity>
@@ -385,7 +385,10 @@ const styles = StyleSheet.create({
   },
   saveButton: {
     flex: 1,
-    padding: 16,
+    // Slimmer horizontal padding keeps 'Save Assignments' wrapping at the
+    // word boundary on narrow phones instead of breaking mid-word.
+    paddingVertical: 16,
+    paddingHorizontal: 8,
     borderRadius: 12,
     backgroundColor: '#01b4ae',
     flexDirection: 'row',

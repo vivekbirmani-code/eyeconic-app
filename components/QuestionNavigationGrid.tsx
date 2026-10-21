@@ -88,7 +88,7 @@ export const QuestionNavigationGrid: React.FC<QuestionNavigationGridProps> = ({
               <Text style={[
                 styles.questionNumber,
                 { color: getTextColor(index) }
-              ]}>
+              ]} maxFontSizeMultiplier={1.4}>
                 {index + 1}
               </Text>
             </TouchableOpacity>

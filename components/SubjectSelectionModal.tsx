@@ -453,7 +453,10 @@ const styles = StyleSheet.create({
     borderColor: '#E5E7EB',
     borderRadius: 12,
     padding: 12,
-    minWidth: '48%',
+    // 47% (not 48%): two cards + the 10 gap must fit inside the modal's
+    // content width on the narrowest phones, or the grid collapses to one
+    // column.
+    minWidth: '47%',
     flexGrow: 1
   },
   subjectCardSelected: {
@@ -512,7 +515,10 @@ const styles = StyleSheet.create({
   },
   saveButton: {
     flex: 1,
-    padding: 16,
+    // Slimmer horizontal padding keeps 'Save Subjects' wrapping at the word
+    // boundary on narrow phones instead of breaking mid-word.
+    paddingVertical: 16,
+    paddingHorizontal: 8,
     borderRadius: 12,
     backgroundColor: '#01b4ae',
     flexDirection: 'row',

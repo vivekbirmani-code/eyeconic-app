@@ -2290,11 +2290,15 @@ const styles = StyleSheet.create({
   selectionCount: {
     fontSize: 13,
     color: colors.textSecondary,
+    // Yields to the Select/Deselect action so neither is pushed off the row.
+    flex: 1,
+    flexShrink: 1,
   },
   selectAllText: {
     fontSize: 14,
     color: colors.primary,
     fontWeight: '600',
+    flexShrink: 1,
   },
   selectAllTextDisabled: {
     color: colors.textMuted,

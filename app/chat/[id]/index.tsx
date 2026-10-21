@@ -24,6 +24,7 @@ import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
 import { getSocketURL } from '@/services/config';
 import { io, Socket } from 'socket.io-client';
+import { KeyboardAvoidingDialog } from '@/components/KeyboardAvoidingDialog';
 
 import { useNotifications } from '@/context/NotificationContext';
 import * as DocumentPicker from 'expo-document-picker';
@@ -918,47 +919,47 @@ function ChatScreen() {
         </View>
       </Modal>
 
-      {/* Edit Message Modal */}
-      <Modal visible={isEditModalVisible} animationType="slide" transparent>
-        <KeyboardAvoidingView
-          style={styles.editOverlay}
-          behavior="padding"
-        >
-          <View style={styles.editContainer}>
-            <View style={styles.editHeader}>
-              <Text style={styles.editTitle}>Edit Message</Text>
-              <TouchableOpacity onPress={() => setIsEditModalVisible(false)}>
-                <X color="#6B7280" size={24} />
-              </TouchableOpacity>
-            </View>
+      {/* Edit Message dialog — in-tree overlay (not a RN Modal) so it renders
+          in the main window: under Android edge-to-edge RN Modal windows get
+          no keyboard resize/events, so the keyboard covered this input and
+          the Save button. */}
+      <KeyboardAvoidingDialog
+        visible={isEditModalVisible}
+        onClose={() => setIsEditModalVisible(false)}
+        animationType="fade"
+        cardStyle={styles.editContainer}
+      >
+        <View style={styles.editHeader}>
+          <Text style={styles.editTitle}>Edit Message</Text>
+          <TouchableOpacity onPress={() => setIsEditModalVisible(false)}>
+            <X color="#6B7280" size={24} />
+          </TouchableOpacity>
+        </View>
 
-            <TextInput
-              style={styles.editInput}
-              value={editContent}
-              onChangeText={setEditContent}
-              multiline
-              autoFocus
-            />
+        <TextInput
+          style={styles.editInput}
+          value={editContent}
+          onChangeText={setEditContent}
+          multiline
+          autoFocus
+        />
 
-            <View style={styles.editActions}>
-              <TouchableOpacity
-                style={styles.editCancelButton}
-                onPress={() => setIsEditModalVisible(false)}
-              >
-                <Text style={styles.editCancelText}>Cancel</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.editSaveButton, !editContent.trim() && styles.editSaveButtonDisabled]}
-                onPress={saveEditedMessage}
-                disabled={!editContent.trim()}
-              >
-                <Text style={styles.editSaveText}>Save</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </KeyboardAvoidingView>
-
-      </Modal>
+        <View style={styles.editActions}>
+          <TouchableOpacity
+            style={styles.editCancelButton}
+            onPress={() => setIsEditModalVisible(false)}
+          >
+            <Text style={styles.editCancelText}>Cancel</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.editSaveButton, !editContent.trim() && styles.editSaveButtonDisabled]}
+            onPress={saveEditedMessage}
+            disabled={!editContent.trim()}
+          >
+            <Text style={styles.editSaveText}>Save</Text>
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingDialog>
 
       {/* Attachment Menu Modal */}
       <Modal
@@ -1393,17 +1394,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#9CA3AF',
   },
-  // Edit modal styles
-  editOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    justifyContent: 'center',
-    padding: 20,
-  },
+  // Edit dialog card styles (the overlay/scrim comes from KeyboardAvoidingDialog)
   editContainer: {
     backgroundColor: '#FFFFFF',
     borderRadius: 16,
     padding: 16,
+    width: '100%',
+    maxWidth: 420,
   },
   editHeader: {
     flexDirection: 'row',

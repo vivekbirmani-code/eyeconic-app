@@ -216,7 +216,7 @@ function RankPredictorScreen() {
                         accessibilityState={{ selected, disabled: !exam.available }}
                       >
                         <View style={styles.examRowText}>
-                          <Text style={[styles.examLabel, !exam.available && styles.textDisabled]}>
+                          <Text style={[styles.examLabel, !exam.available && styles.textDisabled]} numberOfLines={1}>
                             {label}
                           </Text>
                           {patternLine(exam) ? (

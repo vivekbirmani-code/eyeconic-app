@@ -91,7 +91,7 @@ const QuizCard = ({ item, index, onPress }: { item: Quiz; index: number; onPress
         <View style={styles.cardHeader}>
           <View style={styles.subjectBadge}>
             <BookOpen size={12} color="#01b4ae" />
-            <Text style={styles.subjectText}>
+            <Text style={styles.subjectText} numberOfLines={1}>
               {item.subjectNames && item.subjectNames.length > 1
                 ? 'MIXED'
                 : (item.subjectNames?.[0] || item.subject?.name || 'General').toUpperCase()}
@@ -652,6 +652,9 @@ const styles = StyleSheet.create({
     paddingVertical: 5,
     borderRadius: 8,
     gap: 6,
+    // Long uppercase subject names ellipsize inside the pill instead of
+    // pushing the status badge off the card.
+    flexShrink: 1,
   },
   subjectText: {
     fontSize: 12,
@@ -662,6 +665,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: 8,
+    // The subject pill yields first; the badge keeps its size.
+    flexShrink: 0,
+    marginLeft: 8,
   },
   statusText: {
     fontSize: 11,

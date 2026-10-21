@@ -78,7 +78,7 @@ export default function RetestRequests() {
         <View style={styles.requestHeader}>
           <View style={styles.studentInfo}>
             <Text style={styles.studentName}>{item.student.name}</Text>
-            <Text style={styles.studentEmail}>{item.student.email}</Text>
+            <Text style={styles.studentEmail} numberOfLines={1} ellipsizeMode="tail">{item.student.email}</Text>
           </View>
           <View style={styles.scoreContainer}>
             <Text style={[
@@ -277,11 +277,16 @@ const styles = StyleSheet.create({
   },
   stats: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-around',
+    rowGap: 8,
     marginBottom: 16,
   },
   statItem: {
     alignItems: 'center',
+    // Floor keeps each stat intact when the row wraps at narrow widths /
+    // large font scales (long dates no longer overflow the card).
+    minWidth: 84,
   },
   statLabel: {
     fontSize: 11,

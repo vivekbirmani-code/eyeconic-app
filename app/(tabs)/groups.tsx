@@ -818,7 +818,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#F3F4F6',
     borderRadius: 12,
     paddingHorizontal: 12,
-    height: 44,
+    // Grows with the user's font scale instead of clipping the input's text
+    // at a hard 44dp.
+    minHeight: 44,
     borderWidth: 1,
     borderColor: '#E5E7EB',
   },

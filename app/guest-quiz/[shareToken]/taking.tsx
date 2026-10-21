@@ -600,7 +600,7 @@ export default function GuestQuizTaking() {
             <Text style={[
               styles.navButtonText,
               currentQuestionPosition <= 0 && styles.disabledText
-            ]}>Prev</Text>
+            ]} numberOfLines={1}>Prev</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -611,7 +611,7 @@ export default function GuestQuizTaking() {
             <Text style={[
               styles.navButtonText,
               (currentQuestionPosition === -1 || currentQuestionPosition >= totalInScope - 1) && styles.disabledText
-            ]}>Next</Text>
+            ]} numberOfLines={1}>Next</Text>
             <ChevronRight
               size={20}
               color={(currentQuestionPosition === -1 || currentQuestionPosition >= totalInScope - 1) ? '#9ca3af' : '#6366f1'}
@@ -627,7 +627,7 @@ export default function GuestQuizTaking() {
           {submitting || isLoading ? (
             <ActivityIndicator size="small" color="#ffffff" />
           ) : (
-            <Text style={styles.submitButtonText}>
+            <Text style={styles.submitButtonText} numberOfLines={1}>
               {lockOn && !isLastSection ? 'Submit Section' : 'Submit'}
             </Text>
           )}
@@ -825,6 +825,10 @@ const styles = StyleSheet.create({
   navButton: {
     flexDirection: 'row',
     alignItems: 'center',
+    // Buttons yield to fit the row on narrow phones (the four-button row with
+    // "Submit Section" exceeds 360dp at natural widths); labels ellipsize on
+    // one line instead of pushing siblings off-screen.
+    flexShrink: 1,
     paddingHorizontal: 12,
     paddingVertical: 10,
     borderRadius: 8,
@@ -853,6 +857,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '500',
     color: '#6366f1',
+    flexShrink: 1,
   },
   disabledText: {
     color: '#9ca3af',
@@ -865,5 +870,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#ffffff',
+    flexShrink: 1,
   },
 });
