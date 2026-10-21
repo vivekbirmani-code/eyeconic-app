@@ -3239,6 +3239,15 @@ router.get('/:id', auth, async (req, res) => {
       qObj.proctoringRequired = (await resolveQuizProctoringEligibility(quiz)).enabled;
     }
 
+    // Admin-only proctoring status (Phase 9 §D): the LIVE eligibility (kill
+    // switch > flag > quiz opt-in — the same resolver /start gates with)
+    // alongside the stored opt-in, so the edit screen can show "requested
+    // but temporarily unavailable" instead of implying monitoring is active.
+    // Students only ever see proctoringRequired above.
+    if (req.user.role === 'admin') {
+      qObj.proctoringEligibility = await resolveQuizProctoringEligibility(quiz);
+    }
+
     res.json(qObj);
   } catch (error) {
     console.error(error);

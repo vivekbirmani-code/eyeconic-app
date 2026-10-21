@@ -37,6 +37,12 @@ import ShareQuizModal, { ShareQuizTarget } from '@/components/ShareQuizModal';
 import { DateTimeField } from '@/components/DateTimeField';
 import { formatToIST } from '@/utils/date';
 import { isValidQuizWindow } from '@/utils/quizDateTime';
+import {
+  PROCTORING_DISABLED_PAYLOAD,
+  PROCTORING_ON_PAYLOAD,
+  proctoringUnavailableHint,
+  type ProctoringEligibility,
+} from '@/utils/proctoringToggle';
 import useDebounce from '@/hooks/useDebounce';
 import { colors } from '@/utils/theme';
 import { QUESTION_TYPES, QUESTION_TYPE_LABELS, DIFFICULTY_LEVELS, DIFFICULTY_LABELS } from '@/types/question';
@@ -137,6 +143,10 @@ export default function CreateQuiz() {
   const [negativeMarks, setNegativeMarks] = useState('1');
   const [availableQuestions, setAvailableQuestions] = useState(0);
   const [shareSolution, setShareSolution] = useState(true);  // NEW: Share solutions with students
+  // AI Proctoring opt-in (Phase 9): admin preference only — the server
+  // re-resolves eligibility at every start. Default OFF (D15).
+  const [proctoringEnabled, setProctoringEnabled] = useState(false);
+  const [proctoringEligibility, setProctoringEligibility] = useState<ProctoringEligibility | null>(null);
   const [lockSectionsAfterSubmission, setLockSectionsAfterSubmission] = useState(true);  // Section locking (default ON)
   const [assignToAllFreeUsers, setAssignToAllFreeUsers] = useState(false);
 
@@ -313,6 +323,10 @@ export default function CreateQuiz() {
       }
       // Section locking: missing on legacy quizzes = ON (never default OFF)
       setLockSectionsAfterSubmission(quiz.lockSectionsAfterSubmission !== false);
+      // AI Proctoring: stored preference + live server-side eligibility for
+      // the "temporarily unavailable" hint. Missing = OFF.
+      setProctoringEnabled(quiz.proctoring?.enabled === true);
+      setProctoringEligibility(quiz.proctoringEligibility ?? null);
       if (quiz.assignToAllFreeUsers !== undefined) {
         setAssignToAllFreeUsers(quiz.assignToAllFreeUsers);
       }
@@ -728,7 +742,11 @@ export default function CreateQuiz() {
           assignToAllFreeUsers,
           scheduledDate: scheduledDate?.toISOString(),
           expiryDate: expiryDate?.toISOString(),
-          sections: quizSections
+          sections: quizSections,
+          // Phase 9 toggle: ON sends the complete silent-record payload (never
+          // a bare enabled:true — schema defaults include warn-then-submit);
+          // OFF explicitly disables for future attempts.
+          proctoring: proctoringEnabled ? PROCTORING_ON_PAYLOAD : PROCTORING_DISABLED_PAYLOAD
         });
         Alert.alert('Success', 'Quiz updated successfully!', [{ text: 'OK', onPress: () => router.back() }]);
       } else {
@@ -750,7 +768,9 @@ export default function CreateQuiz() {
           assignToAllFreeUsers,
           scheduledDate: scheduledDate?.toISOString(),
           expiryDate: expiryDate?.toISOString(),
-          sections: quizSections
+          sections: quizSections,
+          // Phase 9 toggle: OFF = omit entirely (absent = unproctored quiz).
+          ...(proctoringEnabled ? { proctoring: PROCTORING_ON_PAYLOAD } : {})
         });
 
         // Offer external sharing straight after creation with the same Share
@@ -1012,6 +1032,29 @@ export default function CreateQuiz() {
           onValueChange={setLockSectionsAfterSubmission}
           trackColor={{ false: colors.borderStrong, true: 'rgba(1, 180, 174, 0.45)' }}
           thumbColor={lockSectionsAfterSubmission ? colors.primary : colors.textMuted}
+        />
+      </View>
+
+      {/* AI Proctoring Toggle (Phase 9): per-quiz opt-in. The server stays
+          authoritative — ON only makes THIS quiz eligible while the global
+          flag and emergency switch allow it; monitoring is silent-record. */}
+      <View style={styles.toggleContainer}>
+        <View style={styles.toggleLabelContainer}>
+          <Text style={styles.toggleLabel}>Enable AI Proctoring</Text>
+          <Text style={styles.toggleHelperText}>
+            Camera-based monitoring for this quiz only. Records silently for later review — no warnings, no auto-submit, no photos leave the phone.
+          </Text>
+          {proctoringEnabled && proctoringEligibility && !proctoringEligibility.enabled && (
+            <Text style={styles.proctoringUnavailableText}>
+              {proctoringUnavailableHint(proctoringEligibility)}
+            </Text>
+          )}
+        </View>
+        <Switch
+          value={proctoringEnabled}
+          onValueChange={setProctoringEnabled}
+          trackColor={{ false: colors.borderStrong, true: 'rgba(1, 180, 174, 0.45)' }}
+          thumbColor={proctoringEnabled ? colors.primary : colors.textMuted}
         />
       </View>
 
@@ -2751,6 +2794,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.textSecondary,
     lineHeight: 18,
+  },
+  proctoringUnavailableText: {
+    fontSize: 12,
+    color: colors.warning,
+    lineHeight: 16,
+    marginTop: 4,
   },
   // ---- Empty / error states ----
   emptyState: {

@@ -30,6 +30,12 @@ import { api } from '@/services/api';
 import { useAuth } from '@/context/AuthContext';
 import { DateTimeField } from '@/components/DateTimeField';
 import { isValidQuizWindow } from '@/utils/quizDateTime';
+import {
+  PROCTORING_DISABLED_PAYLOAD,
+  PROCTORING_ON_PAYLOAD,
+  proctoringUnavailableHint,
+  type ProctoringEligibility,
+} from '@/utils/proctoringToggle';
 import { colors } from '@/utils/theme';
 
 interface Question {
@@ -71,6 +77,14 @@ interface Quiz {
   shareSolution?: boolean;
   // Missing on legacy quizzes = ON — read with `!== false` everywhere.
   lockSectionsAfterSubmission?: boolean;
+  // AI Proctoring opt-in (Phase 9): absent on legacy quizzes = OFF.
+  proctoring?: {
+    enabled?: boolean;
+    camera?: string;
+    focusEvents?: { mode?: string };
+    multipleFaces?: { mode?: string };
+    facePresence?: { mode?: string };
+  };
   sections?: Array<{
     name: string;
     duration: number;
@@ -136,6 +150,10 @@ export default function EditQuiz() {
   const [selectedQuestions, setSelectedQuestions] = useState<Question[]>([]);
   const [shareSolution, setShareSolution] = useState(true);
   const [lockSectionsAfterSubmission, setLockSectionsAfterSubmission] = useState(true);
+  // AI Proctoring opt-in (Phase 9): admin preference only — the server
+  // re-resolves eligibility at every start. Default OFF (D15).
+  const [proctoringEnabled, setProctoringEnabled] = useState(false);
+  const [proctoringEligibility, setProctoringEligibility] = useState<ProctoringEligibility | null>(null);
 
   // Time Window
   const [scheduledDate, setScheduledDate] = useState<Date | null>(null);
@@ -183,6 +201,10 @@ export default function EditQuiz() {
       // Both flags: missing on legacy quizzes = ON (never default OFF).
       setShareSolution(quizData.shareSolution !== false);
       setLockSectionsAfterSubmission(quizData.lockSectionsAfterSubmission !== false);
+      // AI Proctoring: stored preference + live server-side eligibility for
+      // the "temporarily unavailable" hint. Missing = OFF.
+      setProctoringEnabled(quizData.proctoring?.enabled === true);
+      setProctoringEligibility((quizData as { proctoringEligibility?: ProctoringEligibility }).proctoringEligibility ?? null);
       setSelectedQuestions(fetchedQuestions);
       setQuizSections(
         (quizData.sections || []).map(section => ({
@@ -445,7 +467,11 @@ export default function EditQuiz() {
         shareSolution,
         lockSectionsAfterSubmission,
         scheduledDate: scheduledDate?.toISOString(),
-        expiryDate: expiryDate?.toISOString()
+        expiryDate: expiryDate?.toISOString(),
+        // Phase 9 toggle: ON sends the complete silent-record payload (never
+        // a bare enabled:true — schema defaults include warn-then-submit);
+        // OFF explicitly disables for future attempts.
+        proctoring: proctoringEnabled ? PROCTORING_ON_PAYLOAD : PROCTORING_DISABLED_PAYLOAD
       });
 
       // Refresh local quiz state so screen shows updated values immediately
@@ -701,6 +727,30 @@ export default function EditQuiz() {
             <Switch
               value={shareSolution}
               onValueChange={setShareSolution}
+              trackColor={{ false: '#D1D5DB', true: colors.primary }}
+              thumbColor="#FFFFFF"
+              ios_backgroundColor="#D1D5DB"
+            />
+          </View>
+
+          {/* AI Proctoring Toggle (Phase 9): per-quiz opt-in. The server stays
+              authoritative — ON only makes THIS quiz eligible while the global
+              flag and emergency switch allow it; monitoring is silent-record. */}
+          <View style={styles.toggleContainer}>
+            <View style={styles.toggleLabelContainer}>
+              <Text style={styles.toggleLabel}>Enable AI Proctoring</Text>
+              <Text style={styles.toggleHelperText}>
+                Camera-based monitoring for this quiz only. Records silently for later review — no warnings, no auto-submit, no photos leave the phone.
+              </Text>
+              {proctoringEnabled && proctoringEligibility && !proctoringEligibility.enabled && (
+                <Text style={styles.proctoringUnavailableText}>
+                  {proctoringUnavailableHint(proctoringEligibility)}
+                </Text>
+              )}
+            </View>
+            <Switch
+              value={proctoringEnabled}
+              onValueChange={setProctoringEnabled}
               trackColor={{ false: '#D1D5DB', true: colors.primary }}
               thumbColor="#FFFFFF"
               ios_backgroundColor="#D1D5DB"
@@ -1278,6 +1328,12 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginTop: 4,
     lineHeight: 16,
+  },
+  proctoringUnavailableText: {
+    fontSize: 11,
+    color: colors.warning,
+    lineHeight: 15,
+    marginTop: 4,
   },
   loadingContainer: {
     flex: 1,

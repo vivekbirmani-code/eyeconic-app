@@ -2,7 +2,7 @@
   "expo": {
     "name": "Eyeconic Mentorship",
     "slug": "eyeconic-mentorship",
-    "version": "1.0.3",
+    "version": "1.1.0",
     "sdkVersion": "54.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
@@ -55,7 +55,7 @@
         "android.permission.CAMERA"
       ],
       "package": "com.eyeconicbydrlalla.mentorship",
-      "versionCode": 11,
+      "versionCode": 13,
       "intentFilters": [
         {
           "action": "VIEW",
