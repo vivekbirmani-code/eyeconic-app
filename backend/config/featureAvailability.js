@@ -34,11 +34,13 @@ const FEATURE_AVAILABILITY = {
   userManagement: false, // admin user CRUD, admin settings screen
   adminOverview: false, // admin mentorship overview dashboard
 
-  // AI proctoring (plan §31 rollout flag). False until the staged rollout
-  // begins; gated routes answer 503 while off. Combined with the
-  // AppSettings.proctoringEnabled kill switch (utils/appSettings.js) and the
-  // per-quiz opt-in (Quiz.proctoring.enabled, default false — D15), all three
-  // gates must be on before any quiz is proctored.
+  // AI proctoring (plan §31 rollout flag). Phase 9 activation 2026-10-21:
+  // flipped true for the single-tester staged rollout. Inert on its own —
+  // the AppSettings.proctoringEnabled kill switch
+  // (utils/appSettings.js) and the per-quiz opt-in
+  // (Quiz.proctoring.enabled, default false — D15) must also be on before
+  // any quiz is proctored. Precedence: kill switch > this flag > quiz
+  // opt-in (utils/proctoring/rollout.js).
   aiProctoring: false,
 };
 
@@ -77,6 +79,14 @@ const QUIZ_WORKFLOW_ALLOWLIST = {
   ],
   settings: [
     'GET /public', // login screen signUpEnabled probe (fail-closed)
+    // Phase 9 (§31): the AI-proctoring emergency kill switch must stay
+    // operable through its admin API for as long as the freeze stands — an
+    // emergency control reachable only by editing the database is not an
+    // emergency control. Read-only state plus the one toggle; the sign-up
+    // and strict-CV toggles stay 503-frozen (settings routes are already
+    // per-field, so this cannot widen their blast radius).
+    'GET /',
+    'PUT /proctoring-enabled',
   ],
 };
 
