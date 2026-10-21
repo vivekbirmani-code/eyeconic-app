@@ -360,6 +360,23 @@ export class ProctoringEngine {
     this.setState({ status: 'stopped', cameraIssue: null });
   }
 
+  /**
+   * Mid-attempt flush (Phase 9 section-transition fix): closes every open
+   * episode and pushes buffered events to the server WITHOUT stopping the
+   * loop — intermediate section submits must keep monitoring running (the
+   * session stays ACTIVE between sections; stopping it there left every
+   * section after the first unmonitored). Safe to call in any state except
+   * stopped; best-effort like every flush.
+   */
+  async flushNow(): Promise<void> {
+    if (this.engineState.status === 'stopped') return;
+    const episodes = this.tracker.closeAll();
+    for (const episode of episodes) {
+      this.emitEpisode(episode);
+    }
+    await this.flush();
+  }
+
   /** One heartbeat cycle — also the piggyback flush driver. */
   async heartbeatTick(): Promise<void> {
     if (this.engineState.status === 'stopped') return;

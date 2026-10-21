@@ -86,6 +86,14 @@ export interface UseProctoringSessionResult {
    */
   stopMonitoring: () => Promise<void>;
   /**
+   * Mid-attempt flush (Phase 9 section-transition fix): closes any open
+   * focus excursions and pushes buffered events while monitoring KEEPS
+   * RUNNING — used before intermediate section submits (the session stays
+   * ACTIVE between sections; stopMonitoring is only for the final submit or
+   * unmount). Best-effort and bounded; never blocks the section submit.
+   */
+  flushMonitoring: () => Promise<void>;
+  /**
    * The latest undelivered-yet policy warning (Phase 6, §20.2) — rendered by
    * the banner from the centralized copy module. WARN variants auto-dismiss;
    * FINAL_WARN persists until replaced or the attempt ends.
@@ -423,6 +431,27 @@ export function useProctoringSession({
     }
   }, []);
 
+  // Mid-attempt variant of the same sequence (Phase 9): close focus
+  // excursions and flush, but monitoring CONTINUES — intermediate section
+  // submits must never stop the engine (that left later sections
+  // unmonitored). Bounded and never throws, same as stopMonitoring.
+  const flushMonitoring = useCallback(async () => {
+    try {
+      const engine = engineRef.current;
+      if (!engine) return;
+      const focusTracker = focusTrackerRef.current;
+      if (focusTracker) {
+        engine.recordEpisodes(focusTracker.closeAll());
+      }
+      await Promise.race([
+        engine.flushNow(),
+        new Promise<void>((resolve) => setTimeout(resolve, 1500)),
+      ]);
+    } catch {
+      // Best-effort — the next heartbeat tick retries whatever remains.
+    }
+  }, []);
+
   // Instant warning delivery (§20.2): the socket nudge carries no payload
   // data beyond the action identity — the same funnel as batch responses, so
   // the banner is deduped by warnId and never trusts socket data beyond the
@@ -450,6 +479,7 @@ export function useProctoringSession({
     cameraIssue: state.cameraIssue,
     recordExitAttempted,
     stopMonitoring,
+    flushMonitoring,
     warning,
     autoSubmitted,
   };

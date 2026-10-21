@@ -61,6 +61,20 @@ export const PROCTORING_COPY = {
   monitoring: {
     /** PiP caption under the live camera preview during the test. */
     active: 'Monitoring active',
+    /**
+     * PiP caption per engine status (Phase 9 fix): the indicator must tell
+     * the truth — a dimmed chip reading "Monitoring active" while the
+     * engine was stopped was the tell that section submits killed
+     * monitoring. Fallback for unknown statuses: `active`.
+     */
+    statusCaptions: {
+      idle: 'Starting monitoring…',
+      starting: 'Starting monitoring…',
+      monitoring: 'Monitoring active',
+      degraded: 'Monitoring active — camera issue recorded',
+      paused: 'Monitoring paused',
+      stopped: 'Monitoring stopped',
+    } as Record<string, string>,
     bannerTitles: {
       'camera-startup': 'Camera problem',
       'camera-error': 'Camera problem',

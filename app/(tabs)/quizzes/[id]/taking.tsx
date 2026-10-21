@@ -710,20 +710,23 @@ function QuizTakingContent() {
             style: 'destructive',
             onPress: async () => {
               try {
-                // Land the final monitoring observations while the session
-                // is still ACTIVE — after submit the server closes it and a
-                // late flush is discarded (409).
-                await proctoring.stopMonitoring();
+                // Land the open monitoring observations while the session is
+                // still ACTIVE — a flush, NOT a stop (Phase 9 device fix:
+                // stopping here left every section after the first
+                // unmonitored, with a stale "Monitoring active" chip).
+                await proctoring.flushMonitoring();
                 const result = await submitSection(activeSectionIndex, false);
                 setShowReviewModal(false);
                 const finalized =
                   result.attemptFinalized === true ||
                   (result.status && result.status !== 'in_progress');
                 if (finalized) {
+                  void proctoring.stopMonitoring(); // session closed — release the camera
                   router.replace(`/quizzes/${id}/result/${result.attemptId || currentAttempt?.attemptId}`);
                 }
                 // Otherwise the context adopted the next section's state and
-                // the adopt-effect re-centers the UI on it.
+                // the adopt-effect re-centers the UI on it — monitoring
+                // continues untouched.
               } catch (error) {
                 // Context already surfaced manual-submit errors via Alert.
               }
@@ -744,11 +747,13 @@ function QuizTakingContent() {
           style: 'destructive',
           onPress: async () => {
             try {
-              // Land the final monitoring observations while the session is
-              // still ACTIVE — the post-submit teardown flush is discarded.
-              await proctoring.stopMonitoring();
+              // Land the open monitoring observations while the session is
+              // still ACTIVE, then release the camera once finalized (same
+              // flush-then-stop ordering as the section path).
+              await proctoring.flushMonitoring();
               const result = await submitQuiz(false);
               setShowReviewModal(false);
+              void proctoring.stopMonitoring();
               router.replace(`/quizzes/${id}/result/${result.attemptId || currentAttempt?.attemptId}`);
             } catch (error) {
               Alert.alert('Error', 'Failed to submit quiz. Please try again.');
@@ -757,7 +762,7 @@ function QuizTakingContent() {
         }
       ]
     );
-  }, [sectionLockOn, activeSectionIndex, isLastSection, activeSectionDef, submitSection, submitQuiz, id, currentAttempt, router, proctoring.stopMonitoring]);
+  }, [sectionLockOn, activeSectionIndex, isLastSection, activeSectionDef, submitSection, submitQuiz, id, currentAttempt, router, proctoring.stopMonitoring, proctoring.flushMonitoring]);
 
   // Section locking: the section timer hit zero — the server is the truth.
   // Submit the section as auto; the response either advances to the next
@@ -765,13 +770,15 @@ function QuizTakingContent() {
   const handleSectionTimeUp = useCallback(async () => {
     if (!sectionLockOn || activeSectionIndex < 0) return;
     try {
-      // Final monitoring flush before the server closes the session.
-      await proctoring.stopMonitoring();
+      // Flush open monitoring observations and KEEP MONITORING unless this
+      // submit finalizes the attempt (Phase 9 device fix).
+      await proctoring.flushMonitoring();
       const result = await submitSection(activeSectionIndex, true);
       const finalized =
         result.attemptFinalized === true ||
         (result.status && result.status !== 'in_progress');
       if (finalized) {
+        void proctoring.stopMonitoring(); // session closed — release the camera
         Alert.alert(
           'Time Up!',
           'The test time has ended. Your answers have been submitted.',
@@ -809,13 +816,16 @@ function QuizTakingContent() {
         [{ text: 'OK' }]
       );
     }
-  }, [sectionLockOn, activeSectionIndex, submitSection, loadAttempt, id, currentAttempt, router, proctoring.stopMonitoring]);
+  }, [sectionLockOn, activeSectionIndex, submitSection, loadAttempt, id, currentAttempt, router, proctoring.stopMonitoring, proctoring.flushMonitoring]);
 
   const handleTimeUp = useCallback(async () => {
     try {
-      // Final monitoring flush before the server closes the session.
-      await proctoring.stopMonitoring();
+      // Flush open monitoring observations while the session is ACTIVE; the
+      // auto-submit finalizes, so the camera is released after it lands. On
+      // error the student may continue manually — monitoring stays alive.
+      await proctoring.flushMonitoring();
       const result = await submitQuiz(true);
+      void proctoring.stopMonitoring();
       
       // Handle case where quiz was already submitted
       if (result.isAlreadySubmitted) {
@@ -868,7 +878,7 @@ function QuizTakingContent() {
         );
       }
     }
-  }, [submitQuiz, id, currentAttempt, router, proctoring.stopMonitoring]);
+  }, [submitQuiz, id, currentAttempt, router, proctoring.stopMonitoring, proctoring.flushMonitoring]);
 
   const handleSectionChange = useCallback((section: string) => {
     // Section locking: only the active section is navigable (tabs are
@@ -1068,6 +1078,10 @@ function QuizTakingContent() {
           <ProctoringCameraPip
             ref={proctoringCameraRef}
             dimmed={proctoring.status !== 'monitoring'}
+            statusCaption={
+              PROCTORING_COPY.monitoring.statusCaptions[proctoring.status]
+              ?? PROCTORING_COPY.monitoring.active
+            }
           />
         )}
 

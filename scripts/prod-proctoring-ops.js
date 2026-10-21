@@ -175,6 +175,43 @@ async function cmdStudentView(quizId) {
   console.log(`[student] HTTP ${detail.status} proctoringRequired=${detail.data?.proctoringRequired} title=${detail.data?.title}`);
 }
 
+async function cmdInspect(quizId) {
+  const student = await login('student');
+  const detail = await api('GET', `/quizzes/${quizId}`, { token: student.token });
+  if (detail.status !== 200) return console.log(`[student] quiz detail HTTP ${detail.status}`);
+  const attempt = detail.data?.attemptStatus;
+  console.log(`[attempt] id=${attempt?.attemptId} status=${attempt?.status} hasAttempted=${attempt?.hasAttempted}`);
+  if (!attempt?.attemptId) return;
+
+  const session = await api('GET', `/quizzes/attempt/${attempt.attemptId}/proctoring/session`, { token: student.token });
+  console.log(`[session] HTTP ${session.status} status=${session.data?.session?.status} started=${session.data?.session?.startedAt ?? session.data?.session?.createdAt}`);
+  const s = session.data?.session;
+  if (s) {
+    console.log(`[session] heartbeats=${JSON.stringify(s.heartbeats ?? s.stats ?? 'n/a')} integrity=${JSON.stringify(s.integrity ?? 'n/a')}`);
+  }
+
+  const timeline = await api('GET', `/quizzes/attempt/${attempt.attemptId}/proctoring/timeline`, { token: student.token });
+  console.log(`[timeline] HTTP ${timeline.status}`);
+  const events = timeline.data?.events ?? timeline.data?.timeline ?? [];
+  if (!Array.isArray(events) || events.length === 0) {
+    console.log('[timeline] no events array — top-level keys: ' + Object.keys(timeline.data || {}).join(', '));
+    console.log(JSON.stringify(timeline.data, null, 2).slice(0, 1500));
+    return;
+  }
+  const byType = {};
+  for (const e of events) {
+    const t = e.type ?? e.eventType ?? 'unknown';
+    byType[t] = (byType[t] || 0) + 1;
+  }
+  console.log(`[timeline] total=${events.length} byType=${JSON.stringify(byType)}`);
+  const t0 = events[0]?.occurredAt ?? events[0]?.timestamp ?? events[0]?.clientTs;
+  for (const e of events) {
+    const ts = e.occurredAt ?? e.timestamp ?? e.clientTs;
+    const rel = ts && t0 ? `+${Math.round((new Date(ts) - new Date(t0)) / 1000)}s` : ts;
+    console.log(`  ${rel}  ${e.type ?? e.eventType}  ${e.metadata ? JSON.stringify(e.metadata).slice(0, 120) : ''}`);
+  }
+}
+
 async function cmdDigest(days = 1) {
   const { token } = await login('admin');
   const result = await api('GET', `/quizzes/proctoring-metrics/digest?days=${days}`, { token });
@@ -192,9 +229,10 @@ async function main() {
     case 'arm': return cmdArm(arg, ON_PAYLOAD);
     case 'disarm': return cmdArm(arg, { enabled: false });
     case 'student-view': return cmdStudentView(arg);
+    case 'inspect': return cmdInspect(arg);
     case 'digest': return cmdDigest(arg || 1);
     default:
-      console.log('commands: diagnose | list-quizzes | quiz <id> | kill-switch on|off | arm <id> | disarm <id> | student-view <id> | digest [days]');
+      console.log('commands: diagnose | list-quizzes | quiz <id> | kill-switch on|off | arm <id> | disarm <id> | student-view <id> | inspect <id> | digest [days]');
       process.exitCode = command ? 1 : 0;
   }
 }

@@ -430,6 +430,53 @@ CAPTURED discipline). Post-test state decision (owner): leave the one quiz
 armed for repeat runs, or `disarm` + `kill-switch off` to return to the
 all-off baseline.
 
+### F.6 Device test 1 — evidence + verdicts (2026-10-21, priya@neet.com on Test*2)
+
+Run: 10:44:27→10:47:51 UTC, session CLOSED, integrity clean (0 missed
+heartbeats, 0 rejected batches, 0 flood flags). 8 events: SESSION_STARTED,
+**5× APP_BACKGROUND** (3.3–13.8 s each — home-button tests, all recorded),
+**FACE_PARTIALLY_VISIBLE 139 s + FACE_NOT_DETECTED 28 s** (camera cover —
+recorded). Answers submitted, results + summary card rendered. The full
+pipeline (detect → buffer → deliver → persist → summarize) is CONFIRMED on
+production from server truth.
+
+Four owner-reported issues, adjudicated on evidence:
+
+1. **No warning on camera cover — WORKING AS DESIGNED.** All policies are
+   `record` (silent shadow): `rulesEngine.js` timeline-only, never warned.
+   The cover WAS detected (the face episodes above). Warnings exist only in
+   warn modes; an optional warn-mode demo flip of this one quiz is available
+   to the owner (see F.7).
+2. **No live warning on app-return — WORKING AS DESIGNED (same cause).** The
+   5 episodes recorded; in record mode the server emits no WARN actions, so
+   no banner. (Even in warn mode the banner appears ~1–2 s AFTER return —
+   the episode rides the first post-resume flush.)
+3. **Head turns not recorded — WORKING AS DESIGNED (thresholds).** Ordinary
+   seated head turns stay inside the extreme/deviation bands; only
+   extreme/sustained/repeated deviations flag (Phase 8 device matrix). The
+   CV pipeline was demonstrably alive — the SAME frames produced the face
+   episodes.
+4. **"Monitoring Active" greyed after section submit — REAL BUG (fixed
+   same day).** Root cause: the section-submit handlers called
+   `stopMonitoring()` before EVERY section submit; for intermediate sections
+   the session stays ACTIVE and the screen does not remount, so the engine
+   stopped permanently — sections after the first ran unmonitored, while the
+   PiP caption (static copy) still read "Monitoring active". The device
+   evidence hid the gap only because the run ended seconds after section 1
+   (no heartbeat timeout had time to register). Fix: engine
+   `flushNow()` (flush open episodes, keep the loop) +
+   hook `flushMonitoring()` + all four submit paths now flush-then-submit and
+   stop ONLY on finalization; the PiP caption is now status-driven
+   (`statusCaptions`). Regression: `proctoringEngine.test.ts` Phase 9
+   flushNow describe-block. Requires device re-test to fully confirm.
+
+### F.7 Optional: warn-mode demo for the owner's own testing
+
+The owner may flip Test*2 policies to warn modes (`focusEvents:
+{mode:'warn-only'}` etc. — no auto-submit in warn-only) to SEE the banner
+flow on their own device. One-quiz scope, owner-only. Not done unless
+requested.
+
 ## G. Production-risk assessment (single tester, real backend + DB)
 
 | Risk | Mitigation | Safe now? |

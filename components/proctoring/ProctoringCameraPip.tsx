@@ -21,10 +21,12 @@ import { PROCTORING_COPY } from '@/utils/proctoringCopy';
 
 interface ProctoringCameraPipProps {
   dimmed?: boolean;
+  /** Honest status caption (Phase 9) — falls back to "Monitoring active". */
+  statusCaption?: string;
 }
 
 export const ProctoringCameraPip = React.forwardRef<CameraView, ProctoringCameraPipProps>(
-  function ProctoringCameraPip({ dimmed }, ref) {
+  function ProctoringCameraPip({ dimmed, statusCaption }, ref) {
     return (
       <View style={[styles.wrap, dimmed && styles.dimmed]} pointerEvents="none">
         {Platform.OS !== 'android' ? (
@@ -39,7 +41,7 @@ export const ProctoringCameraPip = React.forwardRef<CameraView, ProctoringCamera
         )}
         <View style={styles.statusRow}>
           <View style={[styles.dot, dimmed ? styles.dotIdle : styles.dotLive]} />
-          <Text style={styles.caption}>{PROCTORING_COPY.monitoring.active}</Text>
+          <Text style={styles.caption}>{statusCaption ?? PROCTORING_COPY.monitoring.active}</Text>
         </View>
       </View>
     );

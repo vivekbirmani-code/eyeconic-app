@@ -692,3 +692,68 @@ describe('ProctoringEngine — Phase 5 attention derivation wiring', () => {
     expect(event.metadata).toMatchObject({ calibration: 'fallback' });
   });
 });
+
+// ---- Phase 9: mid-attempt flush (section transitions keep monitoring) -----
+// Device-found bug: section submits called stopMonitoring(), which permanently
+// stopped the engine while the attempt (and session) stayed ACTIVE — every
+// section after the first ran unmonitored, and the PiP chip kept reading
+// "Monitoring active" from static copy. flushNow() is the fix's engine half:
+// land open episodes without stopping the loop.
+
+describe('ProctoringEngine — Phase 9 flushNow (section transitions)', () => {
+  let harness: Harness | null = null;
+  afterEach(async () => {
+    if (harness) {
+      await harness.engine.stop();
+      harness = null;
+    }
+  });
+
+  it('flushNow() lands open episodes while the loop keeps monitoring (status unchanged)', async () => {
+    harness = buildEngine();
+    await harness.engine.start();
+    await waitFor(() => harness!.transportCalls.length > 0);
+
+    harness.setFaceCount(0);
+    await new Promise((resolve) => setTimeout(resolve, 500)); // FACE episode opens
+    expect(harness.engine.state.status).toBe('monitoring');
+
+    await harness.engine.flushNow();
+
+    // NOT stopped — the whole point of the section-transition flush.
+    expect(harness.engine.state.status).toBe('monitoring');
+    const absence = harness.transportCalls
+      .flatMap((call) => call.events)
+      .filter((event) => event.type === 'FACE_NOT_DETECTED');
+    expect(absence).toHaveLength(1); // the open episode landed via the flush
+
+    // The loop keeps producing: transport continues after the flush.
+    harness.setFaceCount(1);
+    const callsNow = harness.transportCalls.length;
+    await waitFor(() => harness!.transportCalls.length > callsNow, 4000);
+  });
+
+  it('a section-like sequence: flush (section 1) → still monitoring → episode → flush (section 2) → stop() (final submit)', async () => {
+    harness = buildEngine();
+    await harness.engine.start();
+    await waitFor(() => harness!.transportCalls.length > 0);
+
+    await harness.engine.flushNow(); // section 1 submit
+    expect(harness.engine.state.status).toBe('monitoring');
+
+    harness.setFaceCount(0);
+    await new Promise((resolve) => setTimeout(resolve, 500)); // episode opens
+    harness.setFaceCount(1); // face returns before the flush — exactly one episode
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    await harness.engine.flushNow(); // section 2 submit
+    expect(harness.engine.state.status).toBe('monitoring');
+    const absences = harness.transportCalls
+      .flatMap((call) => call.events)
+      .filter((event) => event.type === 'FACE_NOT_DETECTED');
+    expect(absences).toHaveLength(1);
+
+    await harness.engine.stop(); // final submit
+    expect(harness.engine.state.status).toBe('stopped');
+  });
+});
