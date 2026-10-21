@@ -180,16 +180,16 @@ describe('parseProctoringConfig (quiz authoring validation)', () => {
     expect(result.error).toMatch(/riskWeights/);
   });
 
-  describe('attention lock (D6: record-only in V1)', () => {
+  describe('attention modes (D6 + Phase 9.1 advisory warn opt-in)', () => {
     it('accepts mode "record"', () => {
       const result = parseProctoringConfig({ enabled: true, attention: { mode: 'record' } });
       expect(result.value.attention).toEqual({ mode: 'record' });
     });
 
     it('rejects every escalation attempt with a plain reason', () => {
-      for (const mode of ['warn', 'warn-only', 'submit', 'auto', 'record ']) {
+      for (const mode of ['warn-only', 'submit', 'auto', 'record ']) {
         const result = parseProctoringConfig({ enabled: true, attention: { mode } });
-        expect(result.error).toMatch(/attention\.mode is locked to "record"/);
+        expect(result.error).toMatch(/must be "record" or "warn"/);
       }
     });
   });
@@ -221,12 +221,21 @@ describe('parseProctoringConfig (quiz authoring validation)', () => {
       });
     });
 
-    it('still rejects escalation even alongside valid thresholds (D6 first)', () => {
+    it('accepts the advisory warn opt-in alongside valid thresholds (Phase 9.1)', () => {
       const result = parseProctoringConfig({
         enabled: true,
         attention: { mode: 'warn', thresholds: { turnedDeg: 30 } },
       });
-      expect(result.error).toMatch(/attention\.mode is locked to "record"/);
+      expect(result.error).toBeUndefined();
+      expect(result.value.attention.mode).toBe('warn');
+      expect(result.value.attention.thresholds).toEqual({ turnedDeg: 30 });
+    });
+
+    it('rejects every submit-flavored attention mode — no such mode exists (D6)', () => {
+      expect(parseProctoringConfig({ enabled: true, attention: { mode: 'submit' } }).error)
+        .toMatch(/must be "record" or "warn"/);
+      expect(parseProctoringConfig({ enabled: true, attention: { mode: 'warn-then-submit' } }).error)
+        .toMatch(/must be "record" or "warn"/);
     });
 
     it('bounds every numeric field (out-of-range rejected, never clamped silently)', () => {

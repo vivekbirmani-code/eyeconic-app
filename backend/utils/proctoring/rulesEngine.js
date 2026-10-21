@@ -7,14 +7,18 @@
 // episodes drive the D3 ladder (warn each of the first `toleratedViolations`
 // qualifying episodes → final warning → auto-submit); probabilistic CV
 // observations can at most WARN in V1 (the strict-CV gate is OFF — D8);
-// attention/head-pose events can NEVER trigger any action (D6 — record-only,
-// structural, property-tested).
+// attention/head-pose events are record-only by default (D6).
 //
 // Evaluation scope (bounded): THIS batch's fresh events + the persisted
 // violation set — never a full-session replay per batch. Concurrency
 // semantics: two racing batches can both read a stale-low violation count,
 // under-enforcing temporarily (never over-enforcing) and self-healing on the
 // next batch; the SUBMIT execution itself is CAS-protected downstream.
+//
+// Attention/head-pose: record-only by default (D6). Sole exception (Phase
+// 9.1): an explicit per-quiz opt-in (attention.mode 'warn') turns the
+// 3rd-occurrence marker into ONE advisory WARN banner per repetition window —
+// never a violation, never risk, never submit. Property-tested both ways.
 
 const { getEventDefinition } = require('./eventRegistry');
 
@@ -32,10 +36,11 @@ const CAMERA_WARN_EVENT_TYPES = ['CAMERA_PERMISSION_REVOKED'];
 const MULTIPLE_FACES_EVENT = 'MULTIPLE_FACES_DETECTED';
 const FACE_MISSING_EVENT = 'FACE_NOT_DETECTED';
 
-// Attention/head-pose types — record-only, ALWAYS ignored here (D6). Listed
-// explicitly so the property test can assert over the full registry.
+// Attention/head-pose types — record-only by default (D6). Listed explicitly
+// so the property test can assert over the full registry.
 const ATTENTION_EVENT_TYPES = [
   'HEAD_POSE_EXTREME',
+  'HEAD_POSE_TURNED',
   'HEAD_POSE_REPEATED',
   'ATTENTION_DEVIATION_SUSTAINED',
   'ATTENTION_DEVIATION_REPEATED',
@@ -48,6 +53,7 @@ const RULE_IDS = {
   facePresenceAbsent: 'facePresence.absent',
   cameraPermissionRevoked: 'camera.permissionRevoked',
   maxViolationsCrossType: 'maxViolations.crossType',
+  attentionHeadTurn: 'attention.headTurn',
 };
 
 // Student-facing warning codes — the client renders the centralized copy
@@ -58,6 +64,7 @@ const WARN_CODES = {
   multipleFaces: 'warn.multipleFaces',
   faceMissing: 'warn.faceMissing',
   camera: 'warn.camera',
+  headTurn: 'warn.headTurn',
 };
 
 const numberOr = (value, fallback) =>
@@ -162,6 +169,30 @@ const evaluatePolicy = ({
   for (const event of sorted) {
     const definition = getEventDefinition(event.type);
     if (!definition) continue;
+
+    // ===== Attention, Phase 9.1 advisory carve-out =====
+    // HEAD_POSE_REPEATED is the client's 3rd-qualifying-occurrence marker.
+    // Under an explicit per-quiz opt-in (attention.mode 'warn') each marker
+    // event produces ONE advisory WARN — action WITHOUT a violation, exactly
+    // like the camera-episode re-warn pattern. The server deliberately does
+    // NOT re-derive the repetition window: an honest client emits at most one
+    // marker per window (window consumed on emit ⇒ one banner per 3rd
+    // occurrence); a hostile flood of markers can re-show the banner but can
+    // never escalate — the warn carries no violation, no risk, and there is
+    // no submit path for attention under any representable policy (D6).
+    // Every other attention type (per-occurrence TURNED, EXTREME, deviations)
+    // stays record-only under every representable policy.
+    if (event.type === 'HEAD_POSE_REPEATED'
+      && (policy.attention?.mode || 'record') === 'warn') {
+      actions.push({
+        kind: 'WARN',
+        code: WARN_CODES.headTurn,
+        warnId: buildWarnId(sessionId, RULE_IDS.attentionHeadTurn, event._id),
+        ruleId: RULE_IDS.attentionHeadTurn,
+        eventRef: event._id,
+      });
+      continue;
+    }
 
     // ===== D6 structural lock: attention/head-pose NEVER act =====
     if (ATTENTION_EVENT_TYPES.includes(event.type)) continue;

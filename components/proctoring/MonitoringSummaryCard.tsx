@@ -72,10 +72,13 @@ const MonitoringSummaryCard: React.FC<MonitoringSummaryCardProps> = ({ quizId, a
     [copy.lines.leftApp, counts.APP_BACKGROUND || 0],
     [copy.lines.faceNotVisible, counts.FACE_NOT_DETECTED || 0],
     [copy.lines.multipleFaces, counts.MULTIPLE_FACES_DETECTED || 0],
+    [copy.lines.headTurns, counts.HEAD_POSE_TURNED || 0],
     [copy.lines.cameraIssues,
       (counts.CAMERA_UNAVAILABLE || 0) + (counts.CAMERA_PERMISSION_REVOKED || 0)
       + (counts.CAMERA_TRACK_ENDED || 0) + (counts.CAMERA_FEED_DARK || 0)
       + (counts.CAMERA_FEED_FROZEN || 0) + (counts.MODEL_UNAVAILABLE || 0)],
+    // The aggregate attention notes deliberately EXCLUDE HEAD_POSE_TURNED —
+    // occurrences have their own line above; no double counting.
     [copy.lines.attentionNotes,
       (counts.HEAD_POSE_EXTREME || 0) + (counts.HEAD_POSE_REPEATED || 0)
       + (counts.ATTENTION_DEVIATION_SUSTAINED || 0) + (counts.ATTENTION_DEVIATION_REPEATED || 0)],

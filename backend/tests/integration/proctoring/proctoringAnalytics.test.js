@@ -150,6 +150,15 @@ describe('Phase 7 — analytics block + export parity (§25.2)', () => {
       idempotencyKey: `an-focus-${Date.now()}`, clientSeq: 0,
       metadata: { pattern: 'single' },
     });
+    // Phase 9.1: one recorded look-away occurrence for the same student —
+    // the lookAwayEvents column must flow analytics + CSV + Excel identically.
+    await postEvent(quiz, studentA, startedA, {
+      type: 'HEAD_POSE_TURNED', source: 'cv',
+      openedAt: Date.now() - 40_000, closedAt: Date.now() - 37_000,
+      confidence: 0.81,
+      idempotencyKey: `an-turned-${Date.now()}`, clientSeq: 1,
+      metadata: { basis: 'head_pose', durationMs: 3000, peakAngleDeg: 37.5, thresholds: { turnedDeg: 25, minEpisodeMs: 2000 } },
+    });
     await submitAttempt(quiz, studentA, startedA);
     await submitAttempt(quiz, studentB, startedB);
 
@@ -171,6 +180,7 @@ describe('Phase 7 — analytics block + export parity (§25.2)', () => {
       .set('Authorization', `Bearer ${admin.token}`);
     expect(asAdmin.body.proctoring.attempts).toHaveLength(2);
     expect(asAdmin.body.proctoring.rollup.proctoredAttempts).toBe(2);
+    expect(asAdmin.body.proctoring.rollup.lookAwayEvents).toBe(1);
 
     // PARITY: the collector's per-row columns match the analytics rows, and
     // the CSV + Excel carry the same values (§25.2 AC-3).
@@ -182,6 +192,7 @@ describe('Phase 7 — analytics block + export parity (§25.2)', () => {
       expect(row.riskCategory).toBe(analyticsRow.riskCategory);
       expect(row.totalViolations).toBe(analyticsRow.totalViolations);
       expect(row.focusLossExits).toBe(analyticsRow.focusLossExits);
+      expect(row.lookAwayEvents).toBe(analyticsRow.lookAwayEvents);
       expect(row.multipleFaceEvents).toBe(analyticsRow.multipleFaceEvents);
       expect(row.faceAbsentTotal).toBe(analyticsRow.faceAbsentTotal);
       expect(row.cameraIncidents).toBe(analyticsRow.cameraIncidents);
@@ -198,6 +209,7 @@ describe('Phase 7 — analytics block + export parity (§25.2)', () => {
     expect(csv).toContain('Risk Category');
     expect(csv).toContain('Total Violations');
     expect(csv).toContain('Focus-loss Exits');
+    expect(csv).toContain('Look-away Events');
     expect(csv).toContain('Heartbeat Gaps');
 
     const excelRes = await request(app)
@@ -214,7 +226,7 @@ describe('Phase 7 — analytics block + export parity (§25.2)', () => {
     await workbook.xlsx.load(excelRes.body);
     const sheet = workbook.getWorksheet('Student Performance');
     const headerRow = sheet.getRow(9).values;
-    expect(headerRow).toEqual(expect.arrayContaining(['Risk Category', 'Total Violations']));
+    expect(headerRow).toEqual(expect.arrayContaining(['Risk Category', 'Total Violations', 'Look-away Events']));
   });
 
   it('student access to the analytics endpoint stays refused', async () => {

@@ -500,3 +500,162 @@ describe('Phase 8 §32 AC-3 — attention_disabled accommodation end-to-end', ()
       .toEqual({ deg: 50 });
   });
 });
+
+// ---------- Phase 9.1 — attention 'warn' opt-in (3-look-away advisory) ----------
+//
+// The D6 guarantee above holds for the DEFAULT policy. This block pins the
+// sole carve-out: a quiz authored with attention.mode 'warn' gets ONE
+// advisory WARN banner per HEAD_POSE_REPEATED marker (the client's
+// 3rd-qualifying-occurrence signal) — never a violation, never risk, never
+// auto-submit. HEAD_POSE_TURNED (the per-occurrence events) stay inert so
+// occurrences 1 and 2 are silent.
+
+describe('Phase 9.1 — attention warn opt-in: advisory banner, never consequences', () => {
+  let admin;
+  let student;
+  let quiz;
+  let started;
+
+  beforeEach(async () => {
+    await db.clearDatabase();
+    resetPrecheckRateLimits();
+    resetProctoringEventRateLimits();
+    mockAiProctoringFlag = true;
+    admin = await createUser({ role: 'admin' });
+    student = await createUser({ role: 'student' });
+    const subject = await createSubject('Physiology');
+    const questions = [];
+    for (let i = 0; i < 2; i += 1) {
+      questions.push(await QuestionBank.create({
+        subject: subject._id, topicName: 'Neuro', subtopicName: 'Reflexes',
+        system: 'Neural', questionType: 'mcq_single', difficulty: 'medium',
+        question: `Q ${i}`, options: ['A', 'B', 'C', 'D'], correctAnswer: 1,
+      }));
+    }
+    quiz = await Quiz.create({
+      title: `Warn Quiz ${Date.now()}`,
+      subject: subject._id, testType: 'daily', duration: 20,
+      questions: questions.map((q) => q._id),
+      assignedStudents: [student.user._id],
+      createdBy: admin.user._id,
+      proctoring: {
+        enabled: true,
+        focusEvents: { mode: 'record' }, // isolate the attention advisory
+        multipleFaces: { mode: 'record' },
+        facePresence: { mode: 'record' },
+        attention: { mode: 'warn' },
+      },
+    });
+    await setProctoringEnabled(true, admin.user._id);
+
+    const pre = await request(app)
+      .post(`/api/quizzes/${quiz._id}/proctoring/precheck-report`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send(reportWith(BASELINE));
+    expect(pre.status).toBe(200);
+    await request(app)
+      .post(`/api/quizzes/${quiz._id}/proctoring/consent`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({ precheckToken: pre.body.precheckToken, consentTextVersion: '2026-09-v1', surface: 'app-android' });
+    const start = await request(app)
+      .post(`/api/quizzes/${quiz._id}/start`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({ precheckToken: pre.body.precheckToken });
+    expect(start.status).toBe(201);
+    expect(start.body.proctoringPolicy.attention.mode).toBe('warn');
+    started = { attemptId: start.body.attemptId, sessionId: start.body.proctoringSessionId };
+  });
+
+  const postEvents = (events) =>
+    request(app)
+      .post(`/api/quizzes/${quiz._id}/attempt/${started.attemptId}/proctoring/events`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({ sessionId: started.sessionId, heartbeat: true, events });
+
+  const occurrence = (i) => ({
+    type: 'HEAD_POSE_TURNED', source: 'cv',
+    openedAt: Date.now() - 90_000 + i * 5000,
+    closedAt: Date.now() - 90_000 + i * 5000 + 2600,
+    confidence: 0.8,
+    idempotencyKey: `p91-turned-${i}-${Math.random().toString(36).slice(2, 8)}`,
+    clientSeq: i,
+    metadata: {
+      basis: 'head_pose', calibration: 'captured', durationMs: 2600,
+      peakAngleDeg: 38.5, thresholds: { turnedDeg: 25, minEpisodeMs: 2000 },
+    },
+  });
+
+  const marker = (i) => ({
+    type: 'HEAD_POSE_REPEATED', source: 'cv',
+    openedAt: Date.now() - 90_000 + i * 5000,
+    closedAt: Date.now() - 90_000 + i * 5000 + 20000,
+    confidence: 0.8,
+    idempotencyKey: `p91-repeated-${i}-${Math.random().toString(36).slice(2, 8)}`,
+    clientSeq: i,
+    metadata: {
+      basis: 'head_pose', calibration: 'captured', durationMs: 20000,
+      episodes: 3, thresholds: { minEpisodes: 3, minEpisodeMs: 2000, windowMs: 300000 },
+    },
+  });
+
+  it('occurrences 1 and 2 are stored silently; the 3rd-occurrence marker warns — advisory only', async () => {
+    // Occurrences 1 and 2: recorded, no action.
+    const first = await postEvents([occurrence(0), occurrence(1)]);
+    expect(first.status).toBe(200);
+    expect(first.body.accepted).toBe(2);
+    expect(first.body.actions).toBeUndefined();
+
+    // 3rd occurrence + its window marker: ONE advisory WARN.
+    const third = await postEvents([occurrence(2), marker(3)]);
+    expect(third.status).toBe(200);
+    expect(third.body.accepted).toBe(2);
+    expect(third.body.actions).toHaveLength(1);
+    expect(third.body.actions[0]).toMatchObject({ kind: 'WARN', code: 'warn.headTurn' });
+    expect(third.body.attemptFinalized).toBeUndefined();
+
+    // Advisory ONLY: no violations, no risk, attempt untouched.
+    expect(await ProctoringViolation.countDocuments({})).toBe(0);
+    const session = await ProctoringSession.findById(started.sessionId);
+    expect(session.violationsCount || 0).toBe(0);
+    expect(session.riskScore).toBe(0);
+    const attempt = await QuizAttempt.findById(started.attemptId);
+    expect(attempt.status).toBe('in_progress');
+
+    // The warning delivery is recorded as a system event tied to the warnId.
+    const warnings = await ProctoringEvent.find({
+      session: started.sessionId, type: 'WARNING_DELIVERED',
+    }).lean();
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].idempotencyKey).toBe(third.body.actions[0].warnId);
+    expect(warnings[0].metadata.code).toBe('warn.headTurn');
+  });
+
+  it('a replayed marker batch never re-warns (idempotent delivery)', async () => {
+    const batch = [occurrence(0), marker(1)];
+    const first = await postEvents(batch);
+    expect(first.body.actions).toHaveLength(1);
+    const replay = await postEvents(batch);
+    expect(replay.status).toBe(200);
+    expect(replay.body.accepted).toBe(0);
+    expect(replay.body.duplicates).toHaveLength(2);
+    expect(replay.body.actions).toBeUndefined();
+    expect(await ProctoringEvent.countDocuments({
+      session: started.sessionId, type: 'WARNING_DELIVERED',
+    })).toBe(1);
+  });
+
+  it('a flood of markers warns per marker but NEVER escalates to violation/submit', async () => {
+    for (let round = 0; round < 6; round += 1) {
+      const res = await postEvents([marker(10 + round)]);
+      expect(res.status).toBe(200);
+      if (res.body.actions) {
+        expect(res.body.actions).toHaveLength(1);
+        expect(res.body.actions[0].kind).toBe('WARN');
+      }
+      expect(res.body.attemptFinalized).toBeUndefined();
+    }
+    expect(await ProctoringViolation.countDocuments({})).toBe(0);
+    const attempt = await QuizAttempt.findById(started.attemptId);
+    expect(attempt.status).toBe('in_progress');
+  });
+});

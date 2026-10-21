@@ -327,10 +327,12 @@ const parseProctoringConfig = (raw) => {
     if (Object.keys(section).length > 0) config.facePresence = section;
   }
 
-  // D6: attention is record-only in V1 — reject any attempt to configure it
-  // otherwise at authoring time. (There is deliberately no "submit" option.)
-  // Phase 5 adds SHAPING thresholds only (plan §13.2): they decide when a
-  // record-only observation episode opens and can never attach a consequence.
+  // D6 + Phase 9.1: attention modes are 'record' (default, no actions ever)
+  // and 'warn' (advisory banner on the 3rd-occurrence marker only — never a
+  // violation, never risk, never submit). Any submit-flavored value is
+  // rejected loudly; there is deliberately no such mode to accept.
+  // Phase 5 shaping thresholds (plan §13.2) decide when observation episodes
+  // open and can never attach a consequence beyond that advisory banner.
   if (attention !== undefined) {
     if (!isPlainObject(attention)) return { error: 'proctoring.attention must be an object' };
     const section = {};
@@ -338,8 +340,8 @@ const parseProctoringConfig = (raw) => {
       section.enabled = asBoolean(attention.enabled);
     }
     if (attention.mode !== undefined) {
-      if (attention.mode !== 'record') {
-        return { error: 'proctoring.attention.mode is locked to "record" in V1 (attention observations can never trigger actions)' };
+      if (!oneOf(attention.mode, ['record', 'warn'])) {
+        return { error: 'proctoring.attention.mode must be "record" or "warn" (attention is advisory-only and can never trigger submission)' };
       }
       section.mode = attention.mode;
     }

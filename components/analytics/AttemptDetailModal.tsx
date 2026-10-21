@@ -56,6 +56,7 @@ const TIMELINE_LABELS: Record<string, string> = {
     FACE_OUT_OF_FRAME: 'Face out of frame',
     MULTIPLE_FACES_DETECTED: 'More than one face',
     HEAD_POSE_EXTREME: 'Head turned away (recorded)',
+    HEAD_POSE_TURNED: 'Turned head away (recorded)',
     HEAD_POSE_REPEATED: 'Repeated head turns (recorded)',
     ATTENTION_DEVIATION_SUSTAINED: 'Attention deviation (recorded)',
     ATTENTION_DEVIATION_REPEATED: 'Repeated attention deviation (recorded)',

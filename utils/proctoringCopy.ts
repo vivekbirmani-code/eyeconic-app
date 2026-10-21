@@ -109,8 +109,9 @@ export const PROCTORING_COPY = {
       leftApp: 'Times you left the app',
       faceNotVisible: 'Times your face was not clearly visible',
       multipleFaces: 'Times more than one person may have been visible',
+      headTurns: 'Times you turned your head away',
       cameraIssues: 'Camera or lighting hiccups',
-      attentionNotes: 'Head-turn notes (recorded for transparency only)',
+      attentionNotes: 'Other attention notes (recorded for transparency)',
       connectionGaps: 'Connection gaps',
     },
     reviewed: {
@@ -132,6 +133,7 @@ export const PROCTORING_COPY = {
       FACE_OUT_OF_FRAME: 'Face moved out of view',
       MULTIPLE_FACES_DETECTED: 'More than one person may have been visible',
       HEAD_POSE_EXTREME: 'Head turned far',
+      HEAD_POSE_TURNED: 'Turned head away from the screen',
       HEAD_POSE_REPEATED: 'Repeated head turns',
       ATTENTION_DEVIATION_SUSTAINED: 'Looked away for a while',
       ATTENTION_DEVIATION_REPEATED: 'Looked away several times',
@@ -174,6 +176,10 @@ export const PROCTORING_COPY = {
       'warn.camera': {
         title: 'Camera access lost',
         body: 'Your test continues — this has been recorded. Allow camera access again to restore monitoring.',
+      },
+      'warn.headTurn': {
+        title: 'Please focus on the screen',
+        body: 'Please do not turn your head or look away from the screen. You are being monitored. Please focus on the screen.',
       },
     } as Record<string, { title: string; body: string }>,
     /** Shown when the policy auto-submits the attempt (terminal, §20.3). */

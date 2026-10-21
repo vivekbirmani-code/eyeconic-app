@@ -29,7 +29,13 @@ export interface ProctoringPolicy {
    */
   attention?: {
     enabled?: boolean;
-    mode?: 'record';
+    /**
+     * 'record' (default): observations only, no student-facing effect.
+     * 'warn' (Phase 9.1 advisory opt-in): the 3rd-occurrence marker
+     * (HEAD_POSE_REPEATED) shows ONE advisory banner per repetition window —
+     * server-decided, never a violation, never auto-submit.
+     */
+    mode?: 'record' | 'warn';
     thresholds?: {
       turnedDeg?: number;
       extreme?: { yawDeg?: number; pitchDeg?: number; sustainMs?: number };
@@ -75,6 +81,7 @@ export type ProctoringEventType =
   | 'FACE_OUT_OF_FRAME'
   | 'MULTIPLE_FACES_DETECTED'
   | 'HEAD_POSE_EXTREME'
+  | 'HEAD_POSE_TURNED'
   | 'HEAD_POSE_REPEATED'
   | 'ATTENTION_DEVIATION_SUSTAINED'
   | 'ATTENTION_DEVIATION_REPEATED'

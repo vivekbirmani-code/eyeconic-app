@@ -31,10 +31,11 @@ import type {
 // ===== Phase 5 — head pose + record-only attention (plan §13, D6/D11) =====
 //
 // Derives HEAD_POSE_* / ATTENTION_DEVIATION_* OBSERVATIONS from the
-// per-frame head pose. RECORD-ONLY by construction: this module produces
-// episode records for the timeline and nothing else — it has no warning,
-// violation or submission path at all (the server's D6 structural lock
-// independently refuses to act on these types).
+// per-frame head pose. RECORD-ONLY by construction on this device: this
+// module produces episode records for the timeline and nothing else — it has
+// no warning, violation or submission path at all (the server alone decides
+// consequences; Phase 9.1's advisory warn opt-in lives in the backend rules
+// engine, keyed on the HEAD_POSE_REPEATED marker these observations feed).
 
 /**
  * Client-side fallback attention thresholds — mirror
@@ -567,7 +568,9 @@ export class EpisodeTracker {
    * (openedAt = first segment's start, closedAt = newest segment's end) and
    * the window is CONSUMED — the next pattern event needs a fresh window.
    * Sustained intervals are ordinary qualifying segments and count toward
-   * the pattern like any other.
+   * the pattern like any other. Head-pose family: each qualifying segment is
+   * ALSO emitted on its own as a HEAD_POSE_TURNED occurrence event, so the
+   * history holds occurrences 1 and 2 — not just the 3rd-occurrence marker.
    */
   private updateAttentionFamily(
     state: AttentionFamilyState,
@@ -702,8 +705,11 @@ export class EpisodeTracker {
   }
 
   /**
-   * Qualifies a finished segment and, when the repetition window fills,
-   * emits exactly one pattern event and consumes the window.
+   * Qualifies a finished segment and records it. Head-pose family: every
+   * qualifying segment is ONE look-away occurrence and is emitted as its own
+   * HEAD_POSE_TURNED event (Phase 9.1 — occurrences 1 and 2 must be reviewable
+   * too, not just the window marker). When the repetition window fills, exactly
+   * one pattern event is additionally emitted and the window is consumed.
    */
   private finishAttentionSegment(
     state: AttentionFamilyState,
@@ -721,6 +727,22 @@ export class EpisodeTracker {
     const durationMs = segment.lastTs - segment.start;
     if (segment.frames < ATTENTION_SEGMENT_MIN_FRAMES || durationMs < config.minEpisodeMs) {
       return; // sub-threshold glance (§13.3) — never counted, never emitted
+    }
+    if (config.sustainedType === 'HEAD_POSE_EXTREME') {
+      // One event per qualifying occurrence — the segment itself, with the
+      // same reliability rules (confidence floor) as every CV observation.
+      const occurrence = this.buildAttentionEpisode(
+        {
+          openedAt: segment.start,
+          closedAt: segment.lastTs,
+          qualities: [...segment.qualities],
+          anglePeak: segment.anglePeak,
+          suppressed: false,
+        },
+        'HEAD_POSE_TURNED',
+        config
+      );
+      if (occurrence) emitted.push(occurrence);
     }
     const quality = median(segment.qualities) ?? 0;
     state.window.push({ start: segment.start, end: segment.lastTs, quality });
@@ -843,9 +865,11 @@ export class EpisodeTracker {
       ? { minEpisodes: config.minEpisodes, minEpisodeMs: config.minEpisodeMs, windowMs: config.windowMs }
       : type === 'ATTENTION_DEVIATION_REPEATED'
         ? { minEpisodes: config.minEpisodes, minEpisodeMs: config.minEpisodeMs, windowMs: config.windowMs }
-        : type === 'HEAD_POSE_EXTREME'
-          ? { yawDeg: t.extremeYawDeg, pitchDeg: t.extremePitchDeg, sustainMs: config.sustainedEnterMs ?? t.extremeSustainMs }
-          : { deg: t.effectiveDeviationDeg, sustainMs: config.sustainedEnterMs ?? t.deviationSustainMs };
+        : type === 'HEAD_POSE_TURNED'
+          ? { turnedDeg: t.turnedDeg, minEpisodeMs: config.minEpisodeMs }
+          : type === 'HEAD_POSE_EXTREME'
+            ? { yawDeg: t.extremeYawDeg, pitchDeg: t.extremePitchDeg, sustainMs: config.sustainedEnterMs ?? t.extremeSustainMs }
+            : { deg: t.effectiveDeviationDeg, sustainMs: config.sustainedEnterMs ?? t.deviationSustainMs };
 
     return {
       type,

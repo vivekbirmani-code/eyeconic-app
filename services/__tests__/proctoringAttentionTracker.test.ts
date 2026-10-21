@@ -489,8 +489,14 @@ describe('Phase 5 attention — deviation/extreme band boundaries (device-derive
     return emitted.filter((e: any) => /ATTENTION_DEVIATION|HEAD_POSE/.test(e.type));
   };
 
-  test('33° (just under the 33.4° lower edge) → nothing', () => {
-    expect(sustainedDeviationAt(33)).toEqual([]);
+  test('33° (just under the 33.4° lower edge) → no deviation episode, but one look-away occurrence', () => {
+    // 33° is outside the deviation pocket (baseline −1.6°), yet ≥ the 25°
+    // turned band — an 8 s hold is ONE qualifying occurrence (Phase 9.1:
+    // HEAD_POSE_TURNED), never a deviation/extreme episode.
+    const events = sustainedDeviationAt(33);
+    expect(events.filter((e: any) => /ATTENTION_DEVIATION|HEAD_POSE_EXTREME|REPEATED/.test(e.type)))
+      .toEqual([]);
+    expect(events.filter((e: any) => e.type === 'HEAD_POSE_TURNED')).toHaveLength(1);
   });
 
   test('35° (just inside the pocket) → one ATTENTION_DEVIATION_SUSTAINED', () => {
@@ -523,5 +529,114 @@ describe('Phase 5 attention — deviation/extreme band boundaries (device-derive
     expect(repeated[0].metadata.episodes).toBeGreaterThanOrEqual(4);
     // Sustained glances (2.5 s < 4 s sustain) emit nothing individually.
     expect(emitted.filter((e: any) => e.type === 'ATTENTION_DEVIATION_SUSTAINED')).toEqual([]);
+  });
+});
+
+// ---------- Phase 9.1 — look-away occurrences (HEAD_POSE_TURNED) ----------
+//
+// One TURNED event per QUALIFYING orient-away occurrence (≥2 frames and
+// ≥ minEpisodeMs 2000 ms past the 25° turned band, sub-second gaps bridged).
+// HEAD_POSE_REPEATED remains the 3rd-occurrence window marker the server's
+// advisory warn keys on — occurrences 1 and 2 are recorded but silent.
+
+describe('Phase 9.1 — look-away occurrences (HEAD_POSE_TURNED)', () => {
+  const turnedOf = (episodes: any[]) => episodes.filter((e) => e.type === 'HEAD_POSE_TURNED');
+  const repeatedOf = (episodes: any[]) => episodes.filter((e) => e.type === 'HEAD_POSE_REPEATED');
+
+  /** One look-away: 3 s past the turned band, then 1.5 s back at center. */
+  const glance = (tracker: EpisodeTracker) => [
+    ...hold(tracker, 35, 0, 30),
+    ...hold(tracker, 0, 0, 15),
+  ];
+
+  test('1st occurrence: recorded, no window marker', () => {
+    const tracker = makeTracker(undefined, { yaw: 0, pitch: 0 });
+    const emitted = glance(tracker);
+    expect(types(turnedOf(emitted))).toEqual(['HEAD_POSE_TURNED']);
+    expect(repeatedOf(emitted)).toEqual([]);
+  });
+
+  test('2nd occurrence: recorded, still no window marker', () => {
+    const tracker = makeTracker(undefined, { yaw: 0, pitch: 0 });
+    const emitted = [...glance(tracker), ...glance(tracker)];
+    expect(turnedOf(emitted)).toHaveLength(2);
+    expect(repeatedOf(emitted)).toEqual([]);
+  });
+
+  test('3rd qualifying occurrence: recorded AND completes the window (one REPEATED marker)', () => {
+    const tracker = makeTracker(undefined, { yaw: 0, pitch: 0 });
+    const emitted = [...glance(tracker), ...glance(tracker), ...glance(tracker)];
+    expect(turnedOf(emitted)).toHaveLength(3);
+    expect(repeatedOf(emitted)).toHaveLength(1);
+    expect(repeatedOf(emitted)[0].metadata.episodes).toBe(3);
+  });
+
+  test('4th and 5th occurrences keep recording; the next marker needs a full fresh window (6th)', () => {
+    const tracker = makeTracker(undefined, { yaw: 0, pitch: 0 });
+    const emitted = [
+      ...glance(tracker), ...glance(tracker), ...glance(tracker),
+      ...glance(tracker), ...glance(tracker),
+    ];
+    expect(turnedOf(emitted)).toHaveLength(5);
+    expect(repeatedOf(emitted)).toHaveLength(1); // window consumed at the 3rd
+    const more = [...glance(tracker)]; // 6th occurrence
+    expect(turnedOf(more)).toHaveLength(1);
+    expect(repeatedOf(more)).toHaveLength(1);
+  });
+
+  test('a sustained single head turn is ONE occurrence — no per-frame counting', () => {
+    const tracker = makeTracker(undefined, { yaw: 0, pitch: 0 });
+    const emitted = [
+      ...hold(tracker, 40, 0, 90), // 9 s continuously turned
+      ...hold(tracker, 0, 0, 15),
+    ];
+    expect(turnedOf(emitted)).toHaveLength(1);
+    expect(repeatedOf(emitted)).toEqual([]);
+  });
+
+  test('a sub-second face loss inside a turn does not split the occurrence', () => {
+    const tracker = makeTracker(undefined, { yaw: 0, pitch: 0 });
+    const emitted = [
+      ...hold(tracker, 35, 0, 20), // 2 s turned
+      ...hold(tracker, null, null, 8), // 0.8 s face lost — under the 1 s clear-debounce
+      ...hold(tracker, 35, 0, 20), // still the same occurrence
+      ...hold(tracker, 0, 0, 15),
+    ];
+    expect(turnedOf(emitted)).toHaveLength(1);
+  });
+
+  test('occurrence counting survives a section transition (closeAll/flushNow keeps the window)', () => {
+    const tracker = makeTracker(undefined, { yaw: 0, pitch: 0 });
+    const before = [
+      ...glance(tracker),
+      ...glance(tracker),
+      ...tracker.closeAll(), // Phase 9 flushNow — monitoring CONTINUES on this tracker
+    ];
+    expect(turnedOf(before)).toHaveLength(2);
+    expect(repeatedOf(before)).toEqual([]);
+    const after = [...glance(tracker)]; // 3rd occurrence, post-transition
+    expect(turnedOf(after)).toHaveLength(1);
+    expect(repeatedOf(after)).toHaveLength(1); // window reached across the transition
+  });
+
+  test('a sub-threshold glance (< 2 s) is never an occurrence', () => {
+    const tracker = makeTracker(undefined, { yaw: 0, pitch: 0 });
+    const emitted = [
+      ...hold(tracker, 35, 0, 15), // 1.5 s — under minEpisodeMs
+      ...hold(tracker, 0, 0, 15),
+    ];
+    expect(turnedOf(emitted)).toEqual([]);
+  });
+
+  test('occurrence provenance: thresholds + basis + peak angle + confidence', () => {
+    const tracker = makeTracker(undefined, { yaw: 0, pitch: 0 });
+    const [occurrence] = turnedOf([...glance(tracker), ...hold(tracker, 0, 0, 5)]);
+    expect(occurrence.metadata).toMatchObject({
+      basis: 'head_pose',
+      calibration: 'captured',
+      thresholds: { turnedDeg: DEFAULT_ATTENTION_THRESHOLDS.turnedDeg, minEpisodeMs: DEFAULT_ATTENTION_THRESHOLDS.repeatedHeadPose.minEpisodeMs },
+    });
+    expect(occurrence.metadata.peakAngleDeg).toBeGreaterThanOrEqual(35);
+    expect(typeof occurrence.confidence).toBe('number');
   });
 });

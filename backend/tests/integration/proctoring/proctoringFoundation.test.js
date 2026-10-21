@@ -291,7 +291,7 @@ describe('Proctoring at /start — gates, snapshot, session', () => {
     expect(res.body.proctoringPolicyDigest).toMatch(/^[0-9a-f]{64}$/);
 
     const attempt = await QuizAttempt.findById(res.body.attemptId);
-    expect(attempt.proctoringSnapshot.version).toBe(1);
+    expect(attempt.proctoringSnapshot.version).toBe(2); // Phase 9.1 schema bump (attention 'warn' + HEAD_POSE_TURNED)
     expect(attempt.proctoringSnapshot.hash).toBe(res.body.proctoringPolicyDigest);
     // Effective policy = quiz override merged over platform defaults.
     expect(attempt.proctoringSnapshot.policy.focusEvents.toleratedViolations).toBe(4);
@@ -537,7 +537,7 @@ describe('Proctoring quiz authoring validation (create/update routes)', () => {
   });
 
   it.each([
-    ['attention escalation (D6)', { enabled: true, attention: { mode: 'warn' } }],
+    ['attention submit escalation (D6 — no such mode exists)', { enabled: true, attention: { mode: 'submit' } }],
     ['per-quiz riskWeights injection', { enabled: true, riskWeights: { multipleFaces: { points: 999 } } }],
     ['CV auto-submit as a quiz setting (D8)', { enabled: true, multipleFaces: { mode: 'submit' } }],
     ['zero-tolerance warn-then-submit', { enabled: true, focusEvents: { mode: 'warn-then-submit', toleratedViolations: 0 } }],
@@ -547,6 +547,12 @@ describe('Proctoring quiz authoring validation (create/update routes)', () => {
     const res = await createQuiz({ proctoring });
     expect(res.status).toBe(400);
     expect(res.body.message).toBeDefined();
+  });
+
+  it('accepts the Phase 9.1 attention advisory warn opt-in', async () => {
+    const res = await createQuiz({ proctoring: { enabled: true, attention: { mode: 'warn' } } });
+    expect(res.status).toBe(201);
+    expect((await Quiz.findById(res.body.quiz._id)).proctoring.attention.mode).toBe('warn');
   });
 
   it('PUT /:id updates the config when provided and preserves it when absent', async () => {
@@ -574,7 +580,7 @@ describe('Proctoring quiz authoring validation (create/update routes)', () => {
     const invalid = await request(app)
       .put(`/api/quizzes/${quizId}`)
       .set('Authorization', `Bearer ${admin.token}`)
-      .send({ proctoring: { enabled: true, attention: { mode: 'warn' } } });
+      .send({ proctoring: { enabled: true, attention: { mode: 'submit' } } });
     expect(invalid.status).toBe(400);
     expect((await Quiz.findById(quizId)).proctoring.enabled).toBe(false);
   });

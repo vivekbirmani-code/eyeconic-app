@@ -147,6 +147,23 @@ describe('Quiz-level AI Proctoring toggle — authoring + isolation', () => {
     expect(stored.proctoring.focusEvents.mode).toBe('warn-then-submit');
   });
 
+  it('Phase 9.1: attention.mode "warn" round-trips; submit-flavored values are rejected 400', async () => {
+    const warn = await createQuiz(admin, baseQuizBody(subject, student, questionIds, {
+      proctoring: { enabled: true, camera: 'optional', focusEvents: { mode: 'record' }, attention: { mode: 'warn' } },
+    }));
+    expect([200, 201]).toContain(warn.status);
+    const stored = await Quiz.findById(warn.body.quiz._id);
+    expect(stored.proctoring.attention.mode).toBe('warn');
+
+    for (const mode of ['submit', 'warn-then-submit']) {
+      const rejected = await createQuiz(admin, baseQuizBody(subject, student, questionIds, {
+        proctoring: { enabled: true, attention: { mode } },
+      }));
+      expect(rejected.status).toBe(400);
+      expect(rejected.body.message).toMatch(/attention\.mode/);
+    }
+  });
+
   it('editing quiz A ON then OFF never modifies quiz B', async () => {
     const a = await createQuiz(admin, baseQuizBody(subject, student, questionIds, { proctoring: ON_PAYLOAD }));
     const b = await createQuiz(admin, baseQuizBody(subject, student, questionIds, { proctoring: ON_PAYLOAD }));

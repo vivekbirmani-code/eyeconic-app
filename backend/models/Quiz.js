@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const {
-  ATTENTION_MODE_RECORD_ONLY,
+  ATTENTION_MODES,
   DEFAULT_RISK_WEIGHTS,
 } = require('../utils/proctoring/defaults');
 
@@ -174,13 +174,14 @@ const quizSchema = new mongoose.Schema({
         type: Boolean,
         default: true
       },
-      // LOCKED to 'record' in V1 (decision D6): attention/head-pose
-      // observations can never trigger warnings, violations or auto-submit.
-      // The enum intentionally contains only this value.
+      // D6 + Phase 9.1: default 'record' (attention can never act beyond an
+      // advisory banner); 'warn' is the explicit per-quiz opt-in that shows a
+      // warn banner on the 3rd-occurrence marker. No submit-flavored value
+      // exists — attention can never cost the student their attempt.
       mode: {
         type: String,
-        enum: [ATTENTION_MODE_RECORD_ONLY],
-        default: ATTENTION_MODE_RECORD_ONLY
+        enum: ATTENTION_MODES,
+        default: 'record'
       },
       // Phase 5 SHAPING thresholds (plan §13.2): when a record-only
       // observation episode opens — never a consequence (D6). No mongoose

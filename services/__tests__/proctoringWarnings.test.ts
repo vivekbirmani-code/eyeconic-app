@@ -18,6 +18,7 @@ const SERVER_WARN_CODES = [
   'warn.multipleFaces',
   'warn.faceMissing',
   'warn.camera',
+  'warn.headTurn',
 ] as const;
 
 /** Mirror of the backend registry's banned-identifier pattern + D7 copy bans. */

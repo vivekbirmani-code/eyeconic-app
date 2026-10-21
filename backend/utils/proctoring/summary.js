@@ -139,7 +139,8 @@ const freezeSessionSummary = async (session, { policy = {} } = {}) => {
  * analytics block, CSV and Excel are identical by construction:
  *
  *   riskCategory · totalViolations · focusLossExits (APP_BACKGROUND)
- *   multipleFaceEvents (MULTIPLE_FACES_DETECTED) · faceAbsentTotal
+ *   lookAwayEvents (HEAD_POSE_TURNED) · multipleFaceEvents
+ *   (MULTIPLE_FACES_DETECTED) · faceAbsentTotal
  *   (FACE_NOT_DETECTED) · cameraIncidents (CAMERA_* + MODEL_UNAVAILABLE)
  *   heartbeatGaps (HEARTBEAT_GAP)
  *
@@ -185,6 +186,7 @@ const CAMERA_INCIDENT_TYPES = [
 /** The §25.2 export columns, derived from one session's denormalized counts. */
 const proctoringColumns = (eventCounts) => ({
   focusLossExits: eventCounts.APP_BACKGROUND || 0,
+  lookAwayEvents: eventCounts.HEAD_POSE_TURNED || 0,
   multipleFaceEvents: eventCounts.MULTIPLE_FACES_DETECTED || 0,
   faceAbsentTotal: eventCounts.FACE_NOT_DETECTED || 0,
   cameraIncidents: CAMERA_INCIDENT_TYPES.reduce((sum, type) => sum + (eventCounts[type] || 0), 0),
@@ -196,6 +198,7 @@ const emptyProctoringRollup = () => ({
   riskDistribution: { normal: 0, low: 0, moderate: 0, high: 0, critical: 0 },
   totalViolations: 0,
   focusLossExits: 0,
+  lookAwayEvents: 0,
   multipleFaceEvents: 0,
   faceAbsentTotal: 0,
   cameraIncidents: 0,
@@ -211,6 +214,7 @@ const rollupProctoringRows = (rows) => {
     rollup.riskDistribution[row.riskCategory] = (rollup.riskDistribution[row.riskCategory] || 0) + 1;
     rollup.totalViolations += row.totalViolations;
     rollup.focusLossExits += row.focusLossExits;
+    rollup.lookAwayEvents += row.lookAwayEvents;
     rollup.multipleFaceEvents += row.multipleFaceEvents;
     rollup.faceAbsentTotal += row.faceAbsentTotal;
     rollup.cameraIncidents += row.cameraIncidents;

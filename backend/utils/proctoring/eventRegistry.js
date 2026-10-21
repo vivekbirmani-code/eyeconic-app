@@ -38,6 +38,10 @@ const EVENT_REGISTRY = {
   FACE_OUT_OF_FRAME: { category: 'cv_observation', reliability: 'probabilistic', sources: ['cv'] },
   MULTIPLE_FACES_DETECTED: { category: 'cv_observation', reliability: 'probabilistic', sources: ['cv'] },
   HEAD_POSE_EXTREME: { category: 'cv_observation', reliability: 'probabilistic', sources: ['cv'] },
+  // Phase 9.1: one event per qualifying orient-away occurrence (≥ minEpisodeMs
+  // of turned pose, anti-jitter merged). The REPEATED aggregate stays the
+  // 3rd-occurrence window marker — both persist; neither alone is the count.
+  HEAD_POSE_TURNED: { category: 'cv_observation', reliability: 'probabilistic', sources: ['cv'] },
   HEAD_POSE_REPEATED: { category: 'cv_observation', reliability: 'probabilistic', sources: ['cv'] },
   ATTENTION_DEVIATION_SUSTAINED: { category: 'cv_observation', reliability: 'probabilistic', sources: ['cv'] },
   ATTENTION_DEVIATION_REPEATED: { category: 'cv_observation', reliability: 'probabilistic', sources: ['cv'] },

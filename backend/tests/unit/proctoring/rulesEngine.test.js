@@ -262,6 +262,84 @@ describe('rulesEngine.evaluatePolicy — D6 property: attention never acts', () 
       }
     }
   });
+
+  test('even under the Phase 9.1 warn opt-in, only the REPEATED marker acts — and only as WARN', () => {
+    const silentTypes = ATTENTION_EVENT_TYPES.filter((t) => t !== 'HEAD_POSE_REPEATED');
+    for (const type of silentTypes) {
+      const policy = defaultPolicy();
+      policy.attention.mode = 'warn';
+      policy.maxViolations = 1;
+      policy.violationAction = 'submit';
+      const persisted = Array.from({ length: 99 }, () => ({ ruleId: RULE_IDS.focusLoss }));
+      const result = evaluate({
+        policy,
+        newEvents: [attentionEpisode(type)],
+        persistedViolations: persisted,
+      });
+      expect(result.actions).toHaveLength(0);
+      expect(result.newViolations).toHaveLength(0);
+      expect(result.submit).toBeNull();
+    }
+  });
+});
+
+describe('rulesEngine.evaluatePolicy — Phase 9.1 attention warn opt-in', () => {
+  const repeatedEpisode = () => attentionEpisode('HEAD_POSE_REPEATED');
+
+  test('HEAD_POSE_REPEATED under attention.mode "warn" yields ONE advisory WARN, never a violation or submit', () => {
+    const policy = defaultPolicy();
+    policy.attention.mode = 'warn';
+    policy.maxViolations = 1;
+    policy.violationAction = 'submit';
+    const persisted = Array.from({ length: 99 }, () => ({ ruleId: RULE_IDS.focusLoss }));
+    const result = evaluate({
+      policy,
+      newEvents: [repeatedEpisode()],
+      persistedViolations: persisted,
+    });
+    expect(result.actions).toHaveLength(1);
+    expect(result.actions[0]).toMatchObject({
+      kind: 'WARN',
+      code: WARN_CODES.headTurn,
+      ruleId: RULE_IDS.attentionHeadTurn,
+    });
+    expect(result.newViolations).toHaveLength(0);
+    expect(result.violationCountAfter).toBe(persisted.length);
+    expect(result.submit).toBeNull();
+  });
+
+  test('the same REPEATED event always derives the same deterministic warnId (delivery dedupe)', () => {
+    const policy = defaultPolicy();
+    policy.attention.mode = 'warn';
+    const first = evaluate({ policy, newEvents: [repeatedEpisode()] });
+    const second = evaluate({ policy, newEvents: [repeatedEpisode()] });
+    expect(first.actions[0].warnId).toBe(second.actions[0].warnId);
+    expect(first.actions[0].warnId)
+      .toBe(`warn:${SESSION_ID}:${RULE_IDS.attentionHeadTurn}:${repeatedEpisode()._id}`);
+  });
+
+  test('default (record) and absent attention.mode both stay silent for REPEATED', () => {
+    const withRecord = evaluate({ newEvents: [repeatedEpisode()] });
+    expect(withRecord.actions).toHaveLength(0);
+
+    const policy = defaultPolicy();
+    delete policy.attention.mode;
+    const absent = evaluate({ policy, newEvents: [repeatedEpisode()] });
+    expect(absent.actions).toHaveLength(0);
+  });
+
+  test('each repetition window warns independently (3rd, 6th, 9th occurrence)', () => {
+    const policy = defaultPolicy();
+    policy.attention.mode = 'warn';
+    const events = [0, 1, 2].map((i) => cvEpisode('HEAD_POSE_REPEATED', {
+      _id: `d0000000000000000000000${String(i).padStart(2, '0')}`,
+      serverAt: new Date(Date.now() + i * 1000),
+    }));
+    const result = evaluate({ policy, newEvents: events });
+    expect(result.actions).toHaveLength(3);
+    expect(new Set(result.actions.map((a) => a.warnId)).size).toBe(3);
+    expect(result.newViolations).toHaveLength(0);
+  });
 });
 
 describe('rulesEngine.evaluatePolicy — property: probabilistic events never submit (D8)', () => {

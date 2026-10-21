@@ -148,3 +148,20 @@ The anchored protocol ran on device with a live-readout rehearsal first
 - Incidental: the full focus ladder (WARN×3 → FINAL_WARN → policy SUBMIT,
   `focus.maxViolations`) and the complete heartbeat outage→recovery cycle
   were both captured live during the same session (§47.3).
+
+## 7. Phase 9.1 addendum — HEAD_POSE_TURNED occurrence events (2026-10-21)
+
+The emission contract changed deliberately; the round-1 recorded table above
+is preserved verbatim. Under Phase 9.1 every QUALIFYING orient-away segment
+(≥2 frames and ≥2 s past the 25° turned band, sub-second gaps bridged) now
+also emits ONE `HEAD_POSE_TURNED` occurrence event, so occurrences 1 and 2
+are reviewable — not just the `HEAD_POSE_REPEATED` 3rd-occurrence window
+marker. Scenario geometry and every pre-existing event type are untouched.
+
+Re-measured expected counts (`proctoringCalibrationScenarios.test.ts`, which
+remains the executable evidence): p1/p2/a1/a2/f2 gain +1 TURNED; a3 → 5
+TURNED; a4 → 6 TURNED; f1 (40° without baseline) now records 1 TURNED and no
+deviation episode; all §29.4 normal-behavior rows still emit NOTHING.
+
+Device confirmations for TURNED and the warn banner are pending (Phase 9.1
+device test 4) — not yet captured on hardware.

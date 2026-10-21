@@ -44,12 +44,19 @@ const ON_PAYLOAD = {
 // except focusEvents warn-only — the app-away ladder WARNS (banner appears
 // ~1–2 s after returning) but NEVER auto-submits. Policy change ⇒ new policy
 // hash ⇒ the student re-consents on the next start (by design, §21.4).
+//
+// Phase 9.1 (3-look-away rule): attention 'warn' turns the 3rd qualifying
+// look-away into ONE advisory banner per 5-min window (never violation /
+// risk / submit). REQUIRES the Phase 9.1 backend deploy — parseProctoringConfig
+// rejects attention.mode 'warn' on the currently deployed build. Until then,
+// arm-warn arms ONLY the focus ladder.
 const WARN_PAYLOAD = {
   enabled: true,
   camera: 'optional',
   focusEvents: { mode: 'warn-only' },
   multipleFaces: { mode: 'record' },
   facePresence: { mode: 'record' },
+  attention: { mode: 'warn' },
 };
 
 function loadCreds() {

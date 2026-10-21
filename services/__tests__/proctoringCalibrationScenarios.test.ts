@@ -13,6 +13,11 @@
  * regression-locked in proctoringAttentionTracker.test.ts (~lines 478-507)
  * and are NOT duplicated here — cited only.
  *
+ * Phase 9.1 addendum: every QUALIFYING orient-away segment now also emits one
+ * HEAD_POSE_TURNED occurrence event (the 3-look-away rule's counting base).
+ * The expected tables below were re-measured for that contract — the counts
+ * changed for every scenario that holds/turns past the 25° turned band for
+ * ≥ 2 s; scenario geometry and every pre-existing event type are untouched.
  * Helpers are copied (not imported) from proctoringAttentionTracker.test.ts
  * — that suite is not modified (Phase 8 WS-D contract).
  */
@@ -150,7 +155,7 @@ const ROWS: Row[] = [
     id: 'p1-extreme-10s',
     name: 'Prolonged look-away 10 s at 55° (absolute extreme band)',
     baseline: { yaw: 0, pitch: 0 },
-    expected: { HEAD_POSE_EXTREME: 1 },
+    expected: { HEAD_POSE_EXTREME: 1, HEAD_POSE_TURNED: 1 },
     scenario: (t) => [
       ...hold(t, 55, 0, 100),
       ...settle(t),
@@ -160,7 +165,7 @@ const ROWS: Row[] = [
     id: 'p2-deviation-10s',
     name: 'Prolonged look-away 10 s at 45° (baseline 5° → deviation 40°)',
     baseline: { yaw: 5, pitch: 0 },
-    expected: { ATTENTION_DEVIATION_SUSTAINED: 1 },
+    expected: { ATTENTION_DEVIATION_SUSTAINED: 1, HEAD_POSE_TURNED: 1 },
     scenario: (t) => [
       ...hold(t, 45, 0, 100),
       ...settle(t, 5),
@@ -174,7 +179,7 @@ const ROWS: Row[] = [
     id: 'a1-anchored-40deg',
     name: 'Anchored protocol: 40° held 7 s → ONE SUSTAINED (deviation 41.6°)',
     baseline: ANCHORED,
-    expected: { ATTENTION_DEVIATION_SUSTAINED: 1 },
+    expected: { ATTENTION_DEVIATION_SUSTAINED: 1, HEAD_POSE_TURNED: 1 },
     scenario: (t) => [
       ...hold(t, 40, 0, 70),
       ...settle(t, ANCHORED.yaw),
@@ -188,7 +193,7 @@ const ROWS: Row[] = [
     id: 'a2-anchored-45deg',
     name: 'Anchored protocol: 45° held 7 s → ONE SUSTAINED (deviation 46.6°)',
     baseline: ANCHORED,
-    expected: { ATTENTION_DEVIATION_SUSTAINED: 1 },
+    expected: { ATTENTION_DEVIATION_SUSTAINED: 1, HEAD_POSE_TURNED: 1 },
     scenario: (t) => [
       ...hold(t, 45, 0, 70),
       ...settle(t, ANCHORED.yaw),
@@ -198,7 +203,7 @@ const ROWS: Row[] = [
     id: 'a3-anchored-4-glances',
     name: 'Anchored protocol: 4 glances of 2.5 s → ONE deviation REPEATED (window consumed); the same glances also complete one orient-away REPEATED window (measured honestly)',
     baseline: ANCHORED,
-    expected: { ATTENTION_DEVIATION_REPEATED: 1, HEAD_POSE_REPEATED: 1 },
+    expected: { ATTENTION_DEVIATION_REPEATED: 1, HEAD_POSE_REPEATED: 1, HEAD_POSE_TURNED: 5 },
     scenario: (t) => [
       ...glance(t, 40, 2500, ANCHORED.yaw),
       ...glance(t, 40, 2500, ANCHORED.yaw),
@@ -206,7 +211,8 @@ const ROWS: Row[] = [
       ...glance(t, 40, 2500, ANCHORED.yaw),
       // One extra glance alone: the deviation window was consumed on emit —
       // a second event requires a FULL new window of 4 (and a third
-      // orient-away segment for HEAD_POSE_REPEATED's fresh window).
+      // orient-away segment for HEAD_POSE_REPEATED's fresh window). Every
+      // glance is still one recorded occurrence.
       ...glance(t, 40, 2500, ANCHORED.yaw),
       ...settle(t, ANCHORED.yaw),
     ],
@@ -215,7 +221,7 @@ const ROWS: Row[] = [
     id: 'a4-anchored-6-glances',
     name: 'Anchored protocol: 6 glances of 2.5 s → still ONE deviation REPEATED (2 in the fresh window); orient-away completes its second window',
     baseline: ANCHORED,
-    expected: { ATTENTION_DEVIATION_REPEATED: 1, HEAD_POSE_REPEATED: 2 },
+    expected: { ATTENTION_DEVIATION_REPEATED: 1, HEAD_POSE_REPEATED: 2, HEAD_POSE_TURNED: 6 },
     scenario: (t) => {
       const emitted: any[] = [];
       for (let i = 0; i < 6; i += 1) emitted.push(...glance(t, 40, 2500, ANCHORED.yaw));
@@ -227,9 +233,9 @@ const ROWS: Row[] = [
   // Fallback effective deviation band = 35° + 10° pad = [45°, 50°).
   {
     id: 'f1-fallback-suppressed',
-    name: '40° for 8 s WITHOUT baseline → NOTHING (40 < 45 effective)',
+    name: '40° for 8 s WITHOUT baseline → no deviation (40 < 45 effective); still one look-away occurrence',
     baseline: null,
-    expected: {},
+    expected: { HEAD_POSE_TURNED: 1 },
     scenario: (t) => [
       ...hold(t, 40, 0, 80),
       ...settle(t),
@@ -239,7 +245,7 @@ const ROWS: Row[] = [
     id: 'f2-fallback-wider-tolerance',
     name: '47° for 8 s WITHOUT baseline → ONE SUSTAINED, calibration fallback',
     baseline: null,
-    expected: { ATTENTION_DEVIATION_SUSTAINED: 1 },
+    expected: { ATTENTION_DEVIATION_SUSTAINED: 1, HEAD_POSE_TURNED: 1 },
     scenario: (t) => [
       ...hold(t, 47, 0, 80),
       ...settle(t),

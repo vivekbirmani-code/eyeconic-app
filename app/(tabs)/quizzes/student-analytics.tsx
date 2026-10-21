@@ -107,6 +107,7 @@ interface TestAnalyticsData {
       totalViolations: number;
       integrityStatus: string;
       focusLossExits: number;
+      lookAwayEvents: number;
       multipleFaceEvents: number;
       faceAbsentTotal: number;
       cameraIncidents: number;
@@ -119,6 +120,7 @@ interface TestAnalyticsData {
       riskDistribution: Record<string, number>;
       totalViolations: number;
       focusLossExits: number;
+      lookAwayEvents: number;
       multipleFaceEvents: number;
       faceAbsentTotal: number;
       cameraIncidents: number;

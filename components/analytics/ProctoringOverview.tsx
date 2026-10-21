@@ -1,11 +1,16 @@
 /**
  * ProctoringOverview — the 'proctoring' tab of student-analytics
- * (AI Proctoring plan §25.2/§25.3, Phase 7). Renders the per-test proctoring
- * rollup (KPIs + flagged-attempt table) from the SAME
- * /quizzes/analytics/test/:testId payload the Test tab uses — one response,
- * one cohort, no separate fetch. Rows join the ranked student list for
- * names; tapping a row opens the existing AttemptDetailModal (timeline,
+ * (AI Proctoring plan §25.2/§25.3, Phase 7; mobile-first layout Phase 9.1).
+ * Renders the per-test proctoring rollup (KPIs + flagged-attempt list) from
+ * the SAME /quizzes/analytics/test/:testId payload the Test tab uses — one
+ * response, one cohort, no separate fetch. Rows join the ranked student list
+ * for names; tapping a row opens the existing AttemptDetailModal (timeline,
  * violations, review).
+ *
+ * Layout: below MOBILE_BREAKPOINT the 9-column reviewer table becomes an
+ * attempt-card list (name + risk chip + review status + compact metric
+ * chips) — a phone shows whole attempts, not 2.5 table columns. Wide
+ * viewports keep the shared DataTable (which h-scrolls only if fonts grow).
  *
  * Reviewer-facing labels live here (the D7 centralized-copy rule applies to
  * STUDENT-facing strings only); colors come from the teal design system
@@ -13,11 +18,14 @@
  */
 
 import React from 'react';
-import { ActivityIndicator, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { ShieldCheck, ShieldAlert, AlertTriangle } from 'lucide-react-native';
 import StatCardGrid, { type StatCardItem } from '@/components/StatCardGrid';
 import { DataTable, type DataTableColumn } from '@/components/DataTable';
 import { colors } from '@/utils/theme';
+
+/** Below this width the table becomes attempt cards (phones/small tablets). */
+const MOBILE_BREAKPOINT = 600;
 
 export interface ProctoringAttemptRow {
   attemptId: string;
@@ -28,6 +36,7 @@ export interface ProctoringAttemptRow {
   totalViolations: number;
   integrityStatus: string;
   focusLossExits: number;
+  lookAwayEvents: number;
   multipleFaceEvents: number;
   faceAbsentTotal: number;
   cameraIncidents: number;
@@ -41,6 +50,7 @@ export interface ProctoringRollup {
   riskDistribution: Record<string, number>;
   totalViolations: number;
   focusLossExits: number;
+  lookAwayEvents: number;
   multipleFaceEvents: number;
   faceAbsentTotal: number;
   cameraIncidents: number;
@@ -60,9 +70,9 @@ interface ProctoringOverviewProps {
 const RISK_CHIP_COLORS: Record<string, string> = {
   normal: colors.success,
   low: colors.primaryDark,
-  moderate: '#D97706',
-  high: '#DC2626',
-  critical: '#DC2626',
+  moderate: colors.warningDark,
+  high: colors.dangerDark,
+  critical: colors.dangerDark,
 };
 
 const INTEGRITY_LABELS: Record<string, string> = {
@@ -70,6 +80,75 @@ const INTEGRITY_LABELS: Record<string, string> = {
   clean: 'Clean',
   reviewed_ok: 'Reviewed — OK',
   reviewed_concern: 'Reviewed — concern',
+};
+
+const INTEGRITY_COLORS: Record<string, string> = {
+  pending: colors.textSecondary,
+  clean: colors.successDark,
+  reviewed_ok: colors.successDark,
+  reviewed_concern: colors.dangerDark,
+};
+
+interface AttemptRow extends ProctoringAttemptRow {
+  studentName: string;
+}
+
+/** One mobile attempt card — a whole readable attempt, tap to drill in. */
+const AttemptCard: React.FC<{
+  row: AttemptRow;
+  onPress?: () => void;
+}> = ({ row, onPress }) => {
+  const riskColor = RISK_CHIP_COLORS[row.riskCategory] ?? colors.primaryDark;
+  const metrics: Array<{ label: string; value: number; alert?: boolean }> = [
+    { label: 'Violations', value: row.totalViolations, alert: row.totalViolations > 0 },
+    { label: 'Exits', value: row.focusLossExits },
+    { label: 'Look-aways', value: row.lookAwayEvents },
+    { label: 'Faces', value: row.multipleFaceEvents },
+    { label: 'Absent', value: row.faceAbsentTotal },
+    { label: 'Camera', value: row.cameraIncidents },
+    { label: 'Gaps', value: row.heartbeatGaps },
+  ];
+  const body = (
+    <View style={styles.card}>
+      <View style={styles.cardTopRow}>
+        <Text style={styles.cardName} numberOfLines={1}>{row.studentName}</Text>
+        <View style={[styles.riskChip, { backgroundColor: `${riskColor}1A` }]}>
+          <Text style={[styles.riskChipText, { color: riskColor }]}>
+            {row.riskCategory}
+          </Text>
+        </View>
+      </View>
+      <Text
+        style={[styles.cardReview, { color: INTEGRITY_COLORS[row.integrityStatus] ?? colors.textSecondary }]}
+        numberOfLines={1}
+      >
+        {INTEGRITY_LABELS[row.integrityStatus] ?? row.integrityStatus}
+      </Text>
+      <View style={styles.cardMetrics}>
+        {metrics.map((metric) => (
+          <View
+            key={metric.label}
+            style={[styles.metricChip, metric.alert && styles.metricChipAlert]}
+          >
+            <Text style={styles.metricLabel}>{metric.label}</Text>
+            <Text style={[styles.metricValue, metric.alert && styles.metricValueAlert]}>
+              {metric.value}
+            </Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+  if (!onPress) return body;
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Open proctoring timeline for ${row.studentName}`}
+    >
+      {body}
+    </Pressable>
+  );
 };
 
 const ProctoringOverview: React.FC<ProctoringOverviewProps> = ({
@@ -87,7 +166,7 @@ const ProctoringOverview: React.FC<ProctoringOverviewProps> = ({
   if (!proctoring || proctoring.rollup.proctoredAttempts === 0) {
     return (
       <View style={styles.emptyCard}>
-        <ShieldCheck color="#9CA3AF" size={44} />
+        <ShieldCheck color={colors.textMuted} size={44} />
         <Text style={styles.emptyTitle}>No proctored attempts</Text>
         <Text style={styles.emptyText}>
           This test has no camera-monitoring sessions yet. Proctoring data appears here
@@ -114,21 +193,29 @@ const ProctoringOverview: React.FC<ProctoringOverviewProps> = ({
       value: rollup.flaggedAttempts,
       label: 'Flagged for Review',
       icon: rollup.flaggedAttempts > 0 ? ShieldAlert : ShieldCheck,
-      iconColor: rollup.flaggedAttempts > 0 ? '#DC2626' : colors.success,
-      backgroundColor: rollup.flaggedAttempts > 0 ? '#FEF2F2' : '#ECFDF5',
+      iconColor: rollup.flaggedAttempts > 0 ? colors.dangerDark : colors.success,
+      backgroundColor: rollup.flaggedAttempts > 0 ? colors.dangerTint : colors.successTint,
     },
     {
       value: rollup.totalViolations,
       label: 'Total Violations',
-      valueColor: rollup.totalViolations > 0 ? '#DC2626' : undefined,
+      valueColor: rollup.totalViolations > 0 ? colors.dangerDark : undefined,
     },
     {
       value: rollup.focusLossExits,
       label: 'Focus-loss Exits',
     },
     {
+      value: rollup.lookAwayEvents,
+      label: 'Look-aways',
+    },
+    {
       value: rollup.multipleFaceEvents,
       label: 'Multiple-face Events',
+    },
+    {
+      value: rollup.faceAbsentTotal,
+      label: 'Face Absent',
     },
     {
       value: rollup.cameraIncidents,
@@ -136,14 +223,14 @@ const ProctoringOverview: React.FC<ProctoringOverviewProps> = ({
     },
   ];
 
-  const rows = [...proctoring.attempts]
+  const rows: AttemptRow[] = [...proctoring.attempts]
     .sort((a, b) => b.riskScore - a.riskScore || b.totalViolations - a.totalViolations)
     .map((row) => ({
       ...row,
       studentName: nameByAttempt.get(row.attemptId)?.studentName ?? 'Student',
     }));
 
-  const columns: Array<DataTableColumn<typeof rows[number]>> = [
+  const columns: Array<DataTableColumn<AttemptRow>> = [
     {
       key: 'student',
       header: 'Student',
@@ -201,6 +288,13 @@ const ProctoringOverview: React.FC<ProctoringOverviewProps> = ({
       renderCell: (row) => <Text style={styles.cellValue}>{row.focusLossExits}</Text>,
     },
     {
+      key: 'lookaways',
+      header: 'Look-aways',
+      width: 82,
+      align: 'center',
+      renderCell: (row) => <Text style={styles.cellValue}>{row.lookAwayEvents}</Text>,
+    },
+    {
       key: 'faces',
       header: 'Faces',
       width: 60,
@@ -239,7 +333,7 @@ const ProctoringOverview: React.FC<ProctoringOverviewProps> = ({
 
       {reviewQueue > 0 && (
         <View style={styles.calloutCard}>
-          <AlertTriangle color="#D97706" size={18} />
+          <AlertTriangle color={colors.warningDark} size={18} />
           <Text style={styles.calloutText}>
             {reviewQueue} attempt{reviewQueue === 1 ? '' : 's'} flagged (violations or moderate+ risk)
             {pending > 0 ? ` · ${pending} awaiting review` : ''}
@@ -248,15 +342,29 @@ const ProctoringOverview: React.FC<ProctoringOverviewProps> = ({
         </View>
       )}
 
-      <Text style={styles.sectionTitle}>Attempts (highest risk first)</Text>
-      <DataTable
-        columns={columns}
-        data={rows}
-        keyExtractor={(row) => row.attemptId}
-        onRowPress={onAttemptClick ? (row) => onAttemptClick(row.attemptId) : undefined}
-        rowAccessibilityLabel={(row) => `Open proctoring timeline for ${row.studentName}`}
-        style={styles.tableCard}
-      />
+      <Text style={styles.sectionTitle}>
+        Attempts (highest risk first)
+      </Text>
+      {width < MOBILE_BREAKPOINT ? (
+        <View>
+          {rows.map((row) => (
+            <AttemptCard
+              key={row.attemptId}
+              row={row}
+              onPress={onAttemptClick ? () => onAttemptClick(row.attemptId) : undefined}
+            />
+          ))}
+        </View>
+      ) : (
+        <DataTable
+          columns={columns}
+          data={rows}
+          keyExtractor={(row) => row.attemptId}
+          onRowPress={onAttemptClick ? (row) => onAttemptClick(row.attemptId) : undefined}
+          rowAccessibilityLabel={(row) => `Open proctoring timeline for ${row.studentName}`}
+          style={styles.tableCard}
+        />
+      )}
 
       <Text style={styles.footnote}>
         Observations are estimates for review context — they are never automatic mark
@@ -272,17 +380,23 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFF',
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     padding: 24,
     alignItems: 'center',
     marginTop: 16,
   },
-  emptyTitle: { fontSize: 15, fontWeight: '700', color: '#1F2937', marginTop: 10 },
-  emptyText: { fontSize: 13, color: '#6B7280', textAlign: 'center', marginTop: 4, lineHeight: 18 },
+  emptyTitle: { fontSize: 15, fontWeight: '700', color: colors.text, marginTop: 10 },
+  emptyText: {
+    fontSize: 13,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    marginTop: 6,
+    lineHeight: 19,
+  },
   calloutCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFBEB',
+    backgroundColor: colors.warningTint,
     borderWidth: 1,
     borderColor: '#FDE68A',
     borderRadius: 12,
@@ -293,11 +407,55 @@ const styles = StyleSheet.create({
   sectionTitle: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#374151',
+    color: colors.text,
     marginTop: 18,
-    marginBottom: 8,
+    marginBottom: 10,
   },
   tableCard: { marginBottom: 4 },
+  card: {
+    backgroundColor: '#FFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 14,
+    marginBottom: 10,
+  },
+  cardTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  cardName: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.text,
+    flex: 1,
+    marginRight: 8,
+  },
+  cardReview: { fontSize: 12, fontWeight: '600', marginTop: 4 },
+  cardMetrics: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 10,
+  },
+  metricChip: {
+    backgroundColor: '#F9FAFB',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#F3F4F6',
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+    alignItems: 'center',
+    minWidth: 58,
+  },
+  metricChipAlert: {
+    backgroundColor: colors.dangerTint,
+    borderColor: '#FECACA',
+  },
+  metricLabel: { fontSize: 10, fontWeight: '600', color: colors.textMuted },
+  metricValue: { fontSize: 13, fontWeight: '700', color: colors.text, marginTop: 1 },
+  metricValueAlert: { color: colors.dangerDark },
   riskChip: {
     borderRadius: 10,
     paddingVertical: 3,
@@ -305,11 +463,11 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   riskChipText: { fontSize: 11.5, fontWeight: '700', textTransform: 'capitalize' },
-  cellName: { fontSize: 13, fontWeight: '600', color: '#1F2937' },
-  cellValue: { fontSize: 12.5, color: '#374151' },
-  cellValueAlert: { color: '#DC2626', fontWeight: '700' },
-  cellValueOk: { color: colors.success, fontWeight: '600' },
-  footnote: { fontSize: 11.5, color: '#9CA3AF', marginTop: 10, lineHeight: 16 },
+  cellName: { fontSize: 13, fontWeight: '600', color: colors.text },
+  cellValue: { fontSize: 12.5, color: colors.textBody },
+  cellValueAlert: { color: colors.dangerDark, fontWeight: '700' },
+  cellValueOk: { color: colors.successDark, fontWeight: '600' },
+  footnote: { fontSize: 11.5, color: colors.textMuted, marginTop: 12, marginBottom: 8, lineHeight: 16 },
 });
 
 export default ProctoringOverview;

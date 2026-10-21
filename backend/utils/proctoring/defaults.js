@@ -7,12 +7,17 @@
 
 // Bumped whenever the schema/semantics of the effective policy change so that
 // frozen snapshots can be told apart across releases (plan §21.4).
-const POLICY_SCHEMA_VERSION = 1;
+// v2 (Phase 9.1): attention.mode gains the opt-in 'warn' value (advisory
+// banner on the 3rd-occurrence marker, never violations/submit/risk) and the
+// registry adds HEAD_POSE_TURNED (one event per qualifying occurrence).
+const POLICY_SCHEMA_VERSION = 2;
 
-// V1 lock (plan D6): attention/head-pose observations are RECORD-ONLY. No
-// V1-representable policy may escalate them — parseProctoringConfig rejects
-// any other value, and the Quiz schema enum contains only this value.
-const ATTENTION_MODE_RECORD_ONLY = 'record';
+// Attention enforcement vocabulary (plan D6 + Phase 9.1 carve-out): 'record'
+// remains the default and the only value a quiz gets without explicitly
+// opting in; 'warn' is the advisory-banner opt-in. There is deliberately NO
+// submit-flavored attention mode — attention can never cost an attempt.
+const ATTENTION_MODES = ['record', 'warn'];
+const ATTENTION_MODE_RECORD_ONLY = ATTENTION_MODES[0];
 
 const DEFAULT_PROCTORING_CONFIG = {
   // OPT-IN, default OFF (plan D15). An absent `proctoring` subdoc can never
@@ -37,7 +42,7 @@ const DEFAULT_PROCTORING_CONFIG = {
   },
   attention: {
     enabled: true,
-    mode: ATTENTION_MODE_RECORD_ONLY, // LOCKED in V1 (D6)
+    mode: 'record', // default stays record-only (D6); 'warn' is the Phase 9.1 per-quiz advisory opt-in
     // Phase 5 derivation thresholds (plan §13.2 illustrative values —
     // PROVISIONAL until the §19.5 calibration round, like every number in
     // this file). Shaping-only: they govern WHEN a record-only observation
@@ -179,6 +184,7 @@ const PROVISIONAL_EVENT_SEVERITIES = {
   FACE_OUT_OF_FRAME: 'minor',
   MULTIPLE_FACES_DETECTED: 'moderate',
   HEAD_POSE_EXTREME: 'info',
+  HEAD_POSE_TURNED: 'info',
   HEAD_POSE_REPEATED: 'info',
   ATTENTION_DEVIATION_SUSTAINED: 'info',
   ATTENTION_DEVIATION_REPEATED: 'info',
@@ -194,6 +200,7 @@ const PROVISIONAL_EVENT_SEVERITIES = {
 
 module.exports = {
   POLICY_SCHEMA_VERSION,
+  ATTENTION_MODES,
   ATTENTION_MODE_RECORD_ONLY,
   DEFAULT_PROCTORING_CONFIG,
   DEFAULT_RISK_WEIGHTS,

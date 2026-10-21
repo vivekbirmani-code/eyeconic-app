@@ -70,6 +70,7 @@ const STUDENT_COLUMNS = [
   { header: 'Risk Category', width: 12, value: (r) => r.riskCategory, align: 'center' },
   { header: 'Total Violations', width: 10, value: (r) => r.totalViolations, numFmt: '0', align: 'center' },
   { header: 'Focus-loss Exits', width: 10, value: (r) => r.focusLossExits, numFmt: '0', align: 'center' },
+  { header: 'Look-away Events', width: 10, value: (r) => r.lookAwayEvents, numFmt: '0', align: 'center' },
   { header: 'Multiple-Face Events', width: 11, value: (r) => r.multipleFaceEvents, numFmt: '0', align: 'center' },
   { header: 'Face-Absent Total', width: 10, value: (r) => r.faceAbsentTotal, numFmt: '0', align: 'center' },
   { header: 'Camera Incidents', width: 10, value: (r) => r.cameraIncidents, numFmt: '0', align: 'center' },
