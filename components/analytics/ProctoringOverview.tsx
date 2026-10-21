@@ -329,7 +329,14 @@ const ProctoringOverview: React.FC<ProctoringOverviewProps> = ({
 
   return (
     <View>
-      <StatCardGrid items={kpis} width={width} contentInsets={32} />
+      {/* Page content grid: the host ScrollView carries NO horizontal padding
+          (every section owns its margins — the screen-wide convention is 16).
+          StatCardGrid's contentInsets is MATH-ONLY (it shrinks the cards; it
+          never pads) — the REAL 16/16 inset comes from this wrapper, exactly
+          like quiz-hub's and instructions' padded statsContainer. */}
+      <View style={styles.kpiWrap}>
+        <StatCardGrid items={kpis} width={width} contentInsets={32} gap={12} />
+      </View>
 
       {reviewQueue > 0 && (
         <View style={styles.calloutCard}>
@@ -384,6 +391,7 @@ const styles = StyleSheet.create({
     padding: 24,
     alignItems: 'center',
     marginTop: 16,
+    marginHorizontal: 16,
   },
   emptyTitle: { fontSize: 15, fontWeight: '700', color: colors.text, marginTop: 10 },
   emptyText: {
@@ -402,16 +410,19 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 12,
     marginTop: 14,
+    marginHorizontal: 16,
   },
+  kpiWrap: { paddingHorizontal: 16 },
   calloutText: { fontSize: 12.5, color: '#92400E', marginLeft: 8, flex: 1, lineHeight: 17 },
   sectionTitle: {
     fontSize: 14,
     fontWeight: '700',
     color: colors.text,
-    marginTop: 18,
+    marginTop: 22,
     marginBottom: 10,
+    marginHorizontal: 16,
   },
-  tableCard: { marginBottom: 4 },
+  tableCard: { marginBottom: 4, marginHorizontal: 16 },
   card: {
     backgroundColor: '#FFF',
     borderRadius: 12,
@@ -419,6 +430,7 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     padding: 14,
     marginBottom: 10,
+    marginHorizontal: 16,
   },
   cardTopRow: {
     flexDirection: 'row',
@@ -467,7 +479,7 @@ const styles = StyleSheet.create({
   cellValue: { fontSize: 12.5, color: colors.textBody },
   cellValueAlert: { color: colors.dangerDark, fontWeight: '700' },
   cellValueOk: { color: colors.successDark, fontWeight: '600' },
-  footnote: { fontSize: 11.5, color: colors.textMuted, marginTop: 12, marginBottom: 8, lineHeight: 16 },
+  footnote: { fontSize: 11.5, color: colors.textMuted, marginTop: 12, marginBottom: 8, marginHorizontal: 16, lineHeight: 16 },
 });
 
 export default ProctoringOverview;

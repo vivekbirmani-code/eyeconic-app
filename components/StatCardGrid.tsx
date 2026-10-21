@@ -34,6 +34,14 @@ interface StatGridGeometry {
   contentInsets?: number;
   /** Upper bound on columns; defaults to the item count. */
   maxColumns?: number;
+  /**
+   * ⚠️ contentInsets is MATH-ONLY: it shrinks the computed card width so a
+   * row of cards fits inside an already-inset container — the component
+   * itself NEVER pads. Callers must supply the real horizontal inset (a
+   * padded parent or wrapper), or cards will hug the left edge with all the
+   * slack on the right. quiz-hub/instructions pass a padded statsContainer;
+   * ProctoringOverview wraps the grid in paddingHorizontal: 16.
+   */
 }
 
 const DEFAULT_MIN_CARD_WIDTH = 132;
@@ -137,7 +145,11 @@ export default function StatCardGrid({
             >
               {item.value}
             </Text>
-            <Text style={styles.label} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>
+            {/* Labels wrap to two lines at their natural size — a shrunk
+                one-liner ("Multiple-face Events") reads worse than a clean
+                two-line label, and rows stretch so paired cards stay equal
+                height. */}
+            <Text style={styles.label} numberOfLines={2}>
               {item.label}
             </Text>
           </>
@@ -212,6 +224,7 @@ const styles = StyleSheet.create({
     color: '#6B7280',
     textAlign: 'center',
     width: '100%',
+    lineHeight: 14,
   },
   skeletonValue: {
     width: 40,

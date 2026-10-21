@@ -12,6 +12,7 @@ import {
     TextInput
 } from 'react-native';
 import { X, CheckCircle, XCircle, MinusCircle, Clock, Award, BarChart3, FileText, ChevronDown, ShieldAlert } from 'lucide-react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '@/services/api';
 import { DataTable, DataTableColumn } from '@/components/DataTable';
 import AttemptQuestionReport from './AttemptQuestionReport';
@@ -137,6 +138,7 @@ interface AttemptDetail {
 }
 
 export default function AttemptDetailModal({ attemptId, visible, onClose, userRole }: AttemptDetailModalProps) {
+    const insets = useSafeAreaInsets();
     const [loading, setLoading] = useState(false);
     const [attemptData, setAttemptData] = useState<AttemptDetail | null>(null);
     const [groupBy, setGroupBy] = useState<GroupBy>('section');
@@ -453,7 +455,7 @@ export default function AttemptDetailModal({ attemptId, visible, onClose, userRo
                         <Text style={styles.title} numberOfLines={1} ellipsizeMode="tail">
                              {attemptData ? attemptData.student.name : 'Attempt Details'}
                         </Text>
-                        <TouchableOpacity onPress={onClose} style={styles.closeButton} accessibilityLabel="Close attempt details">
+                        <TouchableOpacity onPress={onClose} style={styles.closeButton} hitSlop={10} accessibilityLabel="Close attempt details">
                             <X color="#1F2937" size={24} />
                         </TouchableOpacity>
                     </View>
@@ -463,7 +465,14 @@ export default function AttemptDetailModal({ attemptId, visible, onClose, userRo
                             <ActivityIndicator color="#01b4ae" size="large" />
                         </View>
                     ) : attemptData && stats ? (
-                        <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+                        <ScrollView
+                            style={styles.content}
+                            showsVerticalScrollIndicator={false}
+                            // Bottom clearance: gesture-nav/system-bar inset plus
+                            // breathing room, so the last timeline row and the
+                            // review actions are never pinned under device UI.
+                            contentContainerStyle={{ paddingBottom: insets.bottom + 24 }}
+                        >
                             
                             {/* Student & Quiz Info Header */}
                             <View style={styles.infoSection}>
@@ -810,7 +819,7 @@ export default function AttemptDetailModal({ attemptId, visible, onClose, userRo
                                 </View>
                             )}
 
-                            <View style={{ height: 20 }} />
+                            <View style={{ height: 8 }} />
                         </ScrollView>
                     ) : (
                         <View style={styles.errorContainer}>
@@ -889,7 +898,11 @@ const styles = StyleSheet.create({
         borderRadius: 12,
         borderWidth: 1,
         borderColor: '#E5E7EB',
+        // Same 16 dp page grid as the modal's other sections (score card,
+        // metrics, tables) — without this the card renders full-bleed.
         marginTop: 12,
+        marginBottom: 4,
+        marginHorizontal: 16,
         overflow: 'hidden',
     },
     timelineHeader: {
@@ -1002,7 +1015,7 @@ const styles = StyleSheet.create({
         marginRight: 12,
     },
     closeButton: {
-        padding: 4,
+        padding: 6,
     },
     loadingContainer: {
         padding: 40,
