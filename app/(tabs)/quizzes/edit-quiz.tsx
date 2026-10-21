@@ -750,7 +750,17 @@ export default function EditQuiz() {
             </View>
             <Switch
               value={proctoringEnabled}
-              onValueChange={setProctoringEnabled}
+              onValueChange={(next) => {
+                setProctoringEnabled(next);
+                // Phase 9 fix: the hint must reflect LIVE server state — the
+                // load-time eligibility snapshot goes stale (and was computed
+                // against the stored opt-in, which may have been OFF).
+                if (next && id) {
+                  api.get(`/quizzes/${id}`)
+                    .then((res) => setProctoringEligibility(res.data?.proctoringEligibility ?? null))
+                    .catch(() => setProctoringEligibility(null));
+                }
+              }}
               trackColor={{ false: '#D1D5DB', true: colors.primary }}
               thumbColor="#FFFFFF"
               ios_backgroundColor="#D1D5DB"

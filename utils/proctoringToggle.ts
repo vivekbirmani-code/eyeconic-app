@@ -33,8 +33,25 @@ export const proctoringBlockerCopy: Record<string, string> = {
   quiz_config_disabled: 'proctoring is off for this quiz',
 };
 
-/** Renders the hint line shown under the toggle when ON but globally blocked. */
-export const proctoringUnavailableHint = (eligibility: ProctoringEligibility): string =>
-  `Requested for this quiz, but monitoring is temporarily unavailable: ${eligibility.blockers
+/**
+ * Renders the hint line shown under the toggle when ON but not currently
+ * effective (Phase 9 fix: two distinct truths, never mixed).
+ *
+ * - `quiz_config_disabled` present = the STORED opt-in is still off (the
+ *   local toggle is on but not saved). While the quiz opt-in is off the
+ *   server's eligibility resolver deliberately cannot see the real kill
+ *   switch (it short-circuits the AppSettings read for every non-proctored
+ *   quiz) — so this branch must NEVER claim kill-switch state. Only the
+ *   feature-flag blocker is real data here.
+ * - Otherwise the blockers are the live global gates — name them.
+ */
+export const proctoringUnavailableHint = (eligibility: ProctoringEligibility): string => {
+  if (eligibility.blockers.includes('quiz_config_disabled')) {
+    return eligibility.blockers.includes('feature_flag_off')
+      ? 'Monitoring will be requested for this quiz when you save it. Note: the proctoring feature flag is currently off, so it will stay unavailable until the backend flag is enabled.'
+      : 'Monitoring will be requested for this quiz when you save it. It runs only while the global proctoring switches allow it.';
+  }
+  return `Requested for this quiz, but monitoring is temporarily unavailable: ${eligibility.blockers
     .map((b) => proctoringBlockerCopy[b] ?? b)
     .join('; ')}. The quiz runs without monitoring until that changes.`;
+};

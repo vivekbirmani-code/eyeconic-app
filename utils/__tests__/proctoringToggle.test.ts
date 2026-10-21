@@ -46,4 +46,23 @@ describe('proctoring toggle payloads', () => {
       expect.arrayContaining(['global_kill_switch_off', 'feature_flag_off', 'quiz_config_disabled'])
     );
   });
+
+  it('pre-save state (quiz_config_disabled) never claims kill-switch state', () => {
+    // While the stored opt-in is off, the resolver cannot see the real kill
+    // switch (deliberate short-circuit) — the hint must not mention it.
+    const preSave = proctoringUnavailableHint({
+      enabled: false,
+      blockers: ['quiz_config_disabled', 'global_kill_switch_off'],
+    });
+    expect(preSave).toContain('when you save it');
+    expect(preSave).not.toContain('emergency switch');
+
+    // The feature-flag blocker IS real data even pre-save — mention it.
+    const preSaveFlagOff = proctoringUnavailableHint({
+      enabled: false,
+      blockers: ['quiz_config_disabled', 'global_kill_switch_off', 'feature_flag_off'],
+    });
+    expect(preSaveFlagOff).toContain('when you save it');
+    expect(preSaveFlagOff).toContain('feature flag is currently off');
+  });
 });

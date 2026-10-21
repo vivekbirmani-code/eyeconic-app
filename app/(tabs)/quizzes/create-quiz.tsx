@@ -1052,7 +1052,17 @@ export default function CreateQuiz() {
         </View>
         <Switch
           value={proctoringEnabled}
-          onValueChange={setProctoringEnabled}
+          onValueChange={(next) => {
+            setProctoringEnabled(next);
+            // Phase 9 fix: the hint must reflect LIVE server state — the
+            // load-time eligibility snapshot goes stale (and was computed
+            // against the stored opt-in, which may have been OFF).
+            if (next && editId) {
+              api.get(`/quizzes/${editId}`)
+                .then((res) => setProctoringEligibility(res.data?.proctoringEligibility ?? null))
+                .catch(() => setProctoringEligibility(null));
+            }
+          }}
           trackColor={{ false: colors.borderStrong, true: 'rgba(1, 180, 174, 0.45)' }}
           thumbColor={proctoringEnabled ? colors.primary : colors.textMuted}
         />
