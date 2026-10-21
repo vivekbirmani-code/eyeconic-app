@@ -26,7 +26,7 @@ import { SectionTabs } from '@/components/SectionTabs';
 import { QuestionSkeleton } from '@/components/Skeleton';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { ProctoringBanner } from '@/components/proctoring/ProctoringBanner';
-import { ProctoringCameraPip } from '@/components/proctoring/ProctoringCameraPip';
+import { MonitoringStatusDot } from '@/components/proctoring/MonitoringStatusDot';
 import { useProctoringSession } from '@/hooks/useProctoringSession';
 import { useAttemptScreenCapturePrevention } from '@/hooks/useAttemptScreenCapturePrevention';
 import { PROCTORING_COPY } from '@/utils/proctoringCopy';
@@ -1022,6 +1022,15 @@ function QuizTakingContent() {
           )}
         </View>
         <View style={styles.headerRight}>
+          {/* Proctoring indicator (Phase 9 redesign): a compact status dot
+              immediately left of the timer — color from the engine's runtime
+              state (green only when genuinely monitoring); tap for details. */}
+          {proctoring.active && (
+            <MonitoringStatusDot
+              status={proctoring.status}
+              cameraIssue={proctoring.cameraIssue}
+            />
+          )}
           {currentAttempt && sectionLockOn && activeSectionDef && activeSectionState?.startedAt ? (
             <QuizTimer
               duration={activeSectionDef.duration}
@@ -1072,29 +1081,12 @@ function QuizTakingContent() {
       />
 
       <View style={styles.mainContent}>
-        {/* Proctoring: monitoring-indicator PiP (Track 2b §43) — the engine
-            streams from the module-owned camera; no view on the frame path */}
-        {proctoring.active && (
-          <ProctoringCameraPip
-            ref={proctoringCameraRef}
-            dimmed={proctoring.status !== 'monitoring'}
-            statusCaption={
-              PROCTORING_COPY.monitoring.statusCaptions[proctoring.status]
-              ?? PROCTORING_COPY.monitoring.active
-            }
-          />
-        )}
-
         {/* Question Area */}
         <View style={styles.questionAreaWrapper}>
           <ScrollView
             ref={scrollViewRef}
             style={styles.questionArea}
-            contentContainerStyle={
-              proctoring.active
-                ? [styles.questionContentContainer, styles.questionContentContainerProctored]
-                : styles.questionContentContainer
-            }
+            contentContainerStyle={styles.questionContentContainer}
             showsVerticalScrollIndicator={false}
           >
             <View style={styles.questionContainer}>
@@ -1421,6 +1413,8 @@ const styles = StyleSheet.create({
   },
   headerRight: {
     flexShrink: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   savingIndicator: {
     flexDirection: 'row',
@@ -1585,9 +1579,6 @@ const styles = StyleSheet.create({
     paddingBottom: 20,
   },
   // Clear the question text below the floating PiP camera (proctored only).
-  questionContentContainerProctored: {
-    paddingTop: 152,
-  },
   bottomNavWrapper: {
     backgroundColor: '#FFFFFF',
     borderTopWidth: 1,

@@ -347,3 +347,99 @@ describe('Proctoring warning ladder + policy auto-submit (Phase 6)', () => {
     expect(attempt.sectionStates.every((s) => s.status !== 'in_progress')).toBe(true);
   });
 });
+
+// ---- Phase 9: warn-only focus policy (the owner's warning-path test mode) --
+
+describe('warn-only focus policy (Phase 9): warnings delivered, never auto-submit', () => {
+  it('APP_BACKGROUND episodes WARN via batch actions; attempt stays in_progress; events still recorded', async () => {
+    await db.clearDatabase();
+    resetPrecheckRateLimits();
+    resetProctoringEventRateLimits();
+    mockAiProctoringFlag = true;
+    const admin = await createUser({ role: 'admin' });
+    const student = await createUser({ role: 'student' });
+    const subject = await createSubject('Pathology');
+    const questions = [];
+    for (let i = 0; i < 2; i++) {
+      questions.push(await QuestionBank.create({
+        subject: subject._id,
+        topicName: 'Genetics',
+        subtopicName: 'Mendelian Inheritance',
+        system: 'Genetic Disorders',
+        questionType: 'mcq_single',
+        difficulty: 'medium',
+        question: `Warn-only question ${i}`,
+        options: ['A', 'B', 'C', 'D'],
+        correctAnswer: 1,
+      }));
+    }
+    const quiz = await Quiz.create({
+      title: `WarnOnly Quiz ${Date.now()}`,
+      subject: subject._id,
+      testType: 'daily',
+      duration: 20,
+      questions: questions.map((q) => q._id),
+      assignedStudents: [student.user._id],
+      createdBy: admin.user._id,
+      proctoring: {
+        enabled: true,
+        camera: 'optional',
+        focusEvents: { mode: 'warn-only' },
+        multipleFaces: { mode: 'record' },
+        facePresence: { mode: 'record' },
+      },
+    });
+    await setProctoringEnabled(true, admin.user._id);
+
+    const report = await request(app)
+      .post(`/api/quizzes/${quiz._id}/proctoring/precheck-report`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send(passReport());
+    expect(report.status).toBe(200);
+    const consent = await request(app)
+      .post(`/api/quizzes/${quiz._id}/proctoring/consent`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({ precheckToken: report.body.precheckToken, consentTextVersion: '2026-09-v1', surface: 'app-android' });
+    expect(consent.status).toBe(200);
+    const start = await request(app)
+      .post(`/api/quizzes/${quiz._id}/start`)
+      .set('Authorization', `Bearer ${student.token}`)
+      .send({ precheckToken: report.body.precheckToken });
+    expect(start.status).toBe(201);
+
+    // Five qualifying app-away episodes (the owner's home-button test).
+    const responses = [];
+    for (let i = 0; i < 5; i++) {
+      const response = await request(app)
+        .post(`/api/quizzes/${quiz._id}/attempt/${start.body.attemptId}/proctoring/events`)
+        .set('Authorization', `Bearer ${student.token}`)
+        .send({ sessionId: start.body.proctoringSessionId, heartbeat: true, events: [focusEpisode(i)] });
+      expect(response.status).toBe(200);
+      responses.push(response.body);
+    }
+
+    const actions = responses.flatMap((body) => body.actions ?? []);
+    expect(actions.length).toBeGreaterThan(0);
+    // Warn-only walks the FULL visible ladder — WARN × tolerated → FINAL_WARN
+    // ("last chance" message) — but the violation action never becomes submit.
+    for (const action of actions) {
+      expect(['WARN', 'FINAL_WARN']).toContain(action.kind);
+    }
+    expect(actions.some((a) => a.kind === 'WARN')).toBe(true);
+    expect(actions.some((a) => a.kind === 'FINAL_WARN')).toBe(true);
+    for (const body of responses) {
+      expect(body.attemptFinalized).not.toBe(true);
+    }
+
+    const attempt = await QuizAttempt.findById(start.body.attemptId);
+    expect(attempt.status).toBe('in_progress'); // nothing was auto-submitted
+
+    // Recording is preserved alongside the warnings.
+    const timeline = await request(app)
+      .get(`/api/quizzes/attempt/${start.body.attemptId}/proctoring/timeline`)
+      .set('Authorization', `Bearer ${student.token}`);
+    expect(timeline.status).toBe(200);
+    const appAway = (timeline.body.timeline?.events ?? []).filter((e) => e.type === 'APP_BACKGROUND');
+    expect(appAway.length).toBe(5);
+  });
+});

@@ -40,6 +40,18 @@ const ON_PAYLOAD = {
   facePresence: { mode: 'record' },
 };
 
+// Owner's warning-path test mode (plan §F.7): same silent-record config
+// except focusEvents warn-only — the app-away ladder WARNS (banner appears
+// ~1–2 s after returning) but NEVER auto-submits. Policy change ⇒ new policy
+// hash ⇒ the student re-consents on the next start (by design, §21.4).
+const WARN_PAYLOAD = {
+  enabled: true,
+  camera: 'optional',
+  focusEvents: { mode: 'warn-only' },
+  multipleFaces: { mode: 'record' },
+  facePresence: { mode: 'record' },
+};
+
 function loadCreds() {
   if (!fs.existsSync(CREDS_FILE)) {
     console.error(`[creds] File not found: ${CREDS_FILE}\n[creds] Create it as {"admin":{"email":"...","password":"..."},"student":{...}}`);
@@ -227,6 +239,7 @@ async function main() {
     case 'list-quizzes': return cmdListQuizzes();
     case 'kill-switch': return cmdKillSwitch(arg);
     case 'arm': return cmdArm(arg, ON_PAYLOAD);
+    case 'arm-warn': return cmdArm(arg, WARN_PAYLOAD);
     case 'disarm': return cmdArm(arg, { enabled: false });
     case 'student-view': return cmdStudentView(arg);
     case 'inspect': return cmdInspect(arg);

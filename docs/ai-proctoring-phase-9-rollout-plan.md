@@ -470,12 +470,32 @@ Four owner-reported issues, adjudicated on evidence:
    (`statusCaptions`). Regression: `proctoringEngine.test.ts` Phase 9
    flushNow describe-block. Requires device re-test to fully confirm.
 
-### F.7 Optional: warn-mode demo for the owner's own testing
+### F.7 Warning-path test mode + indicator redesign (2026-10-21, device test 2)
 
-The owner may flip Test*2 policies to warn modes (`focusEvents:
-{mode:'warn-only'}` etc. — no auto-submit in warn-only) to SEE the banner
-flow on their own device. One-quiz scope, owner-only. Not done unless
-requested.
+Device test 2 (post-`51b310c` APK): **section-continuity fix CONFIRMED on
+device** — monitoring stayed green across all sections.
+
+**Warning banner (owner issue 1):** absence was correct under the all-record
+policy (§F.6 items 1–2). Safest test path implemented: ops `arm-warn
+<quizId>` sets focusEvents `warn-only` (app-away ladder warns via banner
+~1–2 s after return; NEVER auto-submits; everything else stays record).
+Verified server-side after arming; a policy change re-quires re-consent on
+next /start (§21.4, by design). Regression: new warn-only case in
+`proctoringAutoSubmit.test.js` (WARN actions delivered, attempt stays
+in_progress, all 5 events still recorded).
+
+**Status indicator (owner issue 2):** the rectangular camera PiP + status
+row in the quiz body is REPLACED by a compact status dot immediately left of
+the quiz timer (`MonitoringStatusDot`), tap → small popover (transparent
+Modal: backdrop tap-outside closes, in-card taps swallowed, back-button
+closes, unmount-safe, live label updates). Color truth:
+`utils/proctoringStatus.ts` — green ONLY for engine `monitoring`; amber for
+starting/paused/environmental camera issues; red for permission/camera-error/
+model (monitoring cannot work); grey for stopped/not-armed; unknown future
+statuses degrade to grey. Unit-tested per state. The camera preview is no
+longer shown during the quiz (engine streams from the native module — the
+preview was display-only on Android); engine tests + device retest cover
+continuity.
 
 ## G. Production-risk assessment (single tester, real backend + DB)
 
