@@ -1261,7 +1261,7 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
       });
     }
 
-    const { quizTitle, testType, duration, subjectId, instructions, scheduledDate, expiryDate, positiveMarks, negativeMarks, sections, lockSectionsAfterSubmission } = req.body;
+    const { quizTitle, testType, duration, subjectId, instructions, scheduledDate, expiryDate, positiveMarks, negativeMarks, sections, lockSectionsAfterSubmission, proctoring } = req.body;
 
     if (!quizTitle || !String(quizTitle).trim()) {
       return res.status(400).json({ message: 'Quiz title is required.' });
@@ -1274,6 +1274,16 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
         message: `A quiz with the title "${String(quizTitle).trim()}" already exists. Please use a different name.`,
         errorType: 'DUPLICATE_TITLE'
       });
+    }
+
+    // Proctoring config — same validated-not-trusted gate as create-from-bank
+    // above: unknown keys, out-of-range values and escalation attempts all
+    // fail here with a clear 400 BEFORE any question is created. Arrives as a
+    // JSON string form field (multer), which parseProctoringConfig accepts
+    // (same string contract as `sections`). Absent = unproctored quiz (D15).
+    const proctoringResult = parseProctoringConfig(proctoring);
+    if (proctoringResult.error) {
+      return res.status(400).json({ message: proctoringResult.error });
     }
 
     // Parse Excel. File-level problems (unreadable workbook, no data rows on
@@ -1704,6 +1714,9 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
       scheduledDate: timeWindowResult.value.scheduledDate,
       expiryDate: timeWindowResult.value.expiryDate,
       lockSectionsAfterSubmission: lockSections,
+      // Missing = OFF (never treat legacy as on) — identical contract to
+      // create-from-bank above.
+      ...(proctoringResult.value ? { proctoring: proctoringResult.value } : {}),
       sections: sectionResult.sections
     });
 
@@ -5047,16 +5060,30 @@ router.post('/:id/generate-share-link', auth, authorize('admin'), async (req, re
 // Revoke public share link
 router.post('/:id/revoke-share-link', auth, authorize('admin'), async (req, res) => {
   try {
+    if (!mongoose.Types.ObjectId.isValid(req.params.id)) {
+      return res.status(400).json({ message: 'Invalid test ID format' });
+    }
+
     const quiz = await Quiz.findById(req.params.id);
     if (!quiz) {
       return res.status(404).json({ message: 'Quiz not found' });
     }
 
-    quiz.shareToken = null;
-    quiz.isPublic = false;
-    quiz.publicExpiryDate = null;
-
-    await quiz.save();
+    // $unset the token — NEVER null it. shareToken carries a UNIQUE SPARSE
+    // index, and sparse indexes still index explicit nulls: writing
+    // `shareToken: null` succeeds exactly once database-wide (the first
+    // revoke in history), then every later revoke on ANY quiz fails with
+    // E11000 dup key { shareToken: null } → 500 "Server error" (production
+    // bug 2026-10-22). Removing the field keeps revoked docs out of the
+    // index entirely. updateOne (not doc.save()) also skips full-document
+    // revalidation of unrelated legacy fields.
+    await Quiz.updateOne(
+      { _id: quiz._id },
+      {
+        $unset: { shareToken: 1 },
+        $set: { isPublic: false, publicExpiryDate: null }
+      }
+    );
 
     res.json({
       success: true,

@@ -30,6 +30,7 @@ import {
 import * as DocumentPicker from 'expo-document-picker';
 import { colors } from '@/utils/theme';
 import { api, normalizeApiError } from '@/services/api';
+import { PROCTORING_ON_PAYLOAD } from '@/utils/proctoringToggle';
 import { useAuth } from '@/context/AuthContext';
 import ShareQuizModal, { ShareQuizTarget } from '@/components/ShareQuizModal';
 import ImageUploadSummaryModal, { ImageImportSummary } from '@/components/ImageUploadSummaryModal';
@@ -77,6 +78,9 @@ export default function ImportQuiz() {
   const [positiveMarks, setPositiveMarks] = useState('4');
   const [negativeMarks, setNegativeMarks] = useState('1');
   const [lockSectionsAfterSubmission, setLockSectionsAfterSubmission] = useState(true);
+  // AI Proctoring opt-in — same contract as Create Quiz: admin preference
+  // only, default OFF (D15); OFF omits the field entirely on create.
+  const [proctoringEnabled, setProctoringEnabled] = useState(false);
   const [subjectId, setSubjectId] = useState('');
   const [file, setFile] = useState<any>(null);
   const [quizSections, setQuizSections] = useState<QuizSection[]>([]);
@@ -293,6 +297,13 @@ export default function ImportQuiz() {
       // Section locking travels as a string (multer form field); backend
       // coerces and defaults missing to ON.
       formData.append('lockSectionsAfterSubmission', String(lockSectionsAfterSubmission));
+      // AI Proctoring: ON sends the same complete warn-mode payload Create
+      // Quiz / Edit Quiz use (utils/proctoringToggle.ts — never a bare
+      // enabled:true); OFF omits the field entirely (absent = unproctored
+      // quiz, same create convention as Create Quiz).
+      if (proctoringEnabled) {
+        formData.append('proctoring', JSON.stringify(PROCTORING_ON_PAYLOAD));
+      }
       // Instructions can be added if needed, defaulted by backend for now
 
       setProgressMessage('Processing questions and uploading images to cloud...\nThis may take a few minutes.');
@@ -620,6 +631,23 @@ export default function ImportQuiz() {
               </TouchableOpacity>
             ))}
           </ScrollView>
+
+          {/* AI Proctoring opt-in — same toggle, payload and switch styling as
+              Create Quiz (utils/proctoringToggle.ts). */}
+          <View style={styles.toggleContainer}>
+            <View style={styles.toggleLabelContainer}>
+              <Text style={styles.toggleLabel}>Enable AI Proctoring</Text>
+              <Text style={styles.toggleHelperText}>
+                Camera-based monitoring for this quiz only. Warns the student on app switches and repeated look-aways — never auto-submits. Photos never leave the phone.
+              </Text>
+            </View>
+            <Switch
+              value={proctoringEnabled}
+              onValueChange={setProctoringEnabled}
+              trackColor={{ false: colors.borderStrong, true: 'rgba(1, 180, 174, 0.45)' }}
+              thumbColor={proctoringEnabled ? colors.primary : colors.textMuted}
+            />
+          </View>
 
           {/* Time Window */}
           <DateTimeField

@@ -89,6 +89,7 @@ export default function ShareQuizModal({ visible, quiz, onClose, onShareComplete
   const [publicShareUrl, setPublicShareUrl] = useState<string | null>(null);
   const [shareExpiry, setShareExpiry] = useState<Date | null>(null);
   const [generatingLink, setGeneratingLink] = useState(false);
+  const [revokingLink, setRevokingLink] = useState(false);
   const [copied, setCopied] = useState(false);
 
   // Debounced search values for flicker-free filtering
@@ -372,6 +373,8 @@ export default function ShareQuizModal({ visible, quiz, onClose, onShareComplete
           text: 'Revoke',
           style: 'destructive',
           onPress: async () => {
+            if (revokingLink) return;
+            setRevokingLink(true);
             try {
               await api.post(`/quizzes/${activeQuiz._id}/revoke-share-link`);
               setPublicShareUrl(null);
@@ -379,6 +382,8 @@ export default function ShareQuizModal({ visible, quiz, onClose, onShareComplete
               Alert.alert('Success', 'Share link revoked');
             } catch (error: any) {
               Alert.alert('Error', error.response?.data?.message || 'Failed to revoke link');
+            } finally {
+              setRevokingLink(false);
             }
           }
         }
@@ -652,10 +657,15 @@ export default function ShareQuizModal({ visible, quiz, onClose, onShareComplete
                   )}
 
                   <TouchableOpacity
-                    style={styles.revokeButton}
+                    style={[styles.revokeButton, revokingLink && styles.buttonDisabled]}
                     onPress={handleRevokePublicLink}
+                    disabled={revokingLink}
                   >
-                    <Text style={styles.revokeButtonText}>Revoke Link</Text>
+                    {revokingLink ? (
+                      <ActivityIndicator color="#FFF" />
+                    ) : (
+                      <Text style={styles.revokeButtonText}>Revoke Link</Text>
+                    )}
                   </TouchableOpacity>
                 </>
               ) : (

@@ -4,10 +4,13 @@ const db = require('../helpers/db');
 const { buildApp, createUser, createSubject } = require('../helpers/testApp');
 const QuestionBank = require('../../models/QuestionBank');
 const Quiz = require('../../models/Quiz');
+const QuizAttempt = require('../../models/QuizAttempt');
+const { setProctoringEnabled } = require('../../utils/appSettings');
 
 let app;
 let adminToken;
 let studentToken;
+let studentUser;
 let subject;
 
 beforeAll(async () => {
@@ -25,6 +28,7 @@ beforeEach(async () => {
   const student = await createUser({ role: 'student' });
   adminToken = admin.token;
   studentToken = student.token;
+  studentUser = student.user;
   subject = await createSubject('Pathology');
 });
 
@@ -50,19 +54,25 @@ const toBuffer = (rows, sheetName = 'Question Bank') => {
   return xlsx.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 };
 
-const importFile = (token, buffer, fields = {}) =>
-  request(app)
+const importFile = (token, buffer, fields = {}) => {
+  const req = request(app)
     .post('/api/quizzes/import-excel')
     .set('Authorization', `Bearer ${token}`)
     .field('quizTitle', fields.quizTitle || 'Imported Quiz')
     .field('testType', fields.testType || 'daily')
     .field('duration', fields.duration || '30')
     .field('positiveMarks', fields.positiveMarks || '4')
-    .field('negativeMarks', fields.negativeMarks || '1')
-    .attach('file', buffer, {
-      filename: fields.filename || 'import.xlsx',
-      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-    });
+    .field('negativeMarks', fields.negativeMarks || '1');
+  // Extra form fields the app appends conditionally (e.g. the proctoring
+  // JSON string, sent only when its toggle is ON).
+  for (const [key, value] of Object.entries(fields.extra || {})) {
+    req.field(key, value);
+  }
+  return req.attach('file', buffer, {
+    filename: fields.filename || 'import.xlsx',
+    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+};
 
 describe('POST /api/quizzes/import-excel — access control', () => {
   it('rejects an unauthenticated request', async () => {
@@ -350,5 +360,130 @@ describe('POST /api/quizzes/import-excel — unified dedup rule (subject + text)
     const quizA = await Quiz.findOne({ title: 'Race Quiz A' });
     const quizB = await Quiz.findOne({ title: 'Race Quiz B' });
     expect(String(quizA.questions[0])).toBe(String(quizB.questions[0]));
+  });
+});
+
+describe('POST /api/quizzes/import-excel — AI Proctoring toggle', () => {
+  // The EXACT payload the Import Quiz screen sends when its "Enable AI
+  // Proctoring" switch is ON (utils/proctoringToggle.ts), as the JSON-string
+  // form field the app appends. Duplicated from
+  // proctoring/proctoringQuizToggle.test.js on purpose: the test copy is the
+  // tripwire if the client module drifts from what the backend stores.
+  // v3 (2026-10-21 global rollout): the ON payload arms Warning Mode
+  // (focusEvents warn-only + attention 'warn' — never auto-submit).
+  const ON_PAYLOAD_JSON = JSON.stringify({
+    enabled: true,
+    camera: 'optional',
+    focusEvents: { mode: 'warn-only' },
+    multipleFaces: { mode: 'record' },
+    facePresence: { mode: 'record' },
+    attention: { mode: 'warn' },
+  });
+
+  it('toggle ON stores exactly the warn config on the imported quiz', async () => {
+    const res = await importFile(adminToken, toBuffer([baseRow()]), {
+      quizTitle: 'Proctored Import',
+      extra: { proctoring: ON_PAYLOAD_JSON },
+    });
+    expect(res.status).toBe(201);
+
+    const quiz = await Quiz.findOne({ title: 'Proctored Import' });
+    expect(quiz.proctoring.enabled).toBe(true);
+    expect(quiz.proctoring.camera).toBe('optional');
+    expect(quiz.proctoring.focusEvents.mode).toBe('warn-only'); // warns, never auto-submits
+    expect(quiz.proctoring.multipleFaces.mode).toBe('record');
+    expect(quiz.proctoring.facePresence.mode).toBe('record');
+    expect(quiz.proctoring.attention.mode).toBe('warn'); // head-turn banner on the 3rd look-away
+  });
+
+  it('toggle OFF (field omitted, the app convention) produces a normal, unproctored quiz', async () => {
+    const res = await importFile(adminToken, toBuffer([baseRow()]), { quizTitle: 'Unproctored Import' });
+    expect(res.status).toBe(201);
+
+    const quiz = await Quiz.findOne({ title: 'Unproctored Import' });
+    expect(quiz.proctoring.enabled).toBe(false); // absent can never enable (D15)
+  });
+
+  it('explicit {enabled:false} is accepted and stores disabled', async () => {
+    const res = await importFile(adminToken, toBuffer([baseRow()]), {
+      quizTitle: 'Explicit Off Import',
+      extra: { proctoring: JSON.stringify({ enabled: false }) },
+    });
+    expect(res.status).toBe(201);
+
+    const quiz = await Quiz.findOne({ title: 'Explicit Off Import' });
+    expect(quiz.proctoring.enabled).toBe(false);
+  });
+
+  it('an armed import never leaks proctoring into a later unarmed import (isolation)', async () => {
+    const armed = await importFile(adminToken, toBuffer([baseRow()]), {
+      quizTitle: 'Armed Import',
+      extra: { proctoring: ON_PAYLOAD_JSON },
+    });
+    expect(armed.status).toBe(201);
+
+    // Re-import of the same sheet (question reused) with the toggle OFF.
+    const unarmed = await importFile(adminToken, toBuffer([baseRow()]), { quizTitle: 'Unarmed Import' });
+    expect(unarmed.status).toBe(201);
+
+    const quizA = await Quiz.findOne({ title: 'Armed Import' });
+    const quizB = await Quiz.findOne({ title: 'Unarmed Import' });
+    expect(quizA.proctoring.enabled).toBe(true);
+    expect(quizB.proctoring.enabled).toBe(false);
+  });
+
+  it('rejects an invalid proctoring payload with 400 and creates nothing (atomicity)', async () => {
+    const res = await importFile(adminToken, toBuffer([baseRow()]), {
+      quizTitle: 'Bad Proctoring Import',
+      extra: { proctoring: JSON.stringify({ enabled: 'yes' }) },
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/proctoring\.enabled/);
+
+    // The early gate fires BEFORE any question is created — no rollback needed.
+    expect(await Quiz.countDocuments({})).toBe(0);
+    expect(await QuestionBank.countDocuments({})).toBe(0);
+  });
+
+  it('the test-taking flow recognizes the setting: armed import gates /start, unarmed import starts', async () => {
+    // The aiProctoring feature flag is ON in the real config (no mock in
+    // this suite), so only the AppSettings kill switch needs flipping.
+    await setProctoringEnabled(true, null);
+
+    const armed = await importFile(adminToken, toBuffer([baseRow()]), {
+      quizTitle: 'Armed Start Gate',
+      extra: { proctoring: ON_PAYLOAD_JSON },
+    });
+    expect(armed.status).toBe(201);
+
+    const armedQuiz = await Quiz.findOne({ title: 'Armed Start Gate' });
+    armedQuiz.assignedStudents = [studentUser._id];
+    await armedQuiz.save();
+
+    // Armed, no consent recorded yet → the existing /start proctoring gate
+    // fires with its specific error code.
+    const blocked = await request(app)
+      .post(`/api/quizzes/${armedQuiz._id}/start`)
+      .set('Authorization', `Bearer ${studentToken}`)
+      .send({});
+    expect(blocked.status).toBe(403);
+    expect(blocked.body.errorCode).toBe('PROCTORING_CONSENT_REQUIRED');
+    // A failed proctored start consumes nothing.
+    expect(await QuizAttempt.countDocuments({ quiz: armedQuiz._id })).toBe(0);
+
+    // Control: same sheet imported unarmed starts as an ordinary quiz.
+    const unarmed = await importFile(adminToken, toBuffer([baseRow({ QUESTION: 'What enzyme unwinds DNA?' })]), {
+      quizTitle: 'Unarmed Start Gate',
+    });
+    expect(unarmed.status).toBe(201);
+    const unarmedQuiz = await Quiz.findOne({ title: 'Unarmed Start Gate' });
+    unarmedQuiz.assignedStudents = [studentUser._id];
+    await unarmedQuiz.save();
+
+    const started = await request(app)
+      .post(`/api/quizzes/${unarmedQuiz._id}/start`)
+      .set('Authorization', `Bearer ${studentToken}`)
+      .send({});
+    expect([200, 201]).toContain(started.status);
   });
 });
