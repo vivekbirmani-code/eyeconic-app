@@ -562,3 +562,127 @@ describe('Overdue-attempt sweep — finalization without student activity (requi
     expect(await QuizAttempt.countDocuments({ quiz: quiz._id, student: student.user._id })).toBe(1);
   });
 });
+
+describe('Availability-aware question exposure — GET /:id and GET / (content redaction)', () => {
+  let admin;
+  let student;
+  let subject;
+
+  beforeEach(async () => {
+    await db.clearDatabase();
+    admin = await createUser({ role: 'admin' });
+    student = await createUser({ role: 'student' });
+    subject = await createSubject('Anatomy');
+  });
+
+  const getQuizDetail = (user, quizId) =>
+    request(app).get(`/api/quizzes/${quizId}`).set('Authorization', `Bearer ${user.token}`);
+
+  it('redacts question content before the window opens; counts and meta stay', async () => {
+    const { quiz, questions } = await setupQuiz(admin, student, subject, {
+      scheduledDate: new Date(Date.now() + 30 * MIN),
+      expiryDate: new Date(Date.now() + 90 * MIN),
+    });
+    const res = await getQuizDetail(student, quiz._id);
+    expect(res.status).toBe(200);
+    expect(res.body.scheduleState).toBe('scheduled');
+    expect(res.body.serverNow).toBeDefined();
+    // Counts survive (the instructions screen renders from them)...
+    expect(res.body.questions).toHaveLength(questions.length);
+    // ...but no question text leaks through a direct API call.
+    res.body.questions.forEach((q) => expect(typeof q).toBe('string'));
+    (res.body.sections || []).forEach((s) =>
+      s.questions.forEach((q) => expect(typeof q).toBe('string')));
+  });
+
+  it('serves full question content inside the window — answer key still never ships', async () => {
+    const { quiz } = await setupQuiz(admin, student, subject, {
+      scheduledDate: new Date(Date.now() - 30 * MIN),
+      expiryDate: new Date(Date.now() + 90 * MIN),
+    });
+    const res = await getQuizDetail(student, quiz._id);
+    expect(res.status).toBe(200);
+    expect(res.body.scheduleState).toBe('open');
+    expect(typeof res.body.questions[0]).toBe('object');
+    expect(res.body.questions[0].question).toBeDefined();
+    expect(res.body.questions[0].correctAnswer).toBeUndefined();
+  });
+
+  it('redacts content after the window closes once no attempt is in progress', async () => {
+    const { quiz } = await setupQuiz(admin, student, subject, {
+      scheduledDate: new Date(Date.now() - 90 * MIN),
+      expiryDate: new Date(Date.now() - 30 * MIN),
+    });
+    const res = await getQuizDetail(student, quiz._id);
+    expect(res.status).toBe(200);
+    expect(res.body.scheduleState).toBe('ended');
+    res.body.questions.forEach((q) => expect(typeof q).toBe('string'));
+  });
+
+  it('keeps content for a live attempt holder after the window closes (grace/refetch)', async () => {
+    const { quiz } = await setupQuiz(admin, student, subject, {
+      expiryDate: new Date(Date.now() + 30 * MIN),
+    });
+    await startAttempt(student, quiz._id);
+    await closeQuizWindow(quiz._id);
+
+    const res = await getQuizDetail(student, quiz._id);
+    expect(res.status).toBe(200);
+    expect(res.body.scheduleState).toBe('ended');
+    expect(typeof res.body.questions[0]).toBe('object');
+  });
+
+  it('staff always see full questions regardless of the window', async () => {
+    const { quiz } = await setupQuiz(admin, student, subject, {
+      scheduledDate: new Date(Date.now() + 30 * MIN),
+    });
+    const res = await getQuizDetail(admin, quiz._id);
+    expect(res.status).toBe(200);
+    expect(typeof res.body.questions[0]).toBe('object');
+    expect(res.body.questions[0].question).toBeDefined();
+  });
+
+  it('GET / labels each student quiz with the server-computed schedule state', async () => {
+    const scheduled = await setupQuiz(admin, student, subject, {
+      scheduledDate: new Date(Date.now() + 30 * MIN),
+    });
+    const open = await setupQuiz(admin, student, subject); // window-less → open, like /start
+    const ended = await setupQuiz(admin, student, subject, {
+      expiryDate: new Date(Date.now() - 30 * MIN),
+    });
+
+    const res = await request(app)
+      .get('/api/quizzes')
+      .set('Authorization', `Bearer ${student.token}`);
+    expect(res.status).toBe(200);
+    const byId = new Map(res.body.map((q) => [String(q._id), q.scheduleState]));
+    expect(byId.get(String(scheduled.quiz._id))).toBe('scheduled');
+    expect(byId.get(String(open.quiz._id))).toBe('open');
+    expect(byId.get(String(ended.quiz._id))).toBe('ended');
+  });
+});
+
+describe('Duplication never carries the source window', () => {
+  it('a duplicate is created window-less instead of inheriting stale dates', async () => {
+    await db.clearDatabase();
+    const admin = await createUser({ role: 'admin' });
+    const student = await createUser({ role: 'student' });
+    const subject = await createSubject('Biochemistry');
+    const { quiz } = await setupQuiz(admin, student, subject, {
+      scheduledDate: new Date(Date.now() - 90 * MIN),
+      expiryDate: new Date(Date.now() - 30 * MIN),
+    });
+
+    const res = await request(app)
+      .post(`/api/quizzes/${quiz._id}/duplicate`)
+      .set('Authorization', `Bearer ${admin.token}`);
+    expect(res.status).toBe(201);
+
+    const copy = await Quiz.findById(res.body.quiz._id);
+    expect(copy.scheduledDate).toBeUndefined();
+    expect(copy.expiryDate).toBeUndefined();
+    // The original keeps its window untouched.
+    const original = await Quiz.findById(quiz._id);
+    expect(original.expiryDate).toEqual(quiz.expiryDate);
+  });
+});

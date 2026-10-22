@@ -284,7 +284,7 @@ Cloudinary is the **authoritative image store** for everything. Routes under `/a
 | `duration` | Minutes, must be a positive integer. |
 | `questions` | Ordered QuestionBank refs — the order defines question indexes inside attempts. |
 | `positiveMarks` / `negativeMarks` | Quiz-wide marking. Defaults **+4 / −1** (NEET). `totalMarks` auto-computes as questions × positiveMarks. |
-| `scheduledDate` / `expiryDate` | The availability **window** for registered students. Optional; end must be after start. |
+| `scheduledDate` / `expiryDate` | The availability **window** for registered students. Optional; end must be after start. All three authoring paths (`create-from-bank`, `import-excel`, `PUT /:id`) validate it through one `parseQuizTimeWindow`; import validates **before** any question is created (fail-fast, so an invalid window can't leak half-imported questions past the rollback). Datetime strings without a UTC offset are pinned to **UTC** (`parseInstant`) — never the server's local zone. `POST /:id/duplicate` deliberately does **not** copy the window (the copy starts window-less; the admin sets fresh dates). |
 | `assignedStudents` / `assignedMentors` | Who sees it. |
 | `assignToAllFreeUsers` | Quiz belongs to every free user, including ones who sign up later. |
 | `shareSolution` | Default **true** — whether students see correct answers/explanations on results. |
@@ -318,7 +318,7 @@ Checks run in this order, and **a failed proctored start consumes nothing** (no 
 
 1. Quiz exists, is active, not deleted.
 2. **Assignment:** assigned, OR `assignToAllFreeUsers` + free user, OR `testType === 'mini'`.
-3. **Window:** before `scheduledDate` → 403 "not started yet"; past `expiryDate` → 403 (and any dangling in-progress attempt is finalized first).
+3. **Window:** before `scheduledDate` → 403 "not started yet"; past `expiryDate` → 403 (and any dangling in-progress attempt is finalized first). Boundary rule: eligible while `start <= now < end`. Student payloads (`GET /` list, `GET /:id`) carry a server-computed `scheduleState` (`scheduled` / `open` / `ended` — same rule, so badges can't disagree with the gate) and `serverNow` (detail only). `GET /:id` **redacts question content down to ids** for students outside the window (scheduled, or ended with no in-progress attempt) — question counts survive so the instructions screen renders; staff always see full questions; a student holding a live in-progress attempt keeps content in every state (their writes stay deadline-gated).
 4. **Resume:** if an in-progress attempt exists, it is resumed (earliest one wins). Deadlines are enforced lazily *before* resuming — an overdue attempt comes back as "finalized" instead of resurrecting.
 5. **One attempt:** any prior finalized attempt without an approved retest → 400 "already completed".
 6. **Proctoring gating** (if the quiz is armed): recorded consent for the *current* policy version + a valid precheck token are required, else 403 with a specific code.
@@ -477,8 +477,8 @@ A daily ritual: **10 questions per day**, one frozen set per IST date.
 
 A fixed-format **30-question shared test — 10 each from Psychiatry, Dermatology, Orthopaedics** — built as a normal quiz (`testType: 'mini'`) and run through the standard quiz engine.
 
-- **`POST /generate`** (admin): samples per subject (prefers tagged questions, single-best-answer types), hard-errors with per-subject availability if any subject can't field 10. Assignment: `assignToAllFreeUsers: true` **plus** a snapshot of current free users; badges, socket event, and push notification fire on creation.
-- **Self-serve:** every student sees the latest Mini GT without individual assignment (`GET /latest`, `GET /attempts`).
+- **`POST /generate`** (admin): samples per subject (prefers tagged questions, single-best-answer types), hard-errors with per-subject availability if any subject can't field 10. Assignment: `assignToAllFreeUsers: true` **plus** a snapshot of current free users; badges, socket event, and push notification fire on creation. Accepts the same optional `scheduledDate`/`expiryDate` window as every other authoring path, validated through the shared `parseQuizTimeWindow` (§12) before anything is created.
+- **Self-serve:** every student sees the latest Mini GT without individual assignment (`GET /latest`, `GET /attempts`); `/latest` also returns the server-computed `scheduleState` + `serverNow` (§13.1) for availability display.
 - **`GET /attempts/:attemptId/analysis`**: your result vs the **cohort** (everyone's latest finalized attempt on that quiz, deduped per student): percentile (self excluded), tier (Excellent ≥75 / Strong ≥60 / Developing ≥40 / Needs Focus — on accuracy), per-subject rows vs cohort averages, question heatmap, topic + concept-tag breakdowns (provenance tags like `excel-import` are excluded). Cohort stats are nulled below a privacy floor of 5 students.
 - **Free users** get a trimmed analysis (score summary + subject table + tier) with an upsell message — stripped server-side.
 

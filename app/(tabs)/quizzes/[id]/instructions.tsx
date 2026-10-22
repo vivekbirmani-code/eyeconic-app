@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -14,7 +14,7 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { BookOpen, Clock, FileText, Award } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { useQuiz } from '@/context/QuizContext';
-import { formatToIST } from '@/utils/date';
+import { formatToIST, formatCountdown } from '@/utils/date';
 import { colors } from '@/utils/theme';
 
 interface Quiz {
@@ -29,6 +29,12 @@ interface Quiz {
   attemptStatus?: any;
   scheduledDate?: string;
   expiryDate?: string;
+  // Server-computed availability (same rule /start enforces) plus the
+  // server's own clock — together with the local tick below the countdown
+  // stays accurate even on a drifted device clock. /start remains the
+  // authoritative gate either way.
+  scheduleState?: 'scheduled' | 'open' | 'ended';
+  serverNow?: string;
   sections?: {
     name: string;
     duration: number;
@@ -60,6 +66,37 @@ export default function QuizInstructions() {
     fetchQuizDetails();
   }, [id]);
 
+  // ===== Live scheduling state (display only — /start is the gate) =====
+  // The server payload carries scheduleState + its own "now"; between
+  // payloads a 1s tick recomputes the state from the stored dates with the
+  // server-corrected clock, so the Start button flips on time in BOTH
+  // directions (scheduled → open, open → ended) without a refetch, and a
+  // wrong device clock cannot extend or shrink the truth.
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    if (!quiz) return;
+    const timer = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [quiz]);
+
+  const clockOffsetMs = useMemo(() => {
+    const serverMs = quiz?.serverNow ? new Date(quiz.serverNow).getTime() : NaN;
+    return Number.isFinite(serverMs) ? serverMs - Date.now() : 0;
+  }, [quiz?.serverNow]);
+
+  const liveSchedule = useMemo(() => {
+    const serverNowMs = nowTick + clockOffsetMs;
+    const startsAtMs = quiz?.scheduledDate ? new Date(quiz.scheduledDate).getTime() : NaN;
+    const endsAtMs = quiz?.expiryDate ? new Date(quiz.expiryDate).getTime() : NaN;
+    if (Number.isFinite(startsAtMs) && serverNowMs < startsAtMs) {
+      return { state: 'scheduled' as const, msUntilOpen: startsAtMs - serverNowMs };
+    }
+    if (Number.isFinite(endsAtMs) && serverNowMs >= endsAtMs) {
+      return { state: 'ended' as const, msUntilOpen: 0 };
+    }
+    return { state: 'open' as const, msUntilOpen: 0 };
+  }, [nowTick, clockOffsetMs, quiz?.scheduledDate, quiz?.expiryDate]);
+
   const fetchQuizDetails = async () => {
     try {
       const response = await api.get(`/quizzes/${id}`);
@@ -79,6 +116,21 @@ export default function QuizInstructions() {
 
   const handleStartQuiz = async () => {
     if (!quiz) return;
+
+    // Scheduling guard (belt & braces — the button is disabled and /start
+    // independently 403s outside the window, so a stale payload or a direct
+    // tap can never start early or late).
+    if (liveSchedule.state === 'scheduled') {
+      Alert.alert(
+        'Not Started Yet',
+        `This test opens on ${formatToIST(quiz.scheduledDate)}. Please come back then.`
+      );
+      return;
+    }
+    if (liveSchedule.state === 'ended') {
+      Alert.alert('Test Ended', 'The scheduled window for this test has closed.');
+      return;
+    }
 
     // Check if already attempted
     if (quiz.attemptStatus?.hasAttempted && !quiz.attemptStatus?.canRetake) {
@@ -266,11 +318,21 @@ export default function QuizInstructions() {
               {quiz.scheduledDate && (
                 <Text style={[styles.noteText, styles.scheduleText]}>
                   • Starts: {formatToIST(quiz.scheduledDate)}
+                  {liveSchedule.state === 'scheduled' && (
+                    <Text style={{ color: '#F59E0B', fontWeight: '600' }}>
+                      {'  '}(in {formatCountdown(liveSchedule.msUntilOpen)})
+                    </Text>
+                  )}
                 </Text>
               )}
               {quiz.expiryDate && (
                 <Text style={[styles.noteText, styles.scheduleText]}>
                   • Ends: {formatToIST(quiz.expiryDate)}
+                </Text>
+              )}
+              {liveSchedule.state === 'ended' && (
+                <Text style={[styles.noteText, { color: '#EF4444', fontWeight: '600' }]}>
+                  • This test has ended — it can no longer be attempted.
                 </Text>
               )}
             </View>
@@ -341,15 +403,22 @@ export default function QuizInstructions() {
         <View style={{ height: 100 }} />
       </ScrollView>
 
-      {/* Start Button */}
+      {/* Start Button — disabled outside the scheduling window; the label
+          itself communicates why (countdown to open, or closed). */}
       <View style={styles.footer}>
         <TouchableOpacity
-          style={styles.startButton}
+          style={[styles.startButton, liveSchedule.state !== 'open' && styles.startButtonDisabled]}
           onPress={handleStartQuiz}
-          disabled={quizLoading}
+          disabled={quizLoading || liveSchedule.state !== 'open'}
         >
           {quizLoading ? (
             <ActivityIndicator color="#FFFFFF" />
+          ) : liveSchedule.state === 'scheduled' ? (
+            <Text style={styles.startButtonText}>
+              Opens in {formatCountdown(liveSchedule.msUntilOpen)}
+            </Text>
+          ) : liveSchedule.state === 'ended' ? (
+            <Text style={styles.startButtonText}>Test Ended</Text>
           ) : (
             <Text style={styles.startButtonText}>Start Test</Text>
           )}
@@ -493,6 +562,9 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     padding: 16,
     alignItems: 'center',
+  },
+  startButtonDisabled: {
+    backgroundColor: '#9CA3AF',
   },
   startButtonText: {
     fontSize: 18,

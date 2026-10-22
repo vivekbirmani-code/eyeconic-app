@@ -9,16 +9,16 @@ import {
   ActivityIndicator,
   StatusBar,
   BackHandler,
-  Image,
 } from 'react-native';
 import { FullScreenContainer } from '@/components/layout';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { ChevronLeft, ChevronRight, Flag, Clock, AlertCircle } from 'lucide-react-native';
 import { useGuestQuiz } from '@/context/GuestQuizContext';
-import { getSocketURL } from '@/services/config';
 import { SectionTabs } from '@/components/SectionTabs';
 import QuestionPrompt from '@/components/quiz/QuestionPrompt';
+import { QuestionMediaImage } from '@/components/quiz/QuestionMediaImage';
 import { QuestionType, StudentResponse, isResponseAnswered } from '@/types/question';
+import { prefetchMedia } from '@/utils/media';
 
 interface Question {
   _id: string;
@@ -63,7 +63,6 @@ export default function GuestQuizTaking() {
   const [currentSection, setCurrentSection] = useState('All');
   const [questionStartTime, setQuestionStartTime] = useState(Date.now());
   const [submitting, setSubmitting] = useState(false);
-  const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
 
   // ===== Section locking (the attempt snapshot is the single truth) =====
   const lockOn =
@@ -108,6 +107,23 @@ export default function GuestQuizTaking() {
     return currentQuestionIndex;
   }, [lockOn, activeQuestionIndexes, currentQuestionIndex]);
 
+  // Warm the media cache for the question the student will most likely open
+  // next (actual navigation order: section order when locked, plain order
+  // otherwise). Only the immediate next question — never the whole quiz —
+  // and each URL at most once per session (see prefetchMedia).
+  useEffect(() => {
+    if (!quizData) return;
+    const nextIndex = lockOn && activeQuestionIndexes
+      ? activeQuestionIndexes[currentQuestionPosition + 1]
+      : currentQuestionIndex + 1;
+    const nextQuestion = quizData.questions[nextIndex];
+    if (!nextQuestion) return;
+    prefetchMedia([
+      nextQuestion.questionImage,
+      ...(nextQuestion.optionImages || []),
+    ]);
+  }, [quizData, lockOn, activeQuestionIndexes, currentQuestionPosition, currentQuestionIndex]);
+
   const sectionStatuses = useMemo(() => {
     if (!lockOn || !currentAttempt?.sectionDefinitions?.length) return undefined;
     const map: { [name: string]: 'locked' | 'active' | 'upcoming' } = {};
@@ -145,28 +161,9 @@ export default function GuestQuizTaking() {
     return counts;
   }, [lockOn, currentAttempt, sectionQuestionIndexesMap, quizData]);
 
-  const handleImageError = useCallback((url: string) => {
-    setFailedImages(prev => new Set(prev).add(url));
-  }, []);
-
   const scrollViewRef = useRef<ScrollView>(null);
   const timerRef = useRef<any>(null);
   const timeUpFiredRef = useRef(false);
-
-  // Helper to resolve image URLs (handles relative paths from backend)
-  const getImageUrl = useCallback((path?: string) => {
-    if (!path) return undefined;
-    if (path.startsWith('http') || path.startsWith('https') || path.startsWith('file://') || path.startsWith('data:')) {
-      return { uri: path };
-    }
-
-    // Prepend base URL for relative paths
-    // getSocketURL return the root URL e.g. http://192.168.x.x:3000
-    const baseUrl = getSocketURL();
-    // Ensure we don't have double slashes if path starts with /
-    const cleanPath = path.startsWith('/') ? path : `/${path}`;
-    return { uri: `${baseUrl}${cleanPath}` };
-  }, []);
 
   useEffect(() => {
     if (!currentAttempt || !quizData) {
@@ -538,23 +535,20 @@ export default function GuestQuizTaking() {
           {currentQuestion.questionText}
         </Text>
 
-        {/* Question Image */}
-        {currentQuestion.questionImage && (
-          <Image
-            source={getImageUrl(currentQuestion.questionImage)}
-            style={styles.questionImage}
-            resizeMode="contain"
-          />
-        )}
+        {/* Question Image — loading/error/retry states handled internally;
+            text + options stay interactive while the media loads. Renders
+            nothing when the question has no image. */}
+        <QuestionMediaImage
+          source={currentQuestion.questionImage}
+          style={styles.questionImage}
+          accessibilityLabel="Question image"
+        />
 
         {/* Answer Input (adapts to question type) */}
         <QuestionPrompt
           question={currentQuestion}
           response={selectedAnswer}
           onChange={handleResponseChange}
-          getImageUrl={getImageUrl}
-          failedImages={failedImages}
-          onImageError={handleImageError}
         />
 
         {/* Clear Response */}

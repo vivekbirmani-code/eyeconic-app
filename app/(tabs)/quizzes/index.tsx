@@ -21,7 +21,7 @@ import { QuizCardSkeleton } from '@/components/Skeleton';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from '@/utils/haptics';
-import { formatToIST } from '@/utils/date';
+import { formatToIST, formatCountdown } from '@/utils/date';
 
 interface Quiz {
   _id: string;
@@ -37,15 +37,27 @@ interface Quiz {
     status?: string;
     score?: number;
     marksObtained?: number;
+    attemptId?: string;
     canRetake?: boolean;
     retestRequested?: boolean;
   };
   scheduledDate?: string;
   expiryDate?: string;
+  // Server-computed availability (same rule /start enforces) — the badge must
+  // never depend on the device clock.
+  scheduleState?: 'scheduled' | 'open' | 'ended';
 }
 
 const getStatusBadge = (quiz: Quiz) => {
   if (!quiz.attemptStatus?.hasAttempted) {
+    // Scheduling beats "New": a test that hasn't opened (or has closed) is
+    // not startable, and the card must say so.
+    if (quiz.scheduleState === 'scheduled') {
+      return { label: 'Scheduled', color: '#FFFFFF', bgColor: '#F59E0B' }; // Amber
+    }
+    if (quiz.scheduleState === 'ended') {
+      return { label: 'Ended', color: '#FFFFFF', bgColor: '#6B7280' }; // Gray
+    }
     return { label: 'New', color: '#FFFFFF', bgColor: '#10B981' }; // Green
   }
   if (quiz.attemptStatus?.canRetake) {
@@ -57,7 +69,7 @@ const getStatusBadge = (quiz: Quiz) => {
   return { label: 'Done', color: '#FFFFFF', bgColor: '#6B7280' }; // Gray
 };
 
-const QuizCard = ({ item, index, onPress }: { item: Quiz; index: number; onPress: (quiz: Quiz) => void }) => {
+const QuizCard = ({ item, index, onPress, now }: { item: Quiz; index: number; onPress: (quiz: Quiz) => void; now: number }) => {
   const status = getStatusBadge(item);
   const translateY = useRef(new Animated.Value(50)).current;
   const opacity = useRef(new Animated.Value(0)).current;
@@ -110,6 +122,11 @@ const QuizCard = ({ item, index, onPress }: { item: Quiz; index: number; onPress
             {item.scheduledDate && (
               <Text style={{ fontSize: 11, color: '#64748B', fontWeight: '500' }}>
                 Starts: {formatToIST(item.scheduledDate)}
+                {item.scheduleState === 'scheduled' && (
+                  <Text style={{ color: '#F59E0B', fontWeight: '600' }}>
+                    {'  '}(in {formatCountdown(new Date(item.scheduledDate).getTime() - now)})
+                  </Text>
+                )}
               </Text>
             )}
             {item.expiryDate && (
@@ -152,7 +169,11 @@ const QuizCard = ({ item, index, onPress }: { item: Quiz; index: number; onPress
             <Text style={styles.actionButtonText}>
               {item.attemptStatus?.hasAttempted && !item.attemptStatus.canRetake
                 ? 'Check Results'
-                : 'Start Quiz'}
+                : item.scheduleState === 'scheduled'
+                  ? 'View Details'
+                  : item.scheduleState === 'ended'
+                    ? 'Closed'
+                    : 'Start Quiz'}
             </Text>
             <ChevronRight size={16} color="#01b4ae" />
           </View>
@@ -171,6 +192,17 @@ function QuizzesContent() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'available' | 'completed'>('available');
+  // Shared clock for the scheduled-quiz countdowns — one interval for the
+  // whole list, not one per card. Only runs while a scheduled quiz is
+  // visible; the badge itself comes from the server's scheduleState, so a
+  // wrong device clock can mislabel nothing worse than the "in Xm" hint.
+  const [now, setNow] = useState(() => Date.now());
+  const hasScheduled = quizzes.some(q => q.scheduleState === 'scheduled');
+  useEffect(() => {
+    if (!hasScheduled) return;
+    const timer = setInterval(() => setNow(Date.now()), 30 * 1000);
+    return () => clearInterval(timer);
+  }, [hasScheduled]);
 
   // Animation refs
   const headerOpacity = useRef(new Animated.Value(0)).current;
@@ -198,6 +230,10 @@ function QuizzesContent() {
     useCallback(() => {
       if (user?.role === 'student') {
         markQuizzesAsSeen();
+        // Availability transitions (scheduled → open → ended) are
+        // server-computed; re-fetching on focus keeps badges current without
+        // a manual pull-to-refresh.
+        fetchQuizzes();
       }
     }, [user, markQuizzesAsSeen])
   );
@@ -255,22 +291,24 @@ function QuizzesContent() {
           {
             text: 'View Results',
             onPress: async () => {
+              // Route via the attemptId from the list payload — probing
+              // /start stopped working for closed quizzes (it 403s on the
+              // window before the "already completed" branch can answer).
+              if (quiz.attemptStatus?.attemptId) {
+                router.push(`/quizzes/${quiz._id}/result/${quiz.attemptStatus.attemptId}`);
+                return;
+              }
               try {
-                try {
-                  const response = await api.post(`/quizzes/${quiz._id}/start`);
-                  if (response.data.attemptId) {
-                    router.push(`/quizzes/${quiz._id}/result/${response.data.attemptId}`);
-                  }
-                } catch (err: any) {
-                  if (err.response?.status === 400 && err.response?.data?.attemptId) {
-                    router.push(`/quizzes/${quiz._id}/result/${err.response.data.attemptId}`);
-                  } else {
-                    Alert.alert('Error', 'Could not retrieve quiz results');
-                  }
+                const response = await api.post(`/quizzes/${quiz._id}/start`);
+                if (response.data.attemptId) {
+                  router.push(`/quizzes/${quiz._id}/result/${response.data.attemptId}`);
                 }
-              } catch (error) {
-                console.error('Error viewing results:', error);
-                Alert.alert('Error', 'Failed to open results');
+              } catch (err: any) {
+                if (err.response?.status === 400 && err.response?.data?.attemptId) {
+                  router.push(`/quizzes/${quiz._id}/result/${err.response.data.attemptId}`);
+                } else {
+                  Alert.alert('Error', 'Could not retrieve quiz results');
+                }
               }
             }
           }
@@ -447,6 +485,7 @@ function QuizzesContent() {
                 item={item}
                 index={index}
                 onPress={handleQuizPress}
+                now={now}
               />
             )}
             keyExtractor={item => item._id}

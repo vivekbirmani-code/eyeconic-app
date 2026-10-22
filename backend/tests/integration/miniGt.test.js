@@ -176,9 +176,70 @@ describe('POST /api/mini-gt/generate', () => {
     expect(second.status).toBe(400);
     expect(second.body.code).toBe('DUPLICATE_TITLE');
   });
+
+  it('validates the scheduling window with the same contract as every other authoring path', async () => {
+    await seedBank();
+    const res = await request(app)
+      .post('/api/mini-gt/generate')
+      .set('Authorization', `Bearer ${admin.token}`)
+      .send({
+        scheduledDate: new Date(Date.now() + 120 * 60000).toISOString(),
+        expiryDate: new Date(Date.now() + 60 * 60000).toISOString(),
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/end date must be after start date/i);
+    expect(await Quiz.countDocuments({ testType: 'mini' })).toBe(0);
+  });
+
+  it('persists a valid window as a UTC instant even when sent offset-less', async () => {
+    await seedBank();
+    const res = await request(app)
+      .post('/api/mini-gt/generate')
+      .set('Authorization', `Bearer ${admin.token}`)
+      .send({
+        scheduledDate: '2026-10-22T10:00',
+        expiryDate: '2026-10-22T11:00Z',
+      });
+    expect(res.status).toBe(201);
+    const quiz = await Quiz.findById(res.body.quizId);
+    expect(quiz.scheduledDate.toISOString()).toBe('2026-10-22T10:00:00.000Z');
+    expect(quiz.expiryDate.toISOString()).toBe('2026-10-22T11:00:00.000Z');
+  });
 });
 
 describe('GET /api/mini-gt/latest', () => {
+  it('labels availability with the server-computed schedule state', async () => {
+    await seedBank();
+    const generated = await request(app)
+      .post('/api/mini-gt/generate')
+      .set('Authorization', `Bearer ${admin.token}`)
+      .send({
+        scheduledDate: new Date(Date.now() + 60 * 60000).toISOString(),
+        expiryDate: new Date(Date.now() + 120 * 60000).toISOString(),
+      });
+    expect(generated.status).toBe(201);
+
+    const res = await request(app)
+      .get('/api/mini-gt/latest')
+      .set('Authorization', `Bearer ${paidStudent.token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.quiz.scheduleState).toBe('scheduled');
+    expect(res.body.quiz.serverNow).toBeDefined();
+  });
+
+  it('labels window-less Mini GTs as open', async () => {
+    await seedBank();
+    const windowless = await request(app)
+      .post('/api/mini-gt/generate')
+      .set('Authorization', `Bearer ${admin.token}`)
+      .send({});
+    expect(windowless.status).toBe(201);
+    const res = await request(app)
+      .get('/api/mini-gt/latest')
+      .set('Authorization', `Bearer ${paidStudent.token}`);
+    expect(res.body.quiz.scheduleState).toBe('open');
+  });
+
   it('requires a student session', async () => {
     expect((await request(app).get('/api/mini-gt/latest')).status).toBe(401);
     expect(

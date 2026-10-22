@@ -763,31 +763,14 @@ const parseQuizDuration = (duration) => {
 // a 400 instead of throwing a Mongoose CastError (500 "Server error").
 const areValidObjectIds = (ids) => Array.isArray(ids) && ids.every((id) => mongoose.isValidObjectId(id));
 
-// Validates + normalizes the optional quiz time window. Accepts ISO strings
-// (what the apps send) and rejects unparseable values with a clear message
-// instead of letting them become Invalid Dates that crash save() with a 500.
-// Enforces the shared business rule: when both ends are set, end > start.
-const parseQuizTimeWindow = ({ scheduledDate, expiryDate }) => {
-  const value = {};
-  if (scheduledDate !== undefined && scheduledDate !== null && scheduledDate !== '') {
-    const start = new Date(scheduledDate);
-    if (isNaN(start.getTime())) {
-      return { error: 'Start date & time is invalid — please re-select it and try again.' };
-    }
-    value.scheduledDate = start;
-  }
-  if (expiryDate !== undefined && expiryDate !== null && expiryDate !== '') {
-    const end = new Date(expiryDate);
-    if (isNaN(end.getTime())) {
-      return { error: 'End date & time is invalid — please re-select it and try again.' };
-    }
-    value.expiryDate = end;
-  }
-  if (value.scheduledDate && value.expiryDate && value.expiryDate <= value.scheduledDate) {
-    return { error: 'End date must be after start date' };
-  }
-  return { value };
-};
+// Shared quiz-scheduling helpers — every authoring path and student payload
+// resolves windows/availability through this one util (utils/quizSchedule.js)
+// so the Import Quiz, Create Quiz, edit and Mini GT workflows can never
+// validate differently.
+const {
+  parseQuizTimeWindow,
+  computeScheduleState,
+} = require('../utils/quizSchedule');
 
 // Checks whether an active (non-deleted) quiz already exists with the given title.
 // Excludes soft-deleted quizzes (isDeleted: true or isActive: false).
@@ -969,12 +952,20 @@ router.get('/', auth, async (req, res) => {
         // Strip full question data to keep response small
         qObj.questions = (qObj.questions || []).map(qu => qu._id);
 
+        // Server-computed availability (matches the /start gate) so badges and
+        // countdowns never depend on the device clock.
+        qObj.scheduleState = computeScheduleState(quiz);
+
         const attempt = attempts.find(a => a.quiz.toString() === quiz._id.toString());
         qObj.attemptStatus = attempt ? {
           hasAttempted: true,
           status: attempt.status,
           score: attempt.score,
           marksObtained: attempt.marksObtained,
+          // Included so "Check Results" can route directly to the attempt —
+          // a /start probe 403s once the quiz window has closed, which used
+          // to make results unreachable from the list for expired tests.
+          attemptId: attempt._id,
           canRetake: attempt.retestApproved && !attempt.retestUsed,
           retestRequested: attempt.retestRequested && !attempt.retestApproved
         } : {
@@ -1274,6 +1265,16 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
         message: `A quiz with the title "${String(quizTitle).trim()}" already exists. Please use a different name.`,
         errorType: 'DUPLICATE_TITLE'
       });
+    }
+
+    // Fail fast on an invalid time window for the same reason: the check
+    // below runs AFTER questions are created, and its direct return would
+    // bypass the catch-block rollback — an invalid window leaked the created
+    // questions as orphans. Validating here (identical contract to
+    // create-from-bank) keeps the no-half-imports guarantee intact.
+    const timeWindowResult = parseQuizTimeWindow({ scheduledDate, expiryDate });
+    if (timeWindowResult.error) {
+      return res.status(400).json({ message: timeWindowResult.error });
     }
 
     // Proctoring config — same validated-not-trusted gate as create-from-bank
@@ -1674,11 +1675,6 @@ router.post('/import-excel', auth, authorize('admin'), upload.single('file'), as
           status: 'created'
         });
       }
-    }
-
-    const timeWindowResult = parseQuizTimeWindow({ scheduledDate, expiryDate });
-    if (timeWindowResult.error) {
-      return res.status(400).json({ message: timeWindowResult.error });
     }
 
     const sectionResult = deriveSectionsForQuestions(
@@ -3230,6 +3226,12 @@ router.get('/:id', auth, async (req, res) => {
         student: req.user._id
       });
 
+      // Out-of-window question redaction (see the block before res.json):
+      // a live attempt holder keeps seeing question content in every state —
+      // their next write is still gated by the effective-deadline checks.
+      var _hasInProgressAttempt = existingAttempt?.status === 'in_progress';
+      var _scheduleState = computeScheduleState(quiz);
+
       // Attach attemptStatus so the frontend can handle it in the UI
       // (e.g. show "View Results" instead of "Start Quiz")
       // Stored as temp var - will be added to qObj after toObject()
@@ -3306,6 +3308,30 @@ router.get('/:id', auth, async (req, res) => {
     // Students only ever see proctoringRequired above.
     if (req.user.role === 'admin') {
       qObj.proctoringEligibility = await resolveQuizProctoringEligibility(quiz);
+    }
+
+    // Scheduling: students get the server-computed availability state (the
+    // same rule /start enforces) plus the server's now, so a drifted device
+    // clock cannot mislead the countdown. Outside the window the question
+    // CONTENT is also redacted down to ids — /start already blocks attempts
+    // before the start time and after the end time, but without this the
+    // full question text was still fetchable through a direct API call. A
+    // student holding a live in-progress attempt keeps the content (their
+    // writes remain deadline-gated); question COUNTS stay intact so the
+    // instructions screen renders normally for scheduled tests.
+    if (req.user.role === 'student') {
+      qObj.scheduleState = _scheduleState || computeScheduleState(quiz);
+      qObj.serverNow = new Date().toISOString();
+      const outsideWindow =
+        (qObj.scheduleState === 'scheduled' || qObj.scheduleState === 'ended')
+        && !_hasInProgressAttempt;
+      if (outsideWindow) {
+        qObj.questions = (qObj.questions || []).map(qu => (qu && qu._id) ? qu._id : qu);
+        (qObj.sections || []).forEach(section => {
+          section.questions = (section.questions || [])
+            .map(qu => (qu && qu._id) ? qu._id : qu);
+        });
+      }
     }
 
     res.json(qObj);

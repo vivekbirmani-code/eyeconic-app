@@ -11,7 +11,6 @@ import {
   Animated,
   Dimensions,
   AccessibilityInfo,
-  Image,
   Modal,
 } from 'react-native';
 import { ScreenContainer } from '@/components/layout';
@@ -30,11 +29,12 @@ import { MonitoringStatusDot } from '@/components/proctoring/MonitoringStatusDot
 import { useProctoringSession } from '@/hooks/useProctoringSession';
 import { useAttemptScreenCapturePrevention } from '@/hooks/useAttemptScreenCapturePrevention';
 import { PROCTORING_COPY } from '@/utils/proctoringCopy';
-import { getSocketURL } from '@/services/config';
 import { formatToIST } from '@/utils/date';
 import QuestionPrompt from '@/components/quiz/QuestionPrompt';
+import { QuestionMediaImage } from '@/components/quiz/QuestionMediaImage';
 import { ReportQuestionDialog } from '@/components/quiz/ReportQuestionDialog';
 import { QuestionType, StudentResponse, isResponseAnswered } from '@/types/question';
+import { prefetchMedia } from '@/utils/media';
 
 interface Question {
   _id: string;
@@ -103,7 +103,6 @@ function QuizTakingContent() {
   const [showNavigationGrid, setShowNavigationGrid] = useState(SCREEN_WIDTH > 768);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(false);
-  const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
   const [showReviewModal, setShowReviewModal] = useState(false);
   // Report-a-question dialog (side-channel feedback — never touches answers
   // or submission).
@@ -208,25 +207,6 @@ function QuizTakingContent() {
 
   const scrollViewRef = useRef<ScrollView>(null);
 
-  // Helper to resolve image URLs (handles relative paths from backend)
-  const getImageUrl = useCallback((path?: string) => {
-    if (!path) return undefined;
-    if (path.startsWith('http') || path.startsWith('https') || path.startsWith('file://') || path.startsWith('data:')) {
-      return { uri: path };
-    }
-
-    // Prepend base URL for relative paths
-    const baseUrl = getSocketURL();
-    // Ensure we don't have double slashes if path starts with /
-    const cleanPath = path.startsWith('/') ? path : `/${path}`;
-    return { uri: `${baseUrl}${cleanPath}` };
-  }, []);
-
-  // Handle image load errors gracefully
-  const handleImageError = useCallback((url: string) => {
-    setFailedImages(prev => new Set(prev).add(url));
-  }, []);
-
   // Helper to safely get subject name with fallback
   const getSubjectName = useCallback((question: any): string => {
     return question.subject?.name || question.subjectName || 'Uncategorized';
@@ -327,6 +307,21 @@ function QuizTakingContent() {
     () => activeQuestionIndexes.indexOf(currentQuestionIndex),
     [activeQuestionIndexes, currentQuestionIndex]
   );
+
+  // Warm the media cache for the question the student will most likely open
+  // next (actual navigation order, not raw array order). Only the immediate
+  // next question is prefetched — never the whole quiz — and each URL is
+  // requested at most once per session, so back-and-forth navigation or
+  // re-renders cannot duplicate network traffic.
+  useEffect(() => {
+    if (!quiz) return;
+    const nextQuestion = quiz.questions[activeQuestionIndexes[currentQuestionPosition + 1]];
+    if (!nextQuestion) return;
+    prefetchMedia([
+      nextQuestion.questionImage,
+      ...(nextQuestion.optionImages || []),
+    ]);
+  }, [quiz, currentQuestionPosition, activeQuestionIndexes]);
 
   // Memoize question statuses
   const questionStatuses = useMemo(() => {
@@ -1114,24 +1109,21 @@ function QuizTakingContent() {
                 {currentQuestion.question}
               </Text>
 
-              {/* Question Image */}
-              {currentQuestion.questionImage && !failedImages.has(currentQuestion.questionImage) && (
-                <Image
-                  source={getImageUrl(currentQuestion.questionImage)}
-                  style={styles.questionImage}
-                  resizeMode="contain"
-                  onError={() => handleImageError(currentQuestion.questionImage!)}
-                />
-              )}
+              {/* Question Image — loading/error/retry states handled
+                  internally; question text and options stay interactive
+                  while the media loads. Renders nothing when the question
+                  has no image. */}
+              <QuestionMediaImage
+                source={currentQuestion.questionImage}
+                style={styles.questionImage}
+                accessibilityLabel="Question image"
+              />
 
               {/* Answer Input (adapts to question type) */}
               <QuestionPrompt
                 question={currentQuestion}
                 response={selectedAnswer}
                 onChange={handleResponseChange}
-                getImageUrl={getImageUrl}
-                failedImages={failedImages}
-                onImageError={handleImageError}
               />
 
               {/* Per-question actions. Report Question is always available —

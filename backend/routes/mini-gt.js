@@ -7,6 +7,7 @@ const QuestionBank = require('../models/QuestionBank');
 const miniGt = require('../utils/miniGt');
 const { dedupeLatestAttemptPerStudent } = require('../utils/cohortComparison');
 const { roundTo2 } = require('../utils/analytics');
+const { parseQuizTimeWindow, computeScheduleState } = require('../utils/quizSchedule');
 
 const router = express.Router();
 
@@ -130,6 +131,10 @@ router.get('/latest', auth, authorize('student'), async (req, res) => {
         negativeMarks: quiz.negativeMarks,
         scheduledDate: quiz.scheduledDate || null,
         expiryDate: quiz.expiryDate || null,
+        // Server-computed availability — the same rule /start enforces, so
+        // the Mini GT card can never disagree with the gate.
+        scheduleState: computeScheduleState(quiz),
+        serverNow: new Date().toISOString(),
         questionCount: quiz.questions.length,
         subjectNames,
         createdAt: quiz.createdAt,
@@ -257,12 +262,21 @@ router.post('/generate', auth, authorize('admin'), async (req, res) => {
   try {
     const { title, duration, scheduledDate, expiryDate } = req.body || {};
 
+    // Same window contract as every other authoring path (create-from-bank,
+    // import-excel, PUT /:id) — validated and UTC-pinned BEFORE anything is
+    // created, so a Mini GT can never carry an invalid window or a
+    // server-local-timezone instant.
+    const timeWindowResult = parseQuizTimeWindow({ scheduledDate, expiryDate });
+    if (timeWindowResult.error) {
+      return res.status(400).json({ message: timeWindowResult.error });
+    }
+
     const result = await miniGt.createMiniGtQuiz({
       adminId: req.user._id,
       title,
       duration,
-      scheduledDate: scheduledDate ? new Date(scheduledDate) : undefined,
-      expiryDate: expiryDate ? new Date(expiryDate) : undefined,
+      scheduledDate: timeWindowResult.value.scheduledDate,
+      expiryDate: timeWindowResult.value.expiryDate,
       onCreated: async ({ quiz, studentIds }) => {
         // Parity with POST /api/quizzes/create-from-bank: socket badge + push
         // notification (unseenQuizzes was already written by the creator).

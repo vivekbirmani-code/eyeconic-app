@@ -487,3 +487,64 @@ describe('POST /api/quizzes/import-excel — AI Proctoring toggle', () => {
     expect([200, 201]).toContain(started.status);
   });
 });
+
+describe('POST /api/quizzes/import-excel — scheduling window parity with create-from-bank', () => {
+  it('persists a valid window as exact UTC instants', async () => {
+    const scheduledDate = new Date(Date.now() + 60 * 60000);
+    const expiryDate = new Date(Date.now() + 120 * 60000);
+    const res = await importFile(adminToken, toBuffer([baseRow()]), {
+      extra: {
+        scheduledDate: scheduledDate.toISOString(),
+        expiryDate: expiryDate.toISOString(),
+      },
+    });
+    expect(res.status).toBe(201);
+    const quiz = await Quiz.findOne({ title: 'Imported Quiz' });
+    expect(quiz.scheduledDate.getTime()).toBe(scheduledDate.getTime());
+    expect(quiz.expiryDate.getTime()).toBe(expiryDate.getTime());
+  });
+
+  it('rejects end-before-start with 400 and leaves no half-import behind', async () => {
+    const res = await importFile(adminToken, toBuffer([baseRow()]), {
+      extra: {
+        scheduledDate: new Date(Date.now() + 120 * 60000).toISOString(),
+        expiryDate: new Date(Date.now() + 60 * 60000).toISOString(),
+      },
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/end date must be after start date/i);
+    expect(await Quiz.countDocuments({})).toBe(0);
+    expect(await QuestionBank.countDocuments({})).toBe(0);
+  });
+
+  it('rejects an unparseable window value with a clear 400 (not a 500)', async () => {
+    const res = await importFile(adminToken, toBuffer([baseRow()]), {
+      extra: { expiryDate: 'not-a-date' },
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.message).toMatch(/end date & time is invalid/i);
+  });
+
+  it('pins offset-less datetime strings to UTC regardless of the server timezone', async () => {
+    const res = await importFile(adminToken, toBuffer([baseRow()]), {
+      extra: {
+        scheduledDate: '2026-10-22T10:00',
+        expiryDate: '2026-10-22T12:00Z',
+      },
+    });
+    expect(res.status).toBe(201);
+    const quiz = await Quiz.findOne({ title: 'Imported Quiz' });
+    expect(quiz.scheduledDate.toISOString()).toBe('2026-10-22T10:00:00.000Z');
+    expect(quiz.expiryDate.toISOString()).toBe('2026-10-22T12:00:00.000Z');
+  });
+
+  it('treats empty-string window fields as absent (form posts without dates)', async () => {
+    const res = await importFile(adminToken, toBuffer([baseRow()]), {
+      extra: { scheduledDate: '', expiryDate: '' },
+    });
+    expect(res.status).toBe(201);
+    const quiz = await Quiz.findOne({ title: 'Imported Quiz' });
+    expect(quiz.scheduledDate).toBeUndefined();
+    expect(quiz.expiryDate).toBeUndefined();
+  });
+});

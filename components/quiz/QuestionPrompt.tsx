@@ -1,7 +1,8 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, ImageSourcePropType } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Check } from 'lucide-react-native';
 import { QuestionType, StudentResponse, MappingAnswer } from '@/types/question';
+import { QuestionMediaImage } from '@/components/quiz/QuestionMediaImage';
 
 export interface QuestionPromptData {
   questionType?: QuestionType;
@@ -19,9 +20,6 @@ interface QuestionPromptProps {
   question: QuestionPromptData;
   response: StudentResponse;
   onChange: (response: StudentResponse) => void;
-  getImageUrl: (path?: string) => ImageSourcePropType | undefined;
-  failedImages: Set<string>;
-  onImageError: (url: string) => void;
   disabled?: boolean;
 }
 
@@ -34,9 +32,6 @@ export default function QuestionPrompt({
   question,
   response,
   onChange,
-  getImageUrl,
-  failedImages,
-  onImageError,
   disabled,
 }: QuestionPromptProps) {
   const type = question.questionType || 'mcq_single';
@@ -81,14 +76,11 @@ export default function QuestionPrompt({
                   {option ? (
                     <Text style={[styles.optionText, isSelected && styles.selectedOptionText]}>{option}</Text>
                   ) : null}
-                  {optionImage && !failedImages.has(optionImage) && (
-                    <Image
-                      source={getImageUrl(optionImage)}
-                      style={styles.optionImage}
-                      resizeMode="contain"
-                      onError={() => onImageError(optionImage)}
-                    />
-                  )}
+                  <QuestionMediaImage
+                    source={optionImage}
+                    style={styles.optionImage}
+                    accessibilityLabel={`Option ${String.fromCharCode(65 + index)} image`}
+                  />
                 </View>
               </View>
             </TouchableOpacity>

@@ -8,7 +8,6 @@ import {
   ActivityIndicator,
   Alert,
   Dimensions,
-  Image,
 } from 'react-native';
 import { ScreenContainer } from '@/components/layout';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -16,6 +15,7 @@ import { CheckCircle, XCircle, ChevronLeft, ChevronRight, Clock, Award, BarChart
 import Svg, { Circle, G, Text as SvgText, Rect } from 'react-native-svg';
 import { api } from '@/services/api';
 import { SectionTabs } from '@/components/SectionTabs';
+import { QuestionMediaImage } from '@/components/quiz/QuestionMediaImage';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 
@@ -405,7 +405,11 @@ export default function QuizReview() {
           <Text style={styles.questionText}>{currentQuestion.question}</Text>
 
           {currentQuestion.questionImage ? (
-            <Image source={{ uri: currentQuestion.questionImage }} style={styles.questionImage} resizeMode="contain" />
+            <QuestionMediaImage
+              source={currentQuestion.questionImage}
+              style={styles.questionImage}
+              accessibilityLabel="Question image"
+            />
           ) : null}
 
           {currentQuestion.questionType === 'assertion_reason' && (
@@ -470,9 +474,11 @@ export default function QuizReview() {
                       <Text style={[styles.optionText, (isCorrect || isWrongSelection || isSelected) && styles.highlightedText]}>
                         {option}
                       </Text>
-                      {currentQuestion.optionImages?.[index] ? (
-                        <Image source={{ uri: currentQuestion.optionImages[index] }} style={styles.optionImage} resizeMode="contain" />
-                      ) : null}
+                      <QuestionMediaImage
+                        source={currentQuestion.optionImages?.[index]}
+                        style={styles.optionImage}
+                        accessibilityLabel={`Option ${String.fromCharCode(65 + index)} image`}
+                      />
                     </View>
                   </View>
 
@@ -516,7 +522,11 @@ export default function QuizReview() {
           )}
 
           {reviewData.quiz.shareSolution && currentQuestion.explanationImage && (
-            <Image source={{ uri: currentQuestion.explanationImage }} style={styles.explanationImage} resizeMode="contain" />
+            <QuestionMediaImage
+              source={currentQuestion.explanationImage}
+              style={styles.explanationImage}
+              accessibilityLabel="Explanation image"
+            />
           )}
 
           <View style={styles.statsContainer}>
