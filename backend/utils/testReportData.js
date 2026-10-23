@@ -150,8 +150,14 @@ async function collectTestReportData({ testId, user, includeUserResponses = fals
 
   // Phase 7 (§25.2): per-attempt proctoring columns from the SAME rollup the
   // app's analytics block uses — CSV and Excel render these rows verbatim, so
-  // the three surfaces cannot drift.
-  const proctoring = await buildProctoringSummary(attempts.map((a) => a._id));
+  // the three surfaces cannot drift. Public-quiz proctoring Phase 4: admin
+  // exports include guest sessions in the rollup AND on the guest lead rows
+  // (the app's analytics block made the same change in the same changeset —
+  // locked pair). Empty columns remain for attempts without a session.
+  const proctoring = await buildProctoringSummary([
+    ...attempts.map((a) => a._id),
+    ...guestAttempts.map((a) => a._id),
+  ]);
   const proctoringByAttempt = new Map(
     proctoring.attempts.map((row) => [row.attemptId, row])
   );
@@ -243,8 +249,10 @@ async function collectTestReportData({ testId, user, includeUserResponses = fals
         phoneVerified: guest.phoneVerified ? 'Yes' : 'No',
         emailVerified: guest.emailVerified ? 'Yes' : 'No',
         marketingConsent: guest.marketingConsent ? 'Yes' : 'No',
-        // Proctoring never applies to guest attempts (§4.4/V1 scope).
-        ...EMPTY_PROCTORING_COLUMNS,
+        // Public-quiz proctoring Phase 4: real session data for proctored
+        // guest attempts (same rollup as the app's Proctoring tab); empty
+        // columns only for attempts without a session (unarmed quizzes).
+        ...proctoringColumnsFor(guest.attemptId),
       }))
     : [];
 

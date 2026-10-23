@@ -4630,6 +4630,19 @@ async function loadRankedLeaderboard(user, quiz) {
   return rankStudentAttempts(attempts, quiz.questions);
 }
 
+// External (guest) leaderboard export data (public-quiz proctoring Phase
+// 4): participants + the shared proctoring rollup in one helper — the CSV
+// and Excel routes render the SAME data, fetched concurrently (review
+// finding: the block was copy-pasted into both routes).
+const loadGuestLeaderboardExportData = async (testId) => {
+  const [participants, guestAttemptDocs] = await Promise.all([
+    fetchGuestParticipants(testId, { fullPhone: true }),
+    fetchGuestAttemptDocs(testId),
+  ]);
+  const proctoringSummary = await buildProctoringSummary(guestAttemptDocs.map((a) => a._id));
+  return { participants, proctoringSummary };
+};
+
 // Cohort selector shared by both leaderboard export formats. Default (absent
 // param) is 'internal' so pre-dialog callers — older app builds, the verify
 // script, bookmarked URLs — stay byte-identical. 'external' selects the
@@ -4694,7 +4707,10 @@ router.get('/analytics/test/:testId/leaderboard/export/csv', auth, authorize('ad
     const isExternal = cohort === 'external';
     const columns = isExternal ? GUEST_LEADERBOARD_EXPORT_COLUMNS : LEADERBOARD_EXPORT_COLUMNS;
     const rows = isExternal
-      ? toGuestExportRows(await fetchGuestParticipants(req.params.testId, { fullPhone: true }))
+      ? toGuestExportRows(
+        (await loadGuestLeaderboardExportData(req.params.testId)).participants,
+        (await loadGuestLeaderboardExportData(req.params.testId)).proctoringSummary
+      )
       : toExportRows(await loadRankedLeaderboard(req.user, quiz));
     const generatedAt = new Date();
 
@@ -4758,7 +4774,10 @@ router.get('/analytics/test/:testId/leaderboard/export/excel', auth, authorize('
 
     const isExternal = cohort === 'external';
     const rows = isExternal
-      ? toGuestExportRows(await fetchGuestParticipants(req.params.testId, { fullPhone: true }))
+      ? toGuestExportRows(
+        (await loadGuestLeaderboardExportData(req.params.testId)).participants,
+        (await loadGuestLeaderboardExportData(req.params.testId)).proctoringSummary
+      )
       : toExportRows(await loadRankedLeaderboard(req.user, quiz));
     const generatedAt = new Date();
 
@@ -4840,10 +4859,16 @@ router.get('/analytics/test/:testId', auth, authorize('admin', 'mentor'), async 
     const studentPerformance = rankStudentAttempts(attempts, quiz.questions);
 
     // Phase 7 (§25.2): per-test proctoring rollup over the SAME cohort —
-    // mentor scoping comes free from buildTestAttemptScope, so the proctoring
-    // block can never disagree with the rest of this response about who is
-    // in the test. Proctoring is registered-only in V1 (no guest rows).
-    const proctoring = await buildProctoringSummary(attempts.map((a) => a._id));
+    // mentor scoping comes free from buildTestAttemptScope (mentors get
+    // ZERO guest attempts here, so their rollup stays registered-only by
+    // construction). Public-quiz proctoring Phase 4: admins' guest attempts
+    // join the rollup — the guest-label join in the Proctoring tab ships
+    // in the SAME changeset (locked pair), so a guest row can never render
+    // with the "Student" fallback name.
+    const proctoring = await buildProctoringSummary([
+      ...attempts.map((a) => a._id),
+      ...guestAttempts.map((a) => a._id),
+    ]);
 
     // Public-quiz participants: a SEPARATE, unranked list for admins only.
     // Admins get the full lead phone (same follow-up policy as the CSV
@@ -5140,11 +5165,17 @@ router.post('/:id/revoke-share-link', auth, authorize('admin'), async (req, res)
 router.get('/:id/share-status', auth, authorize('admin'), async (req, res) => {
   try {
     const quiz = await Quiz.findById(req.params.id)
-      .select('shareToken isPublic publicExpiryDate');
+      .select('shareToken isPublic publicExpiryDate proctoring');
 
     if (!quiz) {
       return res.status(404).json({ message: 'Quiz not found' });
     }
+
+    // Public-quiz proctoring Phase 4: live proctoring state beside the link
+    // status, so the share modal's indication always reflects the ACTUAL
+    // stored config + rollout gates at fetch time (fresh on every open,
+    // correct after edits/revocation — never a stale screen snapshot).
+    const proctoringEligibility = await resolveEligibilityForQuiz(quiz);
 
     res.json({
       isPublic: quiz.isPublic,
@@ -5154,7 +5185,17 @@ router.get('/:id/share-status', auth, authorize('admin'), async (req, res) => {
       // browser users and is never handed out anymore.
       shareUrl: quiz.shareToken ? buildPublicQuizUrl(quiz.shareToken) : null,
       publicExpiryDate: quiz.publicExpiryDate,
-      isExpired: quiz.publicExpiryDate ? new Date() > quiz.publicExpiryDate : false
+      isExpired: quiz.publicExpiryDate ? new Date() > quiz.publicExpiryDate : false,
+      proctoring: {
+        // Stored opt-in + camera mode (what the admin configured).
+        enabled: quiz.proctoring?.enabled === true,
+        camera: quiz.proctoring?.camera ?? null,
+        // Live "effective right now" + blockers (kill switch / flag).
+        eligibility: {
+          enabled: proctoringEligibility.enabled,
+          blockers: proctoringEligibility.blockers ?? [],
+        },
+      }
     });
   } catch (error) {
     console.error('Get share status error:', error);
@@ -5188,7 +5229,16 @@ router.get('/attempt/:id', auth, async (req, res) => {
           marketingConsent: lead?.marketingConsent?.granted === true,
         };
         payload.participantType = 'guest';
-        return res.json({ ...payload, serverNow: new Date().toISOString() });
+        // Proctoring session hint (public-quiz proctoring Phase 4): the
+        // SAME hint registered attempts carry, so the attempt-detail modal
+        // mounts the timeline for proctored guest attempts too. Ships with
+        // the guest-aware timeline/review resolution (locked pair).
+        const guestSessionHint = await buildProctoringSessionHint(guestAttempt);
+        return res.json({
+          ...payload,
+          ...(guestSessionHint ? { proctoringSession: guestSessionHint } : {}),
+          serverNow: new Date().toISOString(),
+        });
       }
     }
 

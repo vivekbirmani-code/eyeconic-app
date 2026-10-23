@@ -385,6 +385,11 @@ describe('GUEST_LEADERBOARD_EXPORT_COLUMNS', () => {
       'Tab Switches',
       'Completed At (UTC)',
       'Attempt ID',
+      // Public-quiz proctoring Phase 4: summary columns from the shared
+      // buildProctoringSummary rollup (empty for session-less attempts).
+      'Risk Category',
+      'Total Violations',
+      'Review Status',
     ]);
   });
 

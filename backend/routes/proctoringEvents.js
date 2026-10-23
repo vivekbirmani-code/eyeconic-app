@@ -26,6 +26,7 @@
 
 const express = require('express');
 const QuizAttempt = require('../models/QuizAttempt');
+const GuestAttempt = require('../models/GuestAttempt');
 const ProctoringSession = require('../models/ProctoringSession');
 const ProctoringEvent = require('../models/ProctoringEvent');
 const ProctoringViolation = require('../models/ProctoringViolation');
@@ -653,6 +654,22 @@ const assertAttemptReadAccess = async (req, attempt) => {
 };
 
 /**
+ * Guest-aware attempt resolution (public-quiz proctoring Phase 4): the
+ * registered attempt first; a GUEST attempt (public-quiz participant) for
+ * ADMINS ONLY — mentors/students keep the bare 404 (guest leads are
+ * admin-privileged, mirroring GET /quizzes/attempt/:id), and the owner
+ * guest's OWN reads ride the public routes (routes/publicProctoring.js),
+ * never these. Returns {attempt, kind:'user'|'guest'} or null.
+ */
+const resolveAttemptForSessionRead = async (req, attemptId) => {
+  const attempt = await QuizAttempt.findById(attemptId);
+  if (attempt) return { attempt, kind: 'user' };
+  if (req.user.role !== 'admin') return null;
+  const guestAttempt = await GuestAttempt.findById(attemptId);
+  return guestAttempt ? { attempt: guestAttempt, kind: 'guest' } : null;
+};
+
+/**
  * GET /session — session state for resume/resync (plan §27.2), used by the
  * taking screen to re-arm the engine after refresh / app restart.
  */
@@ -662,14 +679,17 @@ const buildSessionRouter = () => {
   router.get('/session', auth, async (req, res) => {
     const { attemptId } = req.params;
     try {
-      const attempt = await QuizAttempt.findById(attemptId);
-      if (!attempt) {
+      const resolved = await resolveAttemptForSessionRead(req, attemptId);
+      if (!resolved) {
         return res.status(404).json({
           success: false, message: 'Attempt not found', code: 'ATTEMPT_NOT_FOUND', requestId: req.requestId,
         });
       }
+      const { attempt, kind } = resolved;
 
-      if (!(await assertAttemptReadAccess(req, attempt))) {
+      // Guest attempts reach here as admin-only; registered attempts keep
+      // the owner/admin/mentor rule.
+      if (kind === 'user' && !(await assertAttemptReadAccess(req, attempt))) {
         return res.status(403).json({
           success: false,
           message: 'You are not authorized to view this session',
@@ -694,6 +714,7 @@ const buildSessionRouter = () => {
         session = await ensureProctoringSession(attempt, {
           policySnapshot: attempt.proctoringSnapshot,
           reason: 'resync_selfheal',
+          ...(kind === 'guest' ? { ownerKind: 'guest' } : {}),
         });
       }
 
@@ -748,13 +769,14 @@ const buildSessionRouter = () => {
   router.get('/timeline', auth, async (req, res) => {
     const { attemptId } = req.params;
     try {
-      const attempt = await QuizAttempt.findById(attemptId);
-      if (!attempt) {
+      const resolved = await resolveAttemptForSessionRead(req, attemptId);
+      if (!resolved) {
         return res.status(404).json({
           success: false, message: 'Attempt not found', code: 'ATTEMPT_NOT_FOUND', requestId: req.requestId,
         });
       }
-      if (!(await assertAttemptReadAccess(req, attempt))) {
+      const { attempt, kind } = resolved;
+      if (kind === 'user' && !(await assertAttemptReadAccess(req, attempt))) {
         return res.status(403).json({
           success: false,
           message: 'You are not authorized to view this timeline',
@@ -822,12 +844,15 @@ const buildSessionRouter = () => {
         });
       }
 
-      const attempt = await QuizAttempt.findById(attemptId);
-      if (!attempt) {
+      // Admin-only route: registered OR guest attempts (guest resolution
+      // is admin-only by construction in resolveAttemptForSessionRead).
+      const resolved = await resolveAttemptForSessionRead(req, attemptId);
+      if (!resolved) {
         return res.status(404).json({
           success: false, message: 'Attempt not found', code: 'ATTEMPT_NOT_FOUND', requestId: req.requestId,
         });
       }
+      const { attempt, kind } = resolved;
       if (!attempt.proctoringSnapshot) {
         return res.status(400).json({
           success: false,
@@ -933,8 +958,10 @@ const buildSessionRouter = () => {
         }
       ).exec();
 
-      // §26.5 mirror on the attempt.
-      await QuizAttempt.updateOne(
+      // §26.5 mirror on the OWNING attempt collection (guest attempts
+      // mirror onto GuestAttempt — public-quiz proctoring Phase 4).
+      const AttemptModel = kind === 'guest' ? GuestAttempt : QuizAttempt;
+      await AttemptModel.updateOne(
         { _id: attempt._id },
         { $set: { integrityStatus } }
       ).exec();

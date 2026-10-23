@@ -104,6 +104,13 @@ const GUEST_LEADERBOARD_EXPORT_COLUMNS = [
     numFmt: DATETIME_FORMAT,
   },
   { header: 'Attempt ID', width: 26, value: (r) => r.attemptId },
+  // Public-quiz proctoring Phase 4: the same summary fields the test-report
+  // export exposes (risk category, violations, review status) — sourced from
+  // the shared buildProctoringSummary rollup, empty for attempts without a
+  // session (unarmed quizzes). No images/evidence exist anywhere by design.
+  { header: 'Risk Category', width: 13, value: (r) => r.proctoringRisk ?? '' },
+  { header: 'Total Violations', width: 11, value: (r) => r.proctoringViolations ?? '', numFmt: '0' },
+  { header: 'Review Status', width: 14, value: (r) => r.proctoringReview ?? '' },
 ];
 
 /**
@@ -127,9 +134,15 @@ function toExportRows(leaderboard) {
  * The sort runs on a copy, so the caller's array is never mutated.
  *
  * Also derives `timeSpent` (minutes, 2dp) from `timeTakenSeconds` so the
- * column spec stays uniform with the internal one.
+ * column spec stays uniform with the internal one, and joins the proctoring
+ * summary (public-quiz proctoring Phase 4) when the caller supplies one —
+ * `proctoringSummary` is `{attempts: [...]}` keyed by attemptId; rows
+ * without a session simply leave the three columns empty.
  */
-function toGuestExportRows(participants) {
+function toGuestExportRows(participants, proctoringSummary = null) {
+  const proctoringByAttempt = new Map(
+    (proctoringSummary?.attempts ?? []).map((row) => [row.attemptId, row])
+  );
   return (Array.isArray(participants) ? participants : [])
     .slice()
     .sort((a, b) => {
@@ -147,11 +160,21 @@ function toGuestExportRows(participants) {
       if (timeA !== timeB) return timeA - timeB;
       return String(a.attemptId ?? '').localeCompare(String(b.attemptId ?? ''));
     })
-    .map((participant, index) => ({
-      ...participant,
-      position: index + 1,
-      timeSpent: Math.round(((participant.timeTakenSeconds || 0) / 60) * 100) / 100,
-    }));
+    .map((participant, index) => {
+      const proctoringRow = proctoringByAttempt.get(String(participant.attemptId));
+      return {
+        ...participant,
+        position: index + 1,
+        timeSpent: Math.round(((participant.timeTakenSeconds || 0) / 60) * 100) / 100,
+        ...(proctoringRow
+          ? {
+              proctoringRisk: proctoringRow.riskCategory,
+              proctoringViolations: proctoringRow.totalViolations,
+              proctoringReview: proctoringRow.integrityStatus,
+            }
+          : {}),
+      };
+    });
 }
 
 const TITLE_ROW = 1;

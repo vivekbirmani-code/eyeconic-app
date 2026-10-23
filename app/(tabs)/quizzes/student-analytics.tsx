@@ -576,6 +576,7 @@ export default function Analytics() {
             <ProctoringOverview
               proctoring={testAnalytics?.proctoring ?? null}
               studentPerformance={testAnalytics?.studentPerformance ?? null}
+              guestParticipants={testAnalytics?.guestParticipants ?? null}
               loading={loadingTestAnalytics}
               onAttemptClick={handleStudentAttemptClick}
             />

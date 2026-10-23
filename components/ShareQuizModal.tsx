@@ -21,6 +21,7 @@ import {
   Link,
   AlertCircle,
   Minus,
+  ShieldCheck,
 } from 'lucide-react-native';
 import { api } from '@/services/api';
 import * as Clipboard from 'expo-clipboard';
@@ -88,6 +89,15 @@ export default function ShareQuizModal({ visible, quiz, onClose, onShareComplete
   const [shareMode, setShareMode] = useState<'internal' | 'external'>('internal');
   const [publicShareUrl, setPublicShareUrl] = useState<string | null>(null);
   const [shareExpiry, setShareExpiry] = useState<Date | null>(null);
+  // Live proctoring state from share-status (public-quiz proctoring Phase
+  // 4): stored opt-in + effective-right-now eligibility, re-fetched on
+  // every modal open so it can never drift from the quiz's actual config.
+  const [proctoringState, setProctoringState] = useState<{
+    enabled: boolean;
+    camera: string | null;
+    effective: boolean;
+    blockers: string[];
+  } | null>(null);
   const [generatingLink, setGeneratingLink] = useState(false);
   const [revokingLink, setRevokingLink] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -216,6 +226,9 @@ export default function ShareQuizModal({ visible, quiz, onClose, onShareComplete
     setPublicShareUrl(null);
     setShareExpiry(null);
     setCopied(false);
+    // Stale-indication guard (review finding): the previous quiz's
+    // proctoring state must never survive into this open.
+    setProctoringState(null);
 
     // The internal pickers (and their API calls) are dead weight when the
     // Internal tab is hidden.
@@ -255,12 +268,26 @@ export default function ShareQuizModal({ visible, quiz, onClose, onShareComplete
   const checkExistingShareLink = async (quizId: string) => {
     try {
       const response = await api.get(`/quizzes/${quizId}/share-status`);
+      const p = response.data?.proctoring;
+      setProctoringState(
+        p
+          ? {
+              enabled: p.enabled === true,
+              camera: p.camera ?? null,
+              effective: p.eligibility?.enabled === true,
+              blockers: Array.isArray(p.eligibility?.blockers) ? p.eligibility.blockers : [],
+            }
+          : null
+      );
       if (response.data.isPublic && response.data.shareUrl) {
         setPublicShareUrl(response.data.shareUrl);
         setShareExpiry(response.data.publicExpiryDate ? new Date(response.data.publicExpiryDate) : null);
       }
     } catch {
-      // Ignore - no existing share link
+      // Ignore - no existing share link. The proctoring indication is
+      // cleared rather than left stale (review finding: the previous
+      // quiz's "ON" must never render for this one).
+      setProctoringState(null);
     }
   };
 
@@ -627,6 +654,23 @@ export default function ShareQuizModal({ visible, quiz, onClose, onShareComplete
                 </Text>
               </View>
 
+              {/* AI Proctoring indication (public-quiz proctoring Phase 4):
+                  live from share-status — stored config + effective gates.
+                  ON = external students go through the camera readiness
+                  checks + consent before starting; OFF = plain link. */}
+              {proctoringState && proctoringState.enabled && (
+                <View style={styles.proctoringShareNote}>
+                  <ShieldCheck size={16} color={colors.primaryDark} />
+                  <Text style={styles.proctoringShareNoteText}>
+                    AI Proctoring is ON for this quiz
+                    {proctoringState.camera ? ` (camera ${proctoringState.camera})` : ''} — external
+                    students complete a camera check and consent before starting.
+                    {!proctoringState.effective &&
+                      ` Monitoring is currently paused (${proctoringState.blockers.join(', ')}); the link works and monitoring resumes when re-enabled.`}
+                  </Text>
+                </View>
+              )}
+
               {publicShareUrl ? (
                 <>
                   <View style={styles.linkContainer}>
@@ -931,6 +975,21 @@ const styles = StyleSheet.create({
     padding: 12,
     borderRadius: 8,
     marginBottom: 16,
+  },
+  proctoringShareNote: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    backgroundColor: colors.primaryTint,
+    padding: 10,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  proctoringShareNoteText: {
+    flex: 1,
+    fontSize: 12.5,
+    lineHeight: 17,
+    color: colors.textBody,
   },
   externalShareInfoText: {
     flex: 1,

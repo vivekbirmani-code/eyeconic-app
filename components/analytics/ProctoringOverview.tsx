@@ -63,6 +63,13 @@ interface ProctoringOverviewProps {
   proctoring?: { attempts: ProctoringAttemptRow[]; rollup: ProctoringRollup } | null;
   /** Ranked student rows (attemptId → studentName/email join). */
   studentPerformance?: Array<{ _id: string; studentName: string; studentEmail: string }> | null;
+  /**
+   * Admin-only unranked public-quiz guests (attemptId → lead identity join).
+   * Since public-quiz proctoring Phase 4 the rollup includes guest sessions;
+   * this join replaces the generic "Student" fallback with the lead's real
+   * name (owner requirement §1) and a Guest badge.
+   */
+  guestParticipants?: Array<{ attemptId: string; name: string; email: string | null }> | null;
   loading?: boolean;
   onAttemptClick?: (attemptId: string) => void;
 }
@@ -91,6 +98,8 @@ const INTEGRITY_COLORS: Record<string, string> = {
 
 interface AttemptRow extends ProctoringAttemptRow {
   studentName: string;
+  /** True for public-quiz guest attempts (rendered with a Guest badge). */
+  isGuest: boolean;
 }
 
 /** One mobile attempt card — a whole readable attempt, tap to drill in. */
@@ -111,7 +120,10 @@ const AttemptCard: React.FC<{
   const body = (
     <View style={styles.card}>
       <View style={styles.cardTopRow}>
-        <Text style={styles.cardName} numberOfLines={1}>{row.studentName}</Text>
+        <View style={styles.cardNameWrap}>
+          <Text style={styles.cardName} numberOfLines={1}>{row.studentName}</Text>
+          {row.isGuest && <Text style={styles.guestBadge}>Guest</Text>}
+        </View>
         <View style={[styles.riskChip, { backgroundColor: `${riskColor}1A` }]}>
           <Text style={[styles.riskChipText, { color: riskColor }]}>
             {row.riskCategory}
@@ -154,6 +166,7 @@ const AttemptCard: React.FC<{
 const ProctoringOverview: React.FC<ProctoringOverviewProps> = ({
   proctoring,
   studentPerformance,
+  guestParticipants,
   loading,
   onAttemptClick,
 }) => {
@@ -179,6 +192,13 @@ const ProctoringOverview: React.FC<ProctoringOverviewProps> = ({
   const { rollup } = proctoring;
   const nameByAttempt = new Map(
     (studentPerformance ?? []).map((row) => [String(row._id), row])
+  );
+  // Guest identity join (owner requirement §1): a rollup row that matches a
+  // public participant renders the lead's REAL name + Guest badge — never
+  // the generic "Student" fallback. Rows matching neither join are legacy
+  // anonymous attempts (pre-verification era) and say so honestly.
+  const guestByAttempt = new Map(
+    (guestParticipants ?? []).map((row) => [String(row.attemptId), row])
   );
 
   const kpis: StatCardItem[] = [
@@ -225,10 +245,15 @@ const ProctoringOverview: React.FC<ProctoringOverviewProps> = ({
 
   const rows: AttemptRow[] = [...proctoring.attempts]
     .sort((a, b) => b.riskScore - a.riskScore || b.totalViolations - a.totalViolations)
-    .map((row) => ({
-      ...row,
-      studentName: nameByAttempt.get(row.attemptId)?.studentName ?? 'Student',
-    }));
+    .map((row) => {
+      const student = nameByAttempt.get(row.attemptId);
+      if (student) return { ...row, studentName: student.studentName, isGuest: false };
+      const guest = guestByAttempt.get(row.attemptId);
+      if (guest) return { ...row, studentName: guest.name, isGuest: true };
+      // Legacy anonymous attempt (pre-OTP-verification era) — never invent
+      // an identity (owner decision 8).
+      return { ...row, studentName: 'Anonymous (pre-verification)', isGuest: true };
+    });
 
   const columns: Array<DataTableColumn<AttemptRow>> = [
     {
@@ -237,7 +262,10 @@ const ProctoringOverview: React.FC<ProctoringOverviewProps> = ({
       width: 150,
       grow: true,
       renderCell: (row) => (
-        <Text style={styles.cellName} numberOfLines={1}>{row.studentName}</Text>
+        <View style={styles.cellNameWrap}>
+          <Text style={styles.cellName} numberOfLines={1}>{row.studentName}</Text>
+          {row.isGuest && <Text style={styles.guestBadge}>Guest</Text>}
+        </View>
       ),
     },
     {
@@ -476,6 +504,20 @@ const styles = StyleSheet.create({
   },
   riskChipText: { fontSize: 11.5, fontWeight: '700', textTransform: 'capitalize' },
   cellName: { fontSize: 13, fontWeight: '600', color: colors.text },
+  cellNameWrap: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  cardNameWrap: { flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 },
+  guestBadge: {
+    fontSize: 9.5,
+    fontWeight: '700',
+    color: colors.primaryDark,
+    backgroundColor: colors.primaryTint,
+    borderRadius: 6,
+    paddingVertical: 1.5,
+    paddingHorizontal: 5,
+    overflow: 'hidden',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
   cellValue: { fontSize: 12.5, color: colors.textBody },
   cellValueAlert: { color: colors.dangerDark, fontWeight: '700' },
   cellValueOk: { color: colors.successDark, fontWeight: '600' },

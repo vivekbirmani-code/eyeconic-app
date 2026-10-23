@@ -20,8 +20,16 @@ export interface ProctoringWarningPayload {
   attemptId?: string;
 }
 
-const resolveSocketUrl = (): string =>
-  import.meta.env.VITE_SOCKET_URL || 'http://localhost:3000';
+const resolveSocketUrl = (): string => {
+  if (import.meta.env.VITE_SOCKET_URL) return import.meta.env.VITE_SOCKET_URL;
+  // Derive from the API URL like every other socket consumer
+  // (NotificationContext derives the socket origin the same way) — a
+  // deployment that sets only VITE_API_URL must never dial localhost
+  // (review finding).
+  const apiUrl = import.meta.env.VITE_API_URL;
+  if (apiUrl) return apiUrl.replace(/\/api\/?$/, '');
+  return 'http://localhost:3000';
+};
 
 export function connectGuestWarningsSocket(
   guestToken: string,

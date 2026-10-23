@@ -119,11 +119,14 @@ export function useWebProctoring({
         lock.release();
         return;
       }
+      // Release in BOTH outcomes (review finding: the challenger path
+      // leaked its BroadcastChannel heartbeat + listener for the page
+      // lifetime).
+      releaseLock = lock.release;
       if (!lock.held) {
         setBlockedByOtherTab(true);
         return;
       }
-      releaseLock = lock.release;
 
       const guestToken = getGuestToken();
       const engine = new WebProctoringEngine({

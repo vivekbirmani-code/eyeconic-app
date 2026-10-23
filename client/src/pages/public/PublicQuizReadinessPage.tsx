@@ -13,6 +13,7 @@ import {
   Video,
 } from 'lucide-react';
 import { publicQuizApi, usePublicQuiz } from '../../contexts/PublicQuizContext';
+import { classifyGetUserMediaError } from '../../services/proctoringWeb/cameraSource';
 import {
   clearPrecheckToken,
   getGuestToken,
@@ -70,9 +71,22 @@ const median = (xs: number[]): number => {
   return sorted[Math.floor(sorted.length / 2)];
 };
 
-const chromeMajorFromUA = (): number => {
-  const match = /(?:Chrome|Chromium|Edg|Firefox|Version)\/(\d+)/.exec(navigator.userAgent);
-  return match ? Number(match[1]) : 0;
+// The backend's precheck contract requires device.osVersion as a NUMBER.
+// For the web the honest value is the OS major (Windows NT x / macOS / Android
+// / iOS) parsed from the UA; when the OS can't be parsed we fall back to the
+// browser major — recorded as-is, never presented as the OS anywhere (the
+// full UA rides alongside in `model`, and the web floor ignores osVersion).
+const osMajorFromUA = (): number => {
+  const ua = navigator.userAgent;
+  const osMatch =
+    /Windows NT ([0-9]+)/.exec(ua)
+    || /Mac OS X 10_([0-9]+)/.exec(ua)
+    || /Android ([0-9]+)/.exec(ua)
+    || /CPU OS ([0-9]+)_/.exec(ua) // iPadOS
+    || /iPhone OS ([0-9]+)_/.exec(ua);
+  if (osMatch) return Number(osMatch[1]);
+  const browserMatch = /(?:Chrome|Chromium|Edg|Firefox|Safari|Version)\/([0-9]+)/.exec(ua);
+  return browserMatch ? Number(browserMatch[1]) : 0;
 };
 
 export default function PublicQuizReadinessPage() {
@@ -127,9 +141,23 @@ export default function PublicQuizReadinessPage() {
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
     if (videoRef.current) videoRef.current.srcObject = null;
+    // Reset the stage: a torn-down stream must never look "live" to the
+    // check's getUserMedia shortcut, or every recheck would probe a dead
+    // <video> and fail forever (review finding: the consent-expired →
+    // back-to-camera path dead-ended exactly like this).
+    setCameraState('idle');
+    setCameraDetail(null);
   }, []);
 
   useEffect(() => () => stopCamera(), [stopCamera]);
+
+  // The preview stream has done its job once the checks pass — stop it at
+  // the ready stage (the in-quiz engine opens its OWN hidden stream at
+  // start; leaving the preview running keeps the camera light on for no
+  // reason).
+  useEffect(() => {
+    if (stage === 'ready') stopCamera();
+  }, [stage, stopCamera]);
 
   const startCamera = async (): Promise<boolean> => {
     setCameraState('starting');
@@ -147,8 +175,10 @@ export default function PublicQuizReadinessPage() {
       setCameraState('live');
       return true;
     } catch (err) {
-      const name = err instanceof DOMException ? err.name : '';
-      if (name === 'NotAllowedError' || name === 'SecurityError' || name === 'PermissionDeniedError') {
+      // One classifier for the whole changeset (review finding: this page
+      // had drifted a second copy of the DOMException mapping).
+      const classified = classifyGetUserMediaError(err);
+      if (classified.kind === 'denied') {
         setCameraState('denied');
         setCameraDetail(
           'Camera permission was denied. Click the camera icon in your browser\'s address bar, allow access for this site, then try again.'
@@ -156,8 +186,8 @@ export default function PublicQuizReadinessPage() {
       } else {
         setCameraState('failed');
         setCameraDetail(
-          name === 'NotFoundError' || name === 'OverconstrainedError'
-            ? 'No camera was found on this device. Connect a camera and try again.'
+          classified.kind === 'unavailable'
+            ? 'No usable camera was found on this device. Connect a camera and try again.'
             : 'The camera could not be started. Close other apps using the camera and try again.'
         );
       }
@@ -239,7 +269,7 @@ export default function PublicQuizReadinessPage() {
       ];
 
       const payload: PrecheckReportPayload = {
-        device: { platform: 'web', osVersion: chromeMajorFromUA(), model: navigator.userAgent.slice(0, 120) },
+        device: { platform: 'web', osVersion: osMajorFromUA(), model: navigator.userAgent.slice(0, 120) },
         network: { reachable: true },
         checks,
       };

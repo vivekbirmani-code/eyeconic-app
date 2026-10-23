@@ -93,7 +93,7 @@ async function createQuestion() {
   });
 }
 
-async function setupQuiz({ armed = true, sections = false } = {}) {
+async function setupQuiz({ armed = true, sections = false, proctoring } = {}) {
   const questions = [];
   for (let i = 0; i < 2; i += 1) questions.push(await createQuestion());
   const quiz = await Quiz.create({
@@ -107,7 +107,7 @@ async function setupQuiz({ armed = true, sections = false } = {}) {
     createdBy: admin.user._id,
     isPublic: true,
     shareToken: `pp-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-    ...(armed ? { proctoring: ARMED_PROCTORING } : {}),
+    ...(armed ? { proctoring: proctoring ?? ARMED_PROCTORING } : {}),
     // Section durations must sum to the quiz duration (10) — the authoring
     // contract buildSectionSnapshot enforces.
     ...(sections
@@ -685,5 +685,240 @@ describe('public proctoring — save-progress on proctored attempts', () => {
     const other = await verifyLead(quiz, { name: 'Save Probe', email: `sv-${Date.now()}@example.com` });
     const res = await saveProgress(quiz, { ...other, attemptId: ctx.attemptId }, savePayload(questions));
     expect(res.status).toBe(404);
+  });
+});
+
+// =====================================================================
+// F. Admin surfaces (Phase 4): guest attempts join the proctoring review
+// experience — attempt-detail session hint + guest-aware timeline/review
+// (locked pair) and the analytics rollup with the guest-label data (locked
+// pair). Mentors keep bare 404s / registered-only scope for guests.
+// =====================================================================
+describe('public proctoring — admin review + analytics surfaces', () => {
+  let quiz;
+  let lead;
+  let attemptId;
+  let sessionId;
+  let mentor;
+
+  beforeAll(async () => {
+    mentor = await createUser({ role: 'mentor', name: 'Mentor' });
+    quiz = (await setupQuiz({ armed: true })).quiz;
+    lead = await verifyLead(quiz);
+    const token = await armLead(quiz, lead.guestToken);
+    const start = await startAttempt(quiz, lead.guestToken, lead.guestId, token);
+    expect(start.status).toBe(201);
+    attemptId = start.body.attempt._id;
+    sessionId = start.body.proctoringSessionId;
+    // One focus episode + submit so the closed session has a story.
+    await sendEvents(quiz, { ...lead, attemptId, sessionId }, [
+      episodeEvent('APP_BACKGROUND', { source: 'os', durationMs: 5000 }),
+    ]);
+    const submit = await request(app)
+      .post(`/api/public/quiz/${quiz.shareToken}/submit`)
+      .set('Authorization', `Bearer ${lead.guestToken}`)
+      .send({ guestId: lead.guestId, attemptId, answers: [] });
+    expect(submit.status).toBe(200);
+    expect((await ProctoringSession.findById(sessionId)).status).toBe('CLOSED');
+  });
+
+  it('attempt-detail (admin) carries the proctoringSession hint for the guest attempt', async () => {
+    const res = await request(app)
+      .get(`/api/quizzes/attempt/${attemptId}`)
+      .set('Authorization', `Bearer ${admin.token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.participantType).toBe('guest');
+    expect(res.body.proctoringSession).toMatchObject({ status: 'CLOSED' });
+  });
+
+  it('admin timeline serves the guest session; mentor and student get bare 404s', async () => {
+    const adminTimeline = await request(app)
+      .get(`/api/quizzes/attempt/${attemptId}/proctoring/timeline`)
+      .set('Authorization', `Bearer ${admin.token}`);
+    expect(adminTimeline.status).toBe(200);
+    expect(adminTimeline.body.timeline.session.status).toBe('CLOSED');
+    expect(adminTimeline.body.timeline.events.length).toBeGreaterThan(0);
+    expect(adminTimeline.body.timeline.attemptStatus).toBe('completed');
+
+    const mentorRes = await request(app)
+      .get(`/api/quizzes/attempt/${attemptId}/proctoring/timeline`)
+      .set('Authorization', `Bearer ${mentor.token}`);
+    expect(mentorRes.status).toBe(404);
+
+    const student = await createUser({ role: 'student' });
+    const studentRes = await request(app)
+      .get(`/api/quizzes/attempt/${attemptId}/proctoring/session`)
+      .set('Authorization', `Bearer ${student.token}`);
+    expect(studentRes.status).toBe(404);
+  });
+
+  it('admin review works on the guest session and mirrors integrityStatus onto the GuestAttempt', async () => {
+    const review = await request(app)
+      .post(`/api/quizzes/attempt/${attemptId}/proctoring/review`)
+      .set('Authorization', `Bearer ${admin.token}`)
+      .send({ decision: 'dismiss', note: 'Owner-tested flow' });
+    expect(review.status).toBe(200);
+
+    const session = await ProctoringSession.findById(sessionId);
+    // The route records the decision verbatim ('dismiss'); the derived
+    // integrityStatus carries the reviewed_ok outcome.
+    expect(session.review.status).toBe('dismiss');
+    expect(session.integrityStatus).toBe('reviewed_ok');
+    // The §26.5 mirror lands on the GUEST attempt collection.
+    const guestAttempt = await GuestAttempt.findById(attemptId);
+    expect(guestAttempt.integrityStatus).toBe('reviewed_ok');
+
+    // Mentor cannot review.
+    const mentorReview = await request(app)
+      .post(`/api/quizzes/attempt/${attemptId}/proctoring/review`)
+      .set('Authorization', `Bearer ${mentor.token}`)
+      .send({ decision: 'confirm' });
+    expect(mentorReview.status).toBe(403);
+  });
+
+  it('analytics rollup includes the guest session for admins (with identity) and stays registered-only for mentors', async () => {
+    const adminRes = await request(app)
+      .get(`/api/quizzes/analytics/test/${quiz._id}`)
+      .set('Authorization', `Bearer ${admin.token}`);
+    expect(adminRes.status).toBe(200);
+    const rollupRow = adminRes.body.proctoring.attempts.find(
+      (row) => row.attemptId === String(attemptId)
+    );
+    expect(rollupRow).toBeTruthy();
+    expect(rollupRow.totalViolations).toBeGreaterThanOrEqual(1);
+    // The guest identity join rides the same response (guestParticipants).
+    const participant = adminRes.body.guestParticipants.find(
+      (p) => String(p.attemptId) === String(attemptId)
+    );
+    expect(participant?.name).toBeTruthy();
+
+    const mentorRes = await request(app)
+      .get(`/api/quizzes/analytics/test/${quiz._id}`)
+      .set('Authorization', `Bearer ${mentor.token}`);
+    expect(mentorRes.status).toBe(200);
+    const guestRowForMentor = mentorRes.body.proctoring.attempts.find(
+      (row) => row.attemptId === String(attemptId)
+    );
+    expect(guestRowForMentor).toBeUndefined();
+    expect(mentorRes.body.guestParticipants ?? null).toBeNull();
+  });
+
+  it('share-status discloses the live proctoring state (stored config + eligibility)', async () => {
+    const res = await request(app)
+      .get(`/api/quizzes/${quiz._id}/share-status`)
+      .set('Authorization', `Bearer ${admin.token}`);
+    expect(res.status).toBe(200);
+    expect(res.body.proctoring).toMatchObject({
+      enabled: true,
+      camera: 'required',
+      eligibility: { enabled: true, blockers: [] },
+    });
+  });
+});
+
+// =====================================================================
+// G. Failure-matrix hardening (Phase 5): link revocation mid-attempt
+// (grace semantics) and the GUEST policy auto-submit ladder end-to-end
+// (the guest finalize adapter had no coverage).
+// =====================================================================
+describe('public proctoring — failure-matrix hardening', () => {
+  beforeEach(() => {
+    resetPublicProctoringEventRateLimits();
+  });
+
+  it('a link revoked MID-ATTEMPT keeps monitoring + submission alive (grace semantics)', async () => {
+    const { quiz } = await setupQuiz({ armed: true });
+    const lead = await verifyLead(quiz);
+    // A second verified lead (BEFORE revocation) plays the newcomer who
+    // must be refused AFTER the link dies.
+    const newcomer = await verifyLead(quiz, { name: 'Late Lead', email: `late-${Date.now()}@example.com` });
+    const token = await armLead(quiz, lead.guestToken);
+    const start = await startAttempt(quiz, lead.guestToken, lead.guestId, token);
+    const ctx = { ...lead, attemptId: start.body.attempt._id, sessionId: start.body.proctoringSessionId };
+
+    // Revoke exactly as the admin route does ($unset token + isPublic off).
+    await Quiz.updateOne(
+      { _id: quiz._id },
+      { $unset: { shareToken: '' }, $set: { isPublic: false } }
+    );
+
+    // Events keep flowing (ownership-based resolution; no link lookup).
+    const events = await sendEvents(quiz, ctx, [
+      episodeEvent('APP_BACKGROUND', { source: 'os', durationMs: 5000 }),
+    ]);
+    expect(events.status).toBe(200);
+    expect(events.body.accepted).toBe(1);
+
+    // And the attempt still finalizes through the normal submit path.
+    const submit = await request(app)
+      .post(`/api/public/quiz/${quiz.shareToken}/submit`)
+      .set('Authorization', `Bearer ${lead.guestToken}`)
+      .send({ guestId: lead.guestId, attemptId: ctx.attemptId, answers: [] });
+    // A REVOKED token is unresolvable by the token-based routes (submit/
+    // save 404 — the web page itself is dead); the honest contract is:
+    // monitoring events continue (above), and the DEADLINE SWEEP finalizes
+    // the abandoned attempt from its stored answers.
+    expect(submit.status).toBe(404);
+    expect((await GuestAttempt.findById(ctx.attemptId)).status).toBe('in_progress');
+
+    // Backdate the deadline and run the sweep — the graceful finale.
+    await GuestAttempt.updateOne(
+      { _id: ctx.attemptId },
+      { $set: { durationDeadline: new Date(Date.now() - 60 * 1000) } }
+    );
+    const { runAttemptSweep } = require('../../../utils/attemptSweep');
+    await runAttemptSweep();
+    const swept = await GuestAttempt.findById(ctx.attemptId);
+    expect(swept.status).toBe('auto_submitted');
+    expect(swept.autoSubmitReason).toMatchObject({ kind: 'duration' });
+    expect((await ProctoringSession.findById(ctx.sessionId)).status).toBe('CLOSED');
+
+    // NEW starts on the revoked link are refused (dead-link contract).
+    const refused = await request(app)
+      .post(`/api/public/quiz/${quiz.shareToken}/start`)
+      .set('Authorization', `Bearer ${newcomer.guestToken}`)
+      .send({ guestId: 'late-device' });
+    expect([404, 410]).toContain(refused.status);
+  });
+
+  it('the GUEST warn-then-submit ladder reaches a server-executed auto-submit', async () => {
+    // warn-then-submit is chosen EXPLICITLY per quiz (the admin toggle's
+    // payload never sends it); toleratedViolations 1 keeps the ladder short.
+    const { quiz: q, questions } = await setupQuiz({
+      armed: true,
+      proctoring: {
+        ...ARMED_PROCTORING,
+        focusEvents: { mode: 'warn-then-submit', toleratedViolations: 1, minDurationMs: 2000 },
+      },
+    });
+    const lead = await verifyLead(q);
+    const pre = await reportPrecheck(q, lead.guestToken);
+    const consent = await giveConsent(q, lead.guestToken, pre.body.precheckToken);
+    expect(consent.status).toBe(200);
+    const start = await startAttempt(q, lead.guestToken, lead.guestId, pre.body.precheckToken);
+    expect(start.status).toBe(201);
+    const ctx = { ...lead, attemptId: start.body.attempt._id, sessionId: start.body.proctoringSessionId };
+
+    const send = (n) =>
+      sendEvents(q, ctx, [episodeEvent('APP_BACKGROUND', { source: 'os', durationMs: 5000 + n })]);
+
+    const warn1 = await send(1);
+    expect(warn1.body.actions?.[0]).toMatchObject({ kind: 'WARN', code: 'warn.focus' });
+
+    const finalWarn = await send(2);
+    expect(finalWarn.body.actions?.[0]).toMatchObject({ kind: 'FINAL_WARN', code: 'warn.final' });
+    expect(finalWarn.body.attemptFinalized).toBeUndefined();
+
+    const submitted = await send(3);
+    expect(submitted.body.attemptFinalized).toBe(true);
+    expect(submitted.body.autoSubmitted).toBe(true);
+
+    const attempt = await GuestAttempt.findById(ctx.attemptId);
+    expect(attempt.status).toBe('auto_submitted');
+    expect(attempt.autoSubmitReason).toMatchObject({ kind: 'policy' });
+    expect((await ProctoringSession.findById(ctx.sessionId)).status).toBe('CLOSED');
+    // Ungraded-answer sanity: the finalize graded STORED answers (empty).
+    expect(attempt.score).toBe(0);
+    expect(questions.length).toBeGreaterThan(0);
   });
 });

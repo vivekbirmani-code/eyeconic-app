@@ -46,6 +46,14 @@ export function acquireProctoringTabLock(
     const stop = () => {
       if (timer !== null) clearInterval(timer);
       timer = null;
+      // Full teardown (review finding): the interval alone left the
+      // channel listener attached for the page lifetime.
+      try {
+        channel!.onmessage = null;
+        channel!.close();
+      } catch {
+        // already closed
+      }
     };
 
     if (!usingChannel) {
