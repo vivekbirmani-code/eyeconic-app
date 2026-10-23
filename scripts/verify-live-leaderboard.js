@@ -14,6 +14,12 @@
  *   5. A mentor viewer's refetch is scoped to only their own students.
  *   6. An external (public-quiz guest) submission nudges the same room with
  *      cohort:'external' and lands in the admin analytics payload.
+ *   7. A viewer that disconnects mid-test stops receiving nudges; after it
+ *      reconnects and RE-JOINS the room (what the fixed app client does on
+ *      every 'connect' — rooms do not survive a disconnect), later
+ *      submissions reach it again and the refetched board is complete.
+ *   8. A burst of 5 concurrent submissions produces exactly 5 nudges and a
+ *      consistent 5-row board delta.
  *
  * Run from the repo root:  node scripts/verify-live-leaderboard.js
  */
@@ -417,6 +423,101 @@ async function main() {
     throw new Error(`internal board for guest quiz should be empty: ${JSON.stringify(guestBoard.body)}`);
   }
   log('internal leaderboard stays cohort-clean for the public quiz');
+
+  // ---- Reconnect contract: rooms do not survive a disconnect ----
+  // A submission landing while the viewer is offline must not reach it, and
+  // the viewer must be able to RE-JOIN after reconnecting (the fixed app
+  // client re-emits join_leaderboard on every 'connect').
+  const eventsBeforeOffline = events.length;
+  adminSocket.disconnect();
+
+  const offlineStudent = await User.create({
+    name: 'Dee Offline',
+    email: `dee-${Date.now()}-${Math.random().toString(36).slice(2, 6)}@verify.test`,
+    password: 'password123',
+    role: 'student',
+  });
+  await Quiz.updateOne({ _id: quiz._id }, { $push: { assignedStudents: offlineStudent._id } });
+  await submitAs(offlineStudent, [0, 1], [2, 3]);
+
+  await new Promise((r) => setTimeout(r, 500));
+  if (events.length !== eventsBeforeOffline) {
+    throw new Error('disconnected viewer received a leaderboard event');
+  }
+  log('offline submission did not reach the disconnected viewer');
+
+  // Refetch would show the missed row (this is what the client's reconnect
+  // resync does).
+  board = await api('GET', leaderboardUrl, { token: adminToken });
+  if (board.body.leaderboard.length !== 4 || !board.body.leaderboard.some((r) => r.studentName === 'Dee Offline')) {
+    throw new Error(`board missing offline submission: ${JSON.stringify(board.body.leaderboard.map((r) => r.studentName))}`);
+  }
+  log('refetch after reconnect resync shows the missed submission');
+
+  // Reconnect + re-join, then a submission must nudge again.
+  const rejoined = waitFor(adminSocket, 'leaderboard_joined');
+  adminSocket.connect();
+  await waitFor(adminSocket, 'connect');
+  adminSocket.emit('join_leaderboard', quiz._id.toString());
+  await rejoined;
+
+  const resyncStudent = await User.create({
+    name: 'Eli Resync',
+    email: `eli-${Date.now()}-${Math.random().toString(36).slice(2, 6)}@verify.test`,
+    password: 'password123',
+    role: 'student',
+  });
+  await Quiz.updateOne({ _id: quiz._id }, { $push: { assignedStudents: resyncStudent._id } });
+  const resyncEventPromise = waitForEvents(adminSocket, 'quiz_leaderboard_updated', 1);
+  const eliAttemptId = await submitAs(resyncStudent, [0, 1, 2], []);
+  const [resyncEvent] = await resyncEventPromise;
+  if (resyncEvent.attemptId !== eliAttemptId.toString()) {
+    throw new Error(`post-reconnect nudge wrong: ${JSON.stringify(resyncEvent)}`);
+  }
+  log('re-connected + re-joined viewer receives nudges again');
+
+  // ---- Burst: 5 concurrent submissions → exactly 5 nudges, complete board ----
+  const burstStudents = [];
+  for (let i = 0; i < 5; i += 1) {
+    burstStudents.push(await User.create({
+      name: `Burst ${i + 1}`,
+      email: `burst${i}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}@verify.test`,
+      password: 'password123',
+      role: 'student',
+    }));
+  }
+  await Quiz.updateOne({ _id: quiz._id }, { $push: { assignedStudents: { $each: burstStudents.map((s) => s._id) } } });
+
+  const burstEventsPromise = waitForEvents(adminSocket, 'quiz_leaderboard_updated', 5);
+  const burstAttemptIds = await Promise.all(
+    burstStudents.map((student, i) => submitAs(student, [i % 4], []))
+  );
+  const burstEvents = await burstEventsPromise;
+  const burstIds = new Set(burstEvents.map((e) => e.attemptId));
+  for (const id of burstAttemptIds) {
+    if (!burstIds.has(id.toString())) {
+      throw new Error(`burst nudge missing for attempt ${id}`);
+    }
+  }
+  if (burstEvents.length !== 5) {
+    throw new Error(`expected exactly 5 burst nudges, got ${burstEvents.length}`);
+  }
+  log('burst of 5 concurrent submissions produced exactly 5 nudges');
+
+  board = await api('GET', leaderboardUrl, { token: adminToken });
+  const expectedRows = 3 + 1 + 1 + 5;
+  if (board.body.leaderboard.length !== expectedRows) {
+    throw new Error(`board after burst wrong: expected ${expectedRows} rows, got ${board.body.leaderboard.length}`);
+  }
+  // Every distinct attempt appears exactly once — no duplicates, none lost.
+  const idCounts = board.body.leaderboard.reduce((acc, row) => {
+    acc[row._id] = (acc[row._id] || 0) + 1;
+    return acc;
+  }, {});
+  if (Object.values(idCounts).some((c) => c !== 1)) {
+    throw new Error('duplicate attempt rows on the board after burst');
+  }
+  log(`board complete after burst: ${board.body.leaderboard.length} unique rows`);
 
   console.log('\nALL LIVE-LEADERBOARD RUNTIME CHECKS PASSED');
   process.exit(0);

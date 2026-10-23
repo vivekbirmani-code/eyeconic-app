@@ -6,7 +6,7 @@
 // Order of checks (each failure maps to a plan error code):
 //   1. consent record for the CURRENT policy version+hash — else 403
 //      PROCTORING_CONSENT_REQUIRED (config changes require re-consent, §21.4)
-//   2. precheck token present + valid + bound to {student, quiz, hash} —
+//   2. precheck token present + valid + bound to {owner, quiz, hash} —
 //      else 403 PROCTORING_PRECHECK_REQUIRED / PRECHECK_TOKEN_INVALID
 //
 // Gating failures must leave ZERO attempt/session rows behind.
@@ -17,16 +17,26 @@ const { verifyPrecheckToken } = require('./precheckToken');
 /**
  * @param {object} quiz quiz document (proctoring-eligible)
  * @param {object} effective {version, hash} from buildEffectiveProctoringPolicy
- * @param {string} studentId
+ * @param {{id: string, kind: 'user'|'guest'}} owner the starting identity —
+ *        a registered student ({id: userId, kind:'user'}) or an OTP-verified
+ *        public-quiz lead ({id: guestId, kind:'guest'}). Consent rows and
+ *        the precheck token are keyed by the same owner.
  * @param {string|undefined} precheckToken raw token from the /start body
  * @returns {{ok: true}}
  *          | {{ok: false, status: 403, code: string, message: string}}
  */
-const assertProctoringStartPrerequisites = async (quiz, effective, studentId, precheckToken) => {
+const assertProctoringStartPrerequisites = async (quiz, effective, owner, precheckToken) => {
+  if (!owner || !owner.id || !['user', 'guest'].includes(owner.kind)) {
+    throw new Error('assertProctoringStartPrerequisites: owner {id, kind} is required');
+  }
+  const ownerFilter = owner.kind === 'guest'
+    ? { guest: owner.id }
+    : { student: owner.id };
+
   // 1. Consent — must exist for the CURRENT policy and match its hash.
   const consent = await ProctoringConsent.findOne({
     quiz: quiz._id,
-    student: studentId,
+    ...ownerFilter,
     policyVersion: effective.version,
   });
   if (!consent || consent.policyHash !== effective.hash) {
@@ -40,7 +50,7 @@ const assertProctoringStartPrerequisites = async (quiz, effective, studentId, pr
     };
   }
 
-  // 2. Precheck attestation token — signed by us, bound to this student +
+  // 2. Precheck attestation token — signed by us, bound to this owner +
   //    quiz + the exact policy hash consent was given for.
   if (!precheckToken) {
     return {
@@ -51,7 +61,8 @@ const assertProctoringStartPrerequisites = async (quiz, effective, studentId, pr
     };
   }
   const verified = verifyPrecheckToken(precheckToken, {
-    studentId,
+    ownerId: owner.id,
+    ownerKind: owner.kind,
     quizId: quiz._id,
     policyHash: effective.hash,
   });

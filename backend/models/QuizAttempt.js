@@ -229,5 +229,10 @@ attemptSchema.index({ student: 1, status: 1 });
 attemptSchema.index({ student: 1, status: 1, endTime: -1 });
 attemptSchema.index({ retestRequested: 1, retestApproved: 1 });
 attemptSchema.index({ student: 1, 'answers.questionId': 1 });
+// Per-quiz terminal-status cohort: the leaderboard endpoint, the analytics
+// test list counts and the overdue-attempt sweep all filter {quiz, status}
+// (mirrors GuestAttempt's quiz_1_status_1_guest_1). Non-unique — auto-built
+// at boot, no migration.
+attemptSchema.index({ quiz: 1, status: 1 });
 
 module.exports = mongoose.model('QuizAttempt', attemptSchema);

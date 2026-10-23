@@ -108,6 +108,71 @@ function emitQuizLeaderboardUpdated(quizId, payload, { req = null } = {}) {
     return true;
 }
 
+// ===== Guest (public-quiz) socket lane =====
+//
+// Deliberately SEPARATE from the user lane above: guest tokens are scoped
+// credentials ({kind:'guest', guestId}) and must never register as users
+// (verifySocketToken's rule). The public-quiz proctoring flow registers
+// OTP-verified leads here so proctoring warnings can be pushed live; every
+// rule of the user lane applies unchanged — identity is PROVEN from the
+// verified token, never claimed, and a guest socket can only ever receive
+// emissions targeted at its own verified guest id.
+const guestSocketMap = new Map(); // guestId (string) → Set<socketId>
+
+/**
+ * Verify a GUEST session token presented by a socket client (handshake
+ * auth.token or register_guest). Only real guest tokens ({kind:'guest',
+ * guestId}) qualify — user tokens and precheck tokens are rejected here,
+ * mirroring how verifySocketToken rejects guest tokens on the user lane.
+ *
+ * @returns {{ok: true, guestId: string} | {ok: false}}
+ */
+function verifyGuestSocketToken(token) {
+    if (typeof token !== 'string' || !token.trim()) return { ok: false };
+    try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        if (decoded.kind !== 'guest' || !decoded.guestId) return { ok: false };
+        const guestId = decoded.guestId.toString();
+        if (!guestId) return { ok: false };
+        return { ok: true, guestId };
+    } catch {
+        return { ok: false };
+    }
+}
+
+/** Register a socket for a guest (identity proven by verifyGuestSocketToken). */
+function registerGuestSocket(socketId, guestId) {
+    const gid = guestId.toString();
+    if (!guestSocketMap.has(gid)) {
+        guestSocketMap.set(gid, new Set());
+    }
+    guestSocketMap.get(gid).add(socketId);
+}
+
+/** Unregister a guest socket (called on 'disconnect'). */
+function unregisterGuestSocket(socketId, guestId) {
+    if (!guestId) return;
+    const gid = guestId.toString();
+    const sids = guestSocketMap.get(gid);
+    if (sids) {
+        sids.delete(socketId);
+        if (sids.size === 0) guestSocketMap.delete(gid);
+    }
+}
+
+/** Emit an event to all sockets belonging to a specific guest. */
+function emitToGuest(guestId, event, data) {
+    if (!_io) return;
+    const gid = guestId.toString();
+    const socketIds = guestSocketMap.get(gid);
+    if (socketIds) {
+        socketIds.forEach(sid => {
+            const s = _io.sockets.sockets.get(sid);
+            if (s) s.emit(event, data);
+        });
+    }
+}
+
 module.exports = {
     setIo,
     verifySocketToken,
@@ -116,4 +181,9 @@ module.exports = {
     emitToUser,
     emitToAdmins,
     emitQuizLeaderboardUpdated,
+    // Guest lane (public-quiz proctoring)
+    verifyGuestSocketToken,
+    registerGuestSocket,
+    unregisterGuestSocket,
+    emitToGuest,
 };

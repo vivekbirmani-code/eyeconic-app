@@ -2,8 +2,7 @@ const express = require('express');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const User = require('../models/User');
-const GuestAttempt = require('../models/GuestAttempt');
-const QuizAttempt = require('../models/QuizAttempt');
+const { linkGuestAttemptsToUser } = require('../utils/linkGuestAttempts');
 const Otp = require('../models/Otp');
 const WebHandoffCode = require('../models/WebHandoffCode');
 const {
@@ -118,45 +117,10 @@ router.post('/login', requireDatabase, async (req, res) => {
     let linkedAttempts = 0;
     if (guestId) {
       try {
-        const guestAttempts = await GuestAttempt.find({
-          guestId,
-          status: 'completed',
-          linkedUser: null
-        });
-
-        for (const guestAttempt of guestAttempts) {
-          // Check if user already has an attempt for this quiz
-          const existingAttempt = await QuizAttempt.findOne({
-            quiz: guestAttempt.quiz,
-            student: user._id
-          });
-
-          if (!existingAttempt) {
-            // Create a new QuizAttempt from guest attempt
-            const newAttempt = new QuizAttempt({
-              quiz: guestAttempt.quiz,
-              student: user._id,
-              answers: guestAttempt.answers,
-              startTime: guestAttempt.startTime,
-              endTime: guestAttempt.endTime,
-              status: guestAttempt.status,
-              score: guestAttempt.score,
-              totalQuestions: guestAttempt.totalQuestions,
-              marksObtained: guestAttempt.marksObtained,
-              totalMarks: guestAttempt.totalMarks,
-              tabSwitchCount: guestAttempt.tabSwitchCount,
-              tabSwitchLog: guestAttempt.tabSwitchLog
-            });
-
-            await newAttempt.save();
-            linkedAttempts++;
-          }
-
-          // Mark guest attempt as linked
-          guestAttempt.linkedUser = user._id;
-          await guestAttempt.save();
-        }
-
+        // utils/linkGuestAttempts.js — same semantics as when this lived
+        // inline (completed guest rows only, no duplicate per quiz), plus a
+        // leaderboard nudge per materialized QuizAttempt so live boards move.
+        linkedAttempts = await linkGuestAttemptsToUser({ guestId, userId: user._id });
         if (linkedAttempts > 0) {
           console.log(`Linked ${linkedAttempts} guest attempts to user ${user.email}`);
         }

@@ -37,9 +37,11 @@ const proctoringEventSchema = new mongoose.Schema({
     ref: 'ProctoringSession',
     required: true,
   },
+  // The owning attempt's _id — from EITHER collection (QuizAttempt for user
+  // attempts, GuestAttempt for public-quiz attempts). Ref deliberately
+  // absent; events are always resolved via the session or attempt id.
   attempt: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'QuizAttempt',
     required: true,
   },
   quiz: {

@@ -162,7 +162,8 @@ router.post('/precheck-report', auth, authorize('student'), precheckReportRateLi
     }
 
     const { token, expiresAt, issuedAt } = issuePrecheckToken({
-      studentId: req.user._id,
+      ownerId: req.user._id,
+      ownerKind: 'user',
       quizId: quiz._id,
       policyHash: effective.hash,
       policyVersion: effective.version,
@@ -242,7 +243,8 @@ router.post('/consent', auth, authorize('student'), async (req, res) => {
     }
 
     const verified = verifyPrecheckToken(precheckToken, {
-      studentId: req.user._id,
+      ownerId: req.user._id,
+      ownerKind: 'user',
       quizId: quiz._id,
       policyHash: effective.hash,
     });

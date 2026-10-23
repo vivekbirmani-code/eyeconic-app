@@ -7,10 +7,12 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   StatusBar,
+  Linking,
+  Alert,
 } from 'react-native';
 import { FullScreenContainer } from '@/components/layout';
 import { useRouter, useLocalSearchParams } from 'expo-router';
-import { BookOpen, Clock, FileText, Award, AlertCircle } from 'lucide-react-native';
+import { BookOpen, Clock, FileText, Award, AlertCircle, ExternalLink, MailCheck } from 'lucide-react-native';
 import { useGuestQuiz } from '@/context/GuestQuizContext';
 
 interface Quiz {
@@ -24,6 +26,11 @@ interface Quiz {
   // Section-locking metadata (structure only, no question content).
   lockSectionsAfterSubmission?: boolean;
   sections?: { name: string; duration: number; questionCount: number }[];
+  // Public-quiz verification (backend decision 2026-10-23): every public
+  // quiz now requires OTP email verification, which only the web flow
+  // provides — the server sends the authoritative browser URL here.
+  webUrl?: string;
+  proctoringRequired?: boolean;
 }
 
 export default function GuestQuizInstructions() {
@@ -33,6 +40,7 @@ export default function GuestQuizInstructions() {
   
   const [quiz, setQuiz] = useState<Quiz | null>(null);
   const [starting, setStarting] = useState(false);
+  const [webRedirectUrl, setWebRedirectUrl] = useState<string | null>(null);
 
   useEffect(() => {
     if (shareToken) {
@@ -45,11 +53,37 @@ export default function GuestQuizInstructions() {
     const quizData = await fetchQuizByToken(shareToken);
     if (quizData) {
       setQuiz(quizData as any);
+      // Verification redirect (backend decision 2026-10-23): every public
+      // quiz requires OTP email verification, which only the browser flow
+      // provides — the server sends the authoritative web URL.
+      if ((quizData as any).webUrl) {
+        setWebRedirectUrl((quizData as any).webUrl as string);
+      }
+    }
+  };
+
+  const openInBrowser = async () => {
+    if (!webRedirectUrl) return;
+    try {
+      const supported = await Linking.canOpenURL(webRedirectUrl);
+      if (supported) {
+        await Linking.openURL(webRedirectUrl);
+      } else {
+        Alert.alert('Cannot open browser', webRedirectUrl);
+      }
+    } catch {
+      Alert.alert('Cannot open browser', webRedirectUrl);
     }
   };
 
   const handleStartQuiz = async () => {
     if (!shareToken) return;
+    // The browser flow owns public quizzes now — never attempt an
+    // anonymous in-app start when the server offers the web URL.
+    if (webRedirectUrl) {
+      openInBrowser();
+      return;
+    }
 
     setStarting(true);
     try {
@@ -73,6 +107,36 @@ export default function GuestQuizInstructions() {
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color="#6366f1" />
           <Text style={styles.loadingText}>Loading quiz...</Text>
+        </View>
+      </FullScreenContainer>
+    );
+  }
+
+  // Email-verification redirect: the rest of this flow lives in the browser
+  // (OTP verify → proctoring checks where armed → take the test).
+  if (webRedirectUrl) {
+    return (
+      <FullScreenContainer style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor="#ffffff" />
+        <View style={styles.redirectContainer}>
+          <MailCheck size={64} color="#01b4ae" />
+          <Text style={styles.redirectTitle}>Verification required</Text>
+          <Text style={styles.redirectText}>
+            {quiz?.title ? `${quiz.title}\n\n` : ''}
+            This test now opens in your browser. You'll verify your email with a one-time code
+            {quiz?.proctoringRequired ? ' and complete a short camera check' : ''} before starting —
+            something the browser flow does for you.
+          </Text>
+          <TouchableOpacity style={styles.redirectButton} onPress={openInBrowser}>
+            <ExternalLink size={20} color="#ffffff" />
+            <Text style={styles.redirectButtonText}>Open in Browser</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.backLink}
+            onPress={() => router.replace('/login')}
+          >
+            <Text style={styles.backLinkText}>Back to login</Text>
+          </TouchableOpacity>
         </View>
       </FullScreenContainer>
     );
@@ -236,6 +300,50 @@ const styles = StyleSheet.create({
     marginTop: 16,
     fontSize: 16,
     color: '#6b7280',
+  },
+  redirectContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 32,
+  },
+  redirectTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#111827',
+    marginTop: 20,
+  },
+  redirectText: {
+    fontSize: 16,
+    color: '#6b7280',
+    textAlign: 'center',
+    marginTop: 12,
+    lineHeight: 24,
+  },
+  redirectButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#01b4ae',
+    borderRadius: 12,
+    paddingHorizontal: 28,
+    paddingVertical: 14,
+    marginTop: 28,
+  },
+  redirectButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  backLink: {
+    marginTop: 20,
+    padding: 8,
+  },
+  backLinkText: {
+    color: '#6366f1',
+    fontSize: 15,
+    fontWeight: '500',
   },
   errorContainer: {
     flex: 1,

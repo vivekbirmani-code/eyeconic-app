@@ -18,6 +18,16 @@ const GuestAttempt = require('../../models/GuestAttempt');
 const QuestionBank = require('../../models/QuestionBank');
 const { runAttemptSweep } = require('../../utils/attemptSweep');
 
+// OTP mailer mock — public starts require a verified lead since the
+// mandatory-verification policy (owner decision D-P1, 2026-10-23).
+const sentOtps = [];
+jest.mock('../../utils/mailer', () => ({
+  ...jest.requireActual('../../utils/mailer'),
+  sendGuestQuizOtpMail: jest.fn(async (email, otp) => {
+    sentOtps.push({ email, otp });
+  }),
+}));
+
 let app;
 
 beforeAll(async () => {
@@ -30,6 +40,23 @@ afterAll(async () => {
 });
 
 const MIN = 60 * 1000;
+
+// Verify a fresh lead through the real OTP flow → guest token.
+async function verifyLead(quiz) {
+  const payload = {
+    name: 'Window Tester',
+    email: `window-${Date.now()}-${Math.random().toString(36).slice(2)}@example.com`,
+    phone: '+919876543210',
+    marketingConsent: true,
+  };
+  await request(app).post(`/api/public/quiz/${quiz.shareToken}/lead/send-otp`).send(payload);
+  const otp = sentOtps[sentOtps.length - 1].otp;
+  const res = await request(app)
+    .post(`/api/public/quiz/${quiz.shareToken}/lead/verify-otp`)
+    .send({ ...payload, otp });
+  expect(res.status).toBe(200);
+  return res.body.guestToken;
+}
 
 let questionSeedRun = 0;
 
@@ -72,9 +99,18 @@ async function setupPublicQuiz(admin, subject, { duration = 30, publicExpiryDate
   return { quiz, questions };
 }
 
+// One lead per quiz — a second startGuest on the same quiz is the SAME
+// person resuming (the /start resume semantics).
+const leadTokenByQuiz = new Map();
 async function startGuest(quiz, guestId, expectStatus = 201) {
+  // Mandatory verification (D-P1): starts require a verified lead token.
+  const key = String(quiz._id);
+  if (!leadTokenByQuiz.has(key)) {
+    leadTokenByQuiz.set(key, await verifyLead(quiz));
+  }
   const res = await request(app)
     .post(`/api/public/quiz/${quiz.shareToken}/start`)
+    .set('Authorization', `Bearer ${leadTokenByQuiz.get(key)}`)
     .send({ guestId });
   expect(res.status).toBe(expectStatus);
   return res.body;

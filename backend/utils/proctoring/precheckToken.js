@@ -2,10 +2,13 @@
 //
 // The precheck-report endpoint issues this token on an all-pass report; /start
 // requires it for proctored quizzes. It is a server-SIGNED JWT bound to
-// {student, quiz, policyHash}: a client can never forge or reuse one for
-// another student, quiz, or policy version — the same secret-based discipline
-// as the guest token. Payload carries the compact precheck summary that the
-// consent record later persists (§26.3 precheckSummary).
+// {owner, quiz, policyHash}: a client can never forge or reuse one for
+// another participant, quiz, or policy version — the same secret-based
+// discipline as the guest token. The owner is a registered student
+// (ownerKind 'user', ownerId = User id) or an OTP-verified public-quiz lead
+// (ownerKind 'guest', ownerId = Guest id). Payload carries the compact
+// precheck summary that the consent record later persists (§26.3
+// precheckSummary).
 
 const jwt = require('jsonwebtoken');
 const { PRECHECK_TOKEN_TTL_MS } = require('./defaults');
@@ -17,7 +20,9 @@ const isPlainObject = (value) =>
 
 /**
  * @param {object} binding values the token is bound to (all required)
- * @param {string} binding.studentId
+ * @param {string} binding.ownerId User id (ownerKind 'user') or Guest id
+ *                 (ownerKind 'guest')
+ * @param {'user'|'guest'} binding.ownerKind
  * @param {string} binding.quizId
  * @param {string} binding.policyHash effective-policy hash at precheck time
  * @param {number} binding.policyVersion
@@ -25,13 +30,14 @@ const isPlainObject = (value) =>
  *          checks?: Array<{id: string, pass: boolean, detail?: string}>}} binding.summary
  * @returns {{token: string, expiresAt: Date, issuedAt: Date}}
  */
-const issuePrecheckToken = ({ studentId, quizId, policyHash, policyVersion, summary = {} }) => {
+const issuePrecheckToken = ({ ownerId, ownerKind, quizId, policyHash, policyVersion, summary = {} }) => {
   const issuedAt = new Date();
   const expiresAt = new Date(issuedAt.getTime() + PRECHECK_TOKEN_TTL_MS);
   const token = jwt.sign(
     {
       kind: PRECHECK_TOKEN_KIND,
-      studentId: String(studentId),
+      ownerId: String(ownerId),
+      ownerKind: ownerKind === 'guest' ? 'guest' : 'user',
       quizId: String(quizId),
       policyHash: String(policyHash),
       policyVersion: Number(policyVersion),
@@ -58,8 +64,10 @@ const issuePrecheckToken = ({ studentId, quizId, policyHash, policyVersion, summ
  *
  * @returns {{ok: true, payload: object}}
  *          | {{ok: false, reason: 'MALFORMED'|'EXPIRED'|'WRONG_KIND'|'WRONG_STUDENT'|'WRONG_QUIZ'|'POLICY_CHANGED'}}
+ *            ('WRONG_STUDENT' is the historical reason name — it means
+ *            wrong OWNER: a different user or guest than expected.)
  */
-const verifyPrecheckToken = (token, { studentId, quizId, policyHash } = {}) => {
+const verifyPrecheckToken = (token, { ownerId, ownerKind, quizId, policyHash } = {}) => {
   if (typeof token !== 'string' || !token.trim()) {
     return { ok: false, reason: 'MALFORMED' };
   }
@@ -70,7 +78,10 @@ const verifyPrecheckToken = (token, { studentId, quizId, policyHash } = {}) => {
     return { ok: false, reason: error?.name === 'TokenExpiredError' ? 'EXPIRED' : 'MALFORMED' };
   }
   if (payload?.kind !== PRECHECK_TOKEN_KIND) return { ok: false, reason: 'WRONG_KIND' };
-  if (studentId !== undefined && String(payload.studentId) !== String(studentId)) {
+  if (ownerKind !== undefined && payload.ownerKind !== ownerKind) {
+    return { ok: false, reason: 'WRONG_STUDENT' };
+  }
+  if (ownerId !== undefined && String(payload.ownerId) !== String(ownerId)) {
     return { ok: false, reason: 'WRONG_STUDENT' };
   }
   if (quizId !== undefined && String(payload.quizId) !== String(quizId)) {

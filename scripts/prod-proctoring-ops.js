@@ -32,9 +32,11 @@ const CREDS_FILE = process.env.EYECONIC_CREDS_FILE ||
   path.join(process.env.USERPROFILE || '.', '.eyeconic-prod-creds.json');
 
 // Mirror of utils/proctoringToggle.ts PROCTORING_ON_PAYLOAD — keep in sync.
+// Camera 'required' since the public-quiz proctoring decision (owner,
+// 2026-10-23): precheck hard-fails camera checks and blocks start.
 const ON_PAYLOAD = {
   enabled: true,
-  camera: 'optional',
+  camera: 'required',
   focusEvents: { mode: 'record' },
   multipleFaces: { mode: 'record' },
   facePresence: { mode: 'record' },
@@ -45,7 +47,9 @@ const ON_PAYLOAD = {
 // ~1–2 s after returning — but NEVER auto-submits) + attention 'warn'
 // (Phase 9.1 3-look-away rule: the 3rd qualifying look-away turns into ONE
 // advisory banner per 5-min window; never violation / risk / submit).
-// multipleFaces/facePresence stay silent record; camera stays optional.
+// multipleFaces/facePresence stay silent record. Camera 'required' since
+// the public-quiz proctoring decision (owner, 2026-10-23) — mirrors
+// utils/proctoringToggle.ts.
 // Policy change ⇒ new policy hash ⇒ the student re-consents on the next
 // start (by design, §21.4).
 //
@@ -54,7 +58,7 @@ const ON_PAYLOAD = {
 // Keep in sync with utils/proctoringToggle.ts PROCTORING_ON_PAYLOAD.
 const WARN_PAYLOAD = {
   enabled: true,
-  camera: 'optional',
+  camera: 'required',
   focusEvents: { mode: 'warn-only' },
   multipleFaces: { mode: 'record' },
   facePresence: { mode: 'record' },
@@ -67,7 +71,7 @@ const WARN_PAYLOAD = {
 // re-run plain `arm-warn` afterwards to add the head-turn banner.
 const WARN_PAYLOAD_FOCUS_ONLY = {
   enabled: true,
-  camera: 'optional',
+  camera: 'required',
   focusEvents: { mode: 'warn-only' },
   multipleFaces: { mode: 'record' },
   facePresence: { mode: 'record' },

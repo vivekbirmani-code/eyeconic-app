@@ -13,6 +13,7 @@
 
 const ProctoringSession = require('../../models/ProctoringSession');
 const QuizAttempt = require('../../models/QuizAttempt');
+const GuestAttempt = require('../../models/GuestAttempt');
 const ProctoringOverride = require('../../models/ProctoringOverride');
 const { freezeSessionSummary } = require('./summary');
 
@@ -56,6 +57,12 @@ const shapeAttentionBaseline = (session) => {
  * snapshot ({version, hash}) — the session stores its identity, the full
  * policy lives on the attempt.
  *
+ * `ownerKind` selects the owning surface: 'user' (registered QuizAttempt,
+ * default — reads attempt.student) or 'guest' (public-quiz GuestAttempt,
+ * reads attempt.guest, the OTP-verified lead). The {attempt} anchor and the
+ * 1:1 unique index are shared, so convergence semantics are identical for
+ * both kinds.
+ *
  * Phase 5 (D11): `attentionBaseline` ({yaw, pitch, roll, frames} from the
  * signed precheck-token summary) is frozen onto the session at creation so
  * the client can re-arm with the SAME seated baseline after an app restart.
@@ -65,7 +72,7 @@ const shapeAttentionBaseline = (session) => {
  * @returns {Promise<object|null>} the session doc, or null on unexpected
  *          failure (session problems must never block a quiz — plan §7.2).
  */
-const ensureProctoringSession = async (attempt, { policySnapshot, reason = 'start', attentionBaseline } = {}) => {
+const ensureProctoringSession = async (attempt, { policySnapshot, reason = 'start', attentionBaseline, ownerKind = 'user' } = {}) => {
   if (!attempt?._id) return null;
 
   const existing = await ProctoringSession.findOne({ attempt: attempt._id });
@@ -76,8 +83,11 @@ const ensureProctoringSession = async (attempt, { policySnapshot, reason = 'star
     return await ProctoringSession.create({
       quiz: attempt.quiz,
       attempt: attempt._id,
-      student: attempt.student,
-      ownerKind: 'user',
+      // Exactly one owner field per kind — see models/ProctoringSession.js.
+      ...(ownerKind === 'guest'
+        ? { student: null, guest: attempt.guest ?? null }
+        : { student: attempt.student ?? null, guest: null }),
+      ownerKind,
       status: 'ACTIVE',
       policy: {
         version: policySnapshot?.version ?? null,
@@ -120,8 +130,11 @@ const ensureProctoringSession = async (attempt, { policySnapshot, reason = 'star
  * attempt's frozen policy. Best-effort by design: a failure here is logged,
  * never propagated — the attempt is already finalized and must not be rolled
  * back.
+ *
+ * `ownerKind` mirrors the integrity status onto the correct attempt model:
+ * QuizAttempt for 'user' (default), GuestAttempt for 'guest'.
  */
-const closeProctoringSessionForAttempt = async (attempt, { reason } = {}) => {
+const closeProctoringSessionForAttempt = async (attempt, { reason, ownerKind = 'user' } = {}) => {
   if (!attempt?._id) return null;
 
   const existing = await ProctoringSession.findOne({ attempt: attempt._id });
@@ -155,7 +168,9 @@ const closeProctoringSessionForAttempt = async (attempt, { reason } = {}) => {
     { _id: target._id, integrityStatus: 'pending' },
     { $set: { integrityStatus } }
   ).exec();
-  await QuizAttempt.updateOne(
+  // §26.5 mirror — onto the OWNING attempt collection (user vs guest).
+  const AttemptModel = ownerKind === 'guest' ? GuestAttempt : QuizAttempt;
+  await AttemptModel.updateOne(
     { _id: attempt._id },
     { $set: { integrityStatus } }
   ).exec();

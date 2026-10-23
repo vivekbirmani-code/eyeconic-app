@@ -29,6 +29,14 @@ import PublicQuizResultPage from './pages/public/PublicQuizResultPage';
 // TEMPORARY FEATURE FREEZE — route-level guard (config/features.ts)
 import { FeatureGate } from './components/FeatureGate';
 
+// Dev-only: Phase 0 browser CV spike (docs/web-cv-spike-report.md).
+// import.meta.env.DEV is statically false in production builds, so the
+// dynamic import never happens and the chunk (with its MediaPipe wrapper)
+// is not emitted into the production bundle.
+const ProctoringWebSpikePage = import.meta.env.DEV
+  ? React.lazy(() => import('./pages/spike/ProctoringWebSpikePage'))
+  : null;
+
 // Protected Route Wrapper
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
   const { user, isLoading } = useAuth();
@@ -71,6 +79,18 @@ function App() {
             <Route path="take" element={<PublicQuizTakingPage />} />
             <Route path="result/:attemptId" element={<PublicQuizResultPage />} />
           </Route>
+
+          {/* Dev-only Phase 0 CV spike — tree-shaken out of production. */}
+          {ProctoringWebSpikePage && (
+            <Route
+              path="/spike/proctoring"
+              element={
+                <React.Suspense fallback={null}>
+                  <ProctoringWebSpikePage />
+                </React.Suspense>
+              }
+            />
+          )}
 
           {/* Protected Routes inside Main Layout */}
           <Route

@@ -8,13 +8,17 @@
  * them here. Since the global rollout it arms Warning Mode everywhere the
  * toggle is used — focusEvents warn-only (app-away banner, never auto-submit)
  * + attention 'warn' (head-turn banner on the 3rd look-away) — while
- * multipleFaces/facePresence stay silent record and the camera stays
- * optional. Keep in sync with WARN_PAYLOAD in scripts/prod-proctoring-ops.js;
+ * multipleFaces/facePresence stay silent record. Camera is REQUIRED since
+ * the public-quiz proctoring decision (owner, 2026-10-23): a proctored quiz
+ * that cannot use its camera is not proctored — precheck hard-fails camera
+ * checks and blocks start. The quizzes armed before this decision keep their
+ * stored 'optional' config until re-armed. Keep in sync with WARN_PAYLOAD in
+ * scripts/prod-proctoring-ops.js;
  * the backend re-validates (parseProctoringConfig) and stays authoritative.
  */
 export const PROCTORING_ON_PAYLOAD = Object.freeze({
   enabled: true,
-  camera: 'optional',
+  camera: 'required',
   focusEvents: { mode: 'warn-only' },
   multipleFaces: { mode: 'record' },
   facePresence: { mode: 'record' },

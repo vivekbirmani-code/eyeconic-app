@@ -13,6 +13,7 @@ import {
 import { Clock, Download, Radio, RefreshCw, Trophy } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { downloadApiReport, getReportDownloadErrorMessage } from '@/services/downloads';
+import { subscribeLeaderboardRoom } from '@/services/leaderboardSubscription';
 import { useNotifications } from '@/context/NotificationContext';
 import ExportLeaderboardDialog, {
   type ExportAudience,
@@ -370,44 +371,20 @@ export default function LiveLeaderboard({
     }, REFRESH_COALESCE_MS);
   }, []);
 
-  // Socket wiring: join the test's leaderboard room, refresh on update
-  // nudges, resync on reconnect (rooms do not survive a reconnect, so the
-  // join is re-armed on every 'connect').
+  // Socket wiring: join the test's leaderboard room and refresh on update
+  // nudges. The shared subscription module owns the reconnect contract —
+  // Socket.IO rooms do not survive a disconnect, so every (re)connect
+  // re-joins the room and triggers one coalesced resync refetch covering
+  // anything missed while offline. (The previous inline wiring registered
+  // its 'connect' handler only when the socket was offline at mount, so a
+  // connected socket that later dropped and reconnected never re-joined and
+  // the board froze at stale rows until a manual refresh.)
   useEffect(() => {
-    if (!socket) {
-      setLive(false);
-      return;
-    }
-
-    const joinRoom = () => {
-      socket.emit('join_leaderboard', testId);
-    };
-    const handleUpdate = (payload: { quizId?: string }) => {
-      if (!payload?.quizId || payload.quizId !== testId) return;
-      scheduleRefresh();
-    };
-    const handleConnect = () => {
-      setLive(true);
-      joinRoom();
-      // Anything may have been submitted while disconnected.
-      scheduleRefresh();
-    };
-    const handleDisconnect = () => setLive(false);
-
-    if (socket.connected) {
-      handleConnect();
-    } else {
-      socket.on('connect', handleConnect);
-    }
-    socket.on('quiz_leaderboard_updated', handleUpdate);
-    socket.on('disconnect', handleDisconnect);
-
-    return () => {
-      socket.off('connect', handleConnect);
-      socket.off('quiz_leaderboard_updated', handleUpdate);
-      socket.off('disconnect', handleDisconnect);
-      socket.emit('leave_leaderboard', testId);
-    };
+    return subscribeLeaderboardRoom(socket, testId, {
+      onUpdate: scheduleRefresh,
+      onResync: scheduleRefresh,
+      onLiveChange: setLive,
+    });
   }, [socket, testId, scheduleRefresh]);
 
   // Clear a pending refresh timer on unmount so no fetch fires late.
@@ -557,11 +534,20 @@ export default function LiveLeaderboard({
         ) : rows.length === 0 ? (
           <View style={styles.emptyContainer}>
             <Trophy color="#9CA3AF" size={40} />
-            <Text style={styles.emptyText}>No submissions yet</Text>
+            {/* Public quizzes: guests are deliberately unranked and listed in
+                their own section below — never let that read as an empty
+                leaderboard when guests HAVE submitted. */}
+            <Text style={styles.emptyText}>
+              {(guestParticipantCount ?? 0) > 0
+                ? 'No registered-student submissions yet'
+                : 'No submissions yet'}
+            </Text>
             <Text style={styles.emptyHint}>
-              {live
-                ? 'Rankings appear here the moment a student submits.'
-                : 'Reconnect to see rankings update as students submit.'}
+              {(guestParticipantCount ?? 0) > 0
+                ? `${guestParticipantCount} public participant${guestParticipantCount === 1 ? '' : 's'} completed this test — see the list below.`
+                : live
+                  ? 'Rankings appear here the moment a student submits.'
+                  : 'Reconnect to see rankings update as students submit.'}
             </Text>
           </View>
         ) : (

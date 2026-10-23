@@ -15,6 +15,7 @@ const groupRoutes = require('../../routes/groups');
 const userRoutes = require('../../routes/users');
 const publicQuizRoutes = require('../../routes/public-quiz');
 const publicLeadRoutes = require('../../routes/public-lead');
+const publicProctoringRoutes = require('../../routes/publicProctoring');
 const dailyPyqRoutes = require('../../routes/daily-pyq');
 const miniGtRoutes = require('../../routes/mini-gt');
 const freeUserAnalyticsRoutes = require('../../routes/free-user-analytics');
@@ -40,6 +41,7 @@ function buildApp() {
   app.use('/api/users', userRoutes);
   app.use('/api/public', publicQuizRoutes);
   app.use('/api/public', publicLeadRoutes);
+  app.use('/api/public', publicProctoringRoutes);
   app.use('/api/daily-pyq', dailyPyqRoutes);
   app.use('/api/mini-gt', miniGtRoutes);
   app.use('/api/free-user-analytics', freeUserAnalyticsRoutes);

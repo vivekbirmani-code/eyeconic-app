@@ -141,6 +141,26 @@ const guestAttemptSchema = new mongoose.Schema({
         type: mongoose.Schema.Types.Mixed
     },
 
+    // ===== AI proctoring (public quizzes) =====
+    // Frozen at /start when the shared quiz is armed — same shape and
+    // write-once semantics as QuizAttempt.proctoringSnapshot ({version,
+    // hash, policy, frozenAt}). Later admin edits of quiz.proctoring never
+    // affect an in-flight attempt. Absent = not proctored (pre-feature or
+    // unarmed quiz).
+    proctoringSnapshot: {
+        type: mongoose.Schema.Types.Mixed
+    },
+
+    // Mirror of the proctoring session's integrity status (same enum as
+    // QuizAttempt.integrityStatus), written only by the proctoring layer
+    // (session close + review decisions). Default 'pending' is meaningless
+    // for non-proctored attempts and never surfaced for them.
+    integrityStatus: {
+        type: String,
+        enum: ['pending', 'clean', 'reviewed_ok', 'reviewed_concern'],
+        default: 'pending'
+    },
+
     // ===== Section locking (snapshot copied from the quiz at /start) =====
     // Same semantics as QuizAttempt: defaults false so pre-feature attempts
     // and section-less quizzes never enforce.

@@ -1,7 +1,9 @@
 const mongoose = require('mongoose');
 
-// Proctoring session — 1:1 with a QuizAttempt (unique {attempt} index),
-// created inside the /start sequence, never earlier (plan §26.1, §7).
+// Proctoring session — 1:1 with an attempt (unique {attempt} index; the
+// attempt is a QuizAttempt for ownerKind 'user' or a GuestAttempt for
+// ownerKind 'guest'), created inside the /start sequence, never earlier
+// (plan §26.1, §7).
 //
 // State is server-authoritative only (§7.4):
 //   (absent) → ACTIVE on /start success (ensureProctoringSession)
@@ -25,18 +27,32 @@ const proctoringSessionSchema = new mongoose.Schema({
     ref: 'Quiz',
     required: true,
   },
+  // 1:1 anchor — holds the owning attempt's _id from EITHER collection:
+  // QuizAttempt for ownerKind 'user', GuestAttempt for ownerKind 'guest'
+  // (public-quiz proctoring). The ref is deliberately absent (it would be
+  // wrong for one of the two kinds); every consumer resolves sessions via
+  // ensureProctoringSession / {attempt} lookups, never populate.
   attempt: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'QuizAttempt',
     required: true,
     unique: true, // the 1:1 anchor — duplicate/concurrent starts converge here
   },
+  // Owner identity — exactly one of student/guest is set, per ownerKind.
+  // 'user' rows keep student (User); 'guest' rows set guest (the OTP-verified
+  // lead) and leave student null. ensureProctoringSession writes the right
+  // one; the schema-level optionality is what lets both kinds share this
+  // collection and the unique {attempt} anchor.
   student: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true,
+    default: null,
   },
-  // Discriminator for a future guest surface (V2); registered attempts use 'user'.
+  guest: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Guest',
+    default: null,
+  },
+  // Discriminator for the owning surface; registered attempts use 'user'.
   ownerKind: {
     type: String,
     enum: ['user', 'guest'],
@@ -140,6 +156,7 @@ const proctoringSessionSchema = new mongoose.Schema({
 
 proctoringSessionSchema.index({ quiz: 1, status: 1 });
 proctoringSessionSchema.index({ student: 1, startedAt: -1 });
+proctoringSessionSchema.index({ guest: 1, startedAt: -1 }); // guest-lane mirror of the student index
 proctoringSessionSchema.index({ quiz: 1, riskCategory: 1 }); // review queue
 
 module.exports = mongoose.model('ProctoringSession', proctoringSessionSchema);

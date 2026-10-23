@@ -26,6 +26,7 @@ import {
 } from 'lucide-react-native';
 import { api } from '@/services/api';
 import { downloadApiReport, getReportDownloadErrorMessage } from '@/services/downloads';
+import { subscribeLeaderboardRoom } from '@/services/leaderboardSubscription';
 import { useAuth } from '@/context/AuthContext';
 import { useNotifications } from '@/context/NotificationContext';
 import TabSwitcher from '@/components/analytics/TabSwitcher';
@@ -279,7 +280,9 @@ export default function Analytics() {
   // coalesce into one quiet trailing refetch; one more on socket reconnect
   // covers anything missed while offline. Joining the room here (duplicate
   // with LiveLeaderboard's join) is idempotent server-side and keeps this
-  // subscription independent of the leaderboard card's lifecycle.
+  // subscription independent of the leaderboard card's lifecycle — the
+  // shared subscribeLeaderboardRoom module re-arms the join on every
+  // reconnect (rooms do not survive a disconnect).
   useEffect(() => {
     if (!socket || !selectedTest) return;
     const testId = selectedTest._id;
@@ -291,24 +294,13 @@ export default function Analytics() {
         fetchAnalyticsRef.current(testId, { quiet: true });
       }, 800);
     };
-    const handleUpdate = (payload: { quizId?: string }) => {
-      if (payload?.quizId === testId) scheduleRefresh();
-    };
-    const handleConnect = () => {
-      socket.emit('join_leaderboard', testId);
-      scheduleRefresh();
-    };
-    if (socket.connected) {
-      handleConnect();
-    } else {
-      socket.on('connect', handleConnect);
-    }
-    socket.on('quiz_leaderboard_updated', handleUpdate);
+    const unsubscribe = subscribeLeaderboardRoom(socket, testId, {
+      onUpdate: scheduleRefresh,
+      onResync: scheduleRefresh,
+    });
     return () => {
+      unsubscribe();
       if (refreshTimer) clearTimeout(refreshTimer);
-      socket.off('connect', handleConnect);
-      socket.off('quiz_leaderboard_updated', handleUpdate);
-      socket.emit('leave_leaderboard', testId);
     };
   }, [socket, selectedTest]);
 

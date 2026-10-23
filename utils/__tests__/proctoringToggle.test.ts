@@ -15,7 +15,10 @@ describe('proctoring toggle payloads', () => {
   it('ON payload arms Warning Mode: focus warn-only + head-turn warn banner, nothing that submits', () => {
     expect(PROCTORING_ON_PAYLOAD).toEqual({
       enabled: true,
-      camera: 'optional',
+      // Camera is REQUIRED since the public-quiz proctoring decision
+      // (owner, 2026-10-23) — precheck hard-fails camera checks and blocks
+      // start on denial.
+      camera: 'required',
       focusEvents: { mode: 'warn-only' },
       multipleFaces: { mode: 'record' },
       facePresence: { mode: 'record' },
@@ -23,10 +26,9 @@ describe('proctoring toggle payloads', () => {
     });
   });
 
-  it('never carries submit semantics or a required camera in any policy', () => {
+  it('never carries submit semantics in any policy', () => {
     const modes = JSON.stringify(PROCTORING_ON_PAYLOAD);
     expect(modes).not.toContain('submit');
-    expect(modes).not.toContain('required');
   });
 
   it('OFF payload is exactly { enabled: false }', () => {

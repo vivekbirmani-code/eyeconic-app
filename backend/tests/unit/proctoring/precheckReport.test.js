@@ -92,9 +92,12 @@ describe('evaluateDeviceFloor — PROVISIONAL D10 floor', () => {
     expect(evaluateDeviceFloor({ platform: 'android', osVersion: 33, ramMb: 4096 })).toMatchObject({ below: false });
   });
 
-  it('refuses non-Android platforms (V1 surface)', () => {
+  it('refuses iOS (V1 surface) but passes the web platform (capability-based floor)', () => {
     expect(evaluateDeviceFloor({ platform: 'ios', osVersion: 17 }).below).toBe(true);
-    expect(evaluateDeviceFloor({ platform: 'web', osVersion: 1 }).below).toBe(true);
+    // Web has no reliable OS/RAM gate — the camera/detector checks are the
+    // floor (public-quiz proctoring decision 2026-10-23). No floor rejection.
+    expect(evaluateDeviceFloor({ platform: 'web', osVersion: 1 })).toMatchObject({ below: false });
+    expect(evaluateDeviceFloor({ platform: 'web', osVersion: 120 })).toMatchObject({ below: false });
   });
 
   it('refuses below-floor OS and (when reported) RAM', () => {

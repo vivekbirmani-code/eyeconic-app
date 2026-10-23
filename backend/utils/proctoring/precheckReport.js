@@ -147,12 +147,22 @@ const parsePrecheckReport = (raw) => {
 // D10 device-floor verdict. PROVISIONAL values (see defaults.js) — the
 // measured floor from the Phase 0 runbook replaces them without any code
 // change here. ramMb is enforced only when reported.
+//
+// Web platform: browsers expose no reliable OS/RAM gate (navigator
+// APIs are coarse hints at best), so the web floor is CAPABILITY-based —
+// the camera_permission / camera_availability / face_readiness checks ARE
+// the floor (they fail when getUserMedia or the detector cannot run on that
+// browser). No OS/RAM rejection applies to platform 'web'; the public-quiz
+// web CV spike (docs/web-cv-spike-report.md) may add measured floors later.
 const evaluateDeviceFloor = (device) => {
+  if (device.platform === 'web') {
+    return { below: false, ramReported: device.ramMb !== undefined, platform: 'web' };
+  }
   if (device.platform !== PROVISIONAL_DEVICE_FLOOR.platform) {
     return {
       below: true,
       reason: 'platform_unsupported',
-      detail: `Proctored tests are supported on Android only in this version (reported: ${device.platform}).`,
+      detail: `Proctored tests are supported on Android and web browsers only in this version (reported: ${device.platform}).`,
       ramReported: false,
     };
   }

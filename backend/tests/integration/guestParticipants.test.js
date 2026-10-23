@@ -366,13 +366,22 @@ describe('Public participants in admin analytics', () => {
   });
 
   it('excludes legacy anonymous guest attempts (no lead) from participant lists', async () => {
-    // Anonymous device-keyed attempt (legacy flow) — no lead captured.
-    const start = await request(app)
-      .post(`/api/public/quiz/${quiz.shareToken}/start`)
-      .send({ guestId: 'anon-legacy' });
-    await request(app)
-      .post(`/api/public/quiz/${quiz.shareToken}/submit`)
-      .send({ guestId: 'anon-legacy', attemptId: start.body.attempt._id, answers: [] });
+    // Anonymous /start is refused since D-P1 (mandatory OTP verification for
+    // every public-quiz attempt), so the legacy device-keyed shape is seeded
+    // directly — the analytics exclusion under test is about the ROW's
+    // guest:null, not how it was created.
+    await GuestAttempt.create({
+      quiz: quiz._id,
+      guestId: 'anon-legacy',
+      status: 'completed',
+      startTime: new Date(Date.now() - 10 * 60 * 1000),
+      endTime: new Date(),
+      answers: [],
+      score: 0,
+      totalQuestions: questions.length,
+      marksObtained: 0,
+      totalMarks: questions.length * 4,
+    });
 
     const res = await request(app)
       .get(`/api/quizzes/analytics/test/${quiz._id}`)

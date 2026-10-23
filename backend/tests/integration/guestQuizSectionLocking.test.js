@@ -3,6 +3,17 @@ const db = require('../helpers/db');
 const { buildApp, createUser, createSubject } = require('../helpers/testApp');
 const Quiz = require('../../models/Quiz');
 const GuestAttempt = require('../../models/GuestAttempt');
+const { resetGuestOtpRateLimits } = require('../../middleware/guestOtpRateLimit');
+
+// OTP mailer mock — public starts require a verified lead since the
+// mandatory-verification policy (owner decision D-P1, 2026-10-23).
+const sentOtps = [];
+jest.mock('../../utils/mailer', () => ({
+  ...jest.requireActual('../../utils/mailer'),
+  sendGuestQuizOtpMail: jest.fn(async (email, otp) => {
+    sentOtps.push({ email, otp });
+  }),
+}));
 
 let app;
 
@@ -14,6 +25,23 @@ beforeAll(async () => {
 afterAll(async () => {
   await db.closeDatabase();
 });
+
+// Verify a fresh lead through the real OTP flow → guest token.
+async function verifyLead(quiz) {
+  const payload = {
+    name: 'Section Tester',
+    email: `section-${Date.now()}-${Math.random().toString(36).slice(2)}@example.com`,
+    phone: '+919876543210',
+    marketingConsent: true,
+  };
+  await request(app).post(`/api/public/quiz/${quiz.shareToken}/lead/send-otp`).send(payload);
+  const otp = sentOtps[sentOtps.length - 1].otp;
+  const res = await request(app)
+    .post(`/api/public/quiz/${quiz.shareToken}/lead/verify-otp`)
+    .send({ ...payload, otp });
+  expect(res.status).toBe(200);
+  return res.body.guestToken;
+}
 
 async function createQuestion(admin, subject, overrides = {}) {
   const res = await request(app)
@@ -64,9 +92,23 @@ async function setupGuestQuiz(admin, subject, { lock = true, unsetFlag = false, 
   return { quiz, questions };
 }
 
+// One lead per quiz for the whole file — a second startGuest on the same
+// quiz is the SAME person resuming (the /start resume semantics).
+const leadTokenByQuiz = new Map();
+const leadTokenFor = async (quiz) => {
+  const key = String(quiz._id);
+  if (!leadTokenByQuiz.has(key)) {
+    leadTokenByQuiz.set(key, await verifyLead(quiz));
+  }
+  return leadTokenByQuiz.get(key);
+};
+
 async function startGuest(quiz, guestId, deviceInfo) {
+  // Mandatory verification (D-P1): starts require a verified lead token.
+  const guestToken = await leadTokenFor(quiz);
   const res = await request(app)
     .post(`/api/public/quiz/${quiz.shareToken}/start`)
+    .set('Authorization', `Bearer ${guestToken}`)
     .send({ guestId, deviceInfo });
   expect(res.status).toBe(201);
   return res.body;
@@ -88,6 +130,9 @@ describe('Section locking — guest/public attempts', () => {
 
   beforeEach(async () => {
     await db.clearDatabase();
+    // Every test verifies a fresh lead (mandatory D-P1) — the per-IP OTP
+    // send limiter would trip after 10 sends otherwise.
+    resetGuestOtpRateLimits();
     admin = await createUser({ role: 'admin' });
     subject = await createSubject('Pathology');
   });
@@ -106,9 +151,11 @@ describe('Section locking — guest/public attempts', () => {
     expect(body.attempt.sectionStates[0].status).toBe('in_progress');
     expect(body.attempt.serverNow).toBeTruthy();
 
-    // Resume returns the same state (guest re-sync channel).
+    // Resume returns the same state (guest re-sync channel) — same lead,
+    // same token (mandatory verification, D-P1).
     const resume = await request(app)
       .post(`/api/public/quiz/${quiz.shareToken}/start`)
+      .set('Authorization', `Bearer ${await leadTokenFor(quiz)}`)
       .send({ guestId });
     expect(resume.status).toBe(200);
     expect(resume.body.attempt._id).toBe(body.attempt._id);
@@ -278,6 +325,7 @@ describe('Section locking — guest/public attempts', () => {
 
     const res = await request(app)
       .post(`/api/public/quiz/${quiz.shareToken}/start`)
+      .set('Authorization', `Bearer ${await leadTokenFor(quiz)}`)
       .send({ guestId });
     expect(res.status).toBe(200);
     expect(res.body.attemptFinalized).toBe(true);

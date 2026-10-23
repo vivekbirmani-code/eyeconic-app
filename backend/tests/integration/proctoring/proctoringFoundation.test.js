@@ -189,7 +189,20 @@ describe('Proctoring foundation — collections and indexes exist', () => {
     expect(eventIndexes.some((idx) => idx.name === 'session_1_serverAt_1')).toBe(true);
 
     const consentIndexes = await listIndexes('proctoringconsents');
-    expect(consentIndexes.some((idx) => idx.name === 'quiz_1_student_1_policyVersion_1')).toBe(true);
+    // Owner-split idempotency (public-quiz proctoring Phase 1, 2026-10-23):
+    // two PARTIAL uniques replace the legacy plain {quiz,student,policyVersion}
+    // unique — a plain unique would collide every guest row's student:null
+    // (sparse-null trap). The partials are explicitly named so they cannot
+    // collide with the legacy default name.
+    const userConsentIndex = consentIndexes.find((idx) => idx.name === 'consent_user_owner_unique_1');
+    expect(userConsentIndex).toBeDefined();
+    expect(userConsentIndex.unique).toBe(true);
+    expect(userConsentIndex.partialFilterExpression).toEqual({ student: { $type: 'objectId' } });
+    const guestConsentIndex = consentIndexes.find((idx) => idx.name === 'consent_guest_owner_unique_1');
+    expect(guestConsentIndex).toBeDefined();
+    expect(guestConsentIndex.unique).toBe(true);
+    expect(guestConsentIndex.partialFilterExpression).toEqual({ guest: { $type: 'objectId' } });
+    expect(consentIndexes.some((idx) => idx.name === 'quiz_1_student_1_policyVersion_1')).toBe(false);
   });
 
   it('rejects banned/unknown event types at the model layer (registry enum)', async () => {

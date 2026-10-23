@@ -46,7 +46,7 @@ const {
   buildEventTypeAggregatePipeline,
   computeRiskScore,
 } = require('../utils/proctoring/riskScore');
-const { computeSessionSummary } = require('../utils/proctoring/summary');
+const { assembleProctoringTimeline } = require('../utils/proctoring/timeline');
 const { ensureProctoringSession, shapeAttentionBaseline } = require('../utils/proctoring/session');
 const {
   computeHeartbeatGap,
@@ -61,27 +61,64 @@ const CLOSED_STATUSES = ['CLOSED', 'CLOSED_FAILED'];
 const DETERRENCE_VALUES = ['android-flagsecure', 'ios-detect-only', 'unsupported', 'disabled'];
 
 /**
+ * Owner adapter — the per-surface seam of the event ingest. Everything the
+ * pipeline does between ownership resolution and the response is
+ * owner-agnostic (validation, dedup, insert, heartbeat, rules, risk); the
+ * adapter supplies only the identity mechanics:
+ *   middleware         — auth chain for the route (registered: user JWT;
+ *                        public: guest token + ownership)
+ *   ownerId(req)       — identity for structured logs
+ *   resolveAttempt     — ownership-checked attempt lookup that ALSO verifies
+ *                        the attempt belongs to this route's quiz scope
+ *                        (registered: the :id path param; public: the
+ *                        shareToken-resolved quiz). Returns null for any
+ *                        miss — the route answers a bare 404 so a probing
+ *                        client learns nothing.
+ *   attemptStillActive — re-check right before a policy auto-submit (racing-
+ *                        finalize guard), same ownership rule
+ *   deliverWarning     — the live channel for warnings (socket lane)
+ *
+ * This default adapter is the registered-student behavior the route had
+ * before the seam existed; public-quiz proctoring adds a guest adapter
+ * (routes/publicProctoring.js) that reuses the identical pipeline through it.
+ */
+const registeredEventOwner = {
+  middleware: [auth, authorize('student'), proctoringEventsRateLimit],
+  ownerId: (req) => req.user._id,
+  resolveAttempt: async (req, attemptId, quizIdParam) => {
+    const attempt = await QuizAttempt.findOne({ _id: attemptId, student: req.user._id });
+    if (!attempt) return null;
+    // The attempt exists but belongs to a different quiz — a confused or
+    // probing client. Do not leak its existence.
+    if (String(attempt.quiz) !== String(quizIdParam)) return null;
+    return attempt;
+  },
+  attemptStillActive: async (req, attempt) =>
+    (await QuizAttempt.countDocuments({
+      _id: attempt._id, student: req.user._id, status: 'in_progress',
+    })) > 0,
+  deliverWarning: (session, payload) => {
+    emitToUser(String(session.student), 'proctoring_warning', payload);
+  },
+};
+
+/**
  * POST /events — batched, idempotent episode ingest (+ heartbeat piggyback).
  *
  * Order of enforcement mirrors the other attempt-touching routes:
  * ownership → lazy §7.5 duration finalize → attempt/session state → envelope
  * and per-event validation → dedup → insert → session health bookkeeping.
  */
-const buildEventsRouter = ({ makeFinalizer, makePolicySubmitter, enforceDeadlines }) => {
+const buildEventsRouter = ({ makeFinalizer, makePolicySubmitter, enforceDeadlines, owner = registeredEventOwner }) => {
   const router = express.Router({ mergeParams: true });
 
-  router.post('/events', auth, authorize('student'), proctoringEventsRateLimit, async (req, res) => {
+  router.post('/events', ...owner.middleware, async (req, res) => {
     const { id: quizIdParam, attemptId } = req.params;
     try {
-      let attempt = await QuizAttempt.findOne({ _id: attemptId, student: req.user._id });
+      // Ownership + quiz-scope resolution lives in the adapter (see
+      // registeredEventOwner) — a null answer is a bare 404, no information.
+      let attempt = await owner.resolveAttempt(req, attemptId, quizIdParam);
       if (!attempt) {
-        return res.status(404).json({
-          success: false, message: 'Attempt not found', code: 'ATTEMPT_NOT_FOUND', requestId: req.requestId,
-        });
-      }
-      if (String(attempt.quiz) !== String(quizIdParam)) {
-        // The attempt exists but belongs to a different quiz — a confused or
-        // probing client. Do not leak its existence.
         return res.status(404).json({
           success: false, message: 'Attempt not found', code: 'ATTEMPT_NOT_FOUND', requestId: req.requestId,
         });
@@ -112,7 +149,7 @@ const buildEventsRouter = ({ makeFinalizer, makePolicySubmitter, enforceDeadline
         logger.warn('Proctoring batch rejected — session not active', {
           requestId: req.requestId,
           attemptId: attempt._id,
-          studentId: req.user._id,
+          ownerId: String(owner.ownerId(req)),
           attemptStatus: attempt.status,
         });
         return res.status(409).json({
@@ -153,7 +190,7 @@ const buildEventsRouter = ({ makeFinalizer, makePolicySubmitter, enforceDeadline
         logger.warn('Proctoring batch rejected — closed session', {
           requestId: req.requestId,
           sessionId: session._id,
-          studentId: req.user._id,
+          ownerId: String(owner.ownerId(req)),
         });
         return res.status(409).json({
           success: false,
@@ -464,7 +501,7 @@ const buildEventsRouter = ({ makeFinalizer, makePolicySubmitter, enforceDeadline
             }
           }
           try {
-            emitToUser(String(session.student), 'proctoring_warning', {
+            owner.deliverWarning(session, {
               warnId: action.warnId,
               kind: action.kind,
               code: action.code,
@@ -491,9 +528,7 @@ const buildEventsRouter = ({ makeFinalizer, makePolicySubmitter, enforceDeadline
         // submit converge to exactly one winner. ---
         if (evaluation.submit) {
           const attemptStillActive = attempt.status === 'in_progress'
-            && (await QuizAttempt.countDocuments({
-              _id: attempt._id, student: req.user._id, status: 'in_progress',
-            })) > 0;
+            && (await owner.attemptStillActive(req, attempt));
           if (attemptStillActive && !CLOSED_STATUSES.includes(session.status)) {
             const autoRecord = buildEventRecord(
               {
@@ -746,50 +781,13 @@ const buildSessionRouter = () => {
         });
       }
 
-      const [events, violations] = await Promise.all([
-        ProctoringEvent.find({ session: session._id })
-          .sort({ serverAt: 1, _id: 1 })
-          .select('type category severity source confidence openedAt closedAt durationMs serverAt metadata actionTaken')
-          .lean(),
-        ProctoringViolation.find({ session: session._id })
-          .sort({ countedAt: 1 })
-          .select('ruleId reliability countedAt actionTaken eventRefs review')
-          .lean(),
-      ]);
-
-      // Closed sessions serve their FROZEN summary; live sessions roll up on
-      // demand (the freeze happens on the finalize winner branch).
-      const summary = (session.status === 'CLOSED' || session.status === 'CLOSED_FAILED') && session.summary
-        ? session.summary
-        : (await computeSessionSummary(session, {
-          policy: attempt.proctoringSnapshot?.policy || {},
-        })).summary;
+      // Assembly is shared with every other timeline reader (public
+      // guest-owner route) — utils/proctoring/timeline.js.
+      const timeline = await assembleProctoringTimeline(attempt, session);
 
       return res.status(200).json({
         success: true,
-        timeline: {
-          session: {
-            id: session._id,
-            status: session.status,
-            startedAt: session.startedAt,
-            endedAt: session.endedAt || null,
-            // Phase 7 (§25.4): live review state — the decision of record
-            // plus the display-only adjusted score (originals never altered).
-            integrityStatus: session.integrityStatus ?? 'pending',
-            ...(session.review?.status ? { review: session.review } : {}),
-            ...(session.reviewAdjustedScore?.score !== undefined
-              ? { reviewAdjustedScore: session.reviewAdjustedScore }
-              : {}),
-            lastSeenAt: session.sessionHealth?.lastSeenAt || null,
-            deterrence: session.deterrence?.screenCapturePrevention || null,
-            integrity: session.integrity || {},
-          },
-          attemptStatus: attempt.status,
-          autoSubmitReason: attempt.autoSubmitReason || null,
-          summary,
-          events,
-          violations,
-        },
+        timeline,
         requestId: req.requestId,
       });
     } catch (error) {

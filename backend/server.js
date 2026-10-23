@@ -34,6 +34,7 @@ const settingsRoutes = require('./routes/settings');
 const uploadRoutes = require('./routes/upload');
 const publicQuizRoutes = require('./routes/public-quiz');
 const publicLeadRoutes = require('./routes/public-lead');
+const publicProctoringRoutes = require('./routes/publicProctoring');
 const studentAnalyticsRoutes = require('./routes/student-analytics');
 const integrationRoutes = require('./routes/integration');
 const { cleanupExpiredMedia } = require('./utils/media-cleanup');
@@ -320,12 +321,54 @@ const migrateGuestAttemptIndexes = async () => {
   }
 };
 
+// One-time migration for the proctoring-consent owner-index split: consent
+// rows were uniquely keyed {quiz, student, policyVersion} with a PLAIN unique
+// index. Guest consent rows (public-quiz proctoring) carry student:null — a
+// plain unique index would treat every second guest's consent for the same
+// quiz+policyVersion as a duplicate of the first (the sparse-null trap, the
+// same class of bug as the shareToken revoke incident). The schema now
+// declares two PARTIAL unique indexes, explicitly named so they cannot
+// collide with the legacy default name; on existing deployments this drops
+// the legacy index and makes sure both partials exist. Idempotent: guarded
+// on what actually exists, so later boots no-op.
+const migrateProctoringConsentIndexes = async () => {
+  try {
+    const collection = mongoose.connection.collection('proctoringconsents');
+    const indexes = await collection.listIndexes().toArray().catch(() => []);
+    if (indexes.some((idx) => idx.name === 'quiz_1_student_1_policyVersion_1')) {
+      await collection.dropIndex('quiz_1_student_1_policyVersion_1');
+      logger.info('Dropped legacy proctoring-consent unique index');
+    }
+    // Same names+specs the schema declares, so deployments where mongoose
+    // already built them no-op here.
+    await collection.createIndex(
+      { quiz: 1, student: 1, policyVersion: 1 },
+      {
+        unique: true,
+        name: 'consent_user_owner_unique_1',
+        partialFilterExpression: { student: { $type: 'objectId' } },
+      }
+    );
+    await collection.createIndex(
+      { quiz: 1, guest: 1, policyVersion: 1 },
+      {
+        unique: true,
+        name: 'consent_guest_owner_unique_1',
+        partialFilterExpression: { guest: { $type: 'objectId' } },
+      }
+    );
+  } catch (error) {
+    logger.warn('Proctoring consent-index migration skipped', { errorMessage: error.message });
+  }
+};
+
 const startDatabase = async () => {
   try {
     await connectDatabase(async () => {
       await migrateGuestOtpCollection();
       await migrateGuestIdentityIndexes();
       await migrateGuestAttemptIndexes();
+      await migrateProctoringConsentIndexes();
       cleanupExpiredMedia();
       setInterval(cleanupExpiredMedia, 24 * 60 * 60 * 1000);
 
@@ -420,6 +463,7 @@ app.use('/api/settings', featureGate('userManagement', 'settings'), settingsRout
 app.use('/api/upload', authMiddleware, featureGate('chat', 'upload'), uploadRoutes);
 app.use('/api/public', publicQuizRoutes);
 app.use('/api/public', publicLeadRoutes);
+app.use('/api/public', publicProctoringRoutes);
 app.use('/api/student-analytics', studentAnalyticsRoutes);
 // Free Login User Dashboard (website Feature 08) — read-only mentor/admin
 // analytics over the free-user population. Ungated like daily-pyq: it only
@@ -606,10 +650,36 @@ io.on('connection', (socket) => {
     }
   };
 
+  // ---- Guest (public-quiz) lane -----------------------------------------
+  // An OTP-verified lead's session token registers the socket in the GUEST
+  // map (socket-helpers guestSocketMap) — a deliberately SEPARATE lane from
+  // users: a guest socket can only ever receive emissions targeted at its
+  // own verified guest id (live proctoring warnings, public-quiz Phase 2),
+  // and joins NO rooms (no chat/call/leaderboard access for guests). Same
+  // identity doctrine as the user lane: proven from the token, never claimed.
+  const registerGuestSocketFromToken = (token) => {
+    const verified = socketHelpers.verifyGuestSocketToken(token);
+    if (!verified.ok) return false;
+    socket.guestId = verified.guestId;
+    socketHelpers.registerGuestSocket(socket.id, verified.guestId);
+    console.log(`Guest ${verified.guestId} registered with socket ${socket.id}`);
+    return true;
+  };
+
   // Clients that pass the token in the handshake are registered immediately.
+  // User lane first; a valid GUEST session token registers the guest lane
+  // instead (a guest token is a fine credential — it simply belongs to the
+  // public lane, so it never draws a register_rejected).
   const handshakeToken = socket.handshake?.auth?.token;
   if (handshakeToken) {
-    registerVerifiedSocket(handshakeToken, null);
+    if (socketHelpers.verifySocketToken(handshakeToken).ok) {
+      registerVerifiedSocket(handshakeToken, null);
+    } else if (!registerGuestSocketFromToken(handshakeToken)) {
+      socket.emit('register_rejected', {
+        message: 'Socket registration requires a valid user or guest token.',
+      });
+      console.warn(`Socket ${socket.id} registration rejected (no/invalid token)`);
+    }
   }
 
   // Register user with socket and auto-join all their group rooms.
@@ -1109,6 +1179,9 @@ io.on('connection', (socket) => {
     const userId = socketUserMap.get(socket.id);
     socketUserMap.delete(socket.id);
     socketHelpers.unregisterSocket(socket.id, userId);
+    if (socket.guestId) {
+      socketHelpers.unregisterGuestSocket(socket.id, socket.guestId);
+    }
     console.log('User disconnected:', socket.id);
 
     // If user was in an active call, handle their departure

@@ -3506,7 +3506,7 @@ router.post('/:id/start', auth, authorize('student'), async (req, res) => {
       const gate = await assertProctoringStartPrerequisites(
         quiz,
         effectiveProctoringPolicy,
-        req.user._id,
+        { id: req.user._id, kind: 'user' },
         req.body?.precheckToken
       );
       if (!gate.ok) {
@@ -4519,48 +4519,63 @@ router.get('/analytics/tests/list', auth, authorize('admin', 'mentor'), async (r
       mentorStudentIds = assignments.map(a => a.student.toString());
     }
 
-    // Get attempt counts for each test
-    const testsWithStats = await Promise.all(
-      tests.map(async (test) => {
-        let attemptQuery = {
-          quiz: test._id,
-          status: { $in: ['completed', 'auto_submitted'] }
-        };
+    // Attempt counts in TWO grouped aggregations instead of 2×N
+    // countDocuments round trips — this list refetches on every Analytics
+    // tab visit, so per-test counts add up. Cohort rules identical to the
+    // per-test queries they replace: registered completed/auto_submitted
+    // (mentor-scoped for mentors), lead-attempted guests for admins only.
+    const quizIds = tests.map((test) => test._id);
+    const countByQuiz = async (model, match) => {
+      const rows = await model.aggregate([
+        { $match: match },
+        { $group: { _id: '$quiz', count: { $sum: 1 } } },
+      ]);
+      return new Map(rows.map((row) => [String(row._id), row.count]));
+    };
 
-        let assignedCount = test.assignedStudents?.length || 0;
+    const registeredMatch = {
+      quiz: { $in: quizIds },
+      status: { $in: ['completed', 'auto_submitted'] },
+    };
+    if (req.user.role === 'mentor') {
+      registeredMatch.student = { $in: mentorStudentIds };
+    }
 
-        // Apply mentor filtering
-        if (req.user.role === 'mentor') {
-          attemptQuery.student = { $in: mentorStudentIds };
-          // Calculate mentor's assigned students that are also assigned to this test (or just mentor's stds if test is global)
-          if (test.assignedStudents && test.assignedStudents.length > 0) {
-            assignedCount = test.assignedStudents.filter(id => mentorStudentIds.includes(id.toString())).length;
-          } else {
-            assignedCount = mentorStudentIds.length;
-          }
+    const [registeredCounts, guestCounts] = await Promise.all([
+      countByQuiz(QuizAttempt, registeredMatch),
+      req.user.role === 'admin'
+        ? countByQuiz(GuestAttempt, {
+            quiz: { $in: quizIds },
+            status: { $in: ['completed', 'auto_submitted'] },
+            guest: { $ne: null },
+          })
+        : null,
+    ]);
+
+    const testsWithStats = tests.map((test) => {
+      let assignedCount = test.assignedStudents?.length || 0;
+
+      // Apply mentor filtering
+      if (req.user.role === 'mentor') {
+        // Calculate mentor's assigned students that are also assigned to this test (or just mentor's stds if test is global)
+        if (test.assignedStudents && test.assignedStudents.length > 0) {
+          assignedCount = test.assignedStudents.filter(id => mentorStudentIds.includes(id.toString())).length;
+        } else {
+          assignedCount = mentorStudentIds.length;
         }
+      }
 
-        const attemptCount = await QuizAttempt.countDocuments(attemptQuery);
-
-        // Public-quiz guest attempts are surfaced to ADMINS ONLY, as a
-        // separate count — attemptCount keeps its registered-only meaning
-        // and mentor responses are unchanged.
-        const guestAttemptCount = req.user.role === 'admin'
-          ? await countGuestAttempts(test._id)
-          : null;
-
-        return {
-          _id: test._id,
-          title: test.title,
-          testType: test.testType,
-          assignedCount: assignedCount,
-          attemptCount,
-          ...(guestAttemptCount !== null ? { guestAttemptCount } : {}),
-          totalMarks: test.totalMarks,
-          createdAt: test.createdAt
-        };
-      })
-    );
+      return {
+        _id: test._id,
+        title: test.title,
+        testType: test.testType,
+        assignedCount: assignedCount,
+        attemptCount: registeredCounts.get(String(test._id)) || 0,
+        ...(guestCounts !== null ? { guestAttemptCount: guestCounts.get(String(test._id)) || 0 } : {}),
+        totalMarks: test.totalMarks,
+        createdAt: test.createdAt
+      };
+    });
 
     let resultTests = testsWithStats;
     if (req.user.role === 'mentor') {

@@ -4,6 +4,7 @@ const Quiz = require('../models/Quiz');
 const QuestionBank = require('../models/QuestionBank');
 const GuestAttempt = require('../models/GuestAttempt');
 const Guest = require('../models/Guest');
+const ProctoringSession = require('../models/ProctoringSession');
 const { gradeQuestion } = require('../utils/grading');
 const { buildMetadataSnapshot } = require('../utils/questionSnapshot');
 const { guestAuth, optionalGuestAuth } = require('../middleware/guestAuth');
@@ -32,6 +33,18 @@ const {
     isPastSubmissionWindow,
     buildAutoSubmitReason,
 } = require('../utils/proctoring/durationEnforcement');
+const {
+    ensureProctoringSession,
+    closeProctoringSessionForAttempt,
+    shapeAttentionBaseline,
+} = require('../utils/proctoring/session');
+const {
+    freezeProctoringPolicySnapshot,
+    buildEffectiveProctoringPolicy,
+} = require('../utils/proctoring/policySnapshot');
+const { resolveEligibilityForQuiz } = require('../utils/proctoring/rollout');
+const { assertProctoringStartPrerequisites } = require('../utils/proctoring/startGating');
+const { buildPublicQuizUrl } = require('../utils/publicWebUrl');
 const socketHelpers = require('../utils/socket-helpers');
 
 const router = express.Router();
@@ -208,6 +221,20 @@ const gradeAndFinalizeGuestAttempt = async (attempt, {
         { new: true }
     );
     if (updated) {
+        // Proctoring (public-quiz Phase 2): EVERY guest finalization path —
+        // whole-quiz submit, section cascade, lazy expiry, sweep, policy
+        // auto-submit — funnels through this one CAS winner, so the session
+        // close + summary freeze hooks here exactly once per attempt. Best
+        // effort by design: a close failure is logged, never propagated (the
+        // attempt is already finalized and must not roll back).
+        try {
+            await closeProctoringSessionForAttempt(updated, {
+                reason: `attempt_${updated.status}`,
+                ownerKind: 'guest',
+            });
+        } catch (proctoringError) {
+            console.error('Guest proctoring session close failed:', proctoringError?.message || proctoringError);
+        }
         // Live leaderboard: this CAS win is the ONE place a guest attempt
         // transitions to finalized, so every guest path (whole-quiz submit,
         // section cascade, lazy expiry, sweep) nudges the test's leaderboard
@@ -356,7 +383,10 @@ const findResumableGuestAttempt = async (quizId, guestId, guest) => {
 // Resume answer for /start, shared by the initial resume path and the
 // duplicate-key convergence path of the create flow: lazily enforces the
 // effective deadline, then returns the section-locked or flat resume shape.
-const respondResumingGuestAttempt = async (res, quiz, attempt, guest) => {
+// `extras` (optional) carries additional TOP-LEVEL response fields — used by
+// the proctoring resume path (proctoringSessionId etc.) so resumed guests
+// get the same arming data the create path returns.
+const respondResumingGuestAttempt = async (res, quiz, attempt, guest, extras = {}) => {
     // First lazily enforce the effective deadline — min(stored duration
     // deadline, link expiry) or the section cascade. The enforcement keys
     // on the ATTEMPT's own guestId — a cross-device resume under the
@@ -384,6 +414,7 @@ const respondResumingGuestAttempt = async (res, quiz, attempt, guest) => {
             success: true,
             message: 'Resuming existing attempt',
             ...(guest ? { lead: leadSummary(guest) } : {}),
+            ...extras,
             attempt: {
                 _id: attempt._id,
                 startTime: attempt.startTime,
@@ -421,6 +452,7 @@ const respondResumingGuestAttempt = async (res, quiz, attempt, guest) => {
         success: true,
         message: 'Resuming existing attempt',
         ...(guest ? { lead: leadSummary(guest) } : {}),
+        ...extras,
         attempt: {
             _id: attempt._id,
             startTime: attempt.startTime,
@@ -496,7 +528,7 @@ router.get('/quiz/:shareToken', async (req, res) => {
         // Shared public-access check: link-level expiry only (the quiz's
         // internal student window does not apply to public guests).
         const access = await findActivePublicQuiz(shareToken, {
-            select: 'title subject duration instructions totalMarks questions publicExpiryDate lockSectionsAfterSubmission sections',
+            select: 'title subject duration instructions totalMarks questions publicExpiryDate lockSectionsAfterSubmission sections proctoring',
         })
             .then(async (result) => {
                 if (result.error || !result.quiz) return result;
@@ -507,6 +539,14 @@ router.get('/quiz/:shareToken', async (req, res) => {
             return sendPublicQuizError(res, access.error);
         }
         const quiz = access.quiz;
+
+        // AI proctoring (public-quiz Phase 2): server-computed "fully
+        // effective right now" hint — resolved through the SAME rollout
+        // helper /start gates with, so the landing page can never disagree
+        // with the gate. Camera is disclosed as required only when
+        // proctoring is actually effective (an unarmed quiz never asks for
+        // a camera).
+        const proctoringEligibility = await resolveEligibilityForQuiz(quiz);
 
         res.json({
             success: true,
@@ -528,7 +568,16 @@ router.get('/quiz/:shareToken', async (req, res) => {
                     name: s.name,
                     duration: s.duration,
                     questionCount: s.questionIds.length
-                }))
+                })),
+                // Proctoring disclosure: what the landing page needs BEFORE
+                // lead capture (monitoring notice + camera requirement), and
+                // the authoritative web URL for the Android app's
+                // redirect-to-browser path.
+                proctoringRequired: proctoringEligibility.enabled === true,
+                ...(proctoringEligibility.enabled ? {
+                    cameraRequired: (buildEffectiveProctoringPolicy(quiz)?.policy?.camera ?? 'required') === 'required',
+                } : {}),
+                webUrl: buildPublicQuizUrl(shareToken)
             }
         });
     } catch (error) {
@@ -536,6 +585,32 @@ router.get('/quiz/:shareToken', async (req, res) => {
         res.status(500).json({ success: false, message: 'Server error' });
     }
 });
+
+// Proctoring resume arming (public-quiz Phase 2): a resumed attempt NEVER
+// re-gates (consent + precheck were consumed at its own /start — a
+// mid-quiz student must never be blocked by a re-consent demand), but a
+// missing session self-heals exactly like the registered flow, and the
+// resume response carries the same arming fields the create path returns.
+// Gate-off mid-attempt: an EXISTING session still arms (it rides to the end
+// on its frozen snapshot); only NEW session creation stops.
+const proctoringResumeExtras = async (quiz, attempt) => {
+    if (!attempt.proctoringSnapshot) return {};
+    let session = await ProctoringSession.findOne({ attempt: attempt._id, ownerKind: 'guest' });
+    if (!session && (await resolveEligibilityForQuiz(quiz)).enabled) {
+        session = await ensureProctoringSession(attempt, {
+            policySnapshot: attempt.proctoringSnapshot,
+            reason: 'resume_self_heal',
+            ownerKind: 'guest',
+        });
+    }
+    if (!session) return {};
+    return {
+        proctoringSessionId: session._id,
+        proctoringPolicyDigest: attempt.proctoringSnapshot?.hash,
+        proctoringPolicy: attempt.proctoringSnapshot?.policy,
+        proctoringAttentionBaseline: shapeAttentionBaseline(session),
+    };
+};
 
 /**
  * POST /api/public/quiz/:shareToken/start
@@ -571,8 +646,24 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
         }
         const quiz = access.quiz;
 
-        // One attempt per identified guest (web OTP flow only — anonymous
-        // device-keyed requests carry no identity and skip this check).
+        // Mandatory OTP verification (owner decision D-P1, 2026-10-23): EVERY
+        // public quiz attempt — proctored or not — requires a verified lead.
+        // Enforced server-side before any attempt lookup or creation; the
+        // payload carries the authoritative web URL so the Android app (and
+        // old APKs that can only render the message) can route the student
+        // to the browser flow. Pre-policy attempts already in progress keep
+        // running through the save/submit routes' own ownership checks.
+        if (!req.guest) {
+            return res.status(401).json({
+                success: false,
+                message: 'Email verification is required to start this test. Please open this link in a browser and verify your email to continue.',
+                code: 'GUEST_VERIFICATION_REQUIRED',
+                webUrl: buildPublicQuizUrl(shareToken),
+                requestId: req.requestId,
+            });
+        }
+
+        // One attempt per identified guest (the OTP-verified email).
         // Runs BEFORE the in-progress resume lookup: if the same person
         // already finished this quiz — via this lead, or any lead sharing
         // the OTP-verified email — no new attempt may be created and a
@@ -598,7 +689,38 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
         let attempt = await findResumableGuestAttempt(quiz._id, guestId, req.guest);
 
         if (attempt) {
-            return respondResumingGuestAttempt(res, quiz, attempt, req.guest);
+            return respondResumingGuestAttempt(
+                res, quiz, attempt, req.guest,
+                await proctoringResumeExtras(quiz, attempt)
+            );
+        }
+
+        // Proctoring gating (public-quiz Phase 2): an armed public quiz
+        // starts only after recorded consent AND a valid precheck
+        // attestation token — enforced BEFORE anything is created (zero
+        // rows on failure; retries are free). Gates off ⇒ the quiz runs
+        // unproctored, exactly like the registered flow (§31 semantics).
+        const proctoringEligibility = await resolveEligibilityForQuiz(quiz);
+        const effectiveProctoringPolicy = proctoringEligibility.enabled
+            ? buildEffectiveProctoringPolicy(quiz)
+            : null;
+        let proctoringAttentionBaseline = null;
+        if (effectiveProctoringPolicy) {
+            const gate = await assertProctoringStartPrerequisites(
+                quiz,
+                effectiveProctoringPolicy,
+                { id: req.guest._id, kind: 'guest' },
+                req.body?.precheckToken
+            );
+            if (!gate.ok) {
+                return res.status(gate.status).json({
+                    success: false,
+                    message: gate.message,
+                    code: gate.code,
+                    requestId: req.requestId,
+                });
+            }
+            proctoringAttentionBaseline = gate.precheck?.summary?.attentionBaseline ?? null;
         }
 
         // Create new attempt. Section-locking snapshot is frozen here (same
@@ -607,13 +729,19 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
         // Flat attempts additionally get the server-side duration deadline
         // (§7.5 mirror of the registered flow): startTime + duration, stored
         // pure — the effective deadline min(this, link expiry) is enforced
-        // lazily on every attempt touch.
+        // lazily on every attempt touch. Proctored attempts additionally
+        // freeze the proctoring policy snapshot (write-once — later admin
+        // edits never move the goalposts mid-attempt); guests get no
+        // accommodation overrides (a registered-student concept).
         const startedAt = new Date();
         const sectionSnapshot = buildSectionSnapshot(quiz, startedAt);
         const flatDurationDeadline = computeFlatDurationDeadline(
             { durationMinutes: quiz.duration, sectionLockEnabled: sectionSnapshot.sectionLockEnabled === true },
             startedAt
         );
+        const proctoringSnapshot = proctoringEligibility.enabled
+            ? freezeProctoringPolicySnapshot(quiz, startedAt, { overrides: [] })
+            : null;
         attempt = new GuestAttempt({
             quiz: quiz._id,
             guestId,
@@ -630,6 +758,7 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
             totalMarks: quiz.totalMarks,
             ...(sectionSnapshot.sectionLockEnabled ? sectionSnapshot : {}),
             ...(flatDurationDeadline ? { durationDeadline: flatDurationDeadline } : {}),
+            ...(proctoringSnapshot ? { proctoringSnapshot } : {}),
             answers: quiz.questions.map((q, index) => ({
                 questionIndex: index,
                 questionId: q._id,
@@ -657,7 +786,10 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
             }
             const winner = await findResumableGuestAttempt(quiz._id, guestId, req.guest);
             if (winner) {
-                return respondResumingGuestAttempt(res, quiz, winner, req.guest);
+                return respondResumingGuestAttempt(
+                    res, quiz, winner, req.guest,
+                    await proctoringResumeExtras(quiz, winner)
+                );
             }
             // The winner was finalized (submitted / deadline-swept) between
             // the failed insert and this lookup — answer with the
@@ -717,6 +849,19 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
             );
         }
 
+        // Proctoring session — created in the same /start sequence as the
+        // attempt, never earlier (the registered-flow doctrine). Idempotent:
+        // the unique {attempt} index converges racing creators onto one row.
+        let proctoringSession = null;
+        if (proctoringEligibility.enabled && attempt.proctoringSnapshot) {
+            proctoringSession = await ensureProctoringSession(attempt, {
+                policySnapshot: attempt.proctoringSnapshot,
+                reason: 'start',
+                ownerKind: 'guest',
+                ...(proctoringAttentionBaseline ? { attentionBaseline: proctoringAttentionBaseline } : {}),
+            });
+        }
+
         res.status(201).json({
             success: true,
             message: 'Quiz started',
@@ -755,7 +900,17 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
                     marks: q.marks || 1
                 })),
                 totalMarks: quiz.totalMarks
-            }
+            },
+            // Proctoring arming data (same fields the registered /start
+            // returns): the FROZEN policy drives the client engine's episode
+            // + heartbeat thresholds; the baseline re-serves the seated pose
+            // captured at precheck.
+            ...(proctoringSession ? {
+                proctoringSessionId: proctoringSession._id,
+                proctoringPolicyDigest: attempt.proctoringSnapshot?.hash,
+                proctoringPolicy: attempt.proctoringSnapshot?.policy,
+                proctoringAttentionBaseline: shapeAttentionBaseline(proctoringSession),
+            } : {})
         });
     } catch (error) {
         console.error('Error starting guest quiz:', error);
@@ -1349,3 +1504,8 @@ module.exports = router;
 // finalizations. Attached after the router so require('../routes/public-quiz')
 // keeps returning the Express router.
 module.exports.enforceGuestAttemptDeadlines = enforceGuestAttemptDeadlines;
+// Re-exported for the public proctoring surface (routes/publicProctoring.js):
+// the guest finalize path (policy auto-submit executor) and the shared
+// ownership rule for attempt-scoped proctoring routes.
+module.exports.gradeAndFinalizeGuestAttempt = gradeAndFinalizeGuestAttempt;
+module.exports.findOwnedGuestAttempt = findOwnedGuestAttempt;
