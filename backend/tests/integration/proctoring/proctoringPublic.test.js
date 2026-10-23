@@ -93,7 +93,7 @@ async function createQuestion() {
   });
 }
 
-async function setupQuiz({ armed = true } = {}) {
+async function setupQuiz({ armed = true, sections = false } = {}) {
   const questions = [];
   for (let i = 0; i < 2; i += 1) questions.push(await createQuestion());
   const quiz = await Quiz.create({
@@ -108,6 +108,16 @@ async function setupQuiz({ armed = true } = {}) {
     isPublic: true,
     shareToken: `pp-${Date.now()}-${Math.random().toString(36).slice(2)}`,
     ...(armed ? { proctoring: ARMED_PROCTORING } : {}),
+    // Section durations must sum to the quiz duration (10) — the authoring
+    // contract buildSectionSnapshot enforces.
+    ...(sections
+      ? {
+          sections: [
+            { name: 'Section A', duration: 5, selectionType: 'manual', questions: [questions[0]._id] },
+            { name: 'Section B', duration: 5, selectionType: 'manual', questions: [questions[1]._id] },
+          ],
+        }
+      : {}),
   });
   return { quiz, questions };
 }
@@ -432,8 +442,7 @@ describe('public proctoring — event ingest', () => {
     resetPublicProctoringEventRateLimits();
   });
 
-  it('accepts a SESSION_STARTED + TAB_HIDDEN batch and updates session bookkeeping', async () => {
-    const res = await sendEvents(quiz, { ...lead, attemptId, sessionId }, [
+  it('accepts a SESSION_STARTED + TAB_HIDDEN batch and updates session bookkeeping', async () => {    const res = await sendEvents(quiz, { ...lead, attemptId, sessionId }, [
       episodeEvent('SESSION_STARTED', { source: 'system' }),
       episodeEvent('TAB_HIDDEN'),
     ]);
@@ -565,5 +574,116 @@ describe('public proctoring — event ingest', () => {
     expect(timeline.status).toBe(200);
     expect(timeline.body.timeline.session.status).toBe('CLOSED');
     expect(timeline.body.timeline.summary).toBeTruthy();
+  });
+});
+
+// =====================================================================
+// E. save-progress on PROCTORED attempts (owner bug report 2026-10-24:
+// repeated 500s during a live proctored attempt). The earlier suites
+// exercised save-progress only on UNPROCTORED attempts — these tests lock
+// the autosave path for armed quizzes: flat and section-locked, repeated
+// (autosave cadence), concurrent (dirty-flush racing heartbeat), and the
+// post-finalize contract.
+// =====================================================================
+const saveProgress = (quiz, { guestToken, guestId, attemptId }, payload) =>
+  request(app)
+    .post(`/api/public/quiz/${quiz.shareToken}/save-progress`)
+    .set('Authorization', guestToken ? `Bearer ${guestToken}` : '')
+    .send({ guestId, attemptId, ...payload });
+
+describe('public proctoring — save-progress on proctored attempts', () => {
+  const { resetGuestOtpRateLimits } = require('../../../middleware/guestOtpRateLimit');
+
+  // Every test verifies fresh leads — the per-IP OTP SEND limiter (10/10min)
+  // would otherwise trip mid-file and poison verifyLead with stale codes.
+  beforeEach(() => {
+    resetGuestOtpRateLimits();
+  });
+
+  const savePayload = (questions) => ({
+    answers: questions.map((q, i) => ({
+      questionIndex: i,
+      questionId: q._id,
+      selectedAnswer: 1,
+      markedForReview: false,
+      timeSpent: 5,
+    })),
+    tabSwitchCount: 0,
+    tabSwitchLog: [],
+  });
+
+  it('flat proctored attempt: repeated + concurrent autosaves all succeed (200, no 500s)', async () => {
+    const { quiz, questions } = await setupQuiz({ armed: true });
+    const lead = await verifyLead(quiz);
+    const token = await armLead(quiz, lead.guestToken);
+    const start = await startAttempt(quiz, lead.guestToken, lead.guestId, token);
+    expect(start.status).toBe(201);
+    const ctx = { ...lead, attemptId: start.body.attempt._id };
+
+    // Autosave cadence: sequential saves.
+    for (let i = 0; i < 3; i += 1) {
+      const res = await saveProgress(quiz, ctx, savePayload(questions));
+      expect(res.status).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.attemptFinalized).toBeUndefined();
+    }
+    // Dirty-flush racing the heartbeat: concurrent saves converge (last
+    // writer wins per question — the fire-and-forget contract).
+    const burst = await Promise.all(
+      Array.from({ length: 4 }, () => saveProgress(quiz, ctx, savePayload(questions)))
+    );
+    burst.forEach((res) => expect(res.status).toBe(200));
+
+    const stored = await GuestAttempt.findById(ctx.attemptId);
+    expect(stored.status).toBe('in_progress');
+    expect(stored.answers.every((a) => a.selectedAnswer === 1)).toBe(true);
+    expect(stored.proctoringSnapshot).toBeTruthy();
+  });
+
+  it('section-locked proctored attempt: saves merge into the open section', async () => {
+    const { quiz, questions } = await setupQuiz({ armed: true, sections: true });
+    const lead = await verifyLead(quiz);
+    const token = await armLead(quiz, lead.guestToken);
+    const start = await startAttempt(quiz, lead.guestToken, lead.guestId, token);
+    expect(start.status).toBe(201);
+    expect(start.body.attempt.sectionLockEnabled).toBe(true);
+    const ctx = { ...lead, attemptId: start.body.attempt._id };
+
+    const res = await saveProgress(quiz, ctx, savePayload(questions));
+    expect(res.status).toBe(200);
+    expect(res.body.success).toBe(true);
+
+    const stored = await GuestAttempt.findById(ctx.attemptId);
+    expect(stored.status).toBe('in_progress');
+  });
+
+  it('post-finalize saves return the finalized contract, never a 500', async () => {
+    const { quiz, questions } = await setupQuiz({ armed: true });
+    const lead = await verifyLead(quiz);
+    const token = await armLead(quiz, lead.guestToken);
+    const start = await startAttempt(quiz, lead.guestToken, lead.guestId, token);
+    const ctx = { ...lead, attemptId: start.body.attempt._id };
+
+    const submit = await request(app)
+      .post(`/api/public/quiz/${quiz.shareToken}/submit`)
+      .set('Authorization', `Bearer ${lead.guestToken}`)
+      .send({ guestId: lead.guestId, attemptId: ctx.attemptId, answers: [] });
+    expect(submit.status).toBe(200);
+
+    const after = await saveProgress(quiz, ctx, savePayload(questions));
+    expect(after.status).toBe(404);
+    expect(after.body.code).toBeUndefined(); // legacy shape: message-only 404
+  });
+
+  it('another lead cannot save into someone else\'s proctored attempt', async () => {
+    const { quiz, questions } = await setupQuiz({ armed: true });
+    const lead = await verifyLead(quiz);
+    const token = await armLead(quiz, lead.guestToken);
+    const start = await startAttempt(quiz, lead.guestToken, lead.guestId, token);
+    const ctx = { ...lead, attemptId: start.body.attempt._id };
+
+    const other = await verifyLead(quiz, { name: 'Save Probe', email: `sv-${Date.now()}@example.com` });
+    const res = await saveProgress(quiz, { ...other, attemptId: ctx.attemptId }, savePayload(questions));
+    expect(res.status).toBe(404);
   });
 });

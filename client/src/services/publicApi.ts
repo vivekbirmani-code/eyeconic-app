@@ -12,6 +12,10 @@ import axios from 'axios';
 
 const GUEST_TOKEN_KEY = 'guestToken';
 const GUEST_SESSION_EXPIRED_EVENT = 'guestSessionExpired';
+// The verified lead, persisted BESIDE the token so a refresh (or a
+// back-navigation from the taking page) never sends a verified participant
+// back to the details form. Cleared together with the token on expiry.
+const GUEST_LEAD_KEY = 'eyeconic_public_lead';
 
 export const GUEST_TOKEN_STORAGE_KEY = GUEST_TOKEN_KEY;
 export const guestSessionExpiredEventName = GUEST_SESSION_EXPIRED_EVENT;
@@ -47,6 +51,44 @@ export const setGuestToken = (token: string): void => {
 
 export const clearGuestToken = (): void => {
   localStorage.removeItem(GUEST_TOKEN_KEY);
+  localStorage.removeItem(GUEST_LEAD_KEY);
+};
+
+// ---------- verified-lead persistence ----------
+// Shape mirrors GuestLead; kept loose (JSON round-trip) so adding fields is
+// not a breaking change. Only ever written together with a fresh token.
+export const getStoredLead = (): { _id: string; name: string; email?: string; phoneMasked?: string } | null => {
+  try {
+    const raw = localStorage.getItem(GUEST_LEAD_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed._id !== 'string' || typeof parsed.name !== 'string') return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+export const setStoredLead = (lead: unknown): void => {
+  if (!lead || typeof lead !== 'object') return;
+  localStorage.setItem(GUEST_LEAD_KEY, JSON.stringify(lead));
+};
+
+// ---------- precheck attestation (short-lived, single-flow) ----------
+// sessionStorage (tab-scoped): survives refreshes during the readiness →
+// start handoff, never leaks into other tabs, and the backend's 30-minute
+// TTL bounds its life anyway.
+const PRECHECK_TOKEN_KEY = 'eyeconic_public_precheck_token';
+
+export const getPrecheckToken = (): string | null =>
+  sessionStorage.getItem(PRECHECK_TOKEN_KEY);
+
+export const setPrecheckToken = (token: string): void => {
+  sessionStorage.setItem(PRECHECK_TOKEN_KEY, token);
+};
+
+export const clearPrecheckToken = (): void => {
+  sessionStorage.removeItem(PRECHECK_TOKEN_KEY);
 };
 
 publicApi.interceptors.request.use((config) => {
@@ -129,6 +171,42 @@ export interface PublicQuizSummary {
   publicExpiryDate?: string;
   lockSectionsAfterSubmission: boolean;
   sections: { name: string; duration: number; questionCount: number }[];
+  // AI proctoring disclosure (public-quiz proctoring): server-computed
+  // "fully effective right now" — the SAME resolver /start gates with, so
+  // this can never disagree with the gate. cameraRequired only when armed.
+  proctoringRequired: boolean;
+  cameraRequired?: boolean;
+  // Authoritative browser URL for this quiz (redirect target for the
+  // Android app; informational on the web itself).
+  webUrl?: string;
+}
+
+// ---------- proctoring readiness (public flow) ----------
+
+export type PrecheckCheckStatus = 'PASS' | 'RETRYABLE' | 'FAIL' | 'UNSUPPORTED';
+
+export interface PrecheckCheck {
+  id: string;
+  status: PrecheckCheckStatus;
+  detail?: string;
+}
+
+export interface PrecheckReportPayload {
+  device: { platform: 'web'; osVersion: number; model?: string };
+  network: { reachable: boolean; authedPingMs?: number };
+  checks: PrecheckCheck[];
+}
+
+export interface PrecheckReportResponse {
+  success: boolean;
+  verdict: 'PASS' | 'RETRYABLE' | 'FAIL' | 'UNSUPPORTED';
+  message: string;
+  precheckToken?: string;
+  precheckTokenExpiresAt?: string;
+  policyVersion?: number;
+  policyHash?: string;
+  reasons?: { check: string; reasonCode: string; detail?: string }[];
+  requestId?: string;
 }
 
 export interface PublicQuestion {
@@ -198,6 +276,18 @@ export interface StartAttemptResponse {
     questions: PublicQuestion[];
     totalMarks: number;
     publicExpiryDate?: string;
+  };
+  // ---- AI proctoring (public-quiz proctoring Phase 2) ----
+  // Present only on PROCTORED starts (armed + gates on): the session to
+  // arm against, the FROZEN policy driving client thresholds, and the
+  // precheck-captured seated baseline. Absent = unproctored attempt.
+  proctoringSessionId?: string;
+  proctoringPolicy?: Record<string, unknown>;
+  proctoringAttentionBaseline?: {
+    yaw: number;
+    pitch: number;
+    roll?: number;
+    calibration: 'captured' | 'fallback';
   };
 }
 

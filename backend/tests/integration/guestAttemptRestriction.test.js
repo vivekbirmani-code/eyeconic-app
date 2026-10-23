@@ -362,18 +362,24 @@ describe('Public quiz one-attempt-per-person restriction', () => {
     expect(fresh.body.alreadyAttempted).toBeUndefined();
   });
 
-  it('leaves the anonymous device-keyed (legacy mobile) flow untouched', async () => {
+  it('anonymous devices are unaffected by the lead restriction but can no longer START (D-P1)', async () => {
     const { quiz, questions } = await setupPublicQuiz(admin, subject);
     const { guestToken } = await verifyLead(quiz);
     const start = await startAttempt(quiz, guestToken);
     await submitAttempt(quiz, guestToken, start.body.attempt._id, questions);
 
-    // No Authorization header at all: the legacy mobile flow has no identity,
-    // so a different anonymous device is never affected by the restriction.
+    // No Authorization header at all: mandatory OTP (D-P1) refuses the
+    // anonymous START with the actionable verification payload — a different
+    // anonymous device is never affected by the restriction, and nothing
+    // is created for it.
     const anon = await request(app)
       .post(`/api/public/quiz/${quiz.shareToken}/start`)
       .send({ guestId: 'legacy-device', deviceInfo: 'React Native App' });
-    expect(anon.status).toBe(201);
+    expect(anon.status).toBe(401);
+    expect(anon.body.code).toBe('GUEST_VERIFICATION_REQUIRED');
+    expect(
+      await GuestAttempt.countDocuments({ quiz: quiz._id, guestId: 'legacy-device' })
+    ).toBe(0);
   });
 
   it('blocks restart after a section-locked quiz is completed section-by-section', async () => {

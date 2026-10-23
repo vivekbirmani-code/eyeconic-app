@@ -290,22 +290,30 @@ describe('Public quiz session isolation — same link, many students', () => {
     expect(await GuestAttempt.countDocuments({ quiz: quiz._id, status: 'in_progress' })).toBe(2);
   });
 
-  it('re-verification (session expiry mid-flow) resumes the anonymous device attempt under the lead', async () => {
+  it('re-verification rescues a PRE-POLICY anonymous device attempt under the lead (transition policy)', async () => {
     const { quiz, questions } = await setupPublicQuiz(admin, subject);
 
-    // Token expired before /start: the web client degrades to an anonymous
-    // (device-keyed) attempt — the legacy-compatible creation path.
-    const anon = await start(quiz, 'device-A', null);
-    expect(anon.status).toBe(201);
-    expect(anon.body.lead).toBeUndefined();
+    // Mandatory OTP (D-P1) means no anonymous attempt can be CREATED via the
+    // API anymore. The rescue path this test locks is for attempts created
+    // BEFORE the policy — seeded directly, exactly like a pre-policy row.
+    const anon = await GuestAttempt.create({
+      quiz: quiz._id,
+      guestId: 'device-A',
+      guest: null,
+      totalQuestions: questions.length,
+      totalMarks: questions.length * 4,
+      startTime: new Date(),
+      answers: questions.map((q, i) => ({
+        questionIndex: i, questionId: q._id, selectedAnswer: -1, isCorrect: false, markedForReview: false, timeSpent: 0,
+      })),
+    });
 
-    // The student re-verifies (same email -> one lead) and starts again on
-    // the same device: the anonymous attempt is rescued under the lead, not
-    // duplicated and not lost.
+    // The student verifies (same device) and starts: the anonymous attempt
+    // is rescued under the lead, not duplicated and not lost.
     const v = await verifyLead(quiz, ELDER);
     const resumed = await start(quiz, 'device-A', v.guestToken);
     expect(resumed.status).toBe(200);
-    expect(String(resumed.body.attempt._id)).toBe(String(anon.body.attempt._id));
+    expect(String(resumed.body.attempt._id)).toBe(String(anon._id));
     expect(String(resumed.body.lead._id)).toBe(String(v.guest._id));
 
     // And it finalizes normally.
@@ -350,20 +358,35 @@ describe('Public quiz session isolation — same link, many students', () => {
     expect(own.body.guest.name).toBe('Student One Updated');
   });
 
-  it('legacy anonymous (mobile) attempts on a device stay device-owned and anonymous', async () => {
-    const { quiz } = await setupPublicQuiz(admin, subject);
+  it('legacy anonymous (mobile) attempts on a device stay device-owned and anonymous (transition policy)', async () => {
+    const { quiz, questions } = await setupPublicQuiz(admin, subject);
 
-    const anon = await start(quiz, 'mobile-device', null);
-    expect(anon.status).toBe(201);
+    // Mandatory OTP (D-P1): anonymous STARTS are refused outright…
+    const refused = await start(quiz, 'mobile-device', null);
+    expect(refused.status).toBe(401);
+    expect(refused.body.code).toBe('GUEST_VERIFICATION_REQUIRED');
 
-    // A different anonymous device is unaffected; the same device resumes.
-    const otherDevice = await start(quiz, 'other-mobile', null);
-    expect(otherDevice.status).toBe(201);
-    const same = await start(quiz, 'mobile-device', null);
-    expect(same.status).toBe(200);
-    expect(String(same.body.attempt._id)).toBe(String(anon.body.attempt._id));
+    // …but attempts created BEFORE the policy (seeded directly) remain
+    // device-owned and operable through the device-keyed write routes.
+    const anon = await GuestAttempt.create({
+      quiz: quiz._id,
+      guestId: 'mobile-device',
+      guest: null,
+      totalQuestions: questions.length,
+      totalMarks: questions.length * 4,
+      startTime: new Date(),
+      answers: questions.map((q, i) => ({
+        questionIndex: i, questionId: q._id, selectedAnswer: -1, isCorrect: false, markedForReview: false, timeSpent: 0,
+      })),
+    });
 
-    const stored = await GuestAttempt.findById(anon.body.attempt._id);
+    const save = await request(app)
+      .post(`/api/public/quiz/${quiz.shareToken}/save-progress`)
+      .send({ guestId: 'mobile-device', attemptId: anon._id, answers: [] });
+    expect(save.status).toBe(200);
+
+    const stored = await GuestAttempt.findById(anon._id);
     expect(stored.guest).toBeNull();
+    expect(stored.status).toBe('in_progress');
   });
 });

@@ -13,10 +13,14 @@ import {
   clearGuestToken,
   guestSessionExpiredEventName,
   getErrorData,
+  getStoredLead,
+  setStoredLead,
   type PublicQuizSummary,
   type GuestLead,
   type StartAttemptResponse,
   type GuestAnswer,
+  type PrecheckReportPayload,
+  type PrecheckReportResponse,
 } from '../services/publicApi';
 
 // Device identity + guest-session plumbing for the public quiz flow.
@@ -58,7 +62,12 @@ const PublicQuizContext = createContext<PublicQuizContextValue | undefined>(unde
 
 export const PublicQuizProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [guestId] = useState(getOrCreateGuestId);
-  const [lead, setLead] = useState<GuestLead | null>(null);
+  // Hydrated from storage beside the token — a refresh (or back-navigation
+  // from the taking page) must never send a verified participant back to
+  // the details form. Only meaningful while a token exists.
+  const [lead, setLeadState] = useState<GuestLead | null>(() =>
+    getGuestToken() ? ((getStoredLead() as GuestLead | null) ?? null) : null
+  );
   const [hasGuestSession, setHasGuestSession] = useState<boolean>(() => Boolean(getGuestToken()));
   const [sessionExpired, setSessionExpired] = useState(false);
   const [quiz, setQuiz] = useState<PublicQuizSummary | null>(null);
@@ -77,6 +86,14 @@ export const PublicQuizProvider: React.FC<{ children: React.ReactNode }> = ({ ch
     clearGuestToken();
     setHasGuestSession(false);
     setSessionExpired(true);
+    setLeadState(null);
+  }, []);
+
+  // Write-through setter: state + storage move together so every reader
+  // (welcome-back card, readiness page, taking page) sees the same lead.
+  const setLead = useCallback((next: GuestLead | null) => {
+    setLeadState(next);
+    if (next) setStoredLead(next);
   }, []);
 
   useEffect(() => {
@@ -125,7 +142,7 @@ export const PublicQuizProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       setLead,
       handleSessionExpired,
     }),
-    [guestId, lead, hasGuestSession, sessionExpired, quiz, quizError, quizLoading, refreshQuiz, handleSessionExpired]
+    [guestId, lead, hasGuestSession, sessionExpired, quiz, quizError, quizLoading, refreshQuiz, setLead, handleSessionExpired]
   );
 
   return <PublicQuizContext.Provider value={value}>{children}</PublicQuizContext.Provider>;
@@ -171,11 +188,29 @@ export const publicQuizApi = {
       alreadyAttempted?: { code: string; message: string; attemptId?: string };
     }>(`/public/quiz/${shareToken}/lead/verify-otp`, payload),
 
-  start: (shareToken: string, guestId: string) =>
+  start: (shareToken: string, guestId: string, precheckToken?: string) =>
     publicApi.post<StartAttemptResponse>(`/public/quiz/${shareToken}/start`, {
       guestId,
       deviceInfo: getDeviceInfo(),
+      ...(precheckToken ? { precheckToken } : {}),
     }),
+
+  // AI proctoring readiness (public flow) — the SERVER decides the verdict
+  // and issues the signed 30-minute precheck token consent binds to.
+  precheckReport: (shareToken: string, payload: PrecheckReportPayload) =>
+    publicApi.post<PrecheckReportResponse>(
+      `/public/quiz/${shareToken}/proctoring/precheck-report`,
+      payload
+    ),
+
+  recordConsent: (
+    shareToken: string,
+    payload: { precheckToken: string; consentTextVersion: string; surface: 'web' }
+  ) =>
+    publicApi.post<{ success: boolean; message: string }>(
+      `/public/quiz/${shareToken}/proctoring/consent`,
+      payload
+    ),
 
   saveProgress: (
     shareToken: string,

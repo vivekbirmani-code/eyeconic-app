@@ -1379,8 +1379,13 @@ router.post('/quiz/:shareToken/save-progress', optionalGuestAuth, async (req, re
             current.tabSwitchCount = tabSwitchCount || current.tabSwitchCount;
             current.tabSwitchLog = tabSwitchLog || current.tabSwitchLog;
 
-            await GuestAttempt.updateOne(
-                { _id: current._id },
+            // Atomic, VERSION-FREE write scoped to in-progress attempts: a
+            // racing finalize (submit / sweep / expiry) must never be
+            // overwritten by a straggler autosave, and concurrent autosaves
+            // converge last-writer-wins instead of tripping Mongoose's
+            // optimistic-version check (the VersionError → 500 defect).
+            const sectionSave = await GuestAttempt.updateOne(
+                { _id: current._id, status: 'in_progress' },
                 {
                     $set: {
                         answers: current.answers,
@@ -1390,23 +1395,59 @@ router.post('/quiz/:shareToken/save-progress', optionalGuestAuth, async (req, re
                 }
             );
 
+            if (sectionSave.matchedCount === 0) {
+                // Finalized between the fetch above and this write — report
+                // the finalized contract so the client stops saving.
+                const finalized = await GuestAttempt.findById(current._id).select('status');
+                return res.json({
+                    success: true,
+                    message: 'This quiz attempt has ended and has been submitted',
+                    attemptFinalized: true,
+                    status: finalized?.status || 'auto_submitted'
+                });
+            }
+
             return res.json({ success: true, message: 'Progress saved' });
         }
 
         // Update progress. Only positional/response fields are trusted from
         // the client — correctness and metadata are always server-derived,
         // and only ever computed at submit time.
-        attempt.answers = (Array.isArray(answers) ? answers : []).map(a => ({
-            questionIndex: a.questionIndex,
-            questionId: a.questionId,
-            selectedAnswer: a.selectedAnswer,
-            markedForReview: !!a.markedForReview,
-            timeSpent: a.timeSpent || 0
-        }));
-        attempt.tabSwitchCount = tabSwitchCount || attempt.tabSwitchCount;
-        attempt.tabSwitchLog = tabSwitchLog || attempt.tabSwitchLog;
+        //
+        // Atomic, VERSION-FREE wholesale replace (the flat-path contract):
+        // the client sends its full current snapshot, so last-writer-wins is
+        // correct, and updateOne cannot trip Mongoose's optimistic-version
+        // check the way the previous fetch-then-save() did — overlapping
+        // autosaves (debounced flush racing the 15s heartbeat, StrictMode
+        // double-mount bursts) used to VersionError into 500s, losing that
+        // flush's answers. Scoped to in-progress attempts so a straggler
+        // save can never overwrite graded answers after a finalize.
+        const flatSave = await GuestAttempt.updateOne(
+            { _id: attempt._id, status: 'in_progress' },
+            {
+                $set: {
+                    answers: (Array.isArray(answers) ? answers : []).map(a => ({
+                        questionIndex: a.questionIndex,
+                        questionId: a.questionId,
+                        selectedAnswer: a.selectedAnswer,
+                        markedForReview: !!a.markedForReview,
+                        timeSpent: a.timeSpent || 0
+                    })),
+                    tabSwitchCount: tabSwitchCount || attempt.tabSwitchCount,
+                    tabSwitchLog: tabSwitchLog || attempt.tabSwitchLog
+                }
+            }
+        );
 
-        await attempt.save();
+        if (flatSave.matchedCount === 0) {
+            const finalized = await GuestAttempt.findById(attempt._id).select('status');
+            return res.json({
+                success: true,
+                message: 'This quiz attempt has ended and has been submitted',
+                attemptFinalized: true,
+                status: finalized?.status || 'auto_submitted'
+            });
+        }
 
         res.json({
             success: true,

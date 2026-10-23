@@ -15,12 +15,20 @@ import {
 } from 'lucide-react';
 import QuizImage from '../../components/public/QuizImage';
 import {
+  MonitoringStatusDot,
+  OtherTabOverlay,
+  ProctoringBanner,
+} from '../../components/public/proctoring/MonitoringStatus';
+import { useWebProctoring } from '../../hooks/useWebProctoring';
+import {
   publicQuizApi,
   usePublicQuiz,
 } from '../../contexts/PublicQuizContext';
 import {
+  clearPrecheckToken,
   getErrorData,
   getGuestToken,
+  getPrecheckToken,
   recallAttemptId,
   rememberAttempt,
   type GuestAnswer,
@@ -28,6 +36,7 @@ import {
   type SectionState,
   type StartAttemptResponse,
 } from '../../services/publicApi';
+import type { ProctoringPolicy } from '@app-services/proctoring/types';
 
 const AUTOSAVE_DEBOUNCE_MS = 3000;
 const AUTOSAVE_HEARTBEAT_MS = 15000;
@@ -81,12 +90,36 @@ export default function PublicQuizTakingPage() {
   // flow). Scopes the localStorage attempt pointer so a second student on
   // this shared browser is never routed to the first student's result.
   const leadIdRef = useRef<string | null>(null);
+  // Latched from the /start outcome (200 = resume, 201 = create) — read by
+  // the proctoring hook at arm time so a resumed attempt emits
+  // SESSION_RESUMED.
+  const resumedRef = useRef(false);
   answersRef.current = answers;
   markedRef.current = markedForReview;
   currentRef.current = current;
 
   const quiz = session?.quiz;
   const attempt = session?.attempt;
+
+  // AI proctoring (public-quiz Phase 3): armed only when /start returned a
+  // session (proctored attempts). The frozen policy + baseline ride the
+  // same response. Non-proctored attempts never mount an engine or camera.
+  // goToResult is declared later in the render — the ref keeps the
+  // finalized callback stable without re-arming the engine.
+  const goToResultRef = useRef<((attemptId: string) => void) | null>(null);
+  const proctoring = useWebProctoring({
+    shareToken: token,
+    attemptId: attempt?._id,
+    sessionId: session?.proctoringSessionId,
+    policy: (session?.proctoringPolicy as ProctoringPolicy | undefined) ?? null,
+    attentionBaseline: session?.proctoringAttentionBaseline ?? null,
+    guestId,
+    resumed: resumedRef.current,
+    onFinalized: () => {
+      if (attempt?._id) goToResultRef.current?.(attempt._id);
+    },
+  });
+  const { flushMonitoring, stopMonitoring } = proctoring;
   const sectionLockEnabled = attempt?.sectionLockEnabled === true;
   const questions = quiz?.questions ?? [];
 
@@ -101,9 +134,13 @@ export default function PublicQuizTakingPage() {
     (async () => {
       setLoading(true);
       try {
-        const response = await publicQuizApi.start(token, guestId);
+        // Proctored quizzes: the readiness stage's signed attestation rides
+        // the start (30-min TTL; absent for unarmed quizzes — the server
+        // only demands it when the quiz is armed).
+        const response = await publicQuizApi.start(token, guestId, getPrecheckToken() ?? undefined);
         if (cancelled) return;
         const data = response.data;
+        resumedRef.current = response.status === 200;
         // The web flow is always OTP-identified — /start responses carry the
         // verified lead. If we hold a stored token but got no lead back, the
         // token no longer authenticates: end the session and re-verify rather
@@ -139,6 +176,9 @@ export default function PublicQuizTakingPage() {
         }
 
         rememberAttempt(token, data.attempt._id, leadIdRef.current);
+        // The precheck attestation is consumed by this start (30-min TTL,
+        // single start) — never reused for a later attempt.
+        clearPrecheckToken();
         if (data.attempt.serverNow) {
           setServerClockOffset(Date.now() - new Date(data.attempt.serverNow).getTime());
         }
@@ -176,6 +216,23 @@ export default function PublicQuizTakingPage() {
         if (extracted?.status === 401) {
           handleSessionExpired();
           navigate(`/public-quiz/${token}`, { replace: true });
+          return;
+        }
+        // Proctoring gates: /start refuses until the readiness stage
+        // (notice → camera check → consent) has produced a valid
+        // attestation. Retrying /start can never fix this — route the
+        // participant to the stage they are missing instead of a dead-end
+        // error card. Zero rows were created server-side (safe, idempotent).
+        if (
+          extracted?.code === 'PROCTORING_CONSENT_REQUIRED' ||
+          extracted?.code === 'PROCTORING_PRECHECK_REQUIRED' ||
+          extracted?.code === 'PRECHECK_TOKEN_INVALID'
+        ) {
+          clearPrecheckToken();
+          navigate(`/public-quiz/${token}/readiness`, {
+            replace: true,
+            state: { gateMessage: extracted?.message },
+          });
           return;
         }
         // One attempt per person: the server refuses a new/resumed attempt
@@ -409,6 +466,8 @@ export default function PublicQuizTakingPage() {
     },
     [navigate, token]
   );
+  // Proctoring finalized-callback indirection (see useWebProctoring wiring).
+  goToResultRef.current = (attemptId: string) => goToResult(attemptId);
 
   const saveProgress = useCallback(async () => {
     if (!attempt || submittingRef.current) return;
@@ -480,6 +539,10 @@ export default function PublicQuizTakingPage() {
       submittingRef.current = true;
       setSubmitting(true);
       try {
+        // Proctoring (mobile discipline): flush open episodes BEFORE the
+        // submit so the session's story is complete at close; stop only
+        // after the finalize (monitoring stays armed between sections).
+        await flushMonitoring();
         const response = await publicQuizApi.submit(token, {
           guestId,
           attemptId: attempt._id,
@@ -490,6 +553,7 @@ export default function PublicQuizTakingPage() {
           // the section-locked flow and the registered app attempt.
           isAutoSubmit: isAuto,
         });
+        await stopMonitoring();
         const attemptId = response.data.attemptId || attempt._id;
         goToResult(attemptId);
       } catch (error) {
@@ -531,6 +595,9 @@ export default function PublicQuizTakingPage() {
       submittingRef.current = true;
       setSubmitting(true);
       try {
+        // Proctoring: flush open episodes but KEEP monitoring armed across
+        // sections (the Phase-9 section-continuity lesson from mobile).
+        await flushMonitoring();
         const response = await publicQuizApi.submitSection(token, sectionIndex, {
           guestId,
           attemptId: attempt._id,
@@ -540,6 +607,7 @@ export default function PublicQuizTakingPage() {
         const data = response.data;
 
         if (data.attemptFinalized || (!data.nextSection && !data.sectionStates)) {
+          await stopMonitoring();
           const attemptId = data.attemptId || attempt._id;
           goToResult(attemptId);
           return;
@@ -826,16 +894,35 @@ export default function PublicQuizTakingPage() {
               </p>
             )}
           </div>
-          <div
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-mono font-bold text-sm tabular-nums ${
-              secondsLeft <= 60 ? 'bg-red-50 text-red-600' : 'bg-[#01b4ae]/10 text-[#008f8a]'
-            }`}
-          >
-            <Clock className="w-4 h-4" />
-            {formatClock(secondsLeft)}
+          <div className="flex items-center gap-3">
+            {proctoring.active && (
+              <MonitoringStatusDot status={proctoring.status} cameraIssue={proctoring.cameraIssue} />
+            )}
+            <div
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl font-mono font-bold text-sm tabular-nums ${
+                secondsLeft <= 60 ? 'bg-red-50 text-red-600' : 'bg-[#01b4ae]/10 text-[#008f8a]'
+              }`}
+            >
+              <Clock className="w-4 h-4" />
+              {formatClock(secondsLeft)}
+            </div>
           </div>
         </div>
       </header>
+
+      {/* Proctoring surfaces (proctored attempts only): the tab-lock
+          overlay when another tab holds monitoring, and the warning /
+          camera banners. */}
+      {proctoring.blockedByOtherTab && <OtherTabOverlay />}
+      {proctoring.active && (
+        <div className="max-w-3xl mx-auto px-4 pt-4">
+          <ProctoringBanner
+            warning={proctoring.warning}
+            cameraIssue={proctoring.cameraIssue}
+            onDismissWarning={proctoring.dismissWarning}
+          />
+        </div>
+      )}
 
       {/* Section progress indicator (locked quizzes only): completed
           sections are locked, the active one is highlighted, upcoming ones

@@ -39,7 +39,7 @@ export default function PublicQuizEntryPage() {
   const { token = '' } = useParams<{ token: string }>();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { lead, setLead, hasGuestSession, sessionExpired, quiz, quizError, quizLoading, refreshQuiz } =
+  const { lead, setLead, hasGuestSession, sessionExpired, handleSessionExpired, quiz, quizError, quizLoading, refreshQuiz } =
     usePublicQuiz();
 
   const [step, setStep] = useState<'form' | 'otp'>('form');
@@ -171,7 +171,15 @@ export default function PublicQuizEntryPage() {
         return;
       }
 
-      navigate(`/public-quiz/${token}/take`, { replace: true });
+      // Armed quizzes route through the readiness stage (notice → camera
+      // check → consent) — /start refuses without it (403 gating); unarmed
+      // quizzes go straight to the taking page.
+      navigate(
+        quiz?.proctoringRequired
+          ? `/public-quiz/${token}/readiness`
+          : `/public-quiz/${token}/take`,
+        { replace: true }
+      );
     } catch (err) {
       setError(getPublicApiError(err));
       setOtp('');
@@ -333,12 +341,23 @@ export default function PublicQuizEntryPage() {
                 <p className="text-xs text-gray-500 truncate">{lead.email || lead.phone} verified</p>
               </div>
               <button
-                onClick={() => navigate(`/public-quiz/${token}/take`)}
+                onClick={() =>
+                  navigate(
+                    quiz?.proctoringRequired
+                      ? `/public-quiz/${token}/readiness`
+                      : `/public-quiz/${token}/take`
+                  )
+                }
                 className="inline-flex items-center gap-1.5 bg-[#01b4ae] hover:bg-[#008f8a] text-white text-sm font-semibold px-4 py-2.5 rounded-xl transition-colors"
               >
                 Continue <ArrowRight className="w-4 h-4" />
               </button>
             </div>
+            {quiz?.proctoringRequired && (
+              <p className="text-[11px] text-gray-400 mt-2.5 pl-11">
+                This test uses camera-based monitoring — the readiness checks take less than a minute.
+              </p>
+            )}
           </div>
         )}
 
@@ -350,7 +369,26 @@ export default function PublicQuizEntryPage() {
           </div>
         )}
 
-        {/* Lead form / OTP card */}
+        {/* Lead form / OTP card — hidden entirely while a verified session
+            exists (the welcome-back card above owns the screen), so a
+            back-navigation never asks a verified participant to re-enter
+            their details. "Not you?" clears the session deliberately. */}
+        {hasGuestSession && lead && step === 'form' ? (
+          <div className="bg-white/10 border border-white/20 rounded-2xl p-4 text-center">
+            <p className="text-xs text-white/80">
+              Signed in as <span className="font-semibold text-white">{lead.name}</span>.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                handleSessionExpired();
+              }}
+              className="mt-2 text-xs text-white/70 underline underline-offset-2 hover:text-white"
+            >
+              Not you? Verify with a different email
+            </button>
+          </div>
+        ) : (
         <div className="bg-white rounded-3xl p-6 shadow-2xl">
           {step === 'form' ? (
             <form onSubmit={handleSendOtp} className="space-y-4">
@@ -517,6 +555,7 @@ export default function PublicQuizEntryPage() {
             </form>
           )}
         </div>
+        )}
 
         <p className="text-center text-white/70 text-[11px] mt-4">
           Powered by Eyeconic Mentors

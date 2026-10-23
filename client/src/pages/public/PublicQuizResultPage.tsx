@@ -13,6 +13,7 @@ import { getErrorData } from '../../services/publicApi';
 import DonutChart from '../../components/public/result/DonutChart';
 import MetricGrid from '../../components/public/result/MetricGrid';
 import ScoreCard from '../../components/public/result/ScoreCard';
+import ProctoringSummaryCard from '../../components/public/result/ProctoringSummaryCard';
 import SectionPerformanceTable from '../../components/public/result/SectionPerformanceTable';
 import SolutionsReview from '../../components/public/result/SolutionsReview';
 import type { GroupByOption, PublicResultPayload } from '../../components/public/result/types';
@@ -207,6 +208,11 @@ export default function PublicQuizResultPage() {
           <ScoreCard summary={summary} />
           <DonutChart summary={summary} />
         </div>
+
+        {/* AI proctoring summary (proctored attempts only — decision D-P4):
+            the student's OWN monitoring overview; renders nothing for
+            non-proctored attempts or missing sessions. */}
+        <ProctoringSummaryCard shareToken={token} attemptId={attemptId} />
 
         <MetricGrid summary={summary} />
 

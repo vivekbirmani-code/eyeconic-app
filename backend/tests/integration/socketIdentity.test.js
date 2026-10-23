@@ -12,7 +12,9 @@
  *   3. A socket presenting user A's token while claiming user B's id is
  *      registered as A (the token wins, the claim never does) — via both the
  *      handshake token and the register_user event's token argument.
- *   4. Scoped credentials (guest-kind JWTs) cannot register a socket.
+ *   4. Scoped credentials (guest-kind JWTs) register ONLY in the separate
+ *      guest lane (public-quiz proctoring): no register_rejected, no
+ *      user-lane events, but guest-lane emissions (emitToGuest) reach them.
  */
 process.env.NODE_ENV = 'test';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'socket-identity-test-secret';
@@ -178,27 +180,43 @@ describe('Socket registration identity', () => {
     client.disconnect();
   });
 
-  it('refuses guest-kind tokens', async () => {
+  it('registers guest-kind tokens ONLY in the guest lane (never as users)', async () => {
+    const guestId = studentB._id.toString();
     const guestToken = jwt.sign(
-      { kind: 'guest', guestId: studentB._id.toString() },
+      { kind: 'guest', guestId },
       process.env.JWT_SECRET
     );
     const port = server.address().port;
 
-    // register_rejected can fire the moment the server processes the
-    // handshake, so arm the waiter before the connect resolves.
+    // The guest lane registers silently — a guest token is a fine
+    // credential, it just belongs to the public lane (live proctoring
+    // warnings), never to the user lane.
     const client = io(`http://127.0.0.1:${port}`, {
       transports: ['websocket'],
       auth: { token: guestToken },
     });
     const rejected = waitFor(client, 'register_rejected');
     await waitFor(client, 'connect');
-    await rejected;
     await settle();
 
-    const reach = probeReach(client);
-    socketHelpers.emitToUser(studentB._id, 'identity_probe', { ok: true });
-    expect(await reach).toBe(false);
+    // USER-lane emissions must never reach a guest socket…
+    const reachUserLane = probeReach(client);
+    socketHelpers.emitToUser(studentB._id, 'identity_probe', { to: 'user-lane' });
+    expect(await reachUserLane).toBe(false);
+    // …and no register_rejected ever fired (settled long enough above; a
+    // late one would also fail the reach probes only if user-registered).
+    await Promise.race([rejected.then(() => { throw new Error('register_rejected fired for a guest token'); }), settle(150)]);
+
+    // GUEST-lane emissions DO reach the verified guest's socket.
+    const reachGuestLane = new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(false), 1500);
+      client.once('guest_probe', () => {
+        clearTimeout(timer);
+        resolve(true);
+      });
+    });
+    socketHelpers.emitToGuest(guestId, 'guest_probe', { to: 'guest-lane' });
+    expect(await reachGuestLane).toBe(true);
 
     client.disconnect();
   });

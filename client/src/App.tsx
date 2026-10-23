@@ -25,6 +25,7 @@ import { PublicQuizProvider } from './contexts/PublicQuizContext';
 import PublicQuizEntryPage from './pages/public/PublicQuizEntryPage';
 import PublicQuizTakingPage from './pages/public/PublicQuizTakingPage';
 import PublicQuizResultPage from './pages/public/PublicQuizResultPage';
+import PublicQuizReadinessPage from './pages/public/PublicQuizReadinessPage';
 
 // TEMPORARY FEATURE FREEZE — route-level guard (config/features.ts)
 import { FeatureGate } from './components/FeatureGate';
@@ -76,6 +77,7 @@ function App() {
             element={<PublicQuizProvider><Outlet /></PublicQuizProvider>}
           >
             <Route index element={<PublicQuizEntryPage />} />
+            <Route path="readiness" element={<PublicQuizReadinessPage />} />
             <Route path="take" element={<PublicQuizTakingPage />} />
             <Route path="result/:attemptId" element={<PublicQuizResultPage />} />
           </Route>

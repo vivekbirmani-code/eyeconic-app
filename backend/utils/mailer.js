@@ -547,18 +547,23 @@ const toPublicDeliveryError = (error) => {
   return new EmailDeliveryError(EMAIL_DELIVERY_USER_MESSAGE, 'EMAIL_DELIVERY_FAILED');
 };
 
-const logDevOtp = (email, label) => {
+// Dev-only OTP echo. Reached ONLY when no provider is configured AND
+// NODE_ENV !== 'production' (see deliverEmail) — the documented dev
+// behavior ("in dev with no provider configured, OTPs print to the
+// console instead of sending", BACKEND_GUIDE §24). Production can never
+// print a code: Render sets NODE_ENV=production and logDevOtp no-ops.
+const logDevOtp = (email, label, otp) => {
   if (isProduction()) {
     return;
   }
 
   console.log('\n==================================================');
   console.log(`📧 [DEV EMAILER] ${label} requested for ${email}`);
-  console.log('👉 OTP was generated (value hidden — check email provider or database in dev)');
+  console.log(`👉 OTP (dev console delivery): ${otp}`);
   console.log('==================================================\n');
 };
 
-const deliverEmail = async (email, subject, html, text, devLabel, purpose, context = {}) => {
+const deliverEmail = async (email, subject, html, text, devLabel, purpose, context = {}, otpForDevLog = null) => {
   const startedAt = Date.now();
   const deadlineAt = startedAt + DELIVERY_DEADLINE_MS;
   const { fromName, fromEmail } = getFromAddress();
@@ -664,7 +669,7 @@ const deliverEmail = async (email, subject, html, text, devLabel, purpose, conte
   }
 
   if (!isProduction()) {
-    logDevOtp(email, devLabel);
+    logDevOtp(email, devLabel, otpForDevLog);
     return;
   }
 
@@ -677,7 +682,7 @@ const sendOtpMail = async (email, otp, context = {}) => {
   const text = `Your verification code is ${otp}. It is valid for 10 minutes.`;
   const html = buildOtpHtml(otp, 'signup');
 
-  await deliverEmail(email, subject, html, text, 'SIGNUP OTP', 'signup', context);
+  await deliverEmail(email, subject, html, text, 'SIGNUP OTP', 'signup', context, otp);
 };
 
 const sendPasswordResetMail = async (email, otp, context = {}) => {
@@ -685,7 +690,7 @@ const sendPasswordResetMail = async (email, otp, context = {}) => {
   const text = `Your password reset verification code is ${otp}. It is valid for 10 minutes.`;
   const html = buildOtpHtml(otp, 'reset');
 
-  await deliverEmail(email, subject, html, text, 'PASSWORD RESET OTP', 'password-reset', context);
+  await deliverEmail(email, subject, html, text, 'PASSWORD RESET OTP', 'password-reset', context, otp);
 };
 
 // Public-quiz guest flow — the code verifies the lead's email before their
@@ -698,7 +703,7 @@ const sendGuestQuizOtpMail = async (email, otp, quizTitle = null, context = {}) 
   const text = `Your verification code to start the quiz${quizTitle ? ` "${quizTitle}"` : ''} is ${otp}. It is valid for 10 minutes. If you did not request this code, please ignore this email.`;
   const html = buildOtpHtml(otp, 'guest-quiz', quizTitle);
 
-  await deliverEmail(email, subject, html, text, 'GUEST QUIZ OTP', 'guest-quiz', context);
+  await deliverEmail(email, subject, html, text, 'GUEST QUIZ OTP', 'guest-quiz', context, otp);
 };
 
 module.exports = {

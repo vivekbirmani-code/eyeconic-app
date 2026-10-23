@@ -286,26 +286,45 @@ describe('Guest attempts with verified leads', () => {
     expect(res.status).toBe(404);
   });
 
-  it('keeps the legacy anonymous device-guestId flow working without any token', async () => {
+  it('REFUSES anonymous starts (mandatory OTP, D-P1) but pre-policy attempts stay device-operable', async () => {
     const { quiz, questions } = await setupPublicQuiz(admin, subject);
 
+    // Since the mandatory-verification policy (owner decision D-P1,
+    // 2026-10-23) every NEW public attempt requires a verified lead —
+    // enforced server-side with the actionable web-redirect payload.
     const start = await request(app)
       .post(`/api/public/quiz/${quiz.shareToken}/start`)
       .send({ guestId: 'anon-device' });
-    expect(start.status).toBe(201);
-    expect(start.body.lead).toBeUndefined();
+    expect(start.status).toBe(401);
+    expect(start.body.code).toBe('GUEST_VERIFICATION_REQUIRED');
+    expect(start.body.webUrl).toContain(`/public-quiz/${quiz.shareToken}`);
+    expect(await GuestAttempt.countDocuments({ quiz: quiz._id })).toBe(0);
+
+    // Transition policy: attempts created BEFORE the policy (seeded here as
+    // pre-policy rows) keep working through the device-keyed write routes.
+    const legacy = await GuestAttempt.create({
+      quiz: quiz._id,
+      guestId: 'anon-device',
+      guest: null,
+      totalQuestions: questions.length,
+      totalMarks: questions.length * 4,
+      startTime: new Date(),
+      answers: questions.map((q, i) => ({
+        questionIndex: i, questionId: q._id, selectedAnswer: -1, isCorrect: false, markedForReview: false, timeSpent: 0,
+      })),
+    });
 
     const save = await request(app)
       .post(`/api/public/quiz/${quiz.shareToken}/save-progress`)
-      .send({ guestId: 'anon-device', attemptId: start.body.attempt._id, answers: [guestAnswer(0, questions[0]._id, 1)] });
+      .send({ guestId: 'anon-device', attemptId: legacy._id, answers: [guestAnswer(0, questions[0]._id, 1)] });
     expect(save.status).toBe(200);
 
     const submit = await request(app)
       .post(`/api/public/quiz/${quiz.shareToken}/submit`)
-      .send({ guestId: 'anon-device', attemptId: start.body.attempt._id, answers: [guestAnswer(0, questions[0]._id, 1)] });
+      .send({ guestId: 'anon-device', attemptId: legacy._id, answers: [guestAnswer(0, questions[0]._id, 1)] });
     expect(submit.status).toBe(200);
 
-    const stored = await GuestAttempt.findById(start.body.attempt._id);
+    const stored = await GuestAttempt.findById(legacy._id);
     expect(stored.guest).toBeNull();
     expect(stored.guestName).toBeNull();
     expect(stored.score).toBe(1);
@@ -617,13 +636,19 @@ describe('Guest attempts with verified leads', () => {
       expect(await GuestAttempt.countDocuments({ quiz: quiz._id, status: 'in_progress' })).toBe(1);
     });
 
-    it('converges concurrent ANONYMOUS starts on one device onto a single attempt', async () => {
+    it('converges concurrent LEAD starts (same verified lead, e.g. two tabs) onto a single attempt', async () => {
       const { quiz } = await setupPublicQuiz(admin, subject);
+      const { guestToken } = await verifyLead(quiz);
 
+      // Anonymous storms are gone with mandatory OTP (D-P1); the property
+      // that must hold is the same one the registered flow guarantees —
+      // parallel /start calls under ONE identity (double-tap, two tabs,
+      // StrictMode) converge on exactly one live attempt.
       const responses = await Promise.all(
         Array.from({ length: 8 }, () =>
           request(app)
             .post(`/api/public/quiz/${quiz.shareToken}/start`)
+            .set('Authorization', `Bearer ${guestToken}`)
             .send({ guestId: 'anon-storm-device' })
         )
       );

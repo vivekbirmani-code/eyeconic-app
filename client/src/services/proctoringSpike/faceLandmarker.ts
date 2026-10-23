@@ -47,6 +47,18 @@ export interface SpikeFrameResult {
   latencyMs: number;
   /** performance.now() of the detection */
   atMs: number;
+  /**
+   * Normalized face-box sizes (long-edge ratio to the frame dimension),
+   * largest first — consumed by the monitoring engine for visibility
+   * classification (face too small → FACE_OUT_OF_FRAME shaping).
+   */
+  faceRatios: number[];
+  /**
+   * Cheap digest of the primary face's landmark geometry (rounded) — the
+   * frozen-feed signature the episode tracker compares across frames.
+   * Null when no face.
+   */
+  signature: string | null;
 }
 
 export interface SpikeDetectorInit {
@@ -127,13 +139,47 @@ export function detectFrame(video: HTMLVideoElement): SpikeFrameResult {
   const t0 = performance.now();
   const result: FaceLandmarkerResult = landmarker.detectForVideo(video, atMs);
   const latencyMs = Math.round((performance.now() - t0) * 10) / 10;
-  const faceCount = result.faceLandmarks?.length ?? 0;
+  const faces = result.faceLandmarks ?? [];
+  const faceCount = faces.length;
+
+  // Face-box ratios (normalized landmark bounds, long edge), largest first.
+  const faceRatios = faces
+    .map((landmarks) => {
+      let minX = 1; let maxX = 0; let minY = 1; let maxY = 0;
+      for (const p of landmarks) {
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+      }
+      return Math.max(maxX - minX, maxY - minY);
+    })
+    .sort((a, b) => b - a)
+    .map((r) => Math.round(r * 1000) / 1000);
+
+  // Frozen-feed signature: rounded digest of the primary face's geometry.
+  // A statically held pose yields a stable signature across frames; real
+  // video noise perturbs it (the tracker's N-identical-signature rule
+  // decides what "frozen" means).
+  let signature: string | null = null;
+  if (faces[0]) {
+    const pts = faces[0];
+    const step = Math.max(1, Math.floor(pts.length / 24)); // ~24 sample points
+    const parts: string[] = [];
+    for (let i = 0; i < pts.length; i += step) {
+      parts.push(`${Math.round(pts[i].x * 100)},${Math.round(pts[i].y * 100)}`);
+    }
+    signature = parts.join('|');
+  }
+
   const matrix = result.facialTransformationMatrixes?.[0]?.data;
   return {
     faceCount,
     headPose: matrix ? headPoseFromMatrix(matrix as unknown as number[]) : null,
     latencyMs,
     atMs,
+    faceRatios,
+    signature,
   };
 }
 // Module-level monotonic timestamp memory for VIDEO mode.

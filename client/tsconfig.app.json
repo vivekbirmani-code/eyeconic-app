@@ -22,7 +22,12 @@
     "noUnusedParameters": true,
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true,
-    "noUncheckedSideEffectImports": true
+    "noUncheckedSideEffectImports": true,
+
+    /* Shared repo-root engine modules (see vite.config.ts alias) */
+    "paths": {
+      "@app-services/*": ["../services/*"]
+    }
   },
-  "include": ["src"]
+  "include": ["src", "../services/proctoring/episodeTracker.ts", "../services/proctoring/focusTracker.ts", "../services/proctoring/eventBuffer.ts", "../services/proctoring/types.ts"]
 }
