@@ -46,6 +46,19 @@ export interface LeaderboardSubscriptionCallbacks {
   onLiveChange?: (live: boolean) => void;
 }
 
+/**
+ * Per-socket room refcounts. Two consumers share ONE app socket — the
+ * LiveLeaderboard card and the Analytics screen's payload invalidator — and a
+ * Socket.IO room membership belongs to the SOCKET, not to whichever consumer
+ * joined first. An unrefcounted `leave_leaderboard` from one consumer's
+ * cleanup (e.g. LiveLeaderboard unmounting when the screen switches from the
+ * Test tab to the Proctoring tab) evicts the shared socket from the room and
+ * silently kills the OTHER consumer's live updates until the next reconnect.
+ * Leaving only when the last subscriber for that socket+room goes away keeps
+ * each subscription's lifecycle independent, which is the module's contract.
+ */
+const roomRefcounts = new WeakMap<LeaderboardSocket, Map<string, number>>();
+
 export function subscribeLeaderboardRoom(
   socket: LeaderboardSocket | null,
   testId: string,
@@ -82,6 +95,13 @@ export function subscribeLeaderboardRoom(
   socket.on('disconnect', handleDisconnect);
   socket.on('quiz_leaderboard_updated', handleUpdate);
 
+  let refcounts = roomRefcounts.get(socket);
+  if (!refcounts) {
+    refcounts = new Map();
+    roomRefcounts.set(socket, refcounts);
+  }
+  refcounts.set(testId, (refcounts.get(testId) ?? 0) + 1);
+
   if (socket.connected) {
     handleConnect();
   }
@@ -90,6 +110,12 @@ export function subscribeLeaderboardRoom(
     socket.off('connect', handleConnect);
     socket.off('disconnect', handleDisconnect);
     socket.off('quiz_leaderboard_updated', handleUpdate);
-    socket.emit('leave_leaderboard', testId);
+    const remaining = (roomRefcounts.get(socket)?.get(testId) ?? 0) - 1;
+    if (remaining > 0) {
+      roomRefcounts.get(socket)?.set(testId, remaining);
+    } else {
+      roomRefcounts.get(socket)?.delete(testId);
+      socket.emit('leave_leaderboard', testId);
+    }
   };
 }

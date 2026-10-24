@@ -53,7 +53,13 @@ const { sendPushNotification, sendPushToUser } = require('./utils/notifications'
 
 const app = express();
 const server = http.createServer(app);
-const io = socketIo(server, createSocketCorsOptions());
+// Socket.IO v4 takes CORS options under a `cors` key — passing them at the
+// top level silently disables engine.io CORS entirely (no ACAO header on the
+// polling handshake), which browsers block for any cross-origin web client.
+// Production masked this because the public web client forces websocket-only
+// transport (WebSocket upgrades are not CORS-gated); the Expo web app's
+// polling-first socket could never connect cross-origin.
+const io = socketIo(server, { cors: createSocketCorsOptions() });
 
 // Expose io to routes
 app.set('io', io);

@@ -574,6 +574,10 @@ export default function Analytics() {
 
           {selectedTest && (
             <ProctoringOverview
+              // Reset the row-cap toggle on test switch, but NOT on live
+              // refreshes of the same test (a shown-all list must not snap
+              // back to the cap mid-burst).
+              key={selectedTest._id}
               proctoring={testAnalytics?.proctoring ?? null}
               studentPerformance={testAnalytics?.studentPerformance ?? null}
               guestParticipants={testAnalytics?.guestParticipants ?? null}

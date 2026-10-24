@@ -157,7 +157,12 @@ describe('subscribeLeaderboardRoom', () => {
 
   it('supports independent subscriptions for the same test on one socket', () => {
     // The screen-level invalidator and the LiveLeaderboard card both
-    // subscribe; each cleanup must leave its own pair alone.
+    // subscribe on ONE shared app socket, and a Socket.IO room membership
+    // belongs to the socket — an unrefcounted leave from the card's cleanup
+    // (unmounting when the screen switches Test → Proctoring tab) used to
+    // evict the socket from the room and silently freeze the screen's live
+    // updates until the next reconnect. Room leaves are refcounted: only the
+    // LAST subscriber's cleanup leaves.
     const socket = new FakeSocket();
     socket.connect();
     const screenCb = callbacks();
@@ -167,14 +172,33 @@ describe('subscribeLeaderboardRoom', () => {
     const unsubscribeCard = subscribeLeaderboardRoom(socket, testId, cardCb);
     expect(socket.joins()).toBe(2);
 
+    // Card unmounts (tab switch) — the shared socket STAYS in the room.
     unsubscribeCard();
+    expect(socket.leaves()).toBe(0);
+
+    // The screen subscription keeps receiving updates with no reconnect.
+    socket.emit('quiz_leaderboard_updated', { quizId: testId, attemptId: 'a1' });
+    expect(screenCb.onUpdate).toHaveBeenCalledTimes(1);
+    expect(cardCb.onUpdate).not.toHaveBeenCalled();
+
+    // The LAST subscriber out is what actually leaves the room.
+    unsubscribeScreen();
+    expect(socket.leaves()).toBe(1);
+  });
+
+  it('re-arms room joins after the refcount drains to zero', () => {
+    const socket = new FakeSocket();
+    socket.connect();
+    const cb = callbacks();
+
+    const unsubscribe = subscribeLeaderboardRoom(socket, testId, cb);
+    unsubscribe();
     expect(socket.leaves()).toBe(1);
 
-    // The screen subscription is still fully live.
-    socket.disconnect();
-    socket.connect();
-    expect(screenCb.onResync).toHaveBeenCalledTimes(1); // this cycle's resync
-    expect(cardCb.onResync).not.toHaveBeenCalled(); // cleaned up before the cycle
-    expect(socket.joins()).toBe(3); // screen rejoined, card did not
+    // A later subscription for the same room joins and leaves normally again.
+    const reunsubscribe = subscribeLeaderboardRoom(socket, testId, callbacks());
+    expect(socket.joins()).toBe(2);
+    reunsubscribe();
+    expect(socket.leaves()).toBe(2);
   });
 });

@@ -17,8 +17,8 @@
  * (utils/theme.ts — Analytics is the reference).
  */
 
-import React from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import React, { useState } from 'react';
+import { ActivityIndicator, Pressable, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from 'react-native';
 import { ShieldCheck, ShieldAlert, AlertTriangle } from 'lucide-react-native';
 import StatCardGrid, { type StatCardItem } from '@/components/StatCardGrid';
 import { DataTable, type DataTableColumn } from '@/components/DataTable';
@@ -26,6 +26,19 @@ import { colors } from '@/utils/theme';
 
 /** Below this width the table becomes attempt cards (phones/small tablets). */
 const MOBILE_BREAKPOINT = 600;
+
+/**
+ * Rows mounted on first render. Long cohorts (public quizzes can carry
+ * hundreds of guest sessions) render the highest-risk rows first and reveal
+ * the rest on demand — mounting every row re-renders the whole table on each
+ * live-refresh nudge (the screen's coalesced quiz_leaderboard_updated
+ * refetch), and at ~400 rows that measured ~650ms of blocked main thread PER
+ * NUDGE on a fast desktop, freezing the tab during submission bursts (phones
+ * are far worse). Same pattern as the timeline's EVENT_ROW_CAP below and
+ * QuestionAnalytics' show-more. KPIs and the flagged callout always aggregate
+ * EVERY attempt — they read the rollup, never the rendered rows.
+ */
+const ROWS_INITIAL = 25;
 
 export interface ProctoringAttemptRow {
   attemptId: string;
@@ -171,6 +184,9 @@ const ProctoringOverview: React.FC<ProctoringOverviewProps> = ({
   onAttemptClick,
 }) => {
   const { width } = useWindowDimensions();
+  // Survives live refreshes of the SAME test (a shown-all list must not snap
+  // back to the cap mid-burst); the host resets it on test switch via `key`.
+  const [showAllRows, setShowAllRows] = useState(false);
 
   if (loading) {
     return <ActivityIndicator color={colors.primary} style={styles.loader} />;
@@ -254,6 +270,9 @@ const ProctoringOverview: React.FC<ProctoringOverviewProps> = ({
       // an identity (owner decision 8).
       return { ...row, studentName: 'Anonymous (pre-verification)', isGuest: true };
     });
+
+  // Triage view: only the top rows mount until the reviewer asks for the rest.
+  const visibleRows = showAllRows ? rows : rows.slice(0, ROWS_INITIAL);
 
   const columns: Array<DataTableColumn<AttemptRow>> = [
     {
@@ -378,11 +397,11 @@ const ProctoringOverview: React.FC<ProctoringOverviewProps> = ({
       )}
 
       <Text style={styles.sectionTitle}>
-        Attempts (highest risk first)
+        Attempts (highest risk first){rows.length > visibleRows.length ? ` · showing ${visibleRows.length} of ${rows.length}` : ''}
       </Text>
       {width < MOBILE_BREAKPOINT ? (
         <View>
-          {rows.map((row) => (
+          {visibleRows.map((row) => (
             <AttemptCard
               key={row.attemptId}
               row={row}
@@ -393,12 +412,25 @@ const ProctoringOverview: React.FC<ProctoringOverviewProps> = ({
       ) : (
         <DataTable
           columns={columns}
-          data={rows}
+          data={visibleRows}
           keyExtractor={(row) => row.attemptId}
           onRowPress={onAttemptClick ? (row) => onAttemptClick(row.attemptId) : undefined}
           rowAccessibilityLabel={(row) => `Open proctoring timeline for ${row.studentName}`}
           style={styles.tableCard}
         />
+      )}
+
+      {rows.length > ROWS_INITIAL && (
+        <TouchableOpacity
+          style={styles.showAllToggle}
+          onPress={() => setShowAllRows((prev) => !prev)}
+          accessibilityRole="button"
+          accessibilityLabel={showAllRows ? 'Show fewer attempts' : `Show all ${rows.length} attempts`}
+        >
+          <Text style={styles.showAllText}>
+            {showAllRows ? 'Show fewer' : `Show all ${rows.length} attempts`}
+          </Text>
+        </TouchableOpacity>
       )}
 
       <Text style={styles.footnote}>
@@ -451,6 +483,8 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
   },
   tableCard: { marginBottom: 4, marginHorizontal: 16 },
+  showAllToggle: { alignItems: 'center', paddingVertical: 10, marginHorizontal: 16 },
+  showAllText: { fontSize: 12, fontWeight: '700', color: colors.primaryDark },
   card: {
     backgroundColor: '#FFF',
     borderRadius: 12,

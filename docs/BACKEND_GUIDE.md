@@ -96,7 +96,7 @@ backend/
 
 Every HTTP request passes through this pipeline, in order (`server.js`):
 
-1. **CORS** — allowed origins come from `ALLOWED_ORIGINS` env, plus defaults for dev (`localhost:5173`, `localhost:3000`) and the production web app, plus `WEB_APP_URL`. Requests with **no** Origin header (mobile app, curl, server-to-server) are always allowed.
+1. **CORS** — allowed origins come from `ALLOWED_ORIGINS` env, plus defaults for dev (`localhost:5173`, `localhost:3000`) and the production web app, plus `WEB_APP_URL`. Requests with **no** Origin header (mobile app, curl, server-to-server) are always allowed. Socket.IO enforces the same list on its engine.io polling handshake (the options must be passed under Socket.IO's `cors:` key — see `backend/tests/integration/socketCors.test.js`).
 2. **requestId** — every request gets an ID (from `X-Request-Id` or freshly generated), echoed back on the response and included in every error and log line. When something breaks, this ID is how you find it in the logs.
 3. **Body parsing** — JSON and form bodies up to **50 MB** (big enough for base64 Excel imports). Malformed JSON gets a clean 400 with code `INVALID_JSON` instead of a crash.
 4. **Request logging** — one structured JSON log line per request (method, path, status, duration, requestId). Bodies are never logged (they can contain passwords).
