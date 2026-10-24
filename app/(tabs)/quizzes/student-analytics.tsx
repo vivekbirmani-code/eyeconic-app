@@ -275,14 +275,14 @@ export default function Analytics() {
 
   // Live analytics: the same quiz_leaderboard_updated nudges that drive
   // LiveLeaderboard also invalidate this screen's payload — external
-  // (public-quiz guest) submissions only surface here (guestParticipants),
-  // and the overview/question cards move on internal submissions too. Bursts
-  // coalesce into one quiet trailing refetch; one more on socket reconnect
-  // covers anything missed while offline. Joining the room here (duplicate
-  // with LiveLeaderboard's join) is idempotent server-side and keeps this
-  // subscription independent of the leaderboard card's lifecycle — the
-  // shared subscribeLeaderboardRoom module re-arms the join on every
-  // reconnect (rooms do not survive a disconnect).
+  // (public-quiz guest) submissions surface here in guestParticipants AND on
+  // the admin's merged board, and the overview/question cards move on
+  // internal submissions too. Bursts coalesce into one quiet trailing
+  // refetch; one more on socket reconnect covers anything missed while
+  // offline. Joining the room here (duplicate with LiveLeaderboard's join)
+  // is idempotent server-side and keeps this subscription independent of the
+  // leaderboard card's lifecycle — the shared subscribeLeaderboardRoom module
+  // re-arms the join on every reconnect (rooms do not survive a disconnect).
   useEffect(() => {
     if (!socket || !selectedTest) return;
     const testId = selectedTest._id;

@@ -125,8 +125,56 @@ const fetchGuestParticipants = async (quizId, { fullPhone = false } = {}) => {
   });
 };
 
+/**
+ * Guest cohort for the merged LIVE leaderboard (admin viewers): lead-backed,
+ * completed/auto_submitted attempts that have NOT been materialized into a
+ * registered QuizAttempt (`linkedUser` is set by linkGuestAttemptsToUser when
+ * a guest later signs up — that submission then ranks as the student's
+ * INTERNAL row, so keeping it here would double-count it). Legacy anonymous
+ * device-keyed attempts (guest: null) stay out, same rule as every other
+ * identity surface: no identity exists for them to rank under.
+ *
+ * Returns `{ attempt, identity }` rows for rankLeaderboardParticipants:
+ * identity = lead snapshot first (frozen at /start), live lead second, 'Guest'
+ * last — a deleted lead still renders the name captured on the attempt.
+ */
+const fetchGuestLeaderboardAttempts = async (quizId) => {
+  const attempts = await GuestAttempt.find({
+    quiz: quizId,
+    status: { $in: DONE_STATUSES },
+    guest: { $ne: null },
+    linkedUser: null,
+  })
+    .select(
+      'answers totalQuestions score marksObtained totalMarks startTime endTime status guest guestName guestEmail tabSwitchCount'
+    )
+    .sort({ marksObtained: -1 })
+    .lean();
+
+  if (attempts.length === 0) return [];
+
+  const leadIds = [...new Set(attempts.map((a) => String(a.guest)))];
+  const leads = await Guest.find({ _id: { $in: leadIds } })
+    .select('name email')
+    .lean();
+  const leadById = new Map(leads.map((l) => [String(l._id), l]));
+
+  return attempts.map((attempt) => {
+    const lead = leadById.get(String(attempt.guest));
+    return {
+      attempt,
+      identity: {
+        _id: attempt.guest,
+        name: attempt.guestName || lead?.name || 'Guest',
+        email: attempt.guestEmail || lead?.email || null,
+      },
+    };
+  });
+};
+
 module.exports = {
   fetchGuestParticipants,
   fetchGuestAttemptDocs,
+  fetchGuestLeaderboardAttempts,
   countGuestAttempts,
 };

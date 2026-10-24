@@ -421,6 +421,69 @@ function computePercentile(sortedByMarks, attempt, { excludeSelf = false } = {})
 }
 
 /**
+ * Leaderboard ordering shared by EVERY ranked surface:
+ * scorePercentage desc → accuracy desc → marksObtained desc → endTime asc → identity id asc.
+ * `entry.attempt.student._id` is the populated student id for registered
+ * attempts and the lead id for guest attempts (via the synthetic identity
+ * rankLeaderboardParticipants attaches), so ordering stays deterministic in
+ * mixed cohorts.
+ */
+function compareLeaderboardEntries(a, b) {
+  const spA = a.stats.scorePercentage ?? -1;
+  const spB = b.stats.scorePercentage ?? -1;
+  if (spB !== spA) return spB - spA;
+
+  const accA = a.stats.accuracy ?? -1;
+  const accB = b.stats.accuracy ?? -1;
+  if (accB !== accA) return accB - accA;
+
+  const marksA = a.stats.marksObtained;
+  const marksB = b.stats.marksObtained;
+  if (marksB !== marksA) return marksB - marksA;
+
+  const timeA = a.attempt.endTime ? new Date(a.attempt.endTime).getTime() : Infinity;
+  const timeB = b.attempt.endTime ? new Date(b.attempt.endTime).getTime() : Infinity;
+  if (timeA !== timeB) return timeA - timeB;
+
+  const idA = String(a.attempt.student?._id || a.attempt.student || '');
+  const idB = String(b.attempt.student?._id || b.attempt.student || '');
+  return idA.localeCompare(idB);
+}
+
+/** One leaderboard row — the exact shape rankStudentAttempts has always returned. */
+function buildRankedAttemptRow({ attempt, stats }, index, includeRank) {
+  return {
+    _id: attempt._id,
+    student: attempt.student
+      ? {
+          _id: attempt.student._id,
+          name: attempt.student.name,
+          email: attempt.student.email,
+        }
+      : null,
+    studentId: attempt.student?._id,
+    studentName: attempt.student?.name || 'Unknown',
+    studentEmail: attempt.student?.email || '',
+    score: attempt.score || stats.correct,
+    totalQuestions: stats.totalQuestions,
+    marksObtained: stats.marksObtained,
+    totalMarks: stats.totalMarks,
+    scorePercentage: stats.scorePercentage,
+    accuracy: stats.accuracy,
+    correct: stats.correct,
+    incorrect: stats.incorrect,
+    skipped: stats.skipped,
+    attempted: stats.attempted,
+    percentage: stats.percentage,
+    timeSpent: getAttemptDurationMinutes(attempt) ?? 0,
+    completedAt: attempt.endTime,
+    endTime: attempt.endTime,
+    tabSwitchCount: attempt.tabSwitchCount || 0,
+    rank: includeRank ? index + 1 : null,
+  };
+}
+
+/**
  * Deterministic ranking with tie-breakers:
  * scorePercentage desc → accuracy desc → marksObtained desc → endTime asc → studentId asc
  */
@@ -430,61 +493,62 @@ function rankStudentAttempts(attempts, questions = []) {
     return { attempt, stats };
   });
 
-  enriched.sort((a, b) => {
-    const spA = a.stats.scorePercentage ?? -1;
-    const spB = b.stats.scorePercentage ?? -1;
-    if (spB !== spA) return spB - spA;
+  enriched.sort(compareLeaderboardEntries);
 
-    const accA = a.stats.accuracy ?? -1;
-    const accB = b.stats.accuracy ?? -1;
-    if (accB !== accA) return accB - accA;
+  const includeRank = enriched.length > 1;
 
-    const marksA = a.stats.marksObtained;
-    const marksB = b.stats.marksObtained;
-    if (marksB !== marksA) return marksB - marksA;
+  return enriched.map((entry, index) => buildRankedAttemptRow(entry, index, includeRank));
+}
 
-    const timeA = a.attempt.endTime ? new Date(a.attempt.endTime).getTime() : Infinity;
-    const timeB = b.attempt.endTime ? new Date(b.attempt.endTime).getTime() : Infinity;
-    if (timeA !== timeB) return timeA - timeB;
+/**
+ * Unified LIVE-leaderboard ranking: registered QuizAttempts and public-quiz
+ * guest attempts ranked together by the SAME rules (one comparator —
+ * compareLeaderboardEntries — so the merged board can never disagree with the
+ * registered-only board about ordering). Every row additionally carries
+ * `participantType: 'internal' | 'external'`; external rows carry `guestId`
+ * (the verified lead's id) and a null `student`/`studentId` — the lead
+ * identity surfaces through studentName/studentEmail only, so a guest row can
+ * never be mistaken for a student-account row. rankStudentAttempts itself
+ * stays registered-only — the static analytics/export surfaces are unchanged.
+ *
+ * `guestEntries` are `{ attempt, identity: {_id, name, email} }` rows built by
+ * fetchGuestLeaderboardAttempts (lead snapshots first, live lead fallback).
+ */
+function rankLeaderboardParticipants(registeredAttempts, guestEntries = [], questions = []) {
+  const enriched = registeredAttempts.map((attempt) => ({
+    attempt,
+    stats: computeAttemptStats(attempt, questions),
+    participantType: 'internal',
+  }));
 
-    const idA = String(a.attempt.student?._id || a.attempt.student || '');
-    const idB = String(b.attempt.student?._id || b.attempt.student || '');
-    return idA.localeCompare(idB);
+  guestEntries.forEach(({ attempt, identity }) => {
+    enriched.push({
+      // Synthetic student, never a mutation of the lean guest doc: it gives
+      // the shared comparator a deterministic tie-break id (the lead id) and
+      // buildRankedAttemptRow the name/email the row renders.
+      attempt: { ...attempt, student: identity },
+      stats: computeAttemptStats(attempt, questions),
+      participantType: 'external',
+      identity,
+    });
   });
+
+  enriched.sort(compareLeaderboardEntries);
 
   const includeRank = enriched.length > 1;
 
   return enriched.map((entry, index) => {
-    const { attempt, stats } = entry;
-    return {
-      _id: attempt._id,
-      student: attempt.student
-        ? {
-            _id: attempt.student._id,
-            name: attempt.student.name,
-            email: attempt.student.email,
-          }
-        : null,
-      studentId: attempt.student?._id,
-      studentName: attempt.student?.name || 'Unknown',
-      studentEmail: attempt.student?.email || '',
-      score: attempt.score || stats.correct,
-      totalQuestions: stats.totalQuestions,
-      marksObtained: stats.marksObtained,
-      totalMarks: stats.totalMarks,
-      scorePercentage: stats.scorePercentage,
-      accuracy: stats.accuracy,
-      correct: stats.correct,
-      incorrect: stats.incorrect,
-      skipped: stats.skipped,
-      attempted: stats.attempted,
-      percentage: stats.percentage,
-      timeSpent: getAttemptDurationMinutes(attempt) ?? 0,
-      completedAt: attempt.endTime,
-      endTime: attempt.endTime,
-      tabSwitchCount: attempt.tabSwitchCount || 0,
-      rank: includeRank ? index + 1 : null,
-    };
+    const row = buildRankedAttemptRow(entry, index, includeRank);
+    row.participantType = entry.participantType;
+    if (entry.participantType === 'external') {
+      // Guests have no student account: the synthetic identity was only for
+      // sorting/row assembly, so strip it here — the lead id rides `guestId`
+      // alone and a `studentId` can never be mistaken for a User id.
+      row.student = null;
+      row.studentId = null;
+      row.guestId = entry.identity._id;
+    }
+    return row;
   });
 }
 
@@ -876,6 +940,7 @@ module.exports = {
   getRawAttemptDurationMinutes,
   computePercentile,
   rankStudentAttempts,
+  rankLeaderboardParticipants,
   parseDateRange,
   filterAttemptsByDateRange,
   aggregateStudentSummary,

@@ -131,9 +131,12 @@ const LeaderboardRow = React.memo(function LeaderboardRow({
         </View>
         <View style={styles.rowInfo}>
           <View style={styles.rowTitleRow}>
-            <Text style={styles.rowName} numberOfLines={1}>
-              {entry.studentName}
-            </Text>
+            <View style={styles.rowNameWrap}>
+              <Text style={styles.rowName} numberOfLines={1}>
+                {entry.studentName}
+              </Text>
+              {entry.participantType === 'external' ? <GuestBadge /> : null}
+            </View>
             <Text style={[styles.rowScore, (scorePct ?? 0) >= 60 ? styles.passScore : styles.failScore]}>
               {formatPercent(scorePct)}
             </Text>
@@ -169,6 +172,16 @@ interface PodiumProps {
   entries: LeaderboardEntry[];
 }
 
+/** "GUEST" chip for external (public-quiz) rows — same visual language as the
+ * Public Participants list (GuestParticipantList). */
+function GuestBadge() {
+  return (
+    <View style={styles.guestBadge}>
+      <Text style={styles.guestBadgeText}>GUEST</Text>
+    </View>
+  );
+}
+
 /** Top-3 highlight strip above the full ranked list. */
 function Podium({ entries }: PodiumProps) {
   if (entries.length === 0) return null;
@@ -191,9 +204,12 @@ function Podium({ entries }: PodiumProps) {
                 {(entry.studentName || '?').charAt(0).toUpperCase()}
               </Text>
             </View>
-            <Text style={styles.podiumName} numberOfLines={1}>
-              {entry.studentName}
-            </Text>
+            <View style={styles.podiumNameRow}>
+              <Text style={styles.podiumName} numberOfLines={1}>
+                {entry.studentName}
+              </Text>
+              {entry.participantType === 'external' ? <GuestBadge /> : null}
+            </View>
             <Text style={[styles.podiumScore, (scorePct ?? 0) >= 60 ? styles.passScore : styles.failScore]}>
               {formatPercent(scorePct)}
             </Text>
@@ -215,17 +231,23 @@ interface LiveLeaderboardProps {
   onStudentClick: (attemptId: string) => void;
   /** Viewer's role — 'admin' unlocks the External (public-quiz guest) audience. */
   userRole?: string;
-  /** Completed public-quiz guests for this test, from the admin analytics payload. */
+  /** Completed public-quiz guests for this test, from the admin analytics
+   * payload. Drives the external EXPORT's empty check (the export serves the
+   * same lead list analytics carries); the board itself ranks guests live. */
   guestParticipantCount?: number;
 }
 
 /**
  * Real-time leaderboard for the selected test in Test Analytics.
  *
- * Data comes from GET /quizzes/analytics/test/:id/leaderboard — the same
- * rankStudentAttempts output the full analytics response carries, so ranking
- * and tie-breakers have one source of truth. Real-time updates are nudges,
- * not payloads: a submission emits quiz_leaderboard_updated to the test's
+ * Data comes from GET /quizzes/analytics/test/:id/leaderboard — one shared
+ * ranking core, so ranking and tie-breakers have a single source of truth.
+ * Admin boards rank internal (registered) and external (public-quiz guest)
+ * participants TOGETHER — external rows carry participantType 'external' and
+ * a GUEST chip, and open the same attempt detail via their attempt id;
+ * mentors receive registered students only (external data is admin-only
+ * backend-side). Real-time updates are nudges, not payloads: a submission —
+ * internal or external — emits quiz_leaderboard_updated to the test's
  * leaderboard room, and this component coalesces those nudges into a single
  * trailing refetch (plus one resync refetch on socket reconnect, which covers
  * anything missed while offline).
@@ -424,9 +446,16 @@ export default function LiveLeaderboard({
     setDialogVisible(true);
   }, [exporting]);
 
+  // Internal rows only — external participants ride `rows` too on admin
+  // boards, but the internal export audience serves registered students only.
+  const internalRowCount = useMemo(
+    () => rows.filter((r) => r.participantType !== 'external').length,
+    [rows]
+  );
+
   const handleExport = useCallback(async () => {
     if (exporting) return;
-    const count = exportAudience === 'internal' ? rows.length : (guestParticipantCount ?? 0);
+    const count = exportAudience === 'internal' ? internalRowCount : (guestParticipantCount ?? 0);
     if (count === 0) {
       Alert.alert(
         'Nothing to export',
@@ -448,7 +477,7 @@ export default function LiveLeaderboard({
     } finally {
       setExporting(null);
     }
-  }, [exporting, exportAudience, exportFormat, rows.length, guestParticipantCount, testId]);
+  }, [exporting, exportAudience, exportFormat, internalRowCount, guestParticipantCount, testId]);
 
   const topThree = useMemo(() => rows.slice(0, 3), [rows]);
   const renderRow = useCallback(
@@ -534,20 +563,14 @@ export default function LiveLeaderboard({
         ) : rows.length === 0 ? (
           <View style={styles.emptyContainer}>
             <Trophy color="#9CA3AF" size={40} />
-            {/* Public quizzes: guests are deliberately unranked and listed in
-                their own section below — never let that read as an empty
-                leaderboard when guests HAVE submitted. */}
-            <Text style={styles.emptyText}>
-              {(guestParticipantCount ?? 0) > 0
-                ? 'No registered-student submissions yet'
-                : 'No submissions yet'}
-            </Text>
+            {/* Empty means empty for BOTH cohorts: admins' boards rank public
+                participants too, so guests having submitted would put rows
+                here. Mentors never receive external rows (admin-only data). */}
+            <Text style={styles.emptyText}>No submissions yet</Text>
             <Text style={styles.emptyHint}>
-              {(guestParticipantCount ?? 0) > 0
-                ? `${guestParticipantCount} public participant${guestParticipantCount === 1 ? '' : 's'} completed this test — see the list below.`
-                : live
-                  ? 'Rankings appear here the moment a student submits.'
-                  : 'Reconnect to see rankings update as students submit.'}
+              {live
+                ? 'Rankings appear here the moment a participant submits.'
+                : 'Reconnect to see rankings update as participants submit.'}
             </Text>
           </View>
         ) : (
@@ -576,7 +599,7 @@ export default function LiveLeaderboard({
         audience={exportAudience}
         format={exportFormat}
         exporting={!!exporting}
-        internalCount={rows.length}
+        internalCount={internalRowCount}
         externalCount={guestParticipantCount ?? 0}
         onAudienceChange={setExportAudience}
         onFormatChange={setExportFormat}
@@ -711,11 +734,17 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
   },
+  podiumNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    maxWidth: '100%',
+  },
   podiumName: {
     fontSize: 12,
     fontWeight: '600',
     color: '#1F2937',
-    maxWidth: '100%',
+    flexShrink: 1,
   },
   podiumScore: {
     fontSize: 14,
@@ -784,8 +813,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 8,
   },
-  rowName: {
+  rowNameWrap: {
     flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    minWidth: 0,
+  },
+  rowName: {
+    flexShrink: 1,
     fontSize: 15,
     fontWeight: '600',
     color: '#1F2937',
@@ -825,6 +861,19 @@ const styles = StyleSheet.create({
     height: 1,
     backgroundColor: '#F3F4F6',
     marginLeft: 100,
+  },
+  guestBadge: {
+    backgroundColor: '#FEF3C7',
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    flexShrink: 0,
+  },
+  guestBadgeText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#B45309',
+    letterSpacing: 0.5,
   },
   listFooter: {
     height: 4,

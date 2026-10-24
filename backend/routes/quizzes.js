@@ -35,6 +35,7 @@ const {
   computeTestAnalytics,
   computePercentile,
   rankStudentAttempts,
+  rankLeaderboardParticipants,
   filterAttemptsByDateRange,
   aggregateStudentSummary,
   aggregateSubjectStats,
@@ -60,7 +61,7 @@ const { assertStudentPerformanceAccess } = require('../utils/studentPerformanceA
 const { buildAttemptResults } = require('../utils/attemptResults');
 const { buildStudentPerformanceResponse } = require('../utils/studentPerformance');
 const { buildCohortComparison } = require('../utils/cohortComparison');
-const { fetchGuestParticipants, fetchGuestAttemptDocs, countGuestAttempts } = require('../utils/guestAnalytics');
+const { fetchGuestParticipants, fetchGuestAttemptDocs, fetchGuestLeaderboardAttempts, countGuestAttempts } = require('../utils/guestAnalytics');
 const { collectTestReportData } = require('../utils/testReportData');
 const { buildTestReportWorkbook } = require('../utils/testReportExcel');
 const { collectAttemptQuestionReport } = require('../utils/attemptQuestionReport');
@@ -4630,6 +4631,24 @@ async function loadRankedLeaderboard(user, quiz) {
   return rankStudentAttempts(attempts, quiz.questions);
 }
 
+// LIVE board loader: the registered cohort (identical scope and ranking to
+// loadRankedLeaderboard) merged, for ADMIN viewers, with the quiz's
+// public-quiz guests — ONE ranked list, one comparator, cohorts told apart by
+// participantType. Mentors keep the registered-only board: external
+// participant data is admin-only everywhere else in the app (same policy as
+// guestParticipants and the ?cohort=external export), and guest rows have no
+// mentor assignment to scope by.
+async function loadLiveLeaderboard(user, quiz) {
+  const { attemptQuery } = await buildTestAttemptScope(user, quiz);
+  const [attempts, guestEntries] = await Promise.all([
+    QuizAttempt.find(attemptQuery)
+      .populate('student', 'name email profilePicture')
+      .sort({ marksObtained: -1 }),
+    user.role === 'admin' ? fetchGuestLeaderboardAttempts(quiz._id) : [],
+  ]);
+  return rankLeaderboardParticipants(attempts, guestEntries, quiz.questions);
+}
+
 // External (guest) leaderboard export data (public-quiz proctoring Phase
 // 4): participants + the shared proctoring rollup in one helper — the CSV
 // and Excel routes render the SAME data, fetched concurrently (review
@@ -4663,10 +4682,13 @@ function resolveExportCohort(req, res) {
 }
 
 // Live leaderboard (admin, mentor) — the ranked participant list the Test
-// Analytics screen updates in real time. Deliberately returns ONLY
-// rankStudentAttempts output: the realtime refresh path stays light (no
-// question analytics, no guest aggregation), while ranking, tie-breakers and
-// mentor scoping stay identical to /analytics/test/:testId by construction.
+// Analytics screen updates in real time. For ADMINS the board merges this
+// quiz's public-quiz guests into the same ranking (participantType /
+// guestId tell the cohorts apart); mentors see registered students only.
+// Deliberately returns only ranked rows: the realtime refresh path stays
+// light (no question analytics, no other guest aggregation), while ranking,
+// tie-breakers and mentor scoping stay identical to /analytics/test/:testId
+// by construction (same scope builder, same comparator).
 router.get('/analytics/test/:testId/leaderboard', auth, authorize('admin', 'mentor'), async (req, res) => {
   try {
     const quiz = await Quiz.findById(req.params.testId).populate('questions');
@@ -4676,7 +4698,7 @@ router.get('/analytics/test/:testId/leaderboard', auth, authorize('admin', 'ment
     }
 
     res.json({
-      leaderboard: await loadRankedLeaderboard(req.user, quiz),
+      leaderboard: await loadLiveLeaderboard(req.user, quiz),
       generatedAt: new Date().toISOString(),
     });
   } catch (error) {

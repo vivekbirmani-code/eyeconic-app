@@ -13,7 +13,9 @@
  *      shows correct ranking after each step.
  *   5. A mentor viewer's refetch is scoped to only their own students.
  *   6. An external (public-quiz guest) submission nudges the same room with
- *      cohort:'external' and lands in the admin analytics payload.
+ *      cohort:'external', lands in the admin analytics payload, and RANKS on
+ *      the admin's merged live board (internal + external together); the
+ *      mentor's board for the same quiz stays guest-free (admin-only data).
  *   7. A viewer that disconnects mid-test stops receiving nudges; after it
  *      reconnects and RE-JOINS the room (what the fixed app client does on
  *      every 'connect' — rooms do not survive a disconnect), later
@@ -417,12 +419,33 @@ async function main() {
   }
   log('admin analytics payload reflects the external guest submission');
 
-  // Internal board for the guest quiz stays empty — cohorts never mix.
+  // The admin's board for the public quiz now RANKS the external guest: this
+  // quiz has no registered attempts, so the merged board is exactly Vera's
+  // row — tagged participantType external, tied to her lead id, graded 3
+  // correct + 1 wrong → 11/16 = 68.75%.
   const guestBoard = await api('GET', `/quizzes/analytics/test/${publicQuiz._id}/leaderboard`, { token: adminToken });
-  if (guestBoard.status !== 200 || guestBoard.body.leaderboard.length !== 0) {
-    throw new Error(`internal board for guest quiz should be empty: ${JSON.stringify(guestBoard.body)}`);
+  if (guestBoard.status !== 200 || guestBoard.body.leaderboard.length !== 1) {
+    throw new Error(`admin merged board for guest quiz wrong: ${JSON.stringify(guestBoard.body)}`);
   }
-  log('internal leaderboard stays cohort-clean for the public quiz');
+  const veraRow = guestBoard.body.leaderboard[0];
+  if (
+    veraRow.studentName !== 'Vera External'
+    || veraRow.participantType !== 'external'
+    || veraRow.guestId !== lead._id.toString()
+    || veraRow.scorePercentage !== 68.75
+    || veraRow.correct !== 3
+    || veraRow.incorrect !== 1
+  ) {
+    throw new Error(`external guest row wrong on merged board: ${JSON.stringify(veraRow)}`);
+  }
+  log('admin merged board ranks the external guest (participantType external, lead id)');
+
+  // Mentors never receive external rows (admin-only data) — same board, empty.
+  const mentorGuestBoard = await api('GET', `/quizzes/analytics/test/${publicQuiz._id}/leaderboard`, { token: mentorToken });
+  if (mentorGuestBoard.status !== 200 || mentorGuestBoard.body.leaderboard.length !== 0) {
+    throw new Error(`mentor board for guest quiz must stay guest-free: ${JSON.stringify(mentorGuestBoard.body)}`);
+  }
+  log('mentor board for the public quiz stays external-free');
 
   // ---- Reconnect contract: rooms do not survive a disconnect ----
   // A submission landing while the viewer is offline must not reach it, and

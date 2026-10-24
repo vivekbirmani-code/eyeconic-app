@@ -9,6 +9,7 @@ const {
   computeTestAnalytics,
   computePerformanceMetricsAverages,
   rankStudentAttempts,
+  rankLeaderboardParticipants,
   filterAttemptsByDateRange,
   aggregateStudentSummary,
   aggregateSubjectStats,
@@ -235,6 +236,123 @@ describe('analytics — distribution and ranking', () => {
     expect(ranked[0].rank).toBe(1);
     expect(ranked[1].rank).toBe(2);
     expect(ranked[0].student._id).toBe('s1');
+  });
+});
+
+describe('analytics — rankLeaderboardParticipants (merged live board)', () => {
+  const internalAttempt = (id, studentId, name, { marks, total = 16, correct = 0, incorrect = 0, endTime } = {}) => ({
+    _id: id,
+    student: { _id: studentId, name, email: `${studentId}@test.test` },
+    marksObtained: marks,
+    totalMarks: total,
+    totalQuestions: 4,
+    score: correct,
+    startTime: new Date('2026-01-01T10:00:00Z'),
+    endTime: endTime || new Date('2026-01-01T10:20:00Z'),
+    answers: [
+      ...Array.from({ length: correct }, (_, i) => ({ questionIndex: i, selectedAnswer: 1, isCorrect: true })),
+      ...Array.from({ length: incorrect }, (_, i) => ({ questionIndex: i + correct, selectedAnswer: 2, isCorrect: false })),
+    ],
+  });
+
+  const guestEntry = (id, leadId, name, { marks, total = 16, correct = 0, incorrect = 0, endTime } = {}) => ({
+    attempt: {
+      _id: id,
+      guest: leadId,
+      guestName: name,
+      guestEmail: `${leadId}@guest.test`,
+      marksObtained: marks,
+      totalMarks: total,
+      totalQuestions: 4,
+      score: correct,
+      startTime: new Date('2026-01-01T10:00:00Z'),
+      endTime: endTime || new Date('2026-01-01T10:20:00Z'),
+      answers: [
+        ...Array.from({ length: correct }, (_, i) => ({ questionIndex: i, selectedAnswer: 1, isCorrect: true })),
+        ...Array.from({ length: incorrect }, (_, i) => ({ questionIndex: i + correct, selectedAnswer: 2, isCorrect: false })),
+      ],
+    },
+    identity: { _id: leadId, name, email: `${leadId}@guest.test` },
+  });
+
+  it('ranks internal and external participants together by the shared rules', () => {
+    const ranked = rankLeaderboardParticipants(
+      [
+        internalAttempt('ia1', 's1', 'Ann Internal', { marks: 8, correct: 2, incorrect: 0 }),
+        internalAttempt('ia2', 's2', 'Bob Internal', { marks: 16, correct: 4 }),
+      ],
+      [guestEntry('ga1', 'lead1', 'Vera External', { marks: 12, correct: 3, incorrect: 1 })]
+    );
+
+    expect(ranked.map((r) => r.studentName)).toEqual(['Bob Internal', 'Vera External', 'Ann Internal']);
+    expect(ranked.map((r) => r.rank)).toEqual([1, 2, 3]);
+  });
+
+  it('tags every row with its cohort and gives external rows the lead identity', () => {
+    const ranked = rankLeaderboardParticipants(
+      [internalAttempt('ia1', 's1', 'Ann Internal', { marks: 16, correct: 4 })],
+      [guestEntry('ga1', 'lead1', 'Vera External', { marks: 8, correct: 2, incorrect: 2 })]
+    );
+
+    const internal = ranked.find((r) => r._id === 'ia1');
+    expect(internal.participantType).toBe('internal');
+    expect(internal.guestId).toBeUndefined();
+    expect(internal.studentId).toBe('s1');
+
+    const external = ranked.find((r) => r._id === 'ga1');
+    expect(external.participantType).toBe('external');
+    expect(external.guestId).toBe('lead1');
+    expect(external.studentName).toBe('Vera External');
+    expect(external.studentEmail).toBe('lead1@guest.test');
+    // No student account — identity rides guestId + studentName/Email only,
+    // so a null student/studentId can never be mistaken for a User id.
+    expect(external.student).toBeNull();
+    expect(external.studentId).toBeNull();
+    expect(external.correct).toBe(2);
+    expect(external.incorrect).toBe(2);
+    expect(external.scorePercentage).toBe(50);
+  });
+
+  it('breaks cross-cohort score ties by accuracy, then finish time', () => {
+    // Both 8/16 = 50%; the guest answered 4 (2/4 = 50% acc), the internal
+    // student answered 3 (2/3 ≈ 66.67%) — internal ranks first.
+    let ranked = rankLeaderboardParticipants(
+      [internalAttempt('ia1', 's1', 'Ann', { marks: 8, correct: 2, incorrect: 1 })],
+      [guestEntry('ga1', 'lead1', 'Vera', { marks: 8, correct: 2, incorrect: 2 })]
+    );
+    expect(ranked.map((r) => r.studentName)).toEqual(['Ann', 'Vera']);
+
+    // Identical score AND accuracy → earlier endTime wins, regardless of cohort.
+    ranked = rankLeaderboardParticipants(
+      [internalAttempt('ia1', 's1', 'Ann', { marks: 8, correct: 2, incorrect: 2, endTime: new Date('2026-01-01T11:00:00Z') })],
+      [guestEntry('ga1', 'lead1', 'Vera', { marks: 8, correct: 2, incorrect: 2, endTime: new Date('2026-01-01T10:30:00Z') })]
+    );
+    expect(ranked.map((r) => r.studentName)).toEqual(['Vera', 'Ann']);
+  });
+
+  it('does not mutate the guest attempt documents it ranks', () => {
+    const entry = guestEntry('ga1', 'lead1', 'Vera External', { marks: 12, correct: 3, incorrect: 1 });
+    rankLeaderboardParticipants([], [entry]);
+    expect(entry.attempt).not.toHaveProperty('student');
+  });
+
+  it('returns an empty board and null rank for a single merged row', () => {
+    expect(rankLeaderboardParticipants([], [])).toEqual([]);
+
+    const single = rankLeaderboardParticipants(
+      [],
+      [guestEntry('ga1', 'lead1', 'Vera External', { marks: 12, correct: 3, incorrect: 1 })]
+    );
+    expect(single).toHaveLength(1);
+    expect(single[0].rank).toBeNull();
+  });
+
+  it('keeps the registered-only ranker untouched (no participantType leakage)', () => {
+    const ranked = rankStudentAttempts([
+      internalAttempt('ia1', 's1', 'Ann Internal', { marks: 16, correct: 4 }),
+    ]);
+    expect(ranked[0].participantType).toBeUndefined();
+    expect(ranked[0].guestId).toBeUndefined();
   });
 });
 

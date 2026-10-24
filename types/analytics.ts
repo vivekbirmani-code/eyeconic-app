@@ -146,22 +146,31 @@ export interface TestOverviewData {
 }
 
 /**
- * One ranked row of a test's live leaderboard — the exact shape
- * rankStudentAttempts returns from GET /quizzes/analytics/test/:id/leaderboard
- * (identical rows to studentPerformance in the full test analytics response).
- * rank is null when the cohort has a single attempt; leaderboard position is
- * index + 1 regardless.
+ * One ranked row of a test's live leaderboard — the shape
+ * rankLeaderboardParticipants returns from GET /quizzes/analytics/test/:id/leaderboard.
+ * Admin viewers get internal (registered) and external (public-quiz guest)
+ * participants ranked together — `participantType` tells them apart, and
+ * external rows carry `guestId` (the verified lead) instead of a student id;
+ * mentors receive internal rows only. rank is null when the cohort has a
+ * single attempt; leaderboard position is index + 1 regardless.
  */
 export interface LeaderboardEntry {
   _id: string;
+  /** 'internal' = registered student attempt; 'external' = public-quiz guest attempt. */
+  participantType?: 'internal' | 'external';
+  /** Null on external rows — guests have no student account (see guestId). */
   student: {
     _id: string;
     name: string;
-    email: string;
+    /** Null for legacy pre-email leads. */
+    email: string | null;
   } | null;
-  studentId: string;
+  /** Null on external rows. */
+  studentId: string | null;
   studentName: string;
   studentEmail: string;
+  /** External rows only — the verified lead's id. */
+  guestId?: string;
   score: number;
   totalQuestions: number;
   marksObtained: number;
