@@ -198,6 +198,15 @@ async function main() {
       log('[requestfailed]', req.url().slice(0, 120), req.failure()?.errorText);
     }
   });
+  // Network-level tracing for the timeline fetch (card-stuck diagnosis).
+  for (const evt of ['request', 'response', 'requestfinished']) {
+    page.on(evt, (reqOrRes) => {
+      const url = reqOrRes.url();
+      if (url.includes('/proctoring/timeline')) {
+        log(`[net:${evt}]`, url.slice(0, 90));
+      }
+    });
+  }
 
   await page.evaluateOnNewDocument((t, pt, lead) => {
     localStorage.setItem('guestToken', t);
@@ -226,7 +235,18 @@ async function main() {
       if (option) option.click();
     });
 
-    await sleep(monitorMs);
+    await sleep(12000);
+    // Tab-switch scenario (real browser): away ~4s (> the 2s focus floor),
+    // then back — must record TAB_HIDDEN + produce the warn.focus action
+    // (focusEvents warn-only) in the batch response.
+    const otherTab = await browser.newPage();
+    await otherTab.bringToFront();
+    await sleep(4000);
+    await page.bringToFront();
+    await otherTab.close();
+    log('tab-switch scenario done');
+
+    await sleep(monitorMs - 16000);
     log('batches so far:', JSON.stringify(batches));
 
     // Submit: 'Submit Test' then confirm 'Submit test'.
@@ -244,13 +264,25 @@ async function main() {
       if (confirm) confirm.click();
     });
     log('submitted; waiting for result page + final flush');
-    await sleep(6000);
-    const bodyText = await page.evaluate(() => document.body.innerText);
-    log('result page?', /result|score/i.test(page.url()) || /submitted|correct/i.test(bodyText) ? 'yes' : 'unclear', page.url());
-    const cardShown = bodyText.includes('Monitoring summary');
-    cardText = cardShown
-      ? bodyText.slice(bodyText.indexOf('Monitoring summary'), bodyText.indexOf('Monitoring summary') + 300).replace(/\n+/g, ' | ')
-      : 'NOT RENDERED';
+    await sleep(2000);
+    // Wait for the monitoring card itself (case-insensitive — the loading
+    // state renders 'Loading monitoring summary…' with a lowercase m).
+    let cardText = null;
+    try {
+      // Wait for the READY state ('Recorded violations' only renders once
+      // the timeline lands) — the loading state also matches 'monitoring
+      // summary', and responses can queue for seconds in this scenario.
+      await page.waitForFunction(
+        () => /Recorded violations/i.test(document.body.innerText),
+        { timeout: 45000 }
+      );
+      const bodyText = await page.evaluate(() => document.body.innerText);
+      const idx = bodyText.search(/monitoring summary/i);
+      cardText = bodyText.slice(idx, idx + 320).replace(/\n+/g, ' | ');
+    } catch {
+      cardText = 'NOT RENDERED (no monitoring summary text within 15s)';
+    }
+    log('result page?', /result|score/i.test(page.url()) ? 'yes' : 'unclear', page.url());
     log('summary card:', cardText);
   } catch (err) {
     failures.push(`browser flow: ${err.message}`);

@@ -340,7 +340,7 @@ describe('Phase 5 attention — repeated patterns (deterministic window)', () =>
 // ---------- §17.5 precedence + face gating ----------
 
 describe('Phase 5 attention — precedence and gating (§17.5)', () => {
-  test('no usable face → attention inactive even with pose-shaped frames', () => {
+  test('look-away bridged through detection dropout: ONE occurrence with bridgedMs, never spurious repeats', () => {
     const tracker = makeTracker(undefined, { yaw: 0, pitch: 0 });
     const emitted = [
       ...hold(tracker, 55, 0, 5),
@@ -351,6 +351,28 @@ describe('Phase 5 attention — precedence and gating (§17.5)', () => {
       ...Array.from({ length: 100 }, () =>
         tracker.observeFrame(frame(55, 0, { visibility: 'small' }))).flat(), // FACE_OUT_OF_FRAME territory
     ];
+    const attention = emitted.filter((e: any) => /HEAD_POSE|ATTENTION/.test(e.type));
+    // Field fix 2026-10-24: at extreme angles the detector loses the face
+    // MID-TURN — the dropout CONTINUES the already-substantiated look-away
+    // (≥2 real frames ≥ turnedDeg) instead of fragmenting it into sub-floor
+    // pieces. Exactly one occurrence, honestly marked with bridgedMs.
+    expect(attention).toHaveLength(1);
+    expect(attention[0].type).toBe('HEAD_POSE_TURNED');
+    expect(attention[0].metadata.bridgedMs).toBeGreaterThan(0);
+    // No usable-face READING ever followed — no second occurrence, no marker.
+    expect(emitted.filter((e: any) => e.type === 'HEAD_POSE_REPEATED')).toEqual([]);
+  });
+
+  test('dropout WITHOUT a prior turned reading produces no attention events', () => {
+    const tracker = makeTracker(undefined, { yaw: 0, pitch: 0 });
+    const emitted = [
+      ...Array.from({ length: 100 }, () =>
+        tracker.observeFrame(frame(55, 0, { faceCount: 0, faceCountClass: 'none', visibility: 'none' }))).flat(),
+      ...Array.from({ length: 100 }, () =>
+        tracker.observeFrame(frame(55, 0, { faceCount: 2, faceCountClass: 'multiple', visibility: 'multiple' }))).flat(),
+    ];
+    // The bridge only CONTINUES an open look-away — a face that was never
+    // readable at ≥ turnedDeg cannot open one (no pose-shaped masquerade).
     expect(emitted.filter((e: any) => /HEAD_POSE|ATTENTION/.test(e.type))).toEqual([]);
   });
 
@@ -375,6 +397,55 @@ describe('Phase 5 attention — precedence and gating (§17.5)', () => {
       ...tracker.closeAll(),
     ];
     expect(emitted.filter((e: any) => /HEAD_POSE|ATTENTION/.test(e.type))).toEqual([]);
+  });
+});
+
+// ---------- detection-dropout bridge (field fix 2026-10-24) ----------
+
+describe('Phase 5 attention — detection-dropout bridge (2026-10-24 field fix)', () => {
+  // The field signature this locks out: extreme real-world turns where the
+  // detector loses the face mid-turn fragmented into sub-2s pieces and were
+  // silently discarded — 3 deliberate look-aways recorded ONE event and the
+  // 3rd-occurrence warning never fired. Each turn below: ~1s readable turn
+  // (40-60 deg), ~1.5s face LOST (still turned in reality), ~0.5s readable
+  // again, then a genuine look-back.
+  test('extreme turns with mid-turn face loss still yield one occurrence EACH + the repeated marker', () => {
+    const tracker = makeTracker(undefined, { yaw: 0, pitch: 0 });
+    const emitted = [];
+    const turn = () => {
+      for (let i = 0; i < 10; i += 1) emitted.push(...tracker.observeFrame(frame(55, 0))); // ~1s readable turn
+      for (let i = 0; i < 15; i += 1) emitted.push(...tracker.observeFrame(frame(null, null))); // ~1.5s face lost
+      for (let i = 0; i < 5; i += 1) emitted.push(...tracker.observeFrame(frame(45, 0))); // readable again
+      for (let i = 0; i < 15; i += 1) emitted.push(...tracker.observeFrame(frame(0, 0))); // look back
+    };
+    turn();
+    turn();
+    turn();
+    const occurrences = emitted.flat().filter((e) => e.type === 'HEAD_POSE_TURNED');
+    const markers = emitted.flat().filter((e) => e.type === 'HEAD_POSE_REPEATED');
+    expect(occurrences).toHaveLength(3);
+    expect(markers).toHaveLength(1); // -> the advisory warn trigger exists
+    // Occurrence span includes the bridged dropout, honestly labelled.
+    expect(occurrences[0].metadata.bridgedMs).toBeGreaterThan(0);
+    expect(occurrences[0].metadata.durationMs).toBeGreaterThanOrEqual(
+      DEFAULT_ATTENTION_THRESHOLDS.repeatedHeadPose.minEpisodeMs
+    );
+    // Confidence comes from READABLE frames only (quality-0 dropout frames
+    // never dilute the median below the floor).
+    expect(occurrences[0].confidence).toBeGreaterThanOrEqual(0.25);
+  });
+
+  test('a dropout longer than the bridge ends the look-away (leaving the desk is absence, not turning)', () => {
+    const tracker = makeTracker(undefined, { yaw: 0, pitch: 0 });
+    const emitted = [
+      ...hold(tracker, 55, 0, 10), // ~1s readable turn
+      ...Array.from({ length: 60 }, () => tracker.observeFrame(frame(null, null))).flat(), // 6s gone
+    ];
+    const occurrences = emitted.filter((e) => e.type === 'HEAD_POSE_TURNED');
+    expect(occurrences).toHaveLength(1); // the substantiated ~1s+bridge window
+    // ...and the long absence belongs to FACE_NOT_DETECTED's 8s floor, not to
+    // an ever-growing look-away: no further attention events after the close.
+    expect(emitted.filter((e) => /HEAD_POSE|ATTENTION/.test(e.type))).toHaveLength(1);
   });
 });
 

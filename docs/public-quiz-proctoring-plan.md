@@ -201,3 +201,37 @@ owner click-through (see START-HERE memory).
 - `docs/ai-proctoring-implementation-plan.md` — the internal-student program
 - `docs/deferred/admin-monitoring-summary-ui.md` — deferred (explicitly NOT built)
 - `docs/deferred/proctoring-data-deletion-cascade.md` — deferred
+
+### Field-bug round 2 (2026-10-24 evening): extreme-turn fragmentation — FIXED
+
+Owner retest on the deployed engine recorded ONE HEAD_POSE_TURNED for 3+
+deliberate 3s+ extreme turns and no warning. DB evidence: the only recorded
+occurrence per session was a 2.5-4.5s fragment with peak 44-67deg — beyond
+~60deg MediaPipe loses/destabilizes the face, the tracker treated those
+frames as "not turned", the 1s clear-debounce split each turn into sub-2s
+pieces, and the anti-jitter floor discarded them all. Fewer than 3
+qualifying occurrences -> no HEAD_POSE_REPEATED -> no advisory banner.
+
+Fix (shared EpisodeTracker, web + mobile): DETECTION-DROPOUT BRIDGE —
+while a qualifying reading was READABLE within 2.5s, unreadable frames
+CONTINUE the open look-away segment/episode (a face that vanishes right
+after a 60deg reading is looking further away, not back). Bridge frames
+advance time only (no quality/angle/frame samples; occurrence metadata
+carries bridgedMs for review honesty). The bridge NEVER spans a technical
+overlap (dark/frozen/model — SS17.5 keeps its own semantics; spanning it
+suppressed otherwise-good episodes, caught by the mobile engine suite).
+A genuine look-back re-acquires the face and closes the interval normally;
+leaving entirely outlasts the bridge and falls to the 8s face-absence
+floor. Regression-locked: 3 turns with mid-turn face loss -> 3
+occurrences + the REPEATED marker (the warning trigger); dropout without
+a prior turned reading -> nothing; dropout longer than the bridge -> one
+bounded occurrence.
+
+Also verified in a real browser (E2E harness tab-switch scenario): a 4s
+tab switch records TAB_HIDDEN + focus.loss violation + WARNING_DELIVERED
+and the result card renders "Flagged for review / 1 Recorded violations /
+4 Monitoring events" — the focus warning path works end to end; sub-2s
+tab peeks correctly record nothing. NOTE the harness lesson: Chrome
+queues a hidden tab's in-flight fetches, so after a mid-quiz tab switch
+the result-card timeline fetch can sit queued for seconds in dev/headless
+(wait for the ready state, not the loading text).

@@ -64,6 +64,20 @@ const ATTENTION_CLEAR_DEBOUNCE_MS = 1000;
 /** A qualifying pattern segment must span ≥ 2 frames (§13.3: any single
  * frame, however extreme, produces nothing — also guards low-FPS spans). */
 const ATTENTION_SEGMENT_MIN_FRAMES = 2;
+/**
+ * Detection-dropout bridge (2026-10-24 field fix): at extreme head angles
+ * the face detector loses or destabilizes the face — mid-turn the pose
+ * becomes UNREADABLE, the clear-debounce starts, and a genuine 3-5 s
+ * look-away fragments into sub-floor pieces that are silently discarded.
+ * While a qualifying reading was seen within this window, unreadable
+ * frames CONTINUE the open segment/episode instead of clearing it: a face
+ * that vanishes right after a 60° reading is looking further away, not
+ * back. A genuine look-back re-acquires the face (readable, low pose) and
+ * closes the interval normally; leaving entirely outlasts the bridge and
+ * the face-absence episode (minAbsentMs) still governs real absence.
+ * Must exceed ATTENTION_CLEAR_DEBOUNCE_MS to bridge mid-turn flicker.
+ */
+const ATTENTION_DROPOUT_BRIDGE_MS = 2500;
 /** Bound on retained pattern segments per family (long-episode memory). */
 const MAX_PATTERN_SEGMENTS = 100;
 
@@ -113,12 +127,18 @@ interface AttentionFamilyState {
   clearedSince: number | null;
   /** Last timestamp the condition held. */
   lastActiveAt: number | null;
+  /** Last timestamps the condition held with a READABLE face — the bases
+   * the detection-dropout bridge counts from (extreme/deviation families). */
+  lastUsableEpisodeAt: number | null;
+  lastUsableSegmentAt: number | null;
   /** Per-frame quality samples while the episode is open. */
   qualities: number[];
   /** Peak |angle| observed while open (deg; family-specific meaning). */
   anglePeak: number;
   /** Open episode suppressed by a technical overlap (§17.5) — drop at close. */
   suppressed: boolean;
+  /** Detection-gap time bridged inside the open episode (review honesty). */
+  episodeBridgedMs: number;
   /** Closed episode held for the cooldown window (merge-or-emit). */
   held: {
     openedAt: number;
@@ -127,9 +147,10 @@ interface AttentionFamilyState {
     qualities: number[];
     anglePeak: number;
     suppressed: boolean;
+    bridgedMs: number;
   } | null;
   /** In-flight pattern segment (null while the condition is false). */
-  segment: { start: number; lastTs: number; frames: number; qualities: number[]; anglePeak: number } | null;
+  segment: { start: number; lastTs: number; frames: number; qualities: number[]; anglePeak: number; bridgedMs: number } | null;
   /** Qualifying segments inside the sliding repetition window. */
   window: PatternWindowSegment[];
 }
@@ -249,9 +270,12 @@ const freshAttentionFamily = (): AttentionFamilyState => ({
   openSince: null,
   clearedSince: null,
   lastActiveAt: null,
+  lastUsableEpisodeAt: null,
+  lastUsableSegmentAt: null,
   qualities: [],
   anglePeak: 0,
   suppressed: false,
+  episodeBridgedMs: 0,
   held: null,
   segment: null,
   window: [],
@@ -516,6 +540,7 @@ export class EpisodeTracker {
       {
         episodeActive: extremeActive,
         segmentActive: turnedActive,
+        usable,
         angle: Math.max(yaw, pitch),
         quality: obs.qualityProxy,
         ts: obs.tsMs,
@@ -534,6 +559,7 @@ export class EpisodeTracker {
       {
         episodeActive: deviationActive,
         segmentActive: deviationActive,
+        usable,
         angle: deviation,
         quality: obs.qualityProxy,
         ts: obs.tsMs,
@@ -577,6 +603,9 @@ export class EpisodeTracker {
     config: {
       episodeActive: boolean;
       segmentActive: boolean;
+      /** Face readable this frame? Unreadable frames may BRIDGE an
+       * already-open interval (see ATTENTION_DROPOUT_BRIDGE_MS). */
+      usable: boolean;
       angle: number;
       quality: number;
       ts: number;
@@ -592,8 +621,31 @@ export class EpisodeTracker {
   ): void {
     const { ts } = config;
 
+    // Detection-dropout bridge: an UNREADABLE face continues an interval
+    // whose qualifying condition was READABLE within the bridge window —
+    // at extreme angles the detector loses the face mid-turn, which must
+    // not fragment a genuine look-away into sub-floor pieces (field fix
+    // 2026-10-24). NEVER bridges across a TECHNICAL overlap (dark/frozen/
+    // model — §17.5's separate failure class): those frames close the
+    // interval cleanly after the debounce instead of extending it into a
+    // suppressed (dropped) episode. Bridge frames advance time (and honest
+    // bridgedMs) but contribute NO quality/angle/frame samples — they are
+    // inferred continuations, not observations.
+    if (config.usable && config.episodeActive) state.lastUsableEpisodeAt = ts;
+    if (config.usable && config.segmentActive) state.lastUsableSegmentAt = ts;
+    const episodeBridged = !config.usable
+      && !config.technicalActive
+      && state.lastUsableEpisodeAt !== null
+      && ts - state.lastUsableEpisodeAt < ATTENTION_DROPOUT_BRIDGE_MS;
+    const segmentBridged = !config.usable
+      && !config.technicalActive
+      && state.lastUsableSegmentAt !== null
+      && ts - state.lastUsableSegmentAt < ATTENTION_DROPOUT_BRIDGE_MS;
+    const episodeActive = config.episodeActive || episodeBridged;
+    const segmentActive = config.segmentActive || segmentBridged;
+
     // --- sustained episode lifecycle (§10.3 debounce/hysteresis/cooldown) ---
-    if (config.episodeActive) {
+    if (episodeActive) {
       state.clearedSince = null; // any active frame resets the clear-debounce
       if (state.held && ts - state.held.closedAtWall < DEFAULT_COOLDOWN_MS) {
         // Cooldown merge: reopen the just-closed episode instead of starting
@@ -606,10 +658,12 @@ export class EpisodeTracker {
         state.qualities = held.qualities;
         state.anglePeak = held.anglePeak;
         state.suppressed = held.suppressed;
+        state.episodeBridgedMs = held.bridgedMs;
       } else if (state.candidateSince === null) {
         state.candidateSince = ts;
         state.clearedSince = null;
       }
+      const prevActiveAt = state.lastActiveAt;
       state.lastActiveAt = ts;
       if (state.openSince === null
         && state.candidateSince !== null
@@ -617,8 +671,14 @@ export class EpisodeTracker {
         state.openSince = state.candidateSince;
       }
       if (state.openSince !== null) {
-        if (state.qualities.length < MAX_SAMPLES) state.qualities.push(config.quality);
-        state.anglePeak = Math.max(state.anglePeak, config.angle);
+        if (episodeBridged && prevActiveAt !== null) {
+          state.episodeBridgedMs += Math.max(0, ts - prevActiveAt);
+        }
+        if (config.episodeActive) {
+          // Real observation only — bridged frames carry no sample.
+          if (state.qualities.length < MAX_SAMPLES) state.qualities.push(config.quality);
+          state.anglePeak = Math.max(state.anglePeak, config.angle);
+        }
         if (config.technicalActive) {
           state.suppressed = true; // §17.5 — dropped at close, never stored
         }
@@ -635,20 +695,30 @@ export class EpisodeTracker {
       state.qualities = [];
       state.anglePeak = 0;
       state.suppressed = false;
+      state.episodeBridgedMs = 0;
     }
 
     // --- pattern segment lifecycle (feeds the REPEATED window) ---
-    if (config.segmentActive) {
+    if (segmentActive) {
       if (state.segment === null) {
-        state.segment = {
-          start: ts, lastTs: ts, frames: 1,
-          qualities: [config.quality], anglePeak: config.angle,
-        };
+        if (config.segmentActive) {
+          state.segment = {
+            start: ts, lastTs: ts, frames: 1,
+            qualities: [config.quality], anglePeak: config.angle, bridgedMs: 0,
+          };
+        }
+        // A segment never OPENS on a bridged (unreadable) frame — the bridge
+        // only continues an existing look-away.
       } else {
+        if (segmentBridged) {
+          state.segment.bridgedMs += Math.max(0, ts - state.segment.lastTs);
+        }
         state.segment.lastTs = ts;
-        state.segment.frames += 1;
-        if (state.segment.qualities.length < MAX_SAMPLES) state.segment.qualities.push(config.quality);
-        state.segment.anglePeak = Math.max(state.segment.anglePeak, config.angle);
+        if (config.segmentActive) {
+          state.segment.frames += 1;
+          if (state.segment.qualities.length < MAX_SAMPLES) state.segment.qualities.push(config.quality);
+          state.segment.anglePeak = Math.max(state.segment.anglePeak, config.angle);
+        }
       }
     } else if (state.segment !== null) {
       // The segment ends only once the condition has stayed false beyond the
@@ -674,6 +744,7 @@ export class EpisodeTracker {
       qualities: [...state.qualities],
       anglePeak: state.anglePeak,
       suppressed: state.suppressed,
+      bridgedMs: state.episodeBridgedMs,
     };
     state.held = snapshot;
     state.openSince = null;
@@ -682,6 +753,7 @@ export class EpisodeTracker {
     state.qualities = [];
     state.anglePeak = 0;
     state.suppressed = false;
+    state.episodeBridgedMs = 0;
     return snapshot;
   }
 
@@ -740,7 +812,8 @@ export class EpisodeTracker {
           suppressed: false,
         },
         'HEAD_POSE_TURNED',
-        config
+        config,
+        segment.bridgedMs > 0 ? { bridgedMs: Math.round(segment.bridgedMs) } : undefined
       );
       if (occurrence) emitted.push(occurrence);
     }
@@ -851,10 +924,11 @@ export class EpisodeTracker {
       qualities: number[];
       anglePeak: number;
       suppressed: boolean;
+      bridgedMs?: number;
     },
     type: ProctoringEventType,
     config: { minEpisodeMs: number; minEpisodes: number; windowMs: number; peakKey: string; sustainedEnterMs?: number },
-    extra?: { episodes: number }
+    extra?: { episodes?: number; bridgedMs?: number }
   ): ProctoringEpisodeEvent | null {
     if (snapshot.suppressed) return null;
     const med = median(snapshot.qualities);
@@ -871,6 +945,10 @@ export class EpisodeTracker {
             ? { yawDeg: t.extremeYawDeg, pitchDeg: t.extremePitchDeg, sustainMs: config.sustainedEnterMs ?? t.extremeSustainMs }
             : { deg: t.effectiveDeviationDeg, sustainMs: config.sustainedEnterMs ?? t.deviationSustainMs };
 
+    // Dropout-bridge honesty: how much of this interval was detection gap
+    // (frames where the face was unreadable while the look-away continued).
+    const bridgedMs = extra?.bridgedMs ?? snapshot.bridgedMs ?? 0;
+
     return {
       type,
       openedAt: snapshot.openedAt,
@@ -883,7 +961,8 @@ export class EpisodeTracker {
         calibration: this.attentionCalibration,
         ...(this.attentionCalibration === 'fallback' ? { baseline: { yaw: 0, pitch: 0 } } : { baseline: { yaw: this.attentionBaseline.yaw, pitch: this.attentionBaseline.pitch } }),
         thresholds,
-        ...(extra ? { episodes: extra.episodes } : {}),
+        ...(extra?.episodes !== undefined ? { episodes: extra.episodes } : {}),
+        ...(bridgedMs > 0 ? { bridgedMs } : {}),
         [config.peakKey]: round2(snapshot.anglePeak),
       },
     };
