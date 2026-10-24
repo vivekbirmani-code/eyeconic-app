@@ -10,7 +10,8 @@
     "moduleResolution": "node",
     "baseUrl": ".",
     "paths": {
-      "@/*": ["./*"]
+      "@/*": ["./*"],
+      "@app-services/*": ["services/*"]
     }
   },
   "include": ["services/**/*.ts", "utils/**/*.ts", "types/**/*.ts"]

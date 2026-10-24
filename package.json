@@ -86,7 +86,8 @@
       ]
     },
     "moduleNameMapper": {
-      "^@/(.*)$": "<rootDir>/$1"
+      "^@/(.*)$": "<rootDir>/$1",
+      "^@app-services/(.*)$": "<rootDir>/services/$1"
     }
   }
 }

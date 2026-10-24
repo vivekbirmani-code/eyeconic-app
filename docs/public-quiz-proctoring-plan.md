@@ -140,6 +140,60 @@ The original plan's failure scenarios, each marked verified-by-automation
 | CV accuracy / FPS on real devices | **NOT CAPTURED** — Phase 0 runbook (owner device runs pending) |
 | Live-warning latency in a real browser | Owner manual (socket lane is server-tested; on-device timing not measured) |
 
+## Field-bug fix: silent analysis blindness (2026-10-24)
+
+Owner report: deliberate head-turns during a real proctored public attempt
+produced a result card of "0 recorded violations / Completed normal" with
+zero monitoring events. DB evidence (session {startedAt, lastSeenAt},
+heartbeats on schedule, integrity.batchesRejected 0) proved ZERO episodes
+were ever enqueued client-side: the web engine ran its heartbeat/transport
+loop while the per-frame analysis path was silently producing nothing. The
+behavior-class (head-turn record-only + advisory warn on the 3rd marker)
+was correct; the DETECTION stage was blind.
+
+Root causes fixed (all client-side; backend contract untouched):
+
+1. engine.ts — analysis now runs while DEGRADED (mobile parity; was:
+   frozen at any degraded state with no recovery path), camera/model
+   failures open tracker signals (mobile openFailureSignals parity) with
+   heartbeat-driven retries of camera + detector while armed, a FRAMES
+   watchdog (10s without an analyzable frame -> CAMERA_UNAVAILABLE
+   reason=frames_not_flowing) and a POSE watchdog (15s of faces with no
+   pose matrix -> MODEL_UNAVAILABLE reason=pose_output_missing) turn
+   silent blindness into recorded technicals + degraded UI state,
+   SESSION_STARTED/RESUMED is emitted BEFORE camera init (a session
+   marker, not a camera-health fact), the buffer is restored BEFORE the
+   first enqueue (mobile order — the old order could clobber the
+   persisted queue with a one-event snapshot on refresh), every enqueue
+   persists + flushes (mobile emitEpisodes parity), and now() is injected
+   into both shared trackers.
+2. cameraSource.ts — start() waits (bounded 5s) for the first decodable
+   frame after play(); a granted-but-frameless track fails loudly as
+   unavailable(frames_not_flowing) instead of analyzing nothing forever.
+3. tabLock.ts — acquisitions are abortable (isCancelled): a StrictMode
+   torn-down mount never claims or pings (its leaked heartbeat could make
+   the live tab's lock back off -> entirely unmonitored attempt).
+4. useWebProctoring.ts — the engine is created BEFORE the lock and the
+   lock's onLost is bound to that specific engine instance (a stale lock
+   could previously stop the live engine through the shared engineRef).
+5. ProctoringSummaryCard.tsx — adds a "Monitoring events" tile
+   (timeline.summary.totalEvents) so recorded observations (look-aways,
+   camera incidents) are visible next to violations, and a genuinely
+   clean session is distinguishable from a recording failure.
+
+Verification: services/__tests__/webProctoringEngine.test.ts (12) +
+webTabLock.test.ts (3) — sustained look-aways -> HEAD_POSE_TURNED x3 +
+HEAD_POSE_REPEATED with the exact wire contract, small movements ->
+nothing, frameless/pose-less/degraded/recovery/refresh paths locked.
+Root suite 387/387; backend proctoring integration 186/186 (untouched);
+client tsc + build clean (detector still code-split). E2E:
+scripts/verify-public-proctoring-web-e2e.js boots the REAL backend
+(in-memory Mongo) + REAL vite client + Chromium fake camera — before the
+fix it reproduced the exact field signature (only the session marker
+stored); after, the same run records the camera technicals and the card
+shows the event count. Real-camera head-turn verification remains the
+owner click-through (see START-HERE memory).
+
 ## Related documents
 
 - `docs/public-proctoring-load-report.md` — Phase 5 load/capacity numbers

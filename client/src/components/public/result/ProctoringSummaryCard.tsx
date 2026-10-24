@@ -125,10 +125,14 @@ export default function ProctoringSummaryCard({
         </span>
       </div>
 
-      <div className="grid grid-cols-2 gap-2 text-center">
+      <div className="grid grid-cols-3 gap-2 text-center">
         <div className="bg-gray-50 rounded-xl py-2.5">
           <p className="text-sm font-bold text-gray-900">{violations}</p>
           <p className="text-[10px] uppercase tracking-wide text-gray-500">Recorded violations</p>
+        </div>
+        <div className="bg-gray-50 rounded-xl py-2.5">
+          <p className="text-sm font-bold text-gray-900">{timeline.summary?.totalEvents ?? 0}</p>
+          <p className="text-[10px] uppercase tracking-wide text-gray-500">Monitoring events</p>
         </div>
         <div className="bg-gray-50 rounded-xl py-2.5">
           <p className="text-sm font-bold text-gray-900 flex items-center justify-center gap-1">
@@ -140,8 +144,10 @@ export default function ProctoringSummaryCard({
       </div>
 
       <p className="text-[11px] text-gray-400 mt-3 leading-relaxed">
-        {reviewText}. Proctoring records are kept with your test records and are visible only to
-        authorized administrators. No photos or videos were recorded.
+        {reviewText}. Monitoring events are observations recorded during your attempt (such as
+        look-aways or camera issues); violations are only the ones this test's rules count.
+        Proctoring records are kept with your test records and are visible only to authorized
+        administrators. No photos or videos were recorded.
       </p>
     </div>
   );

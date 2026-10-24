@@ -23,6 +23,32 @@ export interface WebCameraSource {
   stop(): void;
 }
 
+/**
+ * Bounded wait for the first decodable frame after play() resolves. A
+ * GRANTED-but-frameless track (live track, readyState stuck below 2 — seen
+ * on some devices right after another stream released the camera) would
+ * otherwise leave the engine silently analyzing nothing for the whole
+ * attempt; here it surfaces as an honest `unavailable` startup failure the
+ * engine records and retries. Diagnostics timing, not policy.
+ */
+const FIRST_FRAME_TIMEOUT_MS = 5000;
+
+function waitForFirstFrame(video: HTMLVideoElement, timeoutMs = FIRST_FRAME_TIMEOUT_MS): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (video.readyState >= 2) { resolve(); return; }
+    const startedAt = Date.now();
+    const poll = window.setInterval(() => {
+      if (video.readyState >= 2) {
+        window.clearInterval(poll);
+        resolve();
+      } else if (Date.now() - startedAt >= timeoutMs) {
+        window.clearInterval(poll);
+        reject(new Error('frames_not_flowing'));
+      }
+    }, 100);
+  });
+}
+
 export function createWebCameraSource(): WebCameraSource {
   const video = document.createElement('video');
   // In-DOM but visually absent (NOT display:none — some browsers stall
@@ -64,7 +90,24 @@ export function createWebCameraSource(): WebCameraSource {
         });
       });
       video.srcObject = stream;
-      await video.play();
+      try {
+        await video.play();
+        // A resolved play() does NOT guarantee frames are being pumped to
+        // the element — verify the first frame actually arrives (see
+        // waitForFirstFrame) so a frameless grant fails loudly, not silently.
+        await waitForFirstFrame(video);
+      } catch (err) {
+        // The stream we may have grabbed is not usable — release it before
+        // surfacing the failure so a retry starts from a clean device state.
+        stream?.getTracks().forEach((t) => t.stop());
+        stream = null;
+        video.srcObject = null;
+        if (stopped) return;
+        if (err instanceof Error && err.message === 'frames_not_flowing') {
+          throw { kind: 'unavailable', detail: 'frames_not_flowing' } as CameraSourceError;
+        }
+        throw err;
+      }
     },
     stop() {
       stopped = true;
@@ -78,6 +121,11 @@ export function createWebCameraSource(): WebCameraSource {
 
 /** Maps a getUserMedia failure to the coarse camera-source error kinds. */
 export function classifyGetUserMediaError(err: unknown): CameraSourceError {
+  // A rethrown CameraSourceError (start()'s own failure taxonomy) passes
+  // through unchanged.
+  if (typeof err === 'object' && err !== null && typeof (err as CameraSourceError).kind === 'string') {
+    return err as CameraSourceError;
+  }
   const name = err instanceof DOMException ? err.name : '';
   if (name === 'NotAllowedError' || name === 'SecurityError' || name === 'PermissionDeniedError') {
     return { kind: 'denied' };

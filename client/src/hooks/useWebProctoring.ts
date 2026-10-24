@@ -108,26 +108,11 @@ export function useWebProctoring({
     let disconnectSocket: (() => void) | null = null;
 
     (async () => {
-      // Single-tab lock (best-effort): a second tab must not run a second
-      // engine against the same attempt.
-      const lock = await acquireProctoringTabLock(attemptId, () => {
-        // Lost to another tab (pathological race) — stop our engine.
-        void engineRef.current?.stop();
-        setActive(false);
-      });
-      if (cancelled) {
-        lock.release();
-        return;
-      }
-      // Release in BOTH outcomes (review finding: the challenger path
-      // leaked its BroadcastChannel heartbeat + listener for the page
-      // lifetime).
-      releaseLock = lock.release;
-      if (!lock.held) {
-        setBlockedByOtherTab(true);
-        return;
-      }
-
+      // The engine is created BEFORE the lock so the lock's onLost callback
+      // is bound to THIS effect's engine instance. With the previous order
+      // (lock → engine), a StrictMode double-mount's leaked first lock
+      // could fire onLost against the SHARED engineRef and stop the live
+      // engine of the second mount — an unmonitored rest-of-quiz.
       const guestToken = getGuestToken();
       const engine = new WebProctoringEngine({
         session: { shareToken, attemptId, sessionId, guestId },
@@ -142,6 +127,26 @@ export function useWebProctoring({
         onWarning: (action: TransportAction) => pushWarning(action),
         onFinalized: () => onFinalized?.(),
       });
+      const stopThisEngine = () => { void engine.stop(); };
+
+      // Single-tab lock (best-effort): a second tab must not run a second
+      // engine against the same attempt. isCancelled keeps a torn-down
+      // mount's acquisition from ever pinging (StrictMode double-mount).
+      const lock = await acquireProctoringTabLock(attemptId, stopThisEngine, () => cancelled);
+      if (cancelled) {
+        lock.release();
+        // Never started — nothing armed, nothing to stop.
+        return;
+      }
+      // Release in BOTH outcomes (review finding: the challenger path
+      // leaked its BroadcastChannel heartbeat + listener for the page
+      // lifetime).
+      releaseLock = lock.release;
+      if (!lock.held) {
+        setBlockedByOtherTab(true);
+        return;
+      }
+
       engineRef.current = engine;
       setActive(true);
 

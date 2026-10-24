@@ -26,7 +26,9 @@ export interface TabLock {
 
 export function acquireProctoringTabLock(
   attemptId: string,
-  onLost: () => void
+  onLost: () => void,
+  /** Abort check — a cancelled acquisition must never ping or block. */
+  isCancelled?: () => boolean
 ): Promise<TabLock> {
   return new Promise((resolve) => {
     let usingChannel = false;
@@ -65,6 +67,20 @@ export function acquireProctoringTabLock(
 
     const tryAcquire = () => {
       if (settled && !held) return;
+      // A cancelled acquisition (React StrictMode's first mount, an unmount
+      // during the contest window) must never claim, never ping — otherwise
+      // the leaked lock's heartbeat can make the LIVE tab's lock back off
+      // and leave the attempt entirely unmonitored.
+      if (isCancelled?.()) {
+        if (!settled) {
+          settled = true;
+          stop();
+          resolve({ get held() { return false; }, release: stop });
+        } else {
+          stop();
+        }
+        return;
+      }
       if (!held && Date.now() - lastForeignPing < LOCK_STALE_MS) {
         if (!settled) {
           settled = true;

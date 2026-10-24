@@ -17,7 +17,8 @@ const MIN_FACE_RATIO = 0.12;
 
 export function toFrameObservation(
   frame: SpikeFrameResult,
-  meanLuma: number | null
+  meanLuma: number | null,
+  nowMs?: number
 ): ProctoringFrameObservation {
   const faceCount = Math.max(0, frame.faceCount | 0);
   const faceCountClass = faceCount === 0 ? 'none' : faceCount === 1 ? 'one' : 'multiple';
@@ -33,7 +34,7 @@ export function toFrameObservation(
   else visibility = largestRatio !== null && largestRatio < MIN_FACE_RATIO ? 'small' : 'ok';
 
   return {
-    tsMs: Date.now(),
+    tsMs: nowMs ?? Date.now(),
     faceCount,
     faceCountClass,
     visibility,
