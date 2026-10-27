@@ -250,11 +250,17 @@ function buildStudentSheet(workbook, data) {
 // User Responses sheet
 // ---------------------------------------------------------------------------
 
-// One row per user-question response per attempt. Identity columns repeat on
-// every row (normalized table — filters and pivots stay correct); they are
-// frozen together with the header so wide question columns scroll under a
-// pinned participant block.
-const RESPONSE_COLUMNS = [
+// Wide "answer sheet" layout: ONE ROW PER ATTEMPT. Identity and attempt
+// totals render once, followed by a Response/Status column pair per question
+// slot (Q1, Q2, …). Slots align across every participant through the shared
+// row builder's questionNumber (the quiz's current question-list order), so
+// a response can never drift into a neighbouring question's column —
+// participants who saw fewer questions simply leave the trailing cells
+// empty. A merged question-text band sits ABOVE the filter header (so
+// filtering can never hide it), and the identity block is frozen together
+// with both header rows so wide question columns scroll under a pinned
+// participant block.
+const RESPONSE_IDENTITY_COLUMNS = [
   { header: 'Student Name', width: 22, value: (b) => b.studentName, bold: true, color: COLORS.DARK, wrapChars: 21 },
   { header: 'Email', width: 26, value: (b) => b.studentEmail, wrapChars: 25 },
   // Phone/Participant Type are lead-adjacent data: hidden for mentors exactly
@@ -274,30 +280,16 @@ const RESPONSE_COLUMNS = [
   { header: 'Wrong', width: 7, value: (b) => b.incorrect, numFmt: '0', align: 'center' },
   { header: 'Skipped', width: 7, value: (b) => b.skipped, numFmt: '0', align: 'center' },
   { header: 'Submitted At', width: 17, value: (b) => b.submittedAt, numFmt: DATETIME_FORMAT },
-  // Question-level columns.
-  { header: 'Q No', width: 6, value: (b, q) => q?.questionNumber, numFmt: '0', align: 'center' },
-  { header: 'Section', width: 14, value: (b, q) => q?.section || '', wrapChars: 13 },
-  { header: 'Subject', width: 13, value: (b, q) => q?.subjectName || '', wrapChars: 12 },
-  { header: 'Topic', width: 15, value: (b, q) => q?.topicName || '', wrapChars: 14 },
-  { header: 'Type', width: 14, value: (b, q) => q?.questionTypeLabel || '', wrapChars: 13 },
-  { header: 'Question', width: 50, value: (b, q) => (q ? (q.questionUnavailable ? 'Question no longer available (removed from question bank)' : q.question) : 'Attempt data no longer available'), wrap: true, wrapChars: 48, questionColumn: true },
-  // Student-response columns are text cells by contract (asResponseText +
-  // the '@' numFmt below): representations like "00123", "12/10/2026",
-  // "25%", "0.2500", "1E10" and "-05" must survive into Excel verbatim.
-  { header: 'Selected Option', width: 12, value: (b, q) => asResponseText(selectedOptionOf(q)), numFmt: TEXT_FORMAT, align: 'center', wrap: true, wrapChars: 11 },
-  { header: 'Selected Answer', width: 28, value: (b, q) => asResponseText(selectedAnswerOf(q)), numFmt: TEXT_FORMAT, wrap: true, wrapChars: 27 },
-  { header: 'Correct Option', width: 12, value: (b, q) => (q && !q.questionUnavailable ? q.correctAnswerLabel : ''), align: 'center', wrap: true, wrapChars: 11 },
-  { header: 'Correct Answer', width: 28, value: (b, q) => (q && !q.questionUnavailable ? (q.correctAnswerText || q.correctAnswerLabel || '') : ''), wrap: true, wrapChars: 27 },
-  { header: 'Status', width: 11, value: (b, q) => q?.resultLabel, align: 'center', statusColor: true },
-  { header: 'Marks', width: 7, value: (b, q) => q?.marks, numFmt: '+0;-0;0', align: 'center' },
-  { header: 'Time (s)', width: 7, value: (b, q) => q?.timeSpent, numFmt: '0', align: 'center' },
 ];
 
-// Skipped questions show the app's established "Not answered" wording in the
-// answer column and nothing in the option column — the Status column carries
-// the explicit "Skipped" verdict, so an empty selection is never mistaken
-// for missing data. Answered-but-unresolvable selections fall back to the
-// raw stored value (the shared formatter's behavior).
+const RESPONSE_VALUE_WIDTH = 26;
+const RESPONSE_STATUS_WIDTH = 10;
+
+// Lead columns ride only in admin exports (mentors never receive guest data).
+const identityColumnsOf = (data) => RESPONSE_IDENTITY_COLUMNS.filter(
+  (col) => !col.adminOnly || data.includeLeadColumns
+);
+
 // Student responses are exported as TEXT cells — never numeric/date. The
 // row builder's label/text contract is already string-typed; this coercion
 // is the guarantee at the workbook layer, so no upstream data shape (legacy
@@ -306,34 +298,176 @@ const RESPONSE_COLUMNS = [
 // 25% → 0.25).
 const asResponseText = (value) => (value === null || value === undefined ? '' : String(value));
 
-const selectedOptionOf = (q) => {
-  if (!q || q.result === 'skipped') return '';
-  return q.studentResponseLabel || '';
-};
-const selectedAnswerOf = (q) => {
+// Compact option-letter keys ("B", "A, C") prefix the fuller response text
+// so a question column stays scannable at a glance; types whose label
+// already carries the full content (numerical values, match-the-following
+// pairs, raw stored strings) render the text alone. Skipped questions keep
+// the app's established "Not answered" wording, while an answered question
+// whose stored response legitimately formats to '' stays '' — the Status
+// column carries the explicit verdict either way, so an empty cell is never
+// mistaken for missing data.
+const OPTION_LETTER_KEY = /^[A-Z](?:,\s*[A-Z])*$/;
+
+const responseCellOf = (q) => {
   if (!q) return '';
   if (q.result === 'skipped') return 'Not answered';
-  return q.studentResponseText || q.studentResponseLabel || '';
+  const label = q.studentResponseLabel;
+  const text = q.studentResponseText;
+  if (label && text && label !== text && OPTION_LETTER_KEY.test(label)) {
+    return `${label} — ${text}`;
+  }
+  return asResponseText(text || label || '');
+};
+
+// Band label for one question group: type label + question text, or the
+// honest placeholder when no attempt can still resolve the question doc.
+const questionBandTextOf = (row) => {
+  if (!row) return '';
+  if (row.questionUnavailable || !row.question) {
+    return 'Question no longer available (removed from question bank)';
+  }
+  return row.questionTypeLabel
+    ? `${row.questionTypeLabel} · ${row.question}`
+    : row.question;
 };
 
 const RESPONSES_TITLE_ROW = 1;
 const RESPONSES_META_ROW = 2;
 const RESPONSES_GENERATED_ROW = 3;
-const RESPONSES_HEADER_ROW = 5;
+// Merged question-text band, then the filterable header below it.
+const RESPONSES_QUESTION_ROW = 5;
+const RESPONSES_HEADER_ROW = 6;
 
 function buildUserResponsesSheet(workbook, data) {
   const sheet = workbook.addWorksheet(RESPONSES_SHEET_NAME, {
     properties: { tabColor: { argb: COLORS.TEAL } },
   });
 
-  const columns = RESPONSE_COLUMNS.filter(
-    (col) => !col.adminOnly || data.includeLeadColumns
+  const responses = data.userResponses;
+  const identityColumns = identityColumnsOf(data);
+
+  // Attempt blocks in report order (ranked registered students first, then
+  // admin-only guest leads). Guests are lead data — never rendered in mentor
+  // exports even if rows leaked into the payload (the collector already
+  // leaves guests out for mentors; same guard as the Student Performance
+  // sheet).
+  const blocks = (responses?.attempts || []).filter(
+    (block) => block.participantType !== 'Guest' || data.includeLeadColumns
   );
+
+  // Map each attempt's question rows onto shared slot columns. The shared
+  // row builder numbers main slots contiguously (1..stored totalQuestions)
+  // and appends any legacy unpaired answers AFTER them, so first-wins keys
+  // main slots; an appended row whose number no main slot claimed still
+  // lands on its quiz-slot column (aligned with every other participant),
+  // and a true duplicate number becomes a per-attempt extra column instead
+  // of silently overwriting the slot it collides with.
+  const entries = blocks.map((block) => {
+    const bySlot = new Map();
+    const extras = [];
+    if (!block.attemptUnavailable && Array.isArray(block.rows)) {
+      block.rows.forEach((row) => {
+        const slot = Number(row?.questionNumber);
+        if (Number.isInteger(slot) && slot >= 1 && !bySlot.has(slot)) {
+          bySlot.set(slot, row);
+        } else {
+          extras.push(row);
+        }
+      });
+    }
+    return { block, bySlot, extras };
+  });
+
+  // Question column groups: Q1..Qmax shared slots, then per-attempt extras.
+  const groups = [];
+  const maxSlot = entries.reduce(
+    (max, entry) => Math.max(max, ...entry.bySlot.keys()),
+    0
+  );
+  for (let slot = 1; slot <= maxSlot; slot += 1) {
+    groups.push({ label: `Q${slot}`, slot });
+  }
+  const usedLabels = new Set(groups.map((group) => group.label));
+  entries.forEach((entry, entryIndex) => {
+    entry.extras.forEach((row, extraIndex) => {
+      const base = `Q${Number(row?.questionNumber) || '?'} (extra)`;
+      const label = usedLabels.has(base)
+        ? `${base} — ${entry.block.studentName}, Attempt ${entry.block.attemptNumber}`
+        : base;
+      usedLabels.add(label);
+      groups.push({ label, entryIndex, extraIndex });
+    });
+  });
+
+  // The band label prefers a live question doc — deleted-question rows are
+  // placeholders, so the header shows a real question whenever any attempt
+  // still resolves one.
+  const slotRowFor = (slot) => {
+    let fallback = null;
+    for (const entry of entries) {
+      const row = entry.bySlot.get(slot);
+      if (!row) continue;
+      if (!row.questionUnavailable) return row;
+      if (!fallback) fallback = row;
+    }
+    return fallback;
+  };
+  groups.forEach((group) => {
+    group.row = group.slot !== undefined
+      ? slotRowFor(group.slot)
+      : entries[group.entryIndex].extras[group.extraIndex];
+  });
+
+  // Dynamic columns: one Response + one Status column per question group.
+  const questionColumns = groups.map((group, groupIndex) => ([
+    {
+      header: `${group.label} Response`,
+      width: RESPONSE_VALUE_WIDTH,
+      groupIndex,
+      kind: 'response',
+      wrap: true,
+      wrapChars: RESPONSE_VALUE_WIDTH - 1,
+      numFmt: TEXT_FORMAT,
+    },
+    {
+      header: `${group.label} Status`,
+      width: RESPONSE_STATUS_WIDTH,
+      groupIndex,
+      kind: 'status',
+      align: 'center',
+      statusColor: true,
+    },
+  ])).flat();
+
+  const columns = [...identityColumns, ...questionColumns];
   columns.forEach((col, i) => {
     sheet.getColumn(i + 1).width = col.width;
   });
 
-  const responses = data.userResponses;
+  // Per-attempt cell payload, resolved once up front — the render loop only
+  // reads arrays, keeping the wide sheet (participants × questions) to one
+  // map lookup per cell instead of re-pairing rows during styling.
+  const payloadByBlock = new Map();
+  entries.forEach((entry, entryIndex) => {
+    payloadByBlock.set(entry.block, groups.map((group) => {
+      const row = group.slot !== undefined
+        ? entry.bySlot.get(group.slot)
+        : (group.entryIndex === entryIndex ? entry.extras[group.extraIndex] : null);
+      return {
+        response: asResponseText(responseCellOf(row)),
+        result: row?.result || null,
+        resultLabel: row?.resultLabel || '',
+      };
+    }));
+  });
+  questionColumns.forEach((col) => {
+    const { groupIndex, kind } = col;
+    col.value = (block) => {
+      const cells = payloadByBlock.get(block);
+      if (!cells) return '';
+      return kind === 'response' ? cells[groupIndex].response : cells[groupIndex].resultLabel;
+    };
+  });
 
   const title = sheet.getCell(RESPONSES_TITLE_ROW, 1);
   title.value = `User Responses — ${data.test.title || 'Test Report'}`;
@@ -350,6 +484,24 @@ function buildUserResponsesSheet(workbook, data) {
   generated.value = `Generated ${data.generatedAt.toISOString().replace('T', ' ').slice(0, 16)} UTC`;
   generated.font = { name: FONT, size: 9, color: COLORS.FAINT };
 
+  // Question-text band, merged across each group's column pair. It rides
+  // ABOVE the filter header so autofilter dropdowns live on the real header
+  // row and filtering can never hide the band.
+  if (groups.length > 0) {
+    let bandLines = 1;
+    groups.forEach((group, groupIndex) => {
+      const startCol = identityColumns.length + groupIndex * 2 + 1;
+      const bandCell = sheet.getCell(RESPONSES_QUESTION_ROW, startCol);
+      bandCell.value = questionBandTextOf(group.row);
+      bandCell.font = { name: FONT, size: 8, italic: true, color: COLORS.MUTED };
+      bandCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: COLORS.CHIP_BG } };
+      bandCell.alignment = { horizontal: 'left', vertical: 'top', wrapText: true };
+      sheet.mergeCells(RESPONSES_QUESTION_ROW, startCol, RESPONSES_QUESTION_ROW, startCol + 1);
+      bandLines = Math.max(bandLines, wrapLines(bandCell.value, 34));
+    });
+    sheet.getRow(RESPONSES_QUESTION_ROW).height = Math.min(16 + (bandLines - 1) * 12.5, 110);
+  }
+
   // Table header — solid teal band with white bold labels.
   const headerRow = sheet.getRow(RESPONSES_HEADER_ROW);
   headerRow.height = 30;
@@ -361,25 +513,10 @@ function buildUserResponsesSheet(workbook, data) {
     cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
   });
 
-  // Flatten to one entry per response row; an attempt whose doc vanished
-  // still keeps a single honest placeholder row. Guest blocks are lead data —
-  // never rendered in mentor exports even if rows leaked into the payload
-  // (the collector already leaves guests out for mentors; same guard as the
-  // Student Performance sheet).
-  const rowEntries = [];
-  (responses?.attempts || []).forEach((block) => {
-    if (block.participantType === 'Guest' && !data.includeLeadColumns) return;
-    if (block.attemptUnavailable || !block.rows || block.rows.length === 0) {
-      rowEntries.push({ block, q: null, placeholder: true });
-      return;
-    }
-    block.rows.forEach((q) => rowEntries.push({ block, q }));
-  });
-
-  // Prebuilt shared style objects (identity × banding × variant): this sheet
-  // can carry tens of thousands of rows, and per-cell property assignment
-  // (cell.font = …, cell.border = …) is several times slower than one
-  // wholesale cell.style reference the Cell constructor itself uses.
+  // Prebuilt shared style objects (column × banding × verdict): this sheet
+  // can carry a participant × question matrix, and per-cell property
+  // assignment (cell.font = …, cell.border = …) is several times slower than
+  // one wholesale cell.style reference the Cell constructor itself uses.
   const styleFor = (col, { band = false, font = null }) => {
     const style = {
       font: font || {
@@ -409,65 +546,44 @@ function buildUserResponsesSheet(workbook, data) {
   // One base style per column per banding state…
   const plainStyles = columns.map((col) => styleFor(col, {}));
   const bandStyles = columns.map((col) => styleFor(col, { band: true }));
-  // …plus the per-variant overrides the data decides row by row.
+  // …plus the verdict variants the Status columns pick row by row.
   const statusStyles = {};
-  const unavailableStyles = {};
   columns.forEach((col, i) => {
-    if (col.statusColor) {
-      statusStyles[i] = {
-        plain: {
-          correct: styleFor(col, { font: verdictFont(COLORS.GREEN) }),
-          incorrect: styleFor(col, { font: verdictFont(COLORS.RED) }),
-          skipped: styleFor(col, { font: verdictFont(COLORS.AMBER) }),
-        },
-        band: {
-          correct: styleFor(col, { band: true, font: verdictFont(COLORS.GREEN) }),
-          incorrect: styleFor(col, { band: true, font: verdictFont(COLORS.RED) }),
-          skipped: styleFor(col, { band: true, font: verdictFont(COLORS.AMBER) }),
-        },
-      };
-    }
-    if (col.questionColumn) {
-      unavailableStyles[i] = {
-        plain: styleFor(col, { font: { name: FONT, size: 10, italic: true, color: { argb: COLORS.MUTED } } }),
-        band: styleFor(col, { band: true, font: { name: FONT, size: 10, italic: true, color: { argb: COLORS.MUTED } } }),
-      };
-    }
+    if (!col.statusColor) return;
+    statusStyles[i] = {
+      plain: {
+        correct: styleFor(col, { font: verdictFont(COLORS.GREEN) }),
+        incorrect: styleFor(col, { font: verdictFont(COLORS.RED) }),
+        skipped: styleFor(col, { font: verdictFont(COLORS.AMBER) }),
+      },
+      band: {
+        correct: styleFor(col, { band: true, font: verdictFont(COLORS.GREEN) }),
+        incorrect: styleFor(col, { band: true, font: verdictFont(COLORS.RED) }),
+        skipped: styleFor(col, { band: true, font: verdictFont(COLORS.AMBER) }),
+      },
+    };
   });
 
   const wrapColumns = columns
     .map((col, i) => ({ col, i }))
     .filter(({ col }) => col.wrapChars || col.wrap);
 
-  // Banding is per ATTEMPT (all rows of one attempt share the shade) so a
-  // participant's block reads as one unit — filters still work row by row.
-  let attemptSeen = -1;
-  let banded = false;
-  rowEntries.forEach((entry, idx) => {
-    if (entry.block !== rowEntries[idx - 1]?.block) {
-      attemptSeen += 1;
-      banded = attemptSeen % 2 === 1;
-    }
-    entry.band = banded;
-  });
-
-  rowEntries.forEach((entry, idx) => {
+  // One data row per attempt (banding simply alternates rows now).
+  blocks.forEach((block, idx) => {
     const excelRow = sheet.getRow(RESPONSES_HEADER_ROW + 1 + idx);
-    const isLast = idx === rowEntries.length - 1;
-    const { block, q, band } = entry;
+    const isLast = idx === blocks.length - 1;
+    const band = idx % 2 === 1;
+    const cells = payloadByBlock.get(block);
 
     columns.forEach((col, i) => {
       const cell = excelRow.getCell(i + 1);
-      cell.value = col.value(block, q);
+      cell.value = col.value(block);
 
       let style;
-      if (col.statusColor && q) {
+      if (col.statusColor) {
+        const result = cells?.[col.groupIndex]?.result;
         const variants = statusStyles[i][band ? 'band' : 'plain'];
-        style = variants[q.result] || variants.skipped;
-      } else if (col.statusColor) {
-        style = (band ? bandStyles : plainStyles)[i];
-      } else if (q?.questionUnavailable && unavailableStyles[i]) {
-        style = unavailableStyles[i][band ? 'band' : 'plain'];
+        style = result ? (variants[result] || variants.skipped) : (band ? bandStyles : plainStyles)[i];
       } else {
         style = (band ? bandStyles : plainStyles)[i];
       }
@@ -480,12 +596,12 @@ function buildUserResponsesSheet(workbook, data) {
 
     const wrapNeeded = Math.max(
       1,
-      ...wrapColumns.map(({ col }) => wrapLines(col.value(block, q), col.wrapChars || 80))
+      ...wrapColumns.map(({ col }) => wrapLines(col.value(block), col.wrapChars || 80))
     );
     excelRow.height = boundedRowHeight(wrapNeeded);
   });
 
-  if (rowEntries.length === 0) {
+  if (blocks.length === 0) {
     const noteCell = sheet.getCell(RESPONSES_HEADER_ROW + 1, 1);
     noteCell.value = 'No responses available for this test yet.';
     noteCell.font = { name: FONT, size: 10, italic: true, color: COLORS.MUTED };
@@ -496,19 +612,28 @@ function buildUserResponsesSheet(workbook, data) {
     );
   }
 
-  // Deleted-question honesty note rides after the table.
+  // Honesty notes ride after the table: deleted questions, then attempts
+  // whose response details could not be loaded at all.
+  let noteRowNumber = RESPONSES_HEADER_ROW + blocks.length + 2;
+  const addNote = (text) => {
+    const noteCell = sheet.getCell(noteRowNumber, 1);
+    noteCell.value = text;
+    noteCell.font = { name: FONT, size: 9, italic: true, color: COLORS.MUTED };
+    sheet.mergeCells(noteRowNumber, 1, noteRowNumber, 8);
+    noteRowNumber += 1;
+  };
   const missingQuestionCount = responses?.missingQuestionCount || 0;
   if (missingQuestionCount > 0) {
-    const noteRow = sheet.getRow(RESPONSES_HEADER_ROW + rowEntries.length + 2);
-    const noteCell = noteRow.getCell(1);
-    noteCell.value = `${missingQuestionCount} response row${missingQuestionCount === 1 ? '' : 's'} could not show the question (removed from the question bank after the attempt).`;
-    noteCell.font = { name: FONT, size: 9, italic: true, color: COLORS.MUTED };
-    sheet.mergeCells(noteRow.number, 1, noteRow.number, 8);
+    addNote(`${missingQuestionCount} response${missingQuestionCount === 1 ? '' : 's'} could not show the question (removed from the question bank after the attempt).`);
+  }
+  const unavailableAttempts = entries.filter((entry) => entry.block.attemptUnavailable).length;
+  if (unavailableAttempts > 0) {
+    addNote(`Response details for ${unavailableAttempts} attempt${unavailableAttempts === 1 ? '' : 's'} could not be loaded (attempt data no longer available).`);
   }
 
-  const lastDataRow = RESPONSES_HEADER_ROW + Math.max(rowEntries.length, 1);
-  // Freeze the identity block (through Attempt ID) together with the header
-  // row — column counts differ between admin and mentor exports.
+  const lastDataRow = RESPONSES_HEADER_ROW + Math.max(blocks.length, 1);
+  // Freeze the identity block (through Attempt ID) together with both header
+  // rows — column counts differ between admin and mentor exports.
   const identitySplit = columns.filter((col) => col.identity).length
     ? columns.findIndex((col) => col.identity) + 1
     : 0;

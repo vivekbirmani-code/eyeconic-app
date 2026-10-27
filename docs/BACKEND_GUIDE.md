@@ -372,7 +372,7 @@ All under `/api/quizzes/analytics/...`, mentor-scoped to their own students unle
 |---|---|
 | `GET /stats` | Counts of active quizzes by type. |
 | `GET /list`, `GET /tests/list` | Per-test assigned vs attempted counts (admin also sees guest attempt counts). |
-| `GET /test-report/:testId` (+ `/csv`, `/excel`) | **The big test report.** Ranked per-student rows, totals; the Excel is a styled 3-sheet workbook (Student Performance / Question-wise Analytics / User Responses). Admin exports **include guest attempts** in aggregates and as unranked lead rows (with phone/verified/consent columns); mentor exports stay registered-only. |
+| `GET /test-report/:testId` (+ `/csv`, `/excel`) | **The big test report.** Ranked per-student rows, totals; the Excel is a styled 3-sheet workbook (Student Performance / Question-wise Analytics / User Responses). The **User Responses sheet is wide-format: one row per attempt**, with a `Qn Response`/`Qn Status` column pair per question slot (question text in a band above the header; unanswered = "Not answered"; text cells stay text). Admin exports **include guest attempts** in aggregates and as unranked lead rows (with phone/verified/consent columns); mentor exports stay registered-only. |
 | `GET /attempt/:attemptId/question-report` (+ `/csv`, `/excel`) | One attempt, question by question. Staff always see the answer key; correctness is never recomputed. |
 | `GET /test/:testId` | Full test analytics: KPIs, score distribution, question stats, easiest/hardest question, ranked students, proctoring rollup (§17), guest participants (admin). |
 | `GET /heatmap` | Students × last ~20 tests score matrix (admins additionally get one row per verified public lead). |

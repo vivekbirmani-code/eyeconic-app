@@ -474,19 +474,85 @@ describe('buildTestReportWorkbook', () => {
     const responsesSheetOf = (workbook) => workbook.getWorksheet(RESPONSES_SHEET_NAME);
     const responsesHeaderRowOf = (sheet) => headerRowOf(sheet, 'Student Name');
 
-    // Data row lookup by Student Name + Q No pair.
-    const responseRowOf = (sheet, headerRow, name, questionNumber) => {
+    // Data row lookup by Student Name (+ attempt number for retakes — the
+    // sheet keeps one row per attempt).
+    const responseRowOf = (sheet, headerRow, name, attemptNumber = 1) => {
       const headers = headersOf(sheet, headerRow);
       const nameCol = headers.indexOf('Student Name') + 1;
-      const qNoCol = headers.indexOf('Q No') + 1;
+      const attemptCol = headers.indexOf('Attempt No') + 1;
       for (let row = headerRow + 1; row <= headerRow + 500; row += 1) {
         if (sheet.getCell(row, nameCol).value === name
-          && sheet.getCell(row, qNoCol).value === questionNumber) {
+          && sheet.getCell(row, attemptCol).value === attemptNumber) {
           return row;
         }
       }
-      throw new Error(`Response row for "${name}" Q${questionNumber} not found`);
+      throw new Error(`Response row for "${name}" (attempt ${attemptNumber}) not found`);
     };
+
+    // Number of data rows (non-empty Student Name cells below the header).
+    const dataRowCount = (sheet, headerRow) => {
+      const nameCol = 1;
+      let count = 0;
+      for (let row = headerRow + 1; row <= headerRow + 500; row += 1) {
+        const value = sheet.getCell(row, nameCol).value;
+        if (value === null || value === undefined || value === '') break;
+        count += 1;
+      }
+      return count;
+    };
+
+    // Compact fixture builders for layout-level tests (slot alignment,
+    // extras, unavailable attempts).
+    const questionRow = (number, response, result, extra = {}) => ({
+      questionNumber: number,
+      section: '',
+      subjectName: 'Pathology',
+      topicName: '',
+      questionType: 'mcq_single',
+      questionTypeLabel: 'MCQ — Single Correct',
+      question: `Fixture Q${number}`,
+      questionUnavailable: false,
+      studentResponseLabel: response,
+      studentResponseText: response,
+      correctAnswerLabel: 'A',
+      correctAnswerText: 'Alpha',
+      result,
+      resultLabel: { correct: 'Correct', incorrect: 'Incorrect', skipped: 'Skipped' }[result],
+      marks: 0,
+      timeSpent: 0,
+      ...extra,
+    });
+
+    const attemptBlock = (attemptId, name, rows, extra = {}) => ({
+      attemptId,
+      participantType: 'Registered',
+      studentName: name,
+      studentEmail: `${name.toLowerCase().replace(/\s+/g, '.')}@example.com`,
+      studentPhone: '',
+      rank: 1,
+      attemptNumber: 1,
+      score: 1,
+      marksObtained: 4,
+      totalMarks: 12,
+      scorePercentage: 33.33,
+      correct: 1,
+      incorrect: 1,
+      skipped: 0,
+      submittedAt: new Date('2026-09-01T10:10:00Z'),
+      status: 'completed',
+      rows,
+      missingQuestionCount: 0,
+      ...extra,
+    });
+
+    const responsesPayload = (attempts) => ({
+      attempts,
+      attemptCount: attempts.length,
+      participantCount: attempts.length,
+      responseRowCount: attempts.reduce((n, a) => n + (a.rows?.length || 0), 0),
+      missingQuestionCount: 0,
+      marking: { positiveMarks: 4, negativeMarks: 1 },
+    });
 
     it('styles, freezes identity columns and filters the response table', () => {
       const workbook = buildTestReportWorkbook(buildData());
@@ -494,10 +560,12 @@ describe('buildTestReportWorkbook', () => {
       const headerRow = responsesHeaderRowOf(sheet);
 
       const headers = headersOf(sheet, headerRow);
-      // Required column contract from the export spec.
-      ['Student Name', 'Email', 'Phone', 'Attempt ID', 'Total Marks',
-        'Q No', 'Question', 'Selected Option', 'Selected Answer',
-        'Correct Option', 'Correct Answer', 'Status'].forEach((header) => {
+      // Column contract: identity block once, then a Response/Status pair per
+      // question slot.
+      ['Student Name', 'Email', 'Phone', 'Participant Type', 'Rank',
+        'Attempt No', 'Attempt ID', 'Score (%)', 'Marks Obtained', 'Total Marks',
+        'Correct', 'Wrong', 'Skipped', 'Submitted At',
+        'Q1 Response', 'Q1 Status', 'Q2 Response', 'Q2 Status'].forEach((header) => {
         expect(headers).toContain(header);
       });
 
@@ -508,6 +576,7 @@ describe('buildTestReportWorkbook', () => {
 
       const view = sheet.views[0];
       expect(view.state).toBe('frozen');
+      // Both the question-text band and the header row stay pinned.
       expect(view.ySplit).toBe(headerRow);
       // The identity block (through Attempt ID) is frozen left of the split.
       const identityCols = headers.indexOf('Attempt ID') + 1;
@@ -516,60 +585,230 @@ describe('buildTestReportWorkbook', () => {
       expect(sheet.autoFilter).toBeDefined();
     });
 
-    it('writes one row per response with identity, selection and verdict', () => {
+    it('labels each question pair with a merged question-text band above the header', () => {
       const workbook = buildTestReportWorkbook(buildData());
       const sheet = responsesSheetOf(workbook);
       const headerRow = responsesHeaderRowOf(sheet);
+      const headers = headersOf(sheet, headerRow);
 
-      // Correct MCQ row: option letter AND text for both selection and key.
-      const correctRow = responseRowOf(sheet, headerRow, 'Student One', 1);
-      expect(cellValue(sheet, headerRow, correctRow, 'Selected Option')).toBe('B');
-      expect(cellValue(sheet, headerRow, correctRow, 'Selected Answer')).toBe('Mitochondria');
-      expect(cellValue(sheet, headerRow, correctRow, 'Correct Option')).toBe('B');
-      expect(cellValue(sheet, headerRow, correctRow, 'Correct Answer')).toBe('Mitochondria');
-      expect(cellValue(sheet, headerRow, correctRow, 'Status')).toBe('Correct');
-      expect(cellValue(sheet, headerRow, correctRow, 'Marks')).toBe(4);
+      // The band rides one row above the filter header, merged across each
+      // question's column pair (value lives in the pair's first cell).
+      const bandRow = headerRow - 1;
+      const q1Col = headers.indexOf('Q1 Response') + 1;
+      const q2Col = headers.indexOf('Q2 Response') + 1;
+      expect(String(sheet.getCell(bandRow, q1Col).value))
+        .toBe('MCQ — Single Correct · Which organelle is the powerhouse of the cell?');
+      expect(String(sheet.getCell(bandRow, q2Col).value))
+        .toBe('Numerical · How many chambers does the heart have?');
+      // Deleted-question honesty rides in the band too — once NO attempt can
+      // resolve the doc (the band prefers a live question whenever any can).
+      const deletedData = buildData();
+      deletedData.userResponses.attempts.forEach((attempt) => {
+        attempt.rows[1] = {
+          ...attempt.rows[1],
+          questionUnavailable: true,
+          question: null,
+        };
+      });
+      const deletedSheet = responsesSheetOf(buildTestReportWorkbook(deletedData));
+      const deletedHeaderRow = responsesHeaderRowOf(deletedSheet);
+      const deletedHeaders = headersOf(deletedSheet, deletedHeaderRow);
+      const q2BandCol = deletedHeaders.indexOf('Q2 Response') + 1;
+      expect(String(deletedSheet.getCell(deletedHeaderRow - 1, q2BandCol).value))
+        .toBe('Question no longer available (removed from question bank)');
+    });
 
-      // Incorrect numerical row keeps the numeric verdict honest.
-      const wrongRow = responseRowOf(sheet, headerRow, 'Student One', 2);
-      expect(cellValue(sheet, headerRow, wrongRow, 'Selected Option')).toBe('5');
-      expect(cellValue(sheet, headerRow, wrongRow, 'Correct Answer')).toBe('4');
-      expect(cellValue(sheet, headerRow, wrongRow, 'Status')).toBe('Incorrect');
-      expect(cellValue(sheet, headerRow, wrongRow, 'Marks')).toBe(-1);
+    it('writes one row per attempt with responses mapped to question columns', () => {
+      const workbook = buildTestReportWorkbook(buildData());
+      const sheet = responsesSheetOf(workbook);
+      const headerRow = responsesHeaderRowOf(sheet);
+      const headers = headersOf(sheet, headerRow);
 
-      // Skipped: explicit Skipped status, "Not answered" wording, empty option.
-      const skippedRow = responseRowOf(sheet, headerRow, 'Rahul Sharma', 2);
-      expect(cellValue(sheet, headerRow, skippedRow, 'Status')).toBe('Skipped');
-      expect(cellValue(sheet, headerRow, skippedRow, 'Selected Option')).toBe('');
-      expect(cellValue(sheet, headerRow, skippedRow, 'Selected Answer')).toBe('Not answered');
-      expect(cellValue(sheet, headerRow, skippedRow, 'Marks')).toBe(0);
+      // One data row per participant — not per response.
+      expect(dataRowCount(sheet, headerRow)).toBe(2);
 
-      // Identity/totals ride on every row and match the attempt block —
-      // including the guest's phone as TEXT (never a number).
-      const guestRow = responseRowOf(sheet, headerRow, 'Rahul Sharma', 1);
+      const studentRow = responseRowOf(sheet, headerRow, 'Student One');
+      // Correct MCQ: option letter AND text in one cell.
+      expect(cellValue(sheet, headerRow, studentRow, 'Q1 Response')).toBe('B — Mitochondria');
+      expect(cellValue(sheet, headerRow, studentRow, 'Q1 Status')).toBe('Correct');
+      // Incorrect numerical answer stays the exact string.
+      expect(cellValue(sheet, headerRow, studentRow, 'Q2 Response')).toBe('5');
+      expect(cellValue(sheet, headerRow, studentRow, 'Q2 Status')).toBe('Incorrect');
+
+      // Guest attempt: answered Q1, skipped Q2 (explicit "Not answered").
+      const guestRow = responseRowOf(sheet, headerRow, 'Rahul Sharma');
+      expect(cellValue(sheet, headerRow, guestRow, 'Q1 Response')).toBe('B — Mitochondria');
+      expect(cellValue(sheet, headerRow, guestRow, 'Q1 Status')).toBe('Correct');
+      expect(cellValue(sheet, headerRow, guestRow, 'Q2 Response')).toBe('Not answered');
+      expect(cellValue(sheet, headerRow, guestRow, 'Q2 Status')).toBe('Skipped');
+
+      // Identity/totals match the attempt block — including the guest's
+      // phone as TEXT (never a number).
       expect(cellValue(sheet, headerRow, guestRow, 'Phone')).toBe('+919876543210');
       expect(cellValue(sheet, headerRow, guestRow, 'Participant Type')).toBe('Guest');
       expect(cellValue(sheet, headerRow, guestRow, 'Marks Obtained')).toBe(8);
       expect(cellValue(sheet, headerRow, guestRow, 'Score (%)')).toBe(100);
       expect(cellValue(sheet, headerRow, guestRow, 'Attempt No')).toBe(1);
 
-      // Phone/Attempt ID cells stay strings through serialization.
-      const phoneCol = headersOf(sheet, headerRow).indexOf('Phone') + 1;
+      const phoneCol = headers.indexOf('Phone') + 1;
       expect(sheet.getCell(guestRow, phoneCol).type).toBe(Excel.ValueType.String);
+
+      // Response cells are text-typed end to end.
+      const responseCol = headers.indexOf('Q1 Response') + 1;
+      expect(sheet.getCell(studentRow, responseCol).type).toBe(Excel.ValueType.String);
+      expect(sheet.getCell(studentRow, responseCol).numFmt).toBe('@');
     });
 
-    it('colors the Status column by verdict', () => {
+    it('colors each question Status cell by verdict', () => {
       const workbook = buildTestReportWorkbook(buildData());
       const sheet = responsesSheetOf(workbook);
       const headerRow = responsesHeaderRowOf(sheet);
-      const statusCol = headersOf(sheet, headerRow).indexOf('Status') + 1;
+      const headers = headersOf(sheet, headerRow);
 
-      const correctRow = responseRowOf(sheet, headerRow, 'Student One', 1);
-      expect(argbOf(sheet.getCell(correctRow, statusCol).font.color).toUpperCase()).toBe('FF059669');
-      const wrongRow = responseRowOf(sheet, headerRow, 'Student One', 2);
-      expect(argbOf(sheet.getCell(wrongRow, statusCol).font.color).toUpperCase()).toBe('FFDC2626');
-      const skippedRow = responseRowOf(sheet, headerRow, 'Rahul Sharma', 2);
-      expect(argbOf(sheet.getCell(skippedRow, statusCol).font.color).toUpperCase()).toBe('FFD97706');
+      const studentRow = responseRowOf(sheet, headerRow, 'Student One');
+      const correctCol = headers.indexOf('Q1 Status') + 1;
+      expect(argbOf(sheet.getCell(studentRow, correctCol).font.color).toUpperCase()).toBe('FF059669');
+      const wrongCol = headers.indexOf('Q2 Status') + 1;
+      expect(argbOf(sheet.getCell(studentRow, wrongCol).font.color).toUpperCase()).toBe('FFDC2626');
+
+      const guestRow = responseRowOf(sheet, headerRow, 'Rahul Sharma');
+      const skippedCol = headers.indexOf('Q2 Status') + 1;
+      expect(argbOf(sheet.getCell(guestRow, skippedCol).font.color).toUpperCase()).toBe('FFD97706');
+    });
+
+    it('keeps responses in stable columns when attempts saw different question counts', () => {
+      const data = buildData({
+        userResponses: responsesPayload([
+          attemptBlock('att-full', 'Ann Full', [
+            questionRow(1, 'A', 'correct'),
+            questionRow(2, 'B', 'incorrect'),
+            questionRow(3, 'C', 'correct'),
+          ]),
+          attemptBlock('att-part', 'Ben Part', [
+            questionRow(1, 'A', 'correct'),
+            questionRow(2, 'B', 'skipped'),
+          ]),
+        ]),
+      });
+      const workbook = buildTestReportWorkbook(data);
+      const sheet = responsesSheetOf(workbook);
+      const headerRow = responsesHeaderRowOf(sheet);
+      const headers = headersOf(sheet, headerRow);
+
+      // The column set is the union of slots across attempts.
+      expect(headers).toContain('Q3 Response');
+      expect(dataRowCount(sheet, headerRow)).toBe(2);
+
+      // The same question maps to the same column for every student; the
+      // shorter attempt leaves Q3 empty instead of shifting responses left.
+      const fullRow = responseRowOf(sheet, headerRow, 'Ann Full');
+      const partRow = responseRowOf(sheet, headerRow, 'Ben Part');
+      expect(cellValue(sheet, headerRow, fullRow, 'Q1 Response')).toBe('A');
+      expect(cellValue(sheet, headerRow, partRow, 'Q1 Response')).toBe('A');
+      expect(cellValue(sheet, headerRow, fullRow, 'Q3 Response')).toBe('C');
+      expect(cellValue(sheet, headerRow, partRow, 'Q2 Response')).toBe('Not answered');
+      expect(cellValue(sheet, headerRow, partRow, 'Q2 Status')).toBe('Skipped');
+      expect(cellValue(sheet, headerRow, partRow, 'Q3 Response')).toBe('');
+      expect(cellValue(sheet, headerRow, partRow, 'Q3 Status')).toBe('');
+    });
+
+    it('gives duplicate-numbered legacy rows a dedicated extra column instead of overwriting the slot', () => {
+      const data = buildData({
+        userResponses: responsesPayload([
+          attemptBlock('att-extra', 'Ann Extra', [
+            questionRow(1, 'A', 'correct'),
+            questionRow(2, 'B', 'incorrect'),
+            // Legacy unpaired answer whose number collides with slot 2.
+            questionRow(2, 'D', 'incorrect'),
+          ]),
+        ]),
+      });
+      const workbook = buildTestReportWorkbook(data);
+      const sheet = responsesSheetOf(workbook);
+      const headerRow = responsesHeaderRowOf(sheet);
+      const headers = headersOf(sheet, headerRow);
+
+      expect(headers).toContain('Q2 (extra) Response');
+      const row = responseRowOf(sheet, headerRow, 'Ann Extra');
+      // The main slot keeps its own response; the duplicate never overwrites.
+      expect(cellValue(sheet, headerRow, row, 'Q2 Response')).toBe('B');
+      expect(cellValue(sheet, headerRow, row, 'Q2 Status')).toBe('Incorrect');
+      expect(cellValue(sheet, headerRow, row, 'Q2 (extra) Response')).toBe('D');
+      expect(cellValue(sheet, headerRow, row, 'Q2 (extra) Status')).toBe('Incorrect');
+    });
+
+    it('keeps an honest row and footnote for attempts whose data could not be loaded', () => {
+      const data = buildData({
+        userResponses: responsesPayload([
+          attemptBlock('att-gone', 'Ann Gone', [], { attemptUnavailable: true }),
+          attemptBlock('att-live', 'Ben Live', [questionRow(1, 'A', 'correct')]),
+        ]),
+      });
+      const workbook = buildTestReportWorkbook(data);
+      const sheet = responsesSheetOf(workbook);
+      const headerRow = responsesHeaderRowOf(sheet);
+
+      // The vanished attempt keeps its identity row with empty responses.
+      const goneRow = responseRowOf(sheet, headerRow, 'Ann Gone');
+      expect(cellValue(sheet, headerRow, goneRow, 'Q1 Response')).toBe('');
+      expect(cellValue(sheet, headerRow, goneRow, 'Q1 Status')).toBe('');
+      // The healthy attempt is unaffected.
+      const liveRow = responseRowOf(sheet, headerRow, 'Ben Live');
+      expect(cellValue(sheet, headerRow, liveRow, 'Q1 Response')).toBe('A');
+
+      // Honesty note after the table.
+      let noted = false;
+      for (let row = headerRow + 1; row <= sheet.rowCount; row += 1) {
+        const value = sheet.getCell(row, 1).value;
+        if (String(value).includes('attempt data no longer available')) noted = true;
+      }
+      expect(noted).toBe(true);
+
+      return expect(workbook.xlsx.writeBuffer()).resolves.toBeDefined();
+    });
+
+    it('renders every question type faithfully in its response cell', () => {
+      const data = buildData({
+        userResponses: responsesPayload([
+          attemptBlock('att-types', 'Ann Types', [
+            // assertion_reason formats through the default branch: option
+            // letter + option text, like mcq_single.
+            { ...questionRow(1, 'A', 'correct'), questionType: 'assertion_reason', questionTypeLabel: 'Assertion / Reason', studentResponseText: 'Both Assertion and Reason are true, and Reason is the correct explanation of Assertion' },
+            // match_the_following: label and text are the same pairs with
+            // different separators — the cell carries the text alone rather
+            // than a redundant "label — text" duplication.
+            {
+              ...questionRow(2, 'ignored-label', 'incorrect'),
+              questionType: 'match_the_following',
+              questionTypeLabel: 'Match the Following',
+              studentResponseLabel: 'Item 1 → A, Item 2 → C',
+              studentResponseText: 'Item 1 → A; Item 2 → C',
+            },
+            // multiple_correct: compact letter key + joined option texts.
+            {
+              ...questionRow(3, 'ignored-label', 'incorrect'),
+              questionType: 'multiple_correct',
+              questionTypeLabel: 'Multiple Correct',
+              studentResponseLabel: 'A, C',
+              studentResponseText: 'Alpha; Gamma',
+            },
+            // Answered with a legitimately empty formatted response: empty
+            // cell, distinct from the explicit "Not answered" of a skip.
+            { ...questionRow(4, '', 'incorrect'), studentResponseText: '' },
+          ]),
+        ]),
+      });
+      const workbook = buildTestReportWorkbook(data);
+      const sheet = responsesSheetOf(workbook);
+      const headerRow = responsesHeaderRowOf(sheet);
+      const row = responseRowOf(sheet, headerRow, 'Ann Types');
+
+      expect(cellValue(sheet, headerRow, row, 'Q1 Response'))
+        .toBe('A — Both Assertion and Reason are true, and Reason is the correct explanation of Assertion');
+      expect(cellValue(sheet, headerRow, row, 'Q2 Response')).toBe('Item 1 → A; Item 2 → C');
+      expect(cellValue(sheet, headerRow, row, 'Q3 Response')).toBe('A, C — Alpha; Gamma');
+      expect(cellValue(sheet, headerRow, row, 'Q4 Response')).toBe('');
+      expect(cellValue(sheet, headerRow, row, 'Q4 Status')).toBe('Incorrect');
     });
 
     it('omits lead columns and guest rows for mentor exports', () => {
@@ -580,7 +819,7 @@ describe('buildTestReportWorkbook', () => {
 
       expect(headers).not.toContain('Participant Type');
       expect(headers).not.toContain('Phone');
-      expect(() => responseRowOf(sheet, headerRow, 'Rahul Sharma', 1)).toThrow(/not found/);
+      expect(() => responseRowOf(sheet, headerRow, 'Rahul Sharma')).toThrow(/not found/);
 
       // The frozen identity block shrinks with the column set.
       expect(sheet.views[0].xSplit).toBe(headers.indexOf('Attempt ID') + 1);
@@ -615,11 +854,12 @@ describe('buildTestReportWorkbook', () => {
       expect(sheet.views[0].xSplit).toBe(headers.indexOf('Attempt ID') + 1);
       expect(sheet.autoFilter).toBeDefined();
 
-      const correctRow = responseRowOf(sheet, headerRow, 'Student One', 1);
-      const questionCol = headers.indexOf('Question') + 1;
-      expect(sheet.getCell(correctRow, questionCol).alignment.wrapText).toBe(true);
-      const statusCol = headers.indexOf('Status') + 1;
-      expect(argbOf(sheet.getCell(correctRow, statusCol).font.color).toUpperCase()).toBe('FF059669');
+      const studentRow = responseRowOf(sheet, headerRow, 'Student One');
+      const responseCol = headers.indexOf('Q1 Response') + 1;
+      expect(sheet.getCell(studentRow, responseCol).alignment.wrapText).toBe(true);
+      expect(sheet.getCell(studentRow, responseCol).numFmt).toBe('@');
+      const statusCol = headers.indexOf('Q1 Status') + 1;
+      expect(argbOf(sheet.getCell(studentRow, statusCol).font.color).toUpperCase()).toBe('FF059669');
     });
   });
 });
@@ -649,7 +889,7 @@ describe('User Responses sheet — student responses are preserved as text cells
     'L'.repeat(1200),
   ];
 
-  const dataWithTrickyRows = () => buildData({
+  const dataWithTrickyRow = () => buildData({
     includeLeadColumns: false,
     userResponses: {
       attempts: [
@@ -670,6 +910,8 @@ describe('User Responses sheet — student responses are preserved as text cells
           skipped: 0,
           submittedAt: new Date('2026-09-01T10:10:00Z'),
           status: 'completed',
+          // One attempt answering every question: the wide layout carries
+          // them all in a single row, one Qn Response column each.
           rows: TRICKY.map((value, i) => ({
             questionNumber: i + 1,
             section: '',
@@ -705,7 +947,7 @@ describe('User Responses sheet — student responses are preserved as text cells
   const trickyResponsesHeaderRowOf = (sheet) => headerRowOf(sheet, 'Student Name');
 
   const reloadResponsesSheet = async () => {
-    const workbook = buildTestReportWorkbook(dataWithTrickyRows());
+    const workbook = buildTestReportWorkbook(dataWithTrickyRow());
     const buffer = await workbook.xlsx.writeBuffer();
     const reloaded = await new Excel.Workbook().xlsx.load(buffer);
     const sheet = reloaded.getWorksheet(RESPONSES_SHEET_NAME);
@@ -713,59 +955,50 @@ describe('User Responses sheet — student responses are preserved as text cells
     return { sheet, headerRow, headers: headersOf(sheet, headerRow) };
   };
 
-  it('writes every response representation as an exact string cell with the Text format', async () => {
+  it('writes every response as an exact string cell with the Text format, one row per student', async () => {
     const { sheet, headerRow, headers } = await reloadResponsesSheet();
-    const optionCol = headers.indexOf('Selected Option') + 1;
-    const answerCol = headers.indexOf('Selected Answer') + 1;
 
+    // A single data row carries all TRICKY.length responses.
     TRICKY.forEach((expected, i) => {
-      const row = headerRow + 1 + i;
-      const optionCell = sheet.getCell(row, optionCol);
-      const answerCell = sheet.getCell(row, answerCol);
+      const cell = sheet.getCell(headerRow + 1, headers.indexOf(`Q${i + 1} Response`) + 1);
 
-      expect(optionCell.type).toBe(Excel.ValueType.String);
-      expect(answerCell.type).toBe(Excel.ValueType.String);
-      expect(optionCell.value).toBe(expected);
-      expect(answerCell.value).toBe(expected);
+      expect(cell.type).toBe(Excel.ValueType.String);
+      expect(cell.value).toBe(expected);
       // '@' = Excel's Text number format: the cell stays text even if the
       // recipient later edits or re-enters it.
-      expect(optionCell.numFmt).toBe('@');
-      expect(answerCell.numFmt).toBe('@');
+      expect(cell.numFmt).toBe('@');
     });
+
+    // The row below the data row stays empty — nothing wrapped to a second
+    // student row.
+    expect(sheet.getCell(headerRow + 2, 1).value).toBeNull();
   });
 
   it('never emits a formula cell on the responses sheet', async () => {
     const { sheet, headerRow, headers } = await reloadResponsesSheet();
-    const rowCount = headerRow + TRICKY.length + 1;
-    for (let row = headerRow + 1; row <= rowCount; row += 1) {
+    // Band row, header row and the single data row.
+    for (let row = headerRow - 1; row <= headerRow + 1; row += 1) {
       for (let col = 1; col <= headers.length; col += 1) {
         expect(sheet.getCell(row, col).type).not.toBe(Excel.ValueType.Formula);
       }
     }
   });
 
-  it('keeps analytics metric cells numeric (Marks, Time, Score %)', async () => {
+  it('keeps analytics metric cells numeric (Score %, Correct, Wrong)', async () => {
     const { sheet, headerRow, headers } = await reloadResponsesSheet();
-    const marksCol = headers.indexOf('Marks') + 1;
-    const timeCol = headers.indexOf('Time (s)') + 1;
-    const scoreCol = headers.indexOf('Score (%)') + 1;
+    const scoreCell = sheet.getCell(headerRow + 1, headers.indexOf('Score (%)') + 1);
+    const correctCell = sheet.getCell(headerRow + 1, headers.indexOf('Correct') + 1);
+    const wrongCell = sheet.getCell(headerRow + 1, headers.indexOf('Wrong') + 1);
 
-    const firstRow = sheet.getCell(headerRow + 1, marksCol);
-    const secondRow = sheet.getCell(headerRow + 2, marksCol);
-    const timeCell = sheet.getCell(headerRow + 1, timeCol);
-    const scoreCell = sheet.getCell(headerRow + 1, scoreCol);
-
-    expect(firstRow.type).toBe(Excel.ValueType.Number);
-    expect(firstRow.value).toBe(4);
-    expect(secondRow.type).toBe(Excel.ValueType.Number);
-    expect(secondRow.value).toBe(-1);
-    expect(timeCell.type).toBe(Excel.ValueType.Number);
-    expect(timeCell.value).toBe(10);
     expect(scoreCell.type).toBe(Excel.ValueType.Number);
+    expect(correctCell.type).toBe(Excel.ValueType.Number);
+    expect(correctCell.value).toBe(1);
+    expect(wrongCell.type).toBe(Excel.ValueType.Number);
+    expect(wrongCell.value).toBe(TRICKY.length - 1);
   });
 
   it('coerces a non-string response that leaks through upstream data into a text cell', async () => {
-    const data = dataWithTrickyRows();
+    const data = dataWithTrickyRow();
     // Simulate a legacy document where the formatter contract was violated
     // (numeric option / raw numeric answer stored in the bank or attempt).
     data.userResponses.attempts[0].rows[0].studentResponseLabel = 206;
@@ -778,11 +1011,9 @@ describe('User Responses sheet — student responses are preserved as text cells
     const headerRow = trickyResponsesHeaderRowOf(sheet);
     const headers = headersOf(sheet, headerRow);
 
-    const optionCell = sheet.getCell(headerRow + 1, headers.indexOf('Selected Option') + 1);
-    const answerCell = sheet.getCell(headerRow + 1, headers.indexOf('Selected Answer') + 1);
-    expect(optionCell.type).toBe(Excel.ValueType.String);
-    expect(optionCell.value).toBe('206');
-    expect(answerCell.type).toBe(Excel.ValueType.String);
-    expect(answerCell.value).toBe('0.25');
+    const cell = sheet.getCell(headerRow + 1, headers.indexOf('Q1 Response') + 1);
+    expect(cell.type).toBe(Excel.ValueType.String);
+    expect(cell.value).toBe('0.25');
+    expect(cell.numFmt).toBe('@');
   });
 });
