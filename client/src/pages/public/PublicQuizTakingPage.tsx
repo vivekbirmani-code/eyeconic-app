@@ -1096,6 +1096,15 @@ export default function PublicQuizTakingPage() {
 
           <div className="flex-1" />
 
+          <button
+            type="button"
+            onClick={handleNext}
+            disabled={!canGoNext}
+            className="inline-flex items-center gap-1 text-sm font-semibold text-gray-600 disabled:text-gray-300 px-3 py-2.5"
+          >
+            Next <ChevronRight className="w-4 h-4" />
+          </button>
+
           {sectionLockEnabled ? (
             <button
               type="button"
@@ -1117,15 +1126,6 @@ export default function PublicQuizTakingPage() {
               Submit Test
             </button>
           )}
-
-          <button
-            type="button"
-            onClick={handleNext}
-            disabled={!canGoNext}
-            className="inline-flex items-center gap-1 text-sm font-semibold text-gray-600 disabled:text-gray-300 px-3 py-2.5"
-          >
-            Next <ChevronRight className="w-4 h-4" />
-          </button>
         </div>
       </footer>
 

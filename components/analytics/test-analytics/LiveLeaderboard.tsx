@@ -168,60 +168,12 @@ const LeaderboardRow = React.memo(function LeaderboardRow({
   );
 });
 
-interface PodiumProps {
-  entries: LeaderboardEntry[];
-}
-
 /** "GUEST" chip for external (public-quiz) rows — same visual language as the
  * Public Participants list (GuestParticipantList). */
 function GuestBadge() {
   return (
     <View style={styles.guestBadge}>
       <Text style={styles.guestBadgeText}>GUEST</Text>
-    </View>
-  );
-}
-
-/** Top-3 highlight strip above the full ranked list. */
-function Podium({ entries }: PodiumProps) {
-  if (entries.length === 0) return null;
-
-  // Classic 2-1-3 arrangement when all three spots are filled; otherwise the
-  // natural order. Pedestal heights follow display position (center tallest).
-  const display = entries.length >= 3 ? [entries[1], entries[0], entries[2]] : entries;
-  const heights = entries.length >= 3 ? [32, 46, 26] : entries.length === 2 ? [46, 32] : [46];
-
-  return (
-    <View style={styles.podium}>
-      {display.map((entry, displayIndex) => {
-        const position = entries.indexOf(entry) + 1;
-        const color = MEDAL_COLORS[position - 1];
-        const scorePct = entry.scorePercentage ?? entry.percentage;
-        return (
-          <View key={entry._id} style={styles.podiumColumn}>
-            <View style={[styles.podiumAvatar, { borderColor: color }]}>
-              <Text style={[styles.podiumInitial, { color }]}>
-                {(entry.studentName || '?').charAt(0).toUpperCase()}
-              </Text>
-            </View>
-            <View style={styles.podiumNameRow}>
-              <Text style={styles.podiumName} numberOfLines={1}>
-                {entry.studentName}
-              </Text>
-              {entry.participantType === 'external' ? <GuestBadge /> : null}
-            </View>
-            <Text style={[styles.podiumScore, (scorePct ?? 0) >= 60 ? styles.passScore : styles.failScore]}>
-              {formatPercent(scorePct)}
-            </Text>
-            <Text style={styles.podiumMarks} numberOfLines={1}>
-              {formatMarks(entry.marksObtained)}/{formatMarks(entry.totalMarks)}
-            </Text>
-            <View style={[styles.podiumBase, { backgroundColor: color, height: heights[displayIndex] }]}>
-              <Text style={styles.podiumRank}>#{position}</Text>
-            </View>
-          </View>
-        );
-      })}
     </View>
   );
 }
@@ -479,7 +431,6 @@ export default function LiveLeaderboard({
     }
   }, [exporting, exportAudience, exportFormat, internalRowCount, guestParticipantCount, testId]);
 
-  const topThree = useMemo(() => rows.slice(0, 3), [rows]);
   const renderRow = useCallback(
     ({ item, index }: { item: LeaderboardEntry; index: number }) => (
       <LeaderboardRow
@@ -574,19 +525,16 @@ export default function LiveLeaderboard({
             </Text>
           </View>
         ) : (
-          <>
-            <Podium entries={topThree} />
-            <FlatList
-              data={rows}
-              keyExtractor={(item) => item._id}
-              renderItem={renderRow}
-              extraData={updateId}
-              ItemSeparatorComponent={RowSeparator}
-              scrollEnabled={false}
-              initialNumToRender={12}
-              ListFooterComponent={<View style={styles.listFooter} />}
-            />
-          </>
+          <FlatList
+            data={rows}
+            keyExtractor={(item) => item._id}
+            renderItem={renderRow}
+            extraData={updateId}
+            ItemSeparatorComponent={RowSeparator}
+            scrollEnabled={false}
+            initialNumToRender={12}
+            ListFooterComponent={<View style={styles.listFooter} />}
+          />
         )}
       </View>
 
@@ -705,66 +653,6 @@ const styles = StyleSheet.create({
   },
   loader: {
     marginVertical: 32,
-  },
-  // ---- Podium ----
-  podium: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
-    paddingHorizontal: 12,
-    paddingTop: 8,
-    paddingBottom: 4,
-    gap: 8,
-  },
-  podiumColumn: {
-    flex: 1,
-    alignItems: 'center',
-    minWidth: 0,
-  },
-  podiumAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#FFFFFF',
-    borderWidth: 2,
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  podiumInitial: {
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  podiumNameRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 4,
-    maxWidth: '100%',
-  },
-  podiumName: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#1F2937',
-    flexShrink: 1,
-  },
-  podiumScore: {
-    fontSize: 14,
-    fontWeight: '700',
-  },
-  podiumMarks: {
-    fontSize: 11,
-    color: '#6B7280',
-    marginBottom: 6,
-  },
-  podiumBase: {
-    width: '100%',
-    borderRadius: 8,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  podiumRank: {
-    color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: '700',
   },
   // ---- Rows ----
   rowTouchable: {
