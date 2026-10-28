@@ -277,9 +277,9 @@ export default function PublicQuizEntryPage() {
         {/* Brand header */}
         <div className="flex flex-col items-center mb-6">
           <div className="w-16 h-16 rounded-full bg-white flex items-center justify-center border-4 border-white/30 shadow-xl mb-3 overflow-hidden">
-            {/* Logo.png is a square (1:1) circular mark on an opaque white
-                background that touches the canvas edges, so object-cover fills
-                the circular container without distortion. */}
+            {/* Logo.png is a square (1:1) emblem centered on an opaque
+                dark-teal background, so object-cover fills the circular
+                container without distortion or clipping the emblem. */}
             <img src="/Logo.png" alt="Eyeconic logo" className="w-full h-full object-cover" decoding="async" />
           </div>
           <h1 className="text-2xl font-bold text-white tracking-widest drop-shadow-md">EYECONIC</h1>

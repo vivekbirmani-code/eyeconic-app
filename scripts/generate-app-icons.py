@@ -1,56 +1,153 @@
-"""Generate mobile app icon assets from Logo.png with correct safe-zone padding."""
+"""Generate every app icon/logo asset from the committed logo master.
+
+Source of truth: assets/images/logo-master.png - a 2048x2048 crop of the
+official Bhagat Maths crest poster ("BM BATCH POSTER Square") on which the
+crest emblem (shield + owl + side flags + BM scroll) occupies 58% of the
+canvas side, matching the Android adaptive-icon safe zone. The poster's own
+dark-teal background is kept around the emblem so every derived asset stays
+a continuous crop of the original artwork - nothing is redrawn or
+recomposited.
+
+Outputs (all regenerated, never edit by hand):
+  assets/images/Logo.png                     1024x1024 opaque, emblem 76% (in-app logo + splash source)
+  assets/images/icon.png                     1024x1024 opaque, emblem 72% (launcher icon / iOS)
+  assets/images/adaptive-icon-foreground.png 1024x1024 opaque, emblem 58% (Android adaptive foreground)
+  assets/images/favicon.png                  48x48 web favicon
+  client/public/Logo.png + favicon.png       copies for the public web client
+  android/app/src/main/res/...               mipmap webp icons + splashscreen_logo pngs (when android/ exists)
+
+Also re-syncs the two branding background colors that must follow the
+artwork: app.json splash/adaptiveIcon backgroundColor and the matching
+splashscreen_background / iconBackground entries in android colors.xml.
+"""
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
-import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "assets" / "images"
-LOGO_PATH = ASSETS / "Logo.png"
-BRAND_TEAL = (1, 180, 174, 255)  # #01b4ae
+MASTER_PATH = ASSETS / "logo-master.png"
 
-# Android adaptive icons mask the outer ~17% on each side; keep artwork in ~58%.
-ADAPTIVE_SCALE = 0.58
-# iOS squircle mask is less aggressive; 72% gives a balanced store/home-screen look.
-ICON_SCALE = 0.72
+# Emblem height as a fraction of the master canvas side (1895px of 3266px source).
+EMBLEM_FRACTION = 0.5802
+# Emblem height as a fraction of each output canvas.
+LOGO_SCALE = 0.76  # in-app logo: generous, corners are cropped by circular containers
+ICON_SCALE = 0.72  # launcher icon: balanced store / home-screen look
+ADAPTIVE_SCALE = 0.58  # Android adaptive icon safe zone (~66% circle, artwork inside)
+
+ANDROID_RES = ROOT / "android" / "app" / "src" / "main" / "res"
+CLIENT_PUBLIC = ROOT / "client" / "public"
+
+LAUNCHER_PX = {"mdpi": 48, "hdpi": 72, "xhdpi": 96, "xxhdpi": 144, "xxxhdpi": 192}
+FOREGROUND_PX = {"mdpi": 108, "hdpi": 162, "xhdpi": 216, "xxhdpi": 324, "xxxhdpi": 432}
+SPLASH_PX = {"mdpi": 288, "hdpi": 432, "xhdpi": 576, "xxhdpi": 864, "xxxhdpi": 1152}
 
 
-def remove_white_background(img: Image.Image, threshold: int = 245) -> Image.Image:
-    rgba = img.convert("RGBA")
-    arr = np.array(rgba)
-    white = (arr[:, :, 0] > threshold) & (arr[:, :, 1] > threshold) & (arr[:, :, 2] > threshold)
-    arr[white, 3] = 0
-    return Image.fromarray(arr)
+def emblem_at(master: Image.Image, scale: float, canvas: int) -> Image.Image:
+    """Center-crop the master so the emblem fills `scale` of the crop, resize to canvas."""
+    crop_side = min(round(master.width * EMBLEM_FRACTION / scale), master.width)
+    offset = (master.width - crop_side) // 2
+    img = master.crop((offset, offset, offset + crop_side, offset + crop_side))
+    return img.resize((canvas, canvas), Image.Resampling.LANCZOS)
 
 
-def scale_and_center(img: Image.Image, canvas_size: int, scale: float) -> Image.Image:
-    target = int(round(canvas_size * scale))
-    resized = img.resize((target, target), Image.Resampling.LANCZOS)
-    canvas = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
-    offset = (canvas_size - target) // 2
-    canvas.paste(resized, (offset, offset), resized)
-    return canvas
+def circular_mask(size: int) -> Image.Image:
+    """Antialiased circle alpha mask touching the canvas edges."""
+    big = 4
+    mask = Image.new("L", (size * big, size * big), 0)
+    ImageDraw.Draw(mask).ellipse((0, 0, size * big - 1, size * big - 1), fill=255)
+    return mask.resize((size, size), Image.Resampling.LANCZOS)
+
+
+def median_border_hex(img: Image.Image) -> str:
+    """Median color of the outer 3% frame - the artwork's own backdrop color."""
+    ring = max(round(img.width * 0.03), 8)
+    regions = (
+        (0, 0, img.width, ring),
+        (0, img.height - ring, img.width, img.height),
+        (0, ring, ring, img.height - ring),
+        (img.width - ring, ring, img.width, img.height - ring),
+    )
+    channels: list[bytes] = [[] for _ in range(3)]
+    for box in regions:
+        data = img.crop(box).tobytes()
+        for i in range(3):
+            channels[i].extend(data[i::3])
+    rgb = tuple(sorted(c)[len(c) // 2] for c in channels)
+    return "#{:02x}{:02x}{:02x}".format(*rgb)
+
+
+def sync_colors(hex_color: str) -> None:
+    """Point the branding background colors in app.json and colors.xml at the artwork."""
+    app_json = ROOT / "app.json"
+    text = app_json.read_text(encoding="utf-8")
+    text, n = re.subn(r'("backgroundColor"\s*:\s*")#[0-9a-fA-F]{6}(")', rf"\g<1>{hex_color}\g<2>", text)
+    if n != 2:
+        raise RuntimeError(f"app.json: expected 2 backgroundColor entries, replaced {n}")
+    app_json.write_text(text, encoding="utf-8")
+
+    colors_xml = ANDROID_RES / "values" / "colors.xml"
+    if colors_xml.exists():
+        xml = colors_xml.read_text(encoding="utf-8")
+        for name in ("splashscreen_background", "iconBackground"):
+            xml, n = re.subn(
+                rf'(<color name="{name}">)#[0-9a-fA-F]{{6}}(</color>)', rf"\g<1>{hex_color}\g<2>", xml
+            )
+            if n != 1:
+                raise RuntimeError(f"colors.xml: '{name}' matched {n} times, expected 1")
+        colors_xml.write_text(xml, encoding="utf-8")
 
 
 def main() -> None:
-    logo = Image.open(LOGO_PATH)
-    logo_no_bg = remove_white_background(logo)
+    master = Image.open(MASTER_PATH).convert("RGB")
+    if master.size != (2048, 2048):
+        raise RuntimeError(f"unexpected master size {master.size}, expected 2048x2048")
 
-    adaptive_fg = scale_and_center(logo_no_bg, 1024, ADAPTIVE_SCALE)
-    adaptive_fg.save(ASSETS / "adaptive-icon-foreground.png", optimize=True)
+    logo = emblem_at(master, LOGO_SCALE, 1024)
+    logo.save(ASSETS / "Logo.png", optimize=True)
 
-    icon_fg = scale_and_center(logo_no_bg, 1024, ICON_SCALE)
-    icon = Image.new("RGBA", (1024, 1024), BRAND_TEAL)
-    icon.paste(icon_fg, (0, 0), icon_fg)
+    icon = emblem_at(master, ICON_SCALE, 1024)
     icon.save(ASSETS / "icon.png", optimize=True)
+
+    adaptive = emblem_at(master, ADAPTIVE_SCALE, 1024)
+    adaptive.save(ASSETS / "adaptive-icon-foreground.png", optimize=True)
 
     favicon = icon.resize((48, 48), Image.Resampling.LANCZOS)
     favicon.save(ASSETS / "favicon.png", optimize=True)
 
-    print("Generated icon.png, adaptive-icon-foreground.png, and favicon.png")
+    if CLIENT_PUBLIC.exists():
+        logo.save(CLIENT_PUBLIC / "Logo.png", optimize=True)
+        favicon.save(CLIENT_PUBLIC / "favicon.png", optimize=True)
+
+    hex_color = median_border_hex(logo)
+    sync_colors(hex_color)
+    print(f"backdrop color: {hex_color}")
+
+    if ANDROID_RES.exists():
+        icon_round = icon.convert("RGBA")
+        icon_round.putalpha(circular_mask(1024))
+        for dpi, size in LAUNCHER_PX.items():
+            icon.resize((size, size), Image.Resampling.LANCZOS).save(
+                ANDROID_RES / f"mipmap-{dpi}" / "ic_launcher.webp", lossless=True
+            )
+            icon_round.resize((size, size), Image.Resampling.LANCZOS).save(
+                ANDROID_RES / f"mipmap-{dpi}" / "ic_launcher_round.webp", lossless=True
+            )
+        for dpi, size in FOREGROUND_PX.items():
+            adaptive.resize((size, size), Image.Resampling.LANCZOS).save(
+                ANDROID_RES / f"mipmap-{dpi}" / "ic_launcher_foreground.webp", lossless=True
+            )
+        for dpi, size in SPLASH_PX.items():
+            logo.resize((size, size), Image.Resampling.LANCZOS).save(
+                ANDROID_RES / f"drawable-{dpi}" / "splashscreen_logo.png", optimize=True
+            )
+
+    print("Generated Logo.png, icon.png, adaptive-icon-foreground.png, favicon.png"
+          + (", client copies, android res" if ANDROID_RES.exists() else ""))
 
 
 if __name__ == "__main__":

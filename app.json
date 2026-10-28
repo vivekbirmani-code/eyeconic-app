@@ -9,7 +9,7 @@
     "splash": {
       "image": "./assets/images/Logo.png",
       "resizeMode": "contain",
-      "backgroundColor": "#01b4ae"
+      "backgroundColor": "#005951"
     },
     "scheme": "mentorship",
     "userInterfaceStyle": "light",
@@ -33,7 +33,7 @@
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon-foreground.png",
-        "backgroundColor": "#01b4ae"
+        "backgroundColor": "#005951"
       },
       "blockedPermissions": [
         "android.permission.READ_EXTERNAL_STORAGE",

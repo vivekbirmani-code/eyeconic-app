@@ -38,9 +38,9 @@ export default function LoginScreen() {
         {/* Header Section */}
         <div className="flex flex-col items-center mb-8">
           <div className="w-28 h-28 rounded-full bg-white flex items-center justify-center border-4 border-white/30 shadow-xl mb-6 overflow-hidden transform hover:scale-105 transition-transform duration-300">
-            {/* Logo.png is a square (1:1) circular mark on an opaque white
-                background that touches the canvas edges, so object-cover fills
-                the circular container without distortion. */}
+            {/* Logo.png is a square (1:1) emblem centered on an opaque
+                dark-teal background, so object-cover fills the circular
+                container without distortion or clipping the emblem. */}
             <img src="/Logo.png" alt="Eyeconic logo" className="w-full h-full object-cover" decoding="async" />
           </div>
           <h1 className="text-4xl font-bold text-white tracking-widest mb-2 drop-shadow-md">EYECONIC</h1>
