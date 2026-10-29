@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -16,7 +16,6 @@ import { downloadApiReport, getReportDownloadErrorMessage } from '@/services/dow
 import { subscribeLeaderboardRoom } from '@/services/leaderboardSubscription';
 import { useNotifications } from '@/context/NotificationContext';
 import ExportLeaderboardDialog, {
-  type ExportAudience,
   type ExportFormat,
 } from './ExportLeaderboardDialog';
 import { formatPercent, LeaderboardEntry, LeaderboardResponse } from '@/types/analytics';
@@ -181,12 +180,6 @@ function GuestBadge() {
 interface LiveLeaderboardProps {
   testId: string;
   onStudentClick: (attemptId: string) => void;
-  /** Viewer's role — 'admin' unlocks the External (public-quiz guest) audience. */
-  userRole?: string;
-  /** Completed public-quiz guests for this test, from the admin analytics
-   * payload. Drives the external EXPORT's empty check (the export serves the
-   * same lead list analytics carries); the board itself ranks guests live. */
-  guestParticipantCount?: number;
 }
 
 /**
@@ -198,17 +191,17 @@ interface LiveLeaderboardProps {
  * participants TOGETHER — external rows carry participantType 'external' and
  * a GUEST chip, and open the same attempt detail via their attempt id;
  * mentors receive registered students only (external data is admin-only
- * backend-side). Real-time updates are nudges, not payloads: a submission —
- * internal or external — emits quiz_leaderboard_updated to the test's
- * leaderboard room, and this component coalesces those nudges into a single
- * trailing refetch (plus one resync refetch on socket reconnect, which covers
- * anything missed while offline).
+ * backend-side). The export downloads this same merged board as one combined
+ * file (admin viewers) / the mentor's registered board (mentor viewers).
+ * Real-time updates are nudges, not payloads: a submission — internal or
+ * external — emits quiz_leaderboard_updated to the test's leaderboard room,
+ * and this component coalesces those nudges into a single trailing refetch
+ * (plus one resync refetch on socket reconnect, which covers anything missed
+ * while offline).
  */
 export default function LiveLeaderboard({
   testId,
   onStudentClick,
-  userRole,
-  guestParticipantCount,
 }: LiveLeaderboardProps) {
   const { socket } = useNotifications();
 
@@ -220,18 +213,17 @@ export default function LiveLeaderboard({
   const [refreshing, setRefreshing] = useState(false);
   const [highlights, setHighlights] = useState<Set<string>>(new Set());
   const [updateId, setUpdateId] = useState(0);
-  // Export dialog — picks the audience (internal registered students /
-  // external public-quiz guests, admin-only) and the file format. Rendered as
-  // a screen-level RN Modal (see ExportLeaderboardDialog): the chooser has no
-  // inputs, so the Android Modal keyboard pitfalls don't apply, and a
-  // host-level Modal is the only way to scrim + center over the whole
-  // viewport from inside this card (an in-tree overlay anchors to this
-  // component's bounds within the analytics ScrollView).
+  // Export dialog — picks the file format. The file itself is ONE combined
+  // leaderboard (the same merged board this card renders), so there is no
+  // audience to choose. Rendered as a screen-level RN Modal (see
+  // ExportLeaderboardDialog): the chooser has no inputs, so the Android Modal
+  // keyboard pitfalls don't apply, and a host-level Modal is the only way to
+  // scrim + center over the whole viewport from inside this card (an in-tree
+  // overlay anchors to this component's bounds within the analytics
+  // ScrollView).
   const [dialogVisible, setDialogVisible] = useState(false);
-  const [exportAudience, setExportAudience] = useState<ExportAudience>('internal');
   const [exportFormat, setExportFormat] = useState<ExportFormat>('excel');
-  const [exporting, setExporting] = useState<{ audience: ExportAudience; format: ExportFormat } | null>(null);
-  const isAdmin = userRole === 'admin';
+  const [exporting, setExporting] = useState(false);
 
   // Latest-response guard: a slow response for a previous test (or a response
   // overtaken by a live refresh) must never overwrite newer state.
@@ -388,48 +380,35 @@ export default function LiveLeaderboard({
   }, [refreshing]);
 
   // Export taps the same server-side ranking the board renders (the export
-  // routes reuse the leaderboard endpoint's loader), so the file always
-  // matches the live board — the rows on screen are only used to decide
-  // whether there is anything to export. The empty check runs per audience at
-  // Export-press time: an admin can have zero internal rows but guests to
-  // export, or the reverse.
+  // route reuses the leaderboard endpoint's loader), so the combined file
+  // always matches the live board — the rows on screen are only used to
+  // decide whether there is anything to export.
   const handleExportPress = useCallback(() => {
     if (exporting) return;
     setDialogVisible(true);
   }, [exporting]);
 
-  // Internal rows only — external participants ride `rows` too on admin
-  // boards, but the internal export audience serves registered students only.
-  const internalRowCount = useMemo(
-    () => rows.filter((r) => r.participantType !== 'external').length,
-    [rows]
-  );
-
   const handleExport = useCallback(async () => {
     if (exporting) return;
-    const count = exportAudience === 'internal' ? internalRowCount : (guestParticipantCount ?? 0);
-    if (count === 0) {
+    if (rows.length === 0) {
       Alert.alert(
         'Nothing to export',
-        exportAudience === 'internal'
-          ? 'No students have submitted this test yet, so there is no leaderboard to export.'
-          : 'No public-quiz guests have completed this test yet, so there is no list to export.'
+        'No participants have completed this test yet, so there is no leaderboard to export.'
       );
       return;
     }
     setDialogVisible(false);
-    setExporting({ audience: exportAudience, format: exportFormat });
+    setExporting(true);
     try {
       await downloadApiReport(
-        `/quizzes/analytics/test/${testId}/leaderboard/export/${exportFormat}` +
-          (exportAudience === 'external' ? '?cohort=external' : '')
+        `/quizzes/analytics/test/${testId}/leaderboard/export/${exportFormat}`
       );
     } catch (error) {
       Alert.alert('Export failed', getReportDownloadErrorMessage(error));
     } finally {
-      setExporting(null);
+      setExporting(false);
     }
-  }, [exporting, exportAudience, exportFormat, internalRowCount, guestParticipantCount, testId]);
+  }, [exporting, exportFormat, rows.length, testId]);
 
   const renderRow = useCallback(
     ({ item, index }: { item: LeaderboardEntry; index: number }) => (
@@ -538,18 +517,15 @@ export default function LiveLeaderboard({
         )}
       </View>
 
-      {/* Export chooser — audience + format. Rendered as a host-level RN
-          Modal so the scrim and centering cover the whole viewport instead of
-          this card's bounds inside the analytics ScrollView. */}
+      {/* Export chooser — format only (the file is one combined leaderboard).
+          Rendered as a host-level RN Modal so the scrim and centering cover
+          the whole viewport instead of this card's bounds inside the
+          analytics ScrollView. */}
       <ExportLeaderboardDialog
         visible={dialogVisible}
-        isAdmin={isAdmin}
-        audience={exportAudience}
         format={exportFormat}
-        exporting={!!exporting}
-        internalCount={internalRowCount}
-        externalCount={guestParticipantCount ?? 0}
-        onAudienceChange={setExportAudience}
+        exporting={exporting}
+        participantCount={rows.length}
         onFormatChange={setExportFormat}
         onCancel={() => {
           if (!exporting) setDialogVisible(false);

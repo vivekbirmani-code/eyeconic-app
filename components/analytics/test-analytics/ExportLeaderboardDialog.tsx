@@ -17,28 +17,24 @@ import {
   Download,
   FileSpreadsheet,
   FileText,
-  Globe,
-  Users,
 } from 'lucide-react-native';
 
 export type ExportFormat = 'excel' | 'csv';
-export type ExportAudience = 'internal' | 'external';
 
 interface OptionRowProps {
   icon: React.ReactNode;
   label: string;
-  description?: string;
   selected: boolean;
   onPress: () => void;
 }
 
 /**
- * Radio-style option card for the export dialog's audience/format sections.
+ * Radio-style option card for the export dialog's format section.
  * Selected state mirrors the app's teal selection convention (teal border +
  * pale teal fill). The indicator keeps a fixed size in both states so picking
  * an option never shifts the row's layout.
  */
-function OptionRow({ icon, label, description, selected, onPress }: OptionRowProps) {
+function OptionRow({ icon, label, selected, onPress }: OptionRowProps) {
   return (
     <TouchableOpacity
       style={[styles.optionRow, selected && styles.optionRowSelected]}
@@ -51,7 +47,6 @@ function OptionRow({ icon, label, description, selected, onPress }: OptionRowPro
       {icon}
       <View style={styles.optionText}>
         <Text style={styles.optionLabel}>{label}</Text>
-        {description ? <Text style={styles.optionDescription}>{description}</Text> : null}
       </View>
       <View style={[styles.radioIndicator, selected && styles.radioIndicatorSelected]}>
         {selected ? <Check color="#FFFFFF" size={13} /> : null}
@@ -62,24 +57,24 @@ function OptionRow({ icon, label, description, selected, onPress }: OptionRowPro
 
 export interface ExportLeaderboardDialogProps {
   visible: boolean;
-  /** Viewer's role gate — only admins may export the external cohort. */
-  isAdmin: boolean;
-  /** Current audience / format selection (selection state stays with the caller). */
-  audience: ExportAudience;
+  /** Current format selection (selection state stays with the caller). */
   format: ExportFormat;
   /** True while an export download is in flight. */
   exporting: boolean;
-  /** Participants available per audience — drives the empty-selection notice. */
-  internalCount: number;
-  externalCount: number;
-  onAudienceChange: (audience: ExportAudience) => void;
+  /** Participants on the live board — drives the empty-selection notice.
+   * Admins' boards rank internal + external participants together, so this
+   * one count is the whole eligibility check for the combined export. */
+  participantCount: number;
   onFormatChange: (format: ExportFormat) => void;
   onCancel: () => void;
   onExport: () => void;
 }
 
 /**
- * Audience + format chooser for the Live Leaderboard export.
+ * Format chooser for the Live Leaderboard export. The file itself is ONE
+ * combined leaderboard (internal + external participants, exactly what the
+ * board ranks) — the dialog only picks between Excel and CSV. The audience
+ * selector that used to live here was removed with it.
  *
  * Rendered as a transparent React Native Modal (like AttemptDetailModal and
  * DeleteQuizModal), NOT the in-tree KeyboardAvoidingDialog overlay: this
@@ -111,20 +106,15 @@ export default function ExportLeaderboardDialog(props: ExportLeaderboardDialogPr
 }
 
 function ExportLeaderboardDialogBody({
-  isAdmin,
-  audience,
   format,
   exporting,
-  internalCount,
-  externalCount,
-  onAudienceChange,
+  participantCount,
   onFormatChange,
   onCancel,
   onExport,
 }: ExportLeaderboardDialogProps) {
   const insets = useSafeAreaInsets();
-  const selectedCount = audience === 'internal' ? internalCount : externalCount;
-  const nothingToExport = selectedCount === 0;
+  const nothingToExport = participantCount === 0;
 
   return (
     <TouchableWithoutFeedback onPress={exporting ? undefined : onCancel}>
@@ -154,25 +144,7 @@ function ExportLeaderboardDialogBody({
               contentContainerStyle={styles.contentContainer}
               showsVerticalScrollIndicator={false}
             >
-              <Text style={styles.sectionLabel}>Audience</Text>
-              <OptionRow
-                icon={<Users color={audience === 'internal' ? '#0F766E' : '#374151'} size={18} />}
-                label="Internal Students"
-                description="Registered app users in the leaderboard"
-                selected={audience === 'internal'}
-                onPress={() => onAudienceChange('internal')}
-              />
-              {isAdmin && (
-                <OptionRow
-                  icon={<Globe color={audience === 'external' ? '#0F766E' : '#374151'} size={18} />}
-                  label="External Students"
-                  description="Public-quiz guests (unregistered, verified leads)"
-                  selected={audience === 'external'}
-                  onPress={() => onAudienceChange('external')}
-                />
-              )}
-
-              <Text style={[styles.sectionLabel, styles.formatLabel]}>Format</Text>
+              <Text style={styles.sectionLabel}>Format</Text>
               <OptionRow
                 icon={
                   <FileSpreadsheet color={format === 'excel' ? '#0F766E' : '#374151'} size={18} />
@@ -194,9 +166,8 @@ function ExportLeaderboardDialogBody({
                 <View style={styles.emptyNotice}>
                   <AlertTriangle color="#D97706" size={14} />
                   <Text style={styles.emptyNoticeText}>
-                    {audience === 'internal'
-                      ? 'No students have submitted this test yet, so there is no leaderboard to export.'
-                      : 'No public-quiz guests have completed this test yet, so there is no list to export.'}
+                    No participants have completed this test yet, so there is no leaderboard to
+                    export.
                   </Text>
                 </View>
               )}
@@ -300,9 +271,6 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     marginBottom: 8,
   },
-  formatLabel: {
-    marginTop: 8,
-  },
   optionRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -328,11 +296,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     color: '#1F2937',
-  },
-  optionDescription: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginTop: 1,
   },
   radioIndicator: {
     width: 20,

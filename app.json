@@ -7,9 +7,9 @@
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "splash": {
-      "image": "./assets/images/Logo.png",
+      "image": "./assets/images/splash-blank.png",
       "resizeMode": "contain",
-      "backgroundColor": "#005951"
+      "backgroundColor": "#01b4ae"
     },
     "scheme": "mentorship",
     "userInterfaceStyle": "light",

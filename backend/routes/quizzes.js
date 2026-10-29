@@ -68,10 +68,12 @@ const { collectAttemptQuestionReport } = require('../utils/attemptQuestionReport
 const { buildAttemptQuestionReportWorkbook } = require('../utils/attemptQuestionReportExcel');
 const {
   buildLeaderboardWorkbook,
+  buildCombinedLeaderboardWorkbook,
   buildGuestLeaderboardWorkbook,
   toExportRows,
   toGuestExportRows,
   LEADERBOARD_EXPORT_COLUMNS,
+  COMBINED_LEADERBOARD_EXPORT_COLUMNS,
   GUEST_LEADERBOARD_EXPORT_COLUMNS,
 } = require('../utils/leaderboardExport');
 const { buildPublicQuizUrl } = require('../utils/publicWebUrl');
@@ -4663,13 +4665,17 @@ const loadGuestLeaderboardExportData = async (testId) => {
 };
 
 // Cohort selector shared by both leaderboard export formats. Default (absent
-// param) is 'internal' so pre-dialog callers — older app builds, the verify
-// script, bookmarked URLs — stay byte-identical. 'external' selects the
-// public-quiz guest leads, which are admin-only data everywhere else in this
-// codebase (same policy as guestParticipants), so mentors are refused here
-// even though the route itself admits them.
+// param) is 'combined': the export the app's Export dialog asks for — the
+// merged LIVE board (admins: registered students + public-quiz guests ranked
+// together, exactly what GET .../leaderboard serves; mentors: their registered
+// students, because guest data is admin-only everywhere in this codebase).
+// Explicit ?cohort=internal|external stays supported for older app builds,
+// the verify script and bookmarked URLs: 'internal' renders the
+// registered-only spec, 'external' the admin-only guest lead file (mentors
+// are refused there even though the route itself admits them).
 function resolveExportCohort(req, res) {
-  const cohort = req.query.cohort === undefined ? 'internal' : String(req.query.cohort);
+  if (req.query.cohort === undefined) return 'combined';
+  const cohort = String(req.query.cohort);
   if (cohort !== 'internal' && cohort !== 'external') {
     res.status(400).json({ message: 'Invalid cohort. Use "internal" or "external".' });
     return null;
@@ -4679,6 +4685,37 @@ function resolveExportCohort(req, res) {
     return null;
   }
   return cohort;
+}
+
+// Rows + presentation spec for one export request, shared by the CSV and
+// Excel routes so the two formats can never disagree about which cohort a
+// request resolves to. The external path loads its data exactly once
+// (participants + proctoring rollup together); internal and combined reuse
+// the leaderboard loaders, keeping file exports identical to the board.
+async function loadLeaderboardExport(cohort, user, quiz, testId) {
+  if (cohort === 'external') {
+    const { participants, proctoringSummary } = await loadGuestLeaderboardExportData(testId);
+    return {
+      rows: toGuestExportRows(participants, proctoringSummary),
+      columns: GUEST_LEADERBOARD_EXPORT_COLUMNS,
+      workbook: buildGuestLeaderboardWorkbook,
+      isExternal: true,
+    };
+  }
+  if (cohort === 'internal') {
+    return {
+      rows: toExportRows(await loadRankedLeaderboard(user, quiz)),
+      columns: LEADERBOARD_EXPORT_COLUMNS,
+      workbook: buildLeaderboardWorkbook,
+      isExternal: false,
+    };
+  }
+  return {
+    rows: toExportRows(await loadLiveLeaderboard(user, quiz)),
+    columns: COMBINED_LEADERBOARD_EXPORT_COLUMNS,
+    workbook: buildCombinedLeaderboardWorkbook,
+    isExternal: false,
+  };
 }
 
 // Live leaderboard (admin, mentor) — the ranked participant list the Test
@@ -4708,11 +4745,11 @@ router.get('/analytics/test/:testId/leaderboard', auth, authorize('admin', 'ment
 });
 
 // Leaderboard CSV export (admin, mentor) — the live board as a flat file.
-// Same loader as the leaderboard endpoint, so participants, order and mentor
-// scoping are identical to what the app shows; column headers/values come
-// from the shared spec the Excel export also renders.
-// ?cohort=internal|external — default internal (registered students);
-// external (public-quiz guest leads, admin-only) renders the guest spec.
+// Default (no cohort param): the COMBINED board, so participants, order and
+// mentor scoping are identical to what the app shows; column headers/values
+// come from the shared spec the Excel export also renders.
+// ?cohort=internal|external — registered-only / guest-lead-only files for
+// older app builds and bookmarked URLs (external is admin-only).
 router.get('/analytics/test/:testId/leaderboard/export/csv', auth, authorize('admin', 'mentor'), async (req, res) => {
   try {
     const quiz = await Quiz.findById(req.params.testId)
@@ -4726,14 +4763,12 @@ router.get('/analytics/test/:testId/leaderboard/export/csv', auth, authorize('ad
     const cohort = resolveExportCohort(req, res);
     if (!cohort) return;
 
-    const isExternal = cohort === 'external';
-    const columns = isExternal ? GUEST_LEADERBOARD_EXPORT_COLUMNS : LEADERBOARD_EXPORT_COLUMNS;
-    const rows = isExternal
-      ? toGuestExportRows(
-        (await loadGuestLeaderboardExportData(req.params.testId)).participants,
-        (await loadGuestLeaderboardExportData(req.params.testId)).proctoringSummary
-      )
-      : toExportRows(await loadRankedLeaderboard(req.user, quiz));
+    const { rows, columns, isExternal } = await loadLeaderboardExport(
+      cohort,
+      req.user,
+      quiz,
+      req.params.testId
+    );
     const generatedAt = new Date();
 
     const csvLines = [];
@@ -4778,9 +4813,9 @@ router.get('/analytics/test/:testId/leaderboard/export/csv', auth, authorize('ad
 });
 
 // Leaderboard Excel (.xlsx) export (admin, mentor) — same loader and column
-// spec as the CSV; this route only changes presentation.
-// ?cohort=internal|external — default internal (registered students);
-// external (public-quiz guest leads, admin-only) renders the guest workbook.
+// spec as the CSV; this route only changes presentation. Default (no cohort
+// param) is the COMBINED live board; ?cohort=internal|external renders the
+// registered-only / admin-only guest-lead workbook for legacy callers.
 router.get('/analytics/test/:testId/leaderboard/export/excel', auth, authorize('admin', 'mentor'), async (req, res) => {
   try {
     const quiz = await Quiz.findById(req.params.testId)
@@ -4794,13 +4829,12 @@ router.get('/analytics/test/:testId/leaderboard/export/excel', auth, authorize('
     const cohort = resolveExportCohort(req, res);
     if (!cohort) return;
 
-    const isExternal = cohort === 'external';
-    const rows = isExternal
-      ? toGuestExportRows(
-        (await loadGuestLeaderboardExportData(req.params.testId)).participants,
-        (await loadGuestLeaderboardExportData(req.params.testId)).proctoringSummary
-      )
-      : toExportRows(await loadRankedLeaderboard(req.user, quiz));
+    const { rows, workbook: buildWorkbook, isExternal } = await loadLeaderboardExport(
+      cohort,
+      req.user,
+      quiz,
+      req.params.testId
+    );
     const generatedAt = new Date();
 
     const testData = {
@@ -4814,9 +4848,7 @@ router.get('/analytics/test/:testId/leaderboard/export/excel', auth, authorize('
       rows,
       generatedAt,
     };
-    const workbook = isExternal
-      ? buildGuestLeaderboardWorkbook(testData)
-      : buildLeaderboardWorkbook(testData);
+    const workbook = buildWorkbook(testData);
     const buffer = await workbook.xlsx.writeBuffer();
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');

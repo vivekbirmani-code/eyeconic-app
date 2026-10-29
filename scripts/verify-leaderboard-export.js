@@ -18,6 +18,11 @@
  *      downloads the guest CSV/.xlsx (admin-only, ranked with lead columns);
  *      asserts registered students and anonymous attempts stay out, mentors
  *      get 403, and bogus cohort values get 400.
+ *   7. Combined export (bare route — what the app's Export dialog opens
+ *      since the audience selector was removed): re-downloads CSV + .xlsx
+ *      with guests now present and asserts ONE merged file in the live
+ *      board's exact order, with a Type column telling cohorts apart, and
+ *      the mentor export staying registered-only.
  *
  * Run from the repo root:  node scripts/verify-leaderboard-export.js
  */
@@ -373,9 +378,80 @@ async function main() {
   const bogusCsv = await api('GET', `${exportBase}/export/csv?cohort=guests`, { token: adminToken, asQueryToken: true });
   check('bogus cohort rejected (400)', bogusCsv.status === 400, `status ${bogusCsv.status}`);
 
+  // ---- 8. Combined export (bare route — the app's Export dialog) ----
+  // Guests now exist, so the default export must be ONE merged file matching
+  // the live board: 4 students + 2 verified guests (anonymous stays out).
+  const board3 = await api('GET', `${exportBase}`, { token: adminToken });
+  check('live board now merges students + guests', board3.status === 200 && board3.body.leaderboard.length === 6,
+    `${board3.body.leaderboard && board3.body.leaderboard.length}`);
+
+  const cmbCsv = await api('GET', `${exportBase}/export/csv`, { token: adminToken, asQueryToken: true });
+  check('combined csv 200', cmbCsv.status === 200, `status ${cmbCsv.status}`);
+  check('combined csv default filename (no external suffix)',
+    /attachment/.test(cmbCsv.headers['content-disposition'] || '') && !/_leaderboard_external/.test(cmbCsv.headers['content-disposition'] || ''));
+
+  const cmbCsvPath = path.join(outDir, 'leaderboard-combined.csv');
+  fs.writeFileSync(cmbCsvPath, cmbCsv.buffer);
+
+  const cmbCsvText = cmbCsv.buffer.toString('utf-8');
+  const cmbCsvLines = cmbCsvText.split('\n');
+  check('combined csv titled "Leaderboard"', cmbCsvLines[0] === 'Leaderboard');
+  const cmbHeaderIdx = cmbCsvLines.findIndex((l) => l.startsWith('Rank,'));
+  check('combined csv header carries the Type column',
+    cmbHeaderIdx > 0 && cmbCsvLines[cmbHeaderIdx].split(',').includes('Type'));
+  const cmbRows = cmbCsvLines.slice(cmbHeaderIdx + 1).filter((l) => l.trim() !== '');
+  check('combined csv participant count matches live board', cmbRows.length === board3.body.leaderboard.length,
+    `${cmbRows.length} vs ${board3.body.leaderboard.length}`);
+  const cmbTypeCol = cmbCsvLines[cmbHeaderIdx].split(',').indexOf('Type');
+  const cmbNames = cmbRows.map((l) => l.split(',')[1]);
+  check('combined csv order matches live board',
+    JSON.stringify(cmbNames) === JSON.stringify(board3.body.leaderboard.map((r) => r.studentName)));
+  check('combined csv marks both cohorts via Type',
+    cmbRows.filter((l) => l.split(',')[cmbTypeCol] === 'External').length === 2
+      && cmbRows.filter((l) => l.split(',')[cmbTypeCol] === 'Internal').length === 4);
+  check('combined csv includes guests by name', cmbCsvText.includes('Gita Guest') && cmbCsvText.includes('Ravi Ranker'));
+  check('combined csv excludes anonymous attempt', !cmbCsvText.includes('Anon Visitor'));
+
+  const cmbXlsx = await api('GET', `${exportBase}/export/excel`, { token: adminToken, asQueryToken: true });
+  check('combined excel 200', cmbXlsx.status === 200, `status ${cmbXlsx.status}`);
+  check('combined excel default filename', /\.xlsx/.test(cmbXlsx.headers['content-disposition'] || '')
+    && !/_leaderboard_external/.test(cmbXlsx.headers['content-disposition'] || ''));
+
+  const cmbXlsxPath = path.join(outDir, 'leaderboard-combined.xlsx');
+  fs.writeFileSync(cmbXlsxPath, cmbXlsx.buffer);
+
+  const cmbWorkbook = new Excel.Workbook();
+  await cmbWorkbook.xlsx.load(cmbXlsx.buffer);
+  const cmbSheet = cmbWorkbook.getWorksheet('Leaderboard');
+  check('combined excel single sheet named "Leaderboard"', Boolean(cmbSheet));
+  let cmbHeaderRow = 0;
+  for (let row = 1; row <= 20; row += 1) {
+    if (cmbSheet.getCell(row, 1).value === 'Rank') { cmbHeaderRow = row; break; }
+  }
+  let cmbTypeHeaderCol = 0;
+  for (let col = 1; col <= 30; col += 1) {
+    if (cmbSheet.getCell(cmbHeaderRow, col).value === 'Type') { cmbTypeHeaderCol = col; break; }
+  }
+  const cmbExcelRows = [];
+  for (let row = cmbHeaderRow + 1; row <= cmbHeaderRow + 200; row += 1) {
+    const rank = cmbSheet.getCell(row, 1).value;
+    if (typeof rank === 'number') cmbExcelRows.push(row);
+  }
+  check('combined excel participant count matches live board', cmbExcelRows.length === board3.body.leaderboard.length,
+    `${cmbExcelRows.length} vs ${board3.body.leaderboard.length}`);
+  check('combined excel marks both cohorts via Type',
+    cmbExcelRows.filter((row) => cmbSheet.getCell(row, cmbTypeHeaderCol).value === 'External').length === 2);
+
+  const mentorCmbCsv = await api('GET', `${exportBase}/export/csv`, { token: mentorToken, asQueryToken: true });
+  const mentorCmbText = mentorCmbCsv.buffer.toString('utf-8');
+  check('mentor combined export stays registered-only',
+    mentorCmbCsv.status === 200 && !mentorCmbText.includes('Gita Guest') && !mentorCmbText.includes('Ravi Ranker') && mentorCmbText.includes('Ann First'));
+
   console.log('\n[verify] files written for manual inspection:');
   console.log(`[verify]   ${csvPath}`);
   console.log(`[verify]   ${xlsxPath}`);
+  console.log(`[verify]   ${cmbCsvPath}`);
+  console.log(`[verify]   ${cmbXlsxPath}`);
   console.log(`[verify]   ${extCsvPath}`);
   console.log(`[verify]   ${extXlsxPath}`);
 

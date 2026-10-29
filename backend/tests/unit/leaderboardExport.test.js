@@ -1,10 +1,12 @@
 const Excel = require('exceljs');
 const {
   buildLeaderboardWorkbook,
+  buildCombinedLeaderboardWorkbook,
   buildGuestLeaderboardWorkbook,
   toExportRows,
   toGuestExportRows,
   LEADERBOARD_EXPORT_COLUMNS,
+  COMBINED_LEADERBOARD_EXPORT_COLUMNS,
   GUEST_LEADERBOARD_EXPORT_COLUMNS,
   LEADERBOARD_SHEET_NAME,
   GUEST_LEADERBOARD_SHEET_NAME,
@@ -260,6 +262,111 @@ describe('buildLeaderboardWorkbook', () => {
 
     const scorePctCol = headersOf(sheet, headerRow).indexOf('Score (%)') + 1;
     expect(sheet.getCell(headerRow + 1, scorePctCol).numFmt).toBe('0.0"%"');
+  });
+});
+
+// Combined export: the merged LIVE board — rankLeaderboardParticipants rows.
+// Mirrors the registered shape above plus participantType; guest rows carry
+// guestId with student/studentId null (analytics.js strips the synthetic
+// identity), exactly what loadLiveLeaderboard serves admin viewers.
+function buildCombinedLeaderboard() {
+  const registered = buildLeaderboard();
+  return [
+    registered[0], // Carol Topper, internal
+    {
+      ...registered[1], // reuses the metric fields; identity is a guest's
+      studentId: null,
+      studentName: 'Grace Guest',
+      studentEmail: 'grace@example.com',
+      participantType: 'external',
+      guestId: 'lead1',
+    },
+  ].map((row) => ({ ...row, participantType: row.participantType || 'internal' }));
+}
+
+describe('COMBINED_LEADERBOARD_EXPORT_COLUMNS', () => {
+  it('is the internal spec with a Type column right after the identity block', () => {
+    expect(COMBINED_LEADERBOARD_EXPORT_COLUMNS.map((c) => c.header)).toEqual([
+      ...LEADERBOARD_EXPORT_COLUMNS.slice(0, 3).map((c) => c.header),
+      'Type',
+      ...LEADERBOARD_EXPORT_COLUMNS.slice(3).map((c) => c.header),
+    ]);
+  });
+
+  it('gives every column a CSV-safe value extractor', () => {
+    COMBINED_LEADERBOARD_EXPORT_COLUMNS.forEach((col) => {
+      expect(typeof col.value).toBe('function');
+    });
+  });
+
+  it('labels rows by participantType and treats missing type as internal', () => {
+    const typeColumn = COMBINED_LEADERBOARD_EXPORT_COLUMNS.find((c) => c.header === 'Type');
+    expect(typeColumn.value({ participantType: 'external' })).toBe('External');
+    expect(typeColumn.value({ participantType: 'internal' })).toBe('Internal');
+    expect(typeColumn.value({})).toBe('Internal');
+  });
+});
+
+describe('buildCombinedLeaderboardWorkbook', () => {
+  const sheetTitle = (workbook) =>
+    String(workbook.getWorksheet(LEADERBOARD_SHEET_NAME).getCell(1, 1).value);
+
+  function buildCombinedData(overrides = {}) {
+    return {
+      test: {
+        title: 'NEET Grand Test 04',
+        subjectName: 'Pathology',
+        testType: 'grand',
+        totalQuestions: 4,
+        totalMarks: 16,
+      },
+      rows: toExportRows(buildCombinedLeaderboard()),
+      generatedAt: new Date('2026-10-06T12:00:00Z'),
+      ...overrides,
+    };
+  }
+
+  it('creates a single worksheet named like the internal board', () => {
+    const workbook = buildCombinedLeaderboardWorkbook(buildCombinedData());
+
+    expect(workbook.worksheets).toHaveLength(1);
+    expect(workbook.worksheets[0].name).toBe(LEADERBOARD_SHEET_NAME);
+    expect(sheetTitle(workbook)).toBe('Leaderboard — NEET Grand Test 04');
+  });
+
+  it('writes both cohorts in one ranking with a Type column', () => {
+    const workbook = buildCombinedLeaderboardWorkbook(buildCombinedData());
+    const sheet = workbook.getWorksheet(LEADERBOARD_SHEET_NAME);
+    const headerRow = headerRowOf(sheet, 'Rank');
+
+    expect(headersOf(sheet, headerRow)).toEqual(COMBINED_LEADERBOARD_EXPORT_COLUMNS.map((c) => c.header));
+
+    const internalRow = rowOf(sheet, headerRow, 'Carol Topper');
+    const guestRow = rowOf(sheet, headerRow, 'Grace Guest');
+    expect(cellValue(sheet, headerRow, internalRow, 'Type')).toBe('Internal');
+    expect(cellValue(sheet, headerRow, internalRow, 'Student ID')).toBe('stu1');
+    expect(cellValue(sheet, headerRow, guestRow, 'Type')).toBe('External');
+    // Guests have no student account — the cell stays blank, not "null".
+    expect(cellValue(sheet, headerRow, guestRow, 'Student ID')).toBeNull();
+    expect(cellValue(sheet, headerRow, guestRow, 'Score (%)')).toBe(68.75);
+    expect(cellValue(sheet, headerRow, guestRow, 'Rank')).toBe(2);
+
+    // Styling contract shared with the internal sheet.
+    const headerCell = sheet.getCell(headerRow, 1);
+    expect(argbOf(headerCell.style.fill.fgColor).toUpperCase()).toBe('FF01B4AE');
+    expect(sheet.views[0].state).toBe('frozen');
+    expect(sheet.autoFilter).toBeDefined();
+  });
+
+  it('handles an empty board gracefully', () => {
+    const workbook = buildCombinedLeaderboardWorkbook(buildCombinedData({ rows: [] }));
+    const sheet = workbook.getWorksheet(LEADERBOARD_SHEET_NAME);
+    const headerRow = headerRowOf(sheet, 'Rank');
+
+    expect(String(sheet.getCell(headerRow + 1, 1).value)).toBe('No submissions yet.');
+    expect(String(sheet.getCell(2, 1).value)).toContain('0 participants');
+
+    return expect(workbook.xlsx.writeBuffer()).resolves.toBeDefined();
   });
 });
 

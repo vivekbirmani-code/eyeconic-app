@@ -9,16 +9,32 @@ a continuous crop of the original artwork - nothing is redrawn or
 recomposited.
 
 Outputs (all regenerated, never edit by hand):
-  assets/images/Logo.png                     1024x1024 opaque, emblem 76% (in-app logo + splash source)
+  assets/images/Logo.png                     1024x1024 opaque, emblem 76% (in-app logo; NOT the splash
+                                              source anymore — see SPLASH_BACKGROUND below)
   assets/images/icon.png                     1024x1024 opaque, emblem 72% (launcher icon / iOS)
   assets/images/adaptive-icon-foreground.png 1024x1024 opaque, emblem 58% (Android adaptive foreground)
   assets/images/favicon.png                  48x48 web favicon
   client/public/Logo.png + favicon.png       copies for the public web client
-  android/app/src/main/res/...               mipmap webp icons + splashscreen_logo pngs (when android/ exists)
+  android/app/src/main/res/...               mipmap webp icons + splashscreen_logo pngs (when android/ exists;
+                                              the splash pngs stay the real logo so restoring the native logo
+                                              splash locally is just the styles.xml + colors.xml notes there)
 
-Also re-syncs the two branding background colors that must follow the
-artwork: app.json splash/adaptiveIcon backgroundColor and the matching
-splashscreen_background / iconBackground entries in android colors.xml.
+NOT regenerated here (deliberate): assets/images/splash-blank.png — the fully
+transparent app.json splash.image. Keep it transparent and committed; it is
+what makes expo prebuild / EAS builds produce a logo-less native splash
+(prebuild flattens it onto the splash backgroundColor, i.e. the icon becomes
+an invisible same-color tile). Restore the logo splash by pointing app.json's
+splash.image back to ./assets/images/Logo.png.
+
+Also re-syncs the branding background colors. Since the standalone logo-only
+native splash was retired (2026-10-29: transparent splash icon + teal
+background handing off to the CinematicSplash), the SPLASH background stays
+pinned to the CinematicSplash teal (SPLASH_BACKGROUND) — only the ADAPTIVE
+ICON background follows the artwork: app.json adaptiveIcon backgroundColor
+and the matching iconBackground entry in android colors.xml. app.json's
+splash.backgroundColor is re-pinned to SPLASH_BACKGROUND on every run so a
+hand edit can't drift, and android colors.xml's splashscreen_background is
+likewise kept in sync with it.
 """
 
 from __future__ import annotations
@@ -45,6 +61,11 @@ CLIENT_PUBLIC = ROOT / "client" / "public"
 LAUNCHER_PX = {"mdpi": 48, "hdpi": 72, "xhdpi": 96, "xxhdpi": 144, "xxxhdpi": 192}
 FOREGROUND_PX = {"mdpi": 108, "hdpi": 162, "xhdpi": 216, "xxhdpi": 324, "xxxhdpi": 432}
 SPLASH_PX = {"mdpi": 288, "hdpi": 432, "xhdpi": 576, "xxhdpi": 864, "xxxhdpi": 1152}
+
+# Native splash background: matches the CinematicSplash (app/index.tsx) base
+# teal so the (logo-less) splash hands off to the startup animation with no
+# color jump. NOT artwork-derived — see module docstring.
+SPLASH_BACKGROUND = "#01b4ae"
 
 
 def emblem_at(master: Image.Image, scale: float, canvas: int) -> Image.Image:
@@ -82,20 +103,26 @@ def median_border_hex(img: Image.Image) -> str:
 
 
 def sync_colors(hex_color: str) -> None:
-    """Point the branding background colors in app.json and colors.xml at the artwork."""
+    """Sync branding background colors: adaptive icon follows the artwork,
+    splash stays pinned to the CinematicSplash teal (see module docstring)."""
     app_json = ROOT / "app.json"
     text = app_json.read_text(encoding="utf-8")
-    text, n = re.subn(r'("backgroundColor"\s*:\s*")#[0-9a-fA-F]{6}(")', rf"\g<1>{hex_color}\g<2>", text)
-    if n != 2:
-        raise RuntimeError(f"app.json: expected 2 backgroundColor entries, replaced {n}")
+    for section, color, expected in (("splash", SPLASH_BACKGROUND, 1), ("adaptiveIcon", hex_color, 1)):
+        text, n = re.subn(
+            rf'("{section}"\s*:\s*\{{[^{{}}]*?"backgroundColor"\s*:\s*")#[0-9a-fA-F]{{6}}(")',
+            rf"\g<1>{color}\g<2>",
+            text,
+        )
+        if n != expected:
+            raise RuntimeError(f"app.json: '{section}' backgroundColor matched {n} times, expected {expected}")
     app_json.write_text(text, encoding="utf-8")
 
     colors_xml = ANDROID_RES / "values" / "colors.xml"
     if colors_xml.exists():
         xml = colors_xml.read_text(encoding="utf-8")
-        for name in ("splashscreen_background", "iconBackground"):
+        for name, color in (("splashscreen_background", SPLASH_BACKGROUND), ("iconBackground", hex_color)):
             xml, n = re.subn(
-                rf'(<color name="{name}">)#[0-9a-fA-F]{{6}}(</color>)', rf"\g<1>{hex_color}\g<2>", xml
+                rf'(<color name="{name}">)#[0-9a-fA-F]{{6}}(</color>)', rf"\g<1>{color}\g<2>", xml
             )
             if n != 1:
                 raise RuntimeError(f"colors.xml: '{name}' matched {n} times, expected 1")

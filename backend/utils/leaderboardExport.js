@@ -3,14 +3,20 @@
 // per cohort, so the .xlsx and .csv can never disagree about which fields
 // they carry.
 //
-// Two cohorts share this module:
+// Three surfaces share this module:
 //  - Internal ("Leaderboard"): registered students. Data comes verbatim from
 //    rankStudentAttempts — the same output GET /analytics/test/:testId/leaderboard
-//    serves the live board — so the file always matches what the viewer sees.
+//    served the live board before the merged board — so the file always
+//    matches what the viewer sees.
 //  - External ("External Leaderboard"): public-quiz guest leads
 //    (fetchGuestParticipants rows), admin-only, ranked by the same
-//    score-then-accuracy tie-break order in a separate file so guests never
-//    mix into the student leaderboard.
+//    score-then-accuracy tie-break order in a separate lead file.
+//  - Combined (default app export since the audience selector was removed):
+//    the merged LIVE board — rankLeaderboardParticipants output, i.e.
+//    registered students and public-quiz guests in ONE ranking with a Type
+//    column telling the cohorts apart (the file twin of the board's GUEST
+//    chip). Admins get both cohorts; mentors get their registered students
+//    only (guest data is admin-only backend-wide).
 //
 // This module only owns presentation. Styling mirrors utils/testReportExcel.js
 // (Analytics UI palette: teal primary #01B4AE, gray text/borders, restrained
@@ -69,6 +75,25 @@ const LEADERBOARD_EXPORT_COLUMNS = [
   },
   { header: 'Attempt ID', width: 26, value: (r) => r._id },
   { header: 'Student ID', width: 26, value: (r) => r.studentId },
+];
+
+/**
+ * Columns for the combined leaderboard export — the default the app's Export
+ * dialog requests. Identical to the internal spec plus a `Type` column right
+ * after the identity block: 'External' marks public-quiz guest rows (which
+ * carry a null Student ID — the lead id rides guestId on the board response
+ * and is deliberately not a column here, matching the board's GUEST chip
+ * semantics), 'Internal' marks registered students.
+ */
+const COMBINED_LEADERBOARD_EXPORT_COLUMNS = [
+  ...LEADERBOARD_EXPORT_COLUMNS.slice(0, 3),
+  {
+    header: 'Type',
+    width: 10,
+    value: (r) => (r.participantType === 'external' ? 'External' : 'Internal'),
+    align: 'center',
+  },
+  ...LEADERBOARD_EXPORT_COLUMNS.slice(3),
 ];
 
 /**
@@ -301,6 +326,27 @@ function buildLeaderboardWorkbook(data) {
 }
 
 /**
+ * Builds the one-sheet COMBINED leaderboard workbook (the default app export:
+ * registered students + public-quiz guests in one ranking). Same sheet
+ * contract as buildLeaderboardWorkbook; rows come from
+ * toExportRows(loadLiveLeaderboard(...)) so the file is the live board.
+ */
+function buildCombinedLeaderboardWorkbook(data) {
+  const workbook = new Excel.Workbook();
+  workbook.creator = 'Eyeconic';
+  workbook.created = data.generatedAt instanceof Date ? data.generatedAt : new Date();
+
+  buildSheet(workbook, data, {
+    columns: COMBINED_LEADERBOARD_EXPORT_COLUMNS,
+    sheetName: LEADERBOARD_SHEET_NAME,
+    title: `Leaderboard — ${data.test.title || 'Test'}`,
+    emptyNote: 'No submissions yet.',
+  });
+
+  return workbook;
+}
+
+/**
  * Builds the one-sheet external leaderboard workbook (public-quiz guest
  * leads, admin-only). Same data contract as buildLeaderboardWorkbook, but
  * rows come from toGuestExportRows(fetchGuestParticipants(...)).
@@ -322,10 +368,12 @@ function buildGuestLeaderboardWorkbook(data) {
 
 module.exports = {
   buildLeaderboardWorkbook,
+  buildCombinedLeaderboardWorkbook,
   buildGuestLeaderboardWorkbook,
   toExportRows,
   toGuestExportRows,
   LEADERBOARD_EXPORT_COLUMNS,
+  COMBINED_LEADERBOARD_EXPORT_COLUMNS,
   GUEST_LEADERBOARD_EXPORT_COLUMNS,
   LEADERBOARD_SHEET_NAME,
   GUEST_LEADERBOARD_SHEET_NAME,

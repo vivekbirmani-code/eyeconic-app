@@ -9,6 +9,7 @@ const Guest = require('../../models/Guest');
 const GuestAttempt = require('../../models/GuestAttempt');
 const {
   LEADERBOARD_EXPORT_COLUMNS,
+  COMBINED_LEADERBOARD_EXPORT_COLUMNS,
   GUEST_LEADERBOARD_EXPORT_COLUMNS,
   GUEST_LEADERBOARD_SHEET_NAME,
 } = require('../../utils/leaderboardExport');
@@ -171,7 +172,8 @@ describe('Live leaderboard export', () => {
   }
 
   function csvField(line, header) {
-    const specIndex = LEADERBOARD_EXPORT_COLUMNS.findIndex((c) => c.header === header);
+    // Bare-route exports render the COMBINED spec (the default cohort).
+    const specIndex = COMBINED_LEADERBOARD_EXPORT_COLUMNS.findIndex((c) => c.header === header);
     return line.split(',')[specIndex];
   }
 
@@ -246,9 +248,9 @@ describe('Live leaderboard export', () => {
       const detailsIndex = lines.findIndex((line) => line.startsWith('Test ID,'));
       expect(lines[detailsIndex + 1]).toContain('Leaderboard Export Test');
 
-      // Header row is exactly the shared column spec.
+      // Header row is exactly the shared column spec (combined — the default).
       const headerIndex = lines.findIndex((line) => line.startsWith('Rank,'));
-      expect(lines[headerIndex]).toBe(LEADERBOARD_EXPORT_COLUMNS.map((c) => c.header).join(','));
+      expect(lines[headerIndex]).toBe(COMBINED_LEADERBOARD_EXPORT_COLUMNS.map((c) => c.header).join(','));
 
       // Identical participants, identical order, no duplicates.
       const participantLines = csvParticipantLines(res);
@@ -390,8 +392,8 @@ describe('Live leaderboard export', () => {
       expect(String(rows[2][0])).toContain('Exported');
 
       const headerIndex = rows.findIndex((row) => row[0] === 'Rank');
-      expect(rows[headerIndex].slice(0, LEADERBOARD_EXPORT_COLUMNS.length)).toEqual(
-        LEADERBOARD_EXPORT_COLUMNS.map((c) => c.header)
+      expect(rows[headerIndex].slice(0, COMBINED_LEADERBOARD_EXPORT_COLUMNS.length)).toEqual(
+        COMBINED_LEADERBOARD_EXPORT_COLUMNS.map((c) => c.header)
       );
 
       const participantRows = excelParticipantRows(res);
@@ -494,66 +496,200 @@ describe('Live leaderboard export', () => {
     });
   });
 
+  // Completed guest attempt for a verified lead, seeded directly (same
+  // shape the /submit grading path persists — mirrors analytics.test.js).
+  // `outcomes` drives C/W/S per question: 'correct' | 'wrong' | 'skip'.
+  // { anonymous: true } seeds a legacy device-keyed attempt with no lead;
+  // { status: 'in_progress' } seeds an unfinished attempt.
+  let leadSeed = 0;
+
+  async function addGuestAttempt(quiz, questions, name, outcomes, marksObtained, { status = 'completed', anonymous = false, endTime = new Date() } = {}) {
+    let lead = null;
+    let snapshots = {};
+    if (!anonymous) {
+      leadSeed += 1;
+      lead = await Guest.create({
+        name,
+        email: `${name.toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.|\.$/g, '') || 'guest'}.${leadSeed}@example.com`,
+        emailVerifiedAt: new Date(),
+        phone: `+9198765${String(100000 + leadSeed).slice(1)}`,
+        marketingConsent: { granted: true, updatedAt: new Date() },
+        quizzesTaken: [quiz._id],
+      });
+      snapshots = { guest: lead._id, guestName: name, guestEmail: lead.email, guestPhone: lead.phone };
+    }
+
+    const answers = questions.map((q, i) => {
+      const outcome = outcomes[i] || 'skip';
+      return {
+        questionIndex: i,
+        questionId: q._id,
+        selectedAnswer: outcome === 'correct' ? 1 : outcome === 'wrong' ? 0 : -1,
+        isCorrect: outcome === 'correct',
+        metadataSnapshot: { questionType: 'mcq_single', subjectName: 'Pathology' },
+      };
+    });
+
+    return GuestAttempt.create({
+      quiz: quiz._id,
+      guestId: `device-${leadSeed}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      ...snapshots,
+      status,
+      startTime: new Date(endTime.getTime() - 25 * 60 * 1000),
+      endTime,
+      score: outcomes.filter((o) => o === 'correct').length,
+      totalQuestions: questions.length,
+      marksObtained,
+      totalMarks: questions.length * 4,
+      answers,
+    });
+  }
+
+  // Registered students + one guest of each excluded flavour, so the happy
+  // paths prove the cohort split rather than an empty opposite side.
+  async function seedMixedCohort(quiz, questions) {
+    await seedRankedAttempts(quiz, questions); // Alice 68.75%, Bob 37.5%, Carol 100%
+    await addGuestAttempt(quiz, questions, 'Grace Guest', ['correct', 'correct', 'correct', 'correct'], 16);
+    await addGuestAttempt(quiz, questions, 'Eshan External', ['correct', 'correct', 'correct', 'wrong'], 11);
+    await addGuestAttempt(quiz, questions, 'Anon Visitor', ['correct', 'correct', 'wrong', 'wrong'], 6, { anonymous: true });
+    await addGuestAttempt(quiz, questions, 'Still Working', ['correct'], 4, { status: 'in_progress' });
+  }
+
+  describe('combined export (default cohort — audience selector removed)', () => {
+    it('exports the merged live board in one ranked CSV (admin)', async () => {
+      const { quiz, questions } = await createQuizWithQuestions([
+        studentA.user._id,
+        studentB.user._id,
+        outsider.user._id,
+      ]);
+      await seedMixedCohort(quiz, questions);
+
+      // The board the app is showing right now (admins: internal + external
+      // ranked together).
+      const board = await request(app)
+        .get(`/api/quizzes/analytics/test/${quiz._id}/leaderboard`)
+        .set('Authorization', `Bearer ${admin.token}`);
+      expect(board.status).toBe(200);
+      expect(board.body.leaderboard).toHaveLength(5);
+
+      const res = await getExport(
+        `/api/quizzes/analytics/test/${quiz._id}/leaderboard/export/csv`,
+        admin.token
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers['content-type']).toBe('text/csv; charset=utf-8');
+      // One combined file — the default name, no external suffix.
+      expect(res.headers['content-disposition']).toContain('attachment');
+      expect(res.headers['content-disposition']).not.toContain('_leaderboard_external');
+      expect(res.headers['content-disposition']).toContain('.csv');
+
+      const lines = csvLines(res);
+      expect(lines[0]).toBe('Leaderboard');
+      const headerIndex = lines.findIndex((line) => line.startsWith('Rank,'));
+      expect(lines[headerIndex]).toBe(COMBINED_LEADERBOARD_EXPORT_COLUMNS.map((c) => c.header).join(','));
+
+      // Identical participants + order to the live board, no duplicates.
+      const participantLines = csvParticipantLines(res);
+      expect(participantLines).toHaveLength(board.body.leaderboard.length);
+      expect(participantLines.map((line) => csvField(line, 'Student Name'))).toEqual(
+        board.body.leaderboard.map((r) => r.studentName)
+      );
+      expect(participantLines.map((line) => csvField(line, 'Rank'))).toEqual(
+        board.body.leaderboard.map((_, i) => String(i + 1))
+      );
+      const attemptIds = participantLines.map((line) => csvField(line, 'Attempt ID'));
+      expect(new Set(attemptIds).size).toBe(attemptIds.length);
+
+      // Type column tells the cohorts apart; guest rows carry lead identity.
+      const typeByName = new Map(participantLines.map((line) => [
+        csvField(line, 'Student Name'),
+        csvField(line, 'Type'),
+      ]));
+      expect(typeByName.get('Carol Unmentored')).toBe('Internal');
+      expect(typeByName.get('Alice Ranker')).toBe('Internal');
+      expect(typeByName.get('Grace Guest')).toBe('External');
+      expect(typeByName.get('Eshan External')).toBe('External');
+      const guestLine = participantLines.find((line) => csvField(line, 'Student Name') === 'Grace Guest');
+      expect(csvField(guestLine, 'Student Email')).toContain('grace.guest');
+      expect(csvField(guestLine, 'Student ID')).toBe('');
+
+      // Anonymous legacy and in-progress attempts never join the board.
+      const joined = lines.join('\n');
+      expect(joined).not.toContain('Anon Visitor');
+      expect(joined).not.toContain('Still Working');
+    });
+
+    it('exports the same combined board as a typed Excel sheet (admin)', async () => {
+      const { quiz, questions } = await createQuizWithQuestions([
+        studentA.user._id,
+        studentB.user._id,
+        outsider.user._id,
+      ]);
+      await seedMixedCohort(quiz, questions);
+
+      const board = await request(app)
+        .get(`/api/quizzes/analytics/test/${quiz._id}/leaderboard`)
+        .set('Authorization', `Bearer ${admin.token}`);
+      expect(board.status).toBe(200);
+
+      const res = await getExport(
+        `/api/quizzes/analytics/test/${quiz._id}/leaderboard/export/excel`,
+        admin.token
+      );
+      expect(res.status).toBe(200);
+      expect(res.headers['content-disposition']).not.toContain('_leaderboard_external');
+      expect(res.headers['content-disposition']).toContain('.xlsx');
+
+      const rows = excelRows(res);
+      expect(rows[0][0]).toBe('Leaderboard — Leaderboard Export Test');
+      expect(String(rows[1][0])).toContain('5 participants');
+
+      const headerIndex = rows.findIndex((row) => row[0] === 'Rank');
+      expect(rows[headerIndex].slice(0, COMBINED_LEADERBOARD_EXPORT_COLUMNS.length)).toEqual(
+        COMBINED_LEADERBOARD_EXPORT_COLUMNS.map((c) => c.header)
+      );
+
+      const participantRows = excelParticipantRows(res);
+      expect(participantRows).toHaveLength(board.body.leaderboard.length);
+      const nameCol = rows[headerIndex].indexOf('Student Name');
+      expect(participantRows.map((row) => row[nameCol])).toEqual(
+        board.body.leaderboard.map((r) => r.studentName)
+      );
+      const typeCol = rows[headerIndex].indexOf('Type');
+      const types = participantRows.map((row) => row[typeCol]).sort();
+      expect(types).toEqual(['External', 'External', 'Internal', 'Internal', 'Internal']);
+      const studentIdCol = rows[headerIndex].indexOf('Student ID');
+      const guestIdx = participantRows.findIndex((row) => row[typeCol] === 'External');
+      expect(participantRows[guestIdx][studentIdCol]).toBe('');
+    });
+
+    it('keeps the mentor export registered-only even with guests present', async () => {
+      const { quiz, questions } = await createQuizWithQuestions([
+        studentA.user._id,
+        studentB.user._id,
+        outsider.user._id,
+      ]);
+      await seedMixedCohort(quiz, questions);
+
+      const res = await getExport(
+        `/api/quizzes/analytics/test/${quiz._id}/leaderboard/export/csv`,
+        mentor.token
+      );
+      expect(res.status).toBe(200);
+
+      const participantLines = csvParticipantLines(res);
+      const joined = csvLines(res).join('\n');
+      expect(participantLines).toHaveLength(2); // Alice + Bob only
+      expect(joined).not.toContain('Grace Guest');
+      expect(joined).not.toContain('Eshan External');
+      // Every mentor row is internal — mentors never receive guest data.
+      participantLines.forEach((line) => {
+        expect(csvField(line, 'Type')).toBe('Internal');
+      });
+    });
+  });
+
   describe('external cohort (public-quiz guests)', () => {
-    // Completed guest attempt for a verified lead, seeded directly (same
-    // shape the /submit grading path persists — mirrors analytics.test.js).
-    // `outcomes` drives C/W/S per question: 'correct' | 'wrong' | 'skip'.
-    // { anonymous: true } seeds a legacy device-keyed attempt with no lead;
-    // { status: 'in_progress' } seeds an unfinished attempt.
-    let leadSeed = 0;
-
-    async function addGuestAttempt(quiz, questions, name, outcomes, marksObtained, { status = 'completed', anonymous = false, endTime = new Date() } = {}) {
-      let lead = null;
-      let snapshots = {};
-      if (!anonymous) {
-        leadSeed += 1;
-        lead = await Guest.create({
-          name,
-          email: `${name.toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.|\.$/g, '') || 'guest'}.${leadSeed}@example.com`,
-          emailVerifiedAt: new Date(),
-          phone: `+9198765${String(100000 + leadSeed).slice(1)}`,
-          marketingConsent: { granted: true, updatedAt: new Date() },
-          quizzesTaken: [quiz._id],
-        });
-        snapshots = { guest: lead._id, guestName: name, guestEmail: lead.email, guestPhone: lead.phone };
-      }
-
-      const answers = questions.map((q, i) => {
-        const outcome = outcomes[i] || 'skip';
-        return {
-          questionIndex: i,
-          questionId: q._id,
-          selectedAnswer: outcome === 'correct' ? 1 : outcome === 'wrong' ? 0 : -1,
-          isCorrect: outcome === 'correct',
-          metadataSnapshot: { questionType: 'mcq_single', subjectName: 'Pathology' },
-        };
-      });
-
-      return GuestAttempt.create({
-        quiz: quiz._id,
-        guestId: `device-${leadSeed}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        ...snapshots,
-        status,
-        startTime: new Date(endTime.getTime() - 25 * 60 * 1000),
-        endTime,
-        score: outcomes.filter((o) => o === 'correct').length,
-        totalQuestions: questions.length,
-        marksObtained,
-        totalMarks: questions.length * 4,
-        answers,
-      });
-    }
-
-    // Registered students + one guest of each excluded flavour, so the happy
-    // paths prove the cohort split rather than an empty opposite side.
-    async function seedMixedCohort(quiz, questions) {
-      await seedRankedAttempts(quiz, questions); // Alice 68.75%, Bob 37.5%, Carol 100%
-      await addGuestAttempt(quiz, questions, 'Grace Guest', ['correct', 'correct', 'correct', 'correct'], 16);
-      await addGuestAttempt(quiz, questions, 'Eshan External', ['correct', 'correct', 'correct', 'wrong'], 11);
-      await addGuestAttempt(quiz, questions, 'Anon Visitor', ['correct', 'correct', 'wrong', 'wrong'], 6, { anonymous: true });
-      await addGuestAttempt(quiz, questions, 'Still Working', ['correct'], 4, { status: 'in_progress' });
-    }
-
     // ---- Guest CSV/Excel helpers (Position-keyed, not Rank-keyed) ----
 
     function csvGuestParticipantLines(res) {
@@ -675,7 +811,7 @@ describe('Live leaderboard export', () => {
       );
     });
 
-    it('keeps the bare route identical to ?cohort=internal (backward compat)', async () => {
+    it('keeps ?cohort=internal the registered-only spec for legacy callers', async () => {
       const { quiz, questions } = await createQuizWithQuestions([
         studentA.user._id,
         studentB.user._id,
@@ -694,12 +830,15 @@ describe('Live leaderboard export', () => {
       expect(bare.status).toBe(200);
       expect(explicit.status).toBe(200);
 
-      // Same title, same participants in the same order with the same values.
-      expect(csvLines(bare)[0]).toBe('Leaderboard');
-      expect(csvLines(explicit)[0]).toBe('Leaderboard');
-      expect(csvParticipantLines(bare)).toEqual(csvParticipantLines(explicit));
-      // Explicitly internal stays the registered leaderboard even with guests present.
-      expect(csvParticipantLines(bare)).toHaveLength(3);
+      // Bare default is the combined board (guests ride along); the explicit
+      // internal param keeps serving the legacy registered-only file.
+      expect(csvParticipantLines(bare)).toHaveLength(5);
+      expect(csvParticipantLines(explicit)).toHaveLength(3);
+      const explicitJoined = csvLines(explicit).join('\n');
+      expect(explicitJoined).not.toContain('Grace Guest');
+      expect(explicitJoined).not.toContain('Eshan External');
+      const explicitHeader = csvLines(explicit).find((line) => line.startsWith('Rank,'));
+      expect(explicitHeader).toBe(LEADERBOARD_EXPORT_COLUMNS.map((c) => c.header).join(','));
     });
 
     it('rejects unknown cohort values with 400 on both formats', async () => {
