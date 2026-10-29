@@ -18,7 +18,7 @@
       "bundleIdentifier": "com.eyeconicbydrlalla.mentorship",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Microphone access is required so users can participate in live mentorship sessions, audio calls, and send voice messages.",
-        "NSCameraUsageDescription": "Eyeconic Mentorship includes live mentorship calling support. Camera access is used only for supported video-call features, for example to share your video with your mentor during a live session.",
+        "NSCameraUsageDescription": "Eyeconic Mentorship uses the camera for live mentorship video calls, for example to share your video with your mentor during a session, and to monitor you during a quiz when AI proctoring is enabled, to help maintain exam integrity. Proctoring runs only while you are attempting a proctored quiz.",
         "NSPhotoLibraryUsageDescription": "Allow Eyeconic Mentorship to access your photo library so you can attach images to chat messages or add images to quiz content. For example, you can select a study diagram from your library and send it to your mentor in a chat.",
         "UIBackgroundModes": [
           "audio",
@@ -96,7 +96,7 @@
         "expo-image-picker",
         {
           "photosPermission": "Allow Eyeconic Mentorship to access your photo library so you can attach images to chat messages or add images to quiz content. For example, you can select a study diagram from your library and send it to your mentor in a chat.",
-          "cameraPermission": "Eyeconic Mentorship includes live mentorship calling support. Camera access is used only for supported video-call features, for example to share your video with your mentor during a live session."
+          "cameraPermission": "Eyeconic Mentorship uses the camera for live mentorship video calls, for example to share your video with your mentor during a session, and to monitor you during a quiz when AI proctoring is enabled, to help maintain exam integrity. Proctoring runs only while you are attempting a proctored quiz."
         }
       ],
       [
@@ -108,7 +108,7 @@
       [
         "@config-plugins/react-native-webrtc",
         {
-          "cameraPermission": "Eyeconic Mentorship includes live mentorship calling support. Camera access is used only for supported video-call features, for example to share your video with your mentor during a live session.",
+          "cameraPermission": "Eyeconic Mentorship uses the camera for live mentorship video calls, for example to share your video with your mentor during a session, and to monitor you during a quiz when AI proctoring is enabled, to help maintain exam integrity. Proctoring runs only while you are attempting a proctored quiz.",
           "microphonePermission": "Microphone access is required so users can participate in live mentorship sessions, audio calls, and send voice messages."
         }
       ],
