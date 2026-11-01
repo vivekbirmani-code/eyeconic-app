@@ -28,7 +28,7 @@
         "ITSAppUsesNonExemptEncryption": false
       },
       "bitcode": false,
-      "buildNumber": "20"
+      "buildNumber": "22"
     },
     "android": {
       "adaptiveIcon": {
@@ -55,7 +55,7 @@
         "android.permission.CAMERA"
       ],
       "package": "com.eyeconicbydrlalla.mentorship",
-      "versionCode": 14,
+      "versionCode": 15,
       "intentFilters": [
         {
           "action": "VIEW",
