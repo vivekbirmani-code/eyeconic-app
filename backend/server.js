@@ -452,46 +452,34 @@ app.get('/', (req, res) => {
 // triggers client logout instead of a 503. `/api/settings` is excluded
 // because its GET /public probe must stay unauthenticated.
 const { auth: authMiddleware } = require('./middleware/auth');
-// ---------------------------------------------------------------------------
-// TEMPORARY API BLACKOUT (owner request, 2026-11-05). Every router below is
-// deliberately UNMOUNTED: all /api/* traffic falls through to the 404
-// handler at the bottom of this file, so the app answers "The requested
-// resource was not found." everywhere and becomes unusable. The process
-// itself stays healthy — /health, /api/health and / (mounted above) stay
-// live so Render's checks stay green and nothing restart-loops.
-//
-// RESTORE: uncomment every app.use line in this block, commit, deploy.
-// The requires at the top of this file stay live on purpose — routers and
-// models keep loading so nothing else changes at boot.
-// ---------------------------------------------------------------------------
-// app.use('/api/auth', authRoutes);
-// app.use('/api/users', authMiddleware, featureGate('userManagement', 'users'), userRoutes);
-// app.use('/api/groups', authMiddleware, featureGate('chat', 'groups'), groupRoutes);
-// app.use('/api/messages', authMiddleware, featureGate('chat'), messageRoutes);
-// app.use('/api/quizzes', quizRoutes);
-// app.use('/api/daily-pyq', dailyPyqRoutes);
-// app.use('/api/mini-gt', miniGtRoutes);
-// app.use('/api/question-bank', questionBankRoutes);
-// app.use('/api/subjects', subjectRoutes);
-// app.use('/api/student-subjects', authMiddleware, featureGate('mentorship'), studentSubjectRoutes);
-// app.use('/api/mentor-students', authMiddleware, featureGate('mentorship'), mentorStudentRoutes);
-// app.use('/api/assignments', authMiddleware, featureGate('mentorship', 'assignments'), assignmentRoutes);
-// app.use('/api/admin-overview', authMiddleware, featureGate('adminOverview'), adminOverviewRoutes);
-// app.use('/api/settings', featureGate('userManagement', 'settings'), settingsRoutes);
-// app.use('/api/upload', authMiddleware, featureGate('chat', 'upload'), uploadRoutes);
-// app.use('/api/public', publicQuizRoutes);
-// app.use('/api/public', publicLeadRoutes);
-// app.use('/api/public', publicProctoringRoutes);
-// app.use('/api/student-analytics', studentAnalyticsRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/users', authMiddleware, featureGate('userManagement', 'users'), userRoutes);
+app.use('/api/groups', authMiddleware, featureGate('chat', 'groups'), groupRoutes);
+app.use('/api/messages', authMiddleware, featureGate('chat'), messageRoutes);
+app.use('/api/quizzes', quizRoutes);
+app.use('/api/daily-pyq', dailyPyqRoutes);
+app.use('/api/mini-gt', miniGtRoutes);
+app.use('/api/question-bank', questionBankRoutes);
+app.use('/api/subjects', subjectRoutes);
+app.use('/api/student-subjects', authMiddleware, featureGate('mentorship'), studentSubjectRoutes);
+app.use('/api/mentor-students', authMiddleware, featureGate('mentorship'), mentorStudentRoutes);
+app.use('/api/assignments', authMiddleware, featureGate('mentorship', 'assignments'), assignmentRoutes);
+app.use('/api/admin-overview', authMiddleware, featureGate('adminOverview'), adminOverviewRoutes);
+app.use('/api/settings', featureGate('userManagement', 'settings'), settingsRoutes);
+app.use('/api/upload', authMiddleware, featureGate('chat', 'upload'), uploadRoutes);
+app.use('/api/public', publicQuizRoutes);
+app.use('/api/public', publicLeadRoutes);
+app.use('/api/public', publicProctoringRoutes);
+app.use('/api/student-analytics', studentAnalyticsRoutes);
 // Free Login User Dashboard (website Feature 08) — read-only mentor/admin
 // analytics over the free-user population. Ungated like daily-pyq: it only
 // reads the quiz ecosystem's own collections and enforces its own
 // mentor/admin authorization internally.
-// app.use('/api/free-user-analytics', freeUserAnalyticsRoutes);
+app.use('/api/free-user-analytics', freeUserAnalyticsRoutes);
 // Website (eyeconicneetpg.com) integration — versioned service-to-service
 // surface for app → website session handoff. Own feature flag; every route
 // inside is service-token authenticated (middleware/serviceAuth.js).
-// app.use('/api/integration/v1', featureGate('integration'), integrationRoutes);
+app.use('/api/integration/v1', featureGate('integration'), integrationRoutes);
 
 // Track socket to user mapping (socket.id -> userId)
 const socketUserMap = new Map();
