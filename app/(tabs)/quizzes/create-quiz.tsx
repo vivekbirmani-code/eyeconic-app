@@ -740,8 +740,10 @@ export default function CreateQuiz() {
           shareSolution,
           lockSectionsAfterSubmission,
           assignToAllFreeUsers,
-          scheduledDate: scheduledDate?.toISOString(),
-          expiryDate: expiryDate?.toISOString(),
+          // Explicit null (never a dropped key) so a CLEARED date reaches the
+          // PUT tri-state semantics as "remove this window end".
+          scheduledDate: scheduledDate?.toISOString() ?? null,
+          expiryDate: expiryDate?.toISOString() ?? null,
           sections: quizSections,
           // Phase 9 toggle: ON sends the complete silent-record payload (never
           // a bare enabled:true — schema defaults include warn-then-submit);
@@ -766,8 +768,10 @@ export default function CreateQuiz() {
           shareSolution,
           lockSectionsAfterSubmission,
           assignToAllFreeUsers,
-          scheduledDate: scheduledDate?.toISOString(),
-          expiryDate: expiryDate?.toISOString(),
+          // Explicit null on create = "no window" (same stored outcome as an
+          // omitted key; null keeps create/edit payloads uniform).
+          scheduledDate: scheduledDate?.toISOString() ?? null,
+          expiryDate: expiryDate?.toISOString() ?? null,
           sections: quizSections,
           // Phase 9 toggle: OFF = omit entirely (absent = unproctored quiz).
           ...(proctoringEnabled ? { proctoring: PROCTORING_ON_PAYLOAD } : {})
@@ -1074,6 +1078,7 @@ export default function CreateQuiz() {
         value={scheduledDate}
         placeholder="Select start date & time (Optional)"
         onCommit={setScheduledDate}
+        onClear={() => setScheduledDate(null)}
       />
 
       <DateTimeField
@@ -1081,6 +1086,7 @@ export default function CreateQuiz() {
         value={expiryDate}
         placeholder="Select end date & time (Optional)"
         onCommit={setExpiryDate}
+        onClear={() => setExpiryDate(null)}
       />
 
       {scheduledDate && expiryDate && expiryDate <= scheduledDate && (

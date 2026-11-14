@@ -10,7 +10,8 @@ const { buildMetadataSnapshot } = require('../utils/questionSnapshot');
 const { guestAuth, optionalGuestAuth } = require('../middleware/guestAuth');
 const { maskPhone } = require('../utils/phone');
 const { getPublicWebAppUrl } = require('../utils/publicWebUrl');
-const { findActivePublicQuiz, sendPublicQuizError } = require('../utils/publicQuizAccess');
+const { findActivePublicQuiz, getPublicScheduleGate, sendPublicQuizError } = require('../utils/publicQuizAccess');
+const { computeScheduleState } = require('../utils/quizSchedule');
 const {
     findCompletedAttemptByIdentity,
     identityFromLead,
@@ -272,15 +273,18 @@ const findOwnedGuestAttempt = (attemptId, quizId, guestId, guest) => {
 
 // Single lazy enforcement orchestrator for guest attempts — the mirror of
 // enforceAttemptDeadlines in routes/quizzes.js. Effective participation
-// deadline = min(attempt.durationDeadline, quiz.publicExpiryDate) (+grace):
-// public links are governed by the LINK's expiry (utils/publicQuizAccess.js),
-// not the quiz's internal student window. In precedence order:
-//   1. link window closed  → whole-attempt finalize from STORED answers
+// deadline = min(attempt.durationDeadline, public participation window end)
+// (+grace), where the public window end is the EARLIER of the link's own
+// expiry (publicExpiryDate) and the quiz's internal expiryDate — strict
+// window semantics (owner decision 2026-11-15: shared links obey the quiz's
+// Start/End exactly like registered students; see
+// utils/proctoring/durationEnforcement.js). In precedence order:
+//   1. participation window closed  → whole-attempt finalize from STORED answers
 //      ({kind:'quiz_window'} — or {kind:'duration'} when the individual
 //      deadline was the earlier cap), closing enforced sections atomically;
 //   2. section-locked      → the sectionStates[].endsAt cascade;
-//   3. flat attempt        → stored durationDeadline capped by the live link
-//      window end (min semantics).
+//   3. flat attempt        → stored durationDeadline capped by the live
+//      participation window end (min semantics).
 // Finalizes only what the STORED deadlines already say is expired; never
 // accepts post-deadline answers. Idempotent (CAS inside the grader).
 const enforceGuestAttemptDeadlines = async (attempt, quiz, { now = new Date() } = {}) => {
@@ -525,10 +529,11 @@ router.get('/quiz/:shareToken', async (req, res) => {
     try {
         const { shareToken } = req.params;
 
-        // Shared public-access check: link-level expiry only (the quiz's
-        // internal student window does not apply to public guests).
+        // Shared public-access check: link-level expiry only — the internal
+        // window is surfaced BELOW as scheduleState (strict semantics:
+        // guests see why they cannot start, /start is the hard gate).
         const access = await findActivePublicQuiz(shareToken, {
-            select: 'title subject duration instructions totalMarks questions publicExpiryDate lockSectionsAfterSubmission sections proctoring',
+            select: 'title subject duration instructions totalMarks questions publicExpiryDate scheduledDate expiryDate lockSectionsAfterSubmission sections proctoring',
         })
             .then(async (result) => {
                 if (result.error || !result.quiz) return result;
@@ -558,9 +563,20 @@ router.get('/quiz/:shareToken', async (req, res) => {
                 instructions: quiz.instructions,
                 totalMarks: quiz.totalMarks,
                 questionCount: quiz.questions.length,
-                // The link's own expiry — the participation cutoff for guest
+                // The link's own expiry — one participation cutoff for guest
                 // attempts (clients display it and cap their countdowns).
                 ...(quiz.publicExpiryDate ? { publicExpiryDate: quiz.publicExpiryDate } : {}),
+                // Strict window semantics (owner decision 2026-11-15): the
+                // quiz's internal Start/End governs guests too. The landing
+                // page renders the state (opens-at countdown / closed notice)
+                // and disables Start; /start independently 403s, so a stale
+                // landing payload can never let a guest begin outside the
+                // window. serverNow lets browsers without a trusted clock
+                // compute the countdown from server time.
+                scheduleState: computeScheduleState(quiz, new Date(), { publicMode: true }),
+                serverNow: new Date().toISOString(),
+                ...(quiz.scheduledDate ? { scheduledDate: quiz.scheduledDate.toISOString() } : {}),
+                ...(quiz.expiryDate ? { expiryDate: quiz.expiryDate.toISOString() } : {}),
                 lockSectionsAfterSubmission: quiz.lockSectionsAfterSubmission !== false,
                 // Structure only (no question content) — the guest landing
                 // page uses this to show the sequential-sections notice.
@@ -645,6 +661,36 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
             return sendPublicQuizError(res, access.error);
         }
         const quiz = access.quiz;
+
+        // Strict quiz window gate (owner decision 2026-11-15) — the public
+        // mirror of the registered /start check: no guest may START (or
+        // resume) before the quiz's scheduledDate or at/after the earlier of
+        // the link expiry / the quiz's internal expiryDate. Boundary
+        // semantics identical to the registered gate: AT the start time the
+        // quiz opens; AT or after the closing instant participation is over.
+        const scheduleGate = getPublicScheduleGate(quiz);
+        if (scheduleGate) {
+            // The window has closed for good (the gate also fires for
+            // not-started, but then no attempt could exist yet to clean up —
+            // finalize only when a live attempt of THIS caller is found).
+            if (scheduleGate.code === 'QUIZ_WINDOW_CLOSED') {
+                try {
+                    const dangling = await findResumableGuestAttempt(quiz._id, guestId, req.guest);
+                    if (dangling) {
+                        await enforceGuestAttemptDeadlines(dangling, quiz);
+                    }
+                } catch (finalizeError) {
+                    console.error('[Public Start] Failed to finalize expired-window guest attempt:', finalizeError?.message || finalizeError);
+                }
+            }
+            return res.status(scheduleGate.statusCode).json({
+                success: false,
+                message: scheduleGate.message,
+                code: scheduleGate.code,
+                ...(scheduleGate.extra || {}),
+                requestId: req.requestId,
+            });
+        }
 
         // Mandatory OTP verification (owner decision D-P1, 2026-10-23): EVERY
         // public quiz attempt — proctored or not — requires a verified lead.
@@ -885,6 +931,10 @@ router.post('/quiz/:shareToken/start', optionalGuestAuth, async (req, res) => {
                 title: quiz.title,
                 duration: quiz.duration,
                 ...(quiz.publicExpiryDate ? { publicExpiryDate: quiz.publicExpiryDate } : {}),
+                // Strict window semantics: the internal end caps guest
+                // countdowns too (clients compute min of all ends — the same
+                // min() the backend enforces on every write).
+                ...(quiz.expiryDate ? { expiryDate: quiz.expiryDate } : {}),
                 questions: quiz.questions.map(q => ({
                     _id: q._id,
                     questionText: q.question,
@@ -955,7 +1005,10 @@ router.post('/quiz/:shareToken/submit', optionalGuestAuth, async (req, res) => {
             // is honored like an on-time one (in-transit tolerance, same
             // policy as the registered flow). No live attempt → plain 410.
             expiredWindow = true;
-            quiz = await Quiz.findOne({ shareToken, isPublic: true }).select('_id publicExpiryDate');
+            // Both ends project: the enforcer below computes the effective
+            // deadline as min(link expiry, internal end) and the reason's
+            // deadline must be the one that actually fired.
+            quiz = await Quiz.findOne({ shareToken, isPublic: true }).select('_id publicExpiryDate expiryDate');
         } else {
             quiz = access.quiz;
         }

@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
-import { Check, Clock } from 'lucide-react-native';
+import { Check, Clock, X } from 'lucide-react-native';
 import { combineDateAndTime, startOfMinute } from '@/utils/quizDateTime';
 import { colors } from '@/utils/theme';
 
@@ -10,6 +10,13 @@ interface DateTimeFieldProps {
   value: Date | null;
   placeholder: string;
   onCommit: (date: Date) => void;
+  /**
+   * When provided, a small ✕ button appears while a value is set and calls
+   * this to CLEAR the field (quiz windows are optional — an admin removing
+   * the End Date makes the quiz open-ended again). Omitting it keeps the
+   * field set-once (create-only screens).
+   */
+  onClear?: () => void;
 }
 
 /**
@@ -28,7 +35,7 @@ interface DateTimeFieldProps {
  * auto-committed near-arbitrary times (e.g. AM instead of PM) because the
  * first tick in each mode ended that mode.
  */
-export function DateTimeField({ label, value, placeholder, onCommit }: DateTimeFieldProps) {
+export function DateTimeField({ label, value, placeholder, onCommit, onClear }: DateTimeFieldProps) {
   const [open, setOpen] = useState(false);
   const [pickerMode, setPickerMode] = useState<'date' | 'time'>('date');
   const [temp, setTemp] = useState<Date>(new Date());
@@ -66,7 +73,21 @@ export function DateTimeField({ label, value, placeholder, onCommit }: DateTimeF
 
   return (
     <View>
-      <Text style={styles.label}>{label}</Text>
+      <View style={styles.labelRow}>
+        <Text style={styles.label}>{label}</Text>
+        {onClear && value !== null && (
+          <TouchableOpacity
+            style={styles.clearButton}
+            onPress={onClear}
+            accessibilityRole="button"
+            accessibilityLabel={`Clear ${label}`}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+          >
+            <X color="#6B7280" size={14} />
+            <Text style={styles.clearButtonText}>Clear</Text>
+          </TouchableOpacity>
+        )}
+      </View>
       <TouchableOpacity style={styles.button} onPress={openPicker}>
         <Clock color="#6B7280" size={18} />
         <Text style={[styles.buttonText, !value && styles.placeholderText]}>
@@ -110,12 +131,32 @@ export function DateTimeField({ label, value, placeholder, onCommit }: DateTimeF
 }
 
 const styles = StyleSheet.create({
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 16,
+    marginBottom: 8,
+  },
   label: {
     fontSize: 14,
     fontWeight: '600',
     color: '#374151',
-    marginBottom: 8,
-    marginTop: 16,
+    flex: 1,
+  },
+  clearButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    backgroundColor: '#F3F4F6',
+  },
+  clearButtonText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#6B7280',
   },
   button: {
     flexDirection: 'row',

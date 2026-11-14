@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import {
   View,
   Text,
@@ -46,6 +46,9 @@ interface Quiz {
   // Server-computed availability (same rule /start enforces) — the badge must
   // never depend on the device clock.
   scheduleState?: 'scheduled' | 'open' | 'ended';
+  // Server "now" captured with the list payload — corrects a drifted device
+  // clock for the "(in 2h)" countdown hints.
+  serverNow?: string;
 }
 
 const getStatusBadge = (quiz: Quiz) => {
@@ -195,14 +198,21 @@ function QuizzesContent() {
   // Shared clock for the scheduled-quiz countdowns — one interval for the
   // whole list, not one per card. Only runs while a scheduled quiz is
   // visible; the badge itself comes from the server's scheduleState, so a
-  // wrong device clock can mislabel nothing worse than the "in Xm" hint.
+  // wrong device clock can mislabel nothing worse than the "in Xm" hint —
+  // and even that hint is server-corrected via serverNow on the payload.
+  const serverClockOffsetMs = useMemo(() => {
+    const serverNow = quizzes.find(q => q.serverNow)?.serverNow;
+    if (!serverNow) return 0;
+    const serverMs = new Date(serverNow).getTime();
+    return Number.isFinite(serverMs) ? serverMs - Date.now() : 0;
+  }, [quizzes]);
   const [now, setNow] = useState(() => Date.now());
   const hasScheduled = quizzes.some(q => q.scheduleState === 'scheduled');
   useEffect(() => {
     if (!hasScheduled) return;
-    const timer = setInterval(() => setNow(Date.now()), 30 * 1000);
+    const timer = setInterval(() => setNow(Date.now() + serverClockOffsetMs), 30 * 1000);
     return () => clearInterval(timer);
-  }, [hasScheduled]);
+  }, [hasScheduled, serverClockOffsetMs]);
 
   // Animation refs
   const headerOpacity = useRef(new Animated.Value(0)).current;

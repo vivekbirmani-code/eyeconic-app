@@ -18,8 +18,10 @@
 //   effectiveDeadline = min(attempt.durationDeadline, participationWindowEnd)
 //
 // where the window end is quiz.expiryDate for registered-student attempts and
-// quiz.publicExpiryDate for guest attempts (public links are governed by the
-// link's own expiry — see utils/publicQuizAccess.js). The stored
+// the EARLIER of quiz.publicExpiryDate and quiz.expiryDate for guest attempts
+// (strict window semantics, owner decision 2026-11-15: shared links obey the
+// quiz's Start/End exactly like in-app students; see
+// utils/publicQuizAccess.js). The stored
 // durationDeadline stays PURE (startTime + duration, never pre-capped): the
 // min() is recomputed at enforcement time from the LIVE quiz document, so an
 // admin shortening or extending the window mid-attempt takes effect
@@ -75,17 +77,32 @@ const getDurationDeadline = (attempt) => {
 /**
  * The quiz's participation window end for a given attempt mode.
  *  - registered students: quiz.expiryDate (the admin-configured window)
- *  - public guests:       quiz.publicExpiryDate (the link's own expiry —
- *    deliberate product rule, see utils/publicQuizAccess.js)
+ *  - public guests:       the EARLIER of quiz.publicExpiryDate (the link's
+ *    own expiry) and quiz.expiryDate (the quiz's internal window). Owner
+ *    decision (2026-11-15, "strictly always"): a shared link must obey the
+ *    quiz's Start/End Date & Time exactly like in-app students — guests can
+ *    never attempt past the internal end, even when the link itself would
+ *    stay valid longer. A guest attempt is capped by whichever closes first.
  * A missing/invalid window end is null (no window cap) — the individual
  * duration deadline then governs alone, exactly as before this field existed.
  */
 const getParticipationWindowEnd = (quiz, { publicMode = false } = {}) => {
   if (!quiz) return null;
-  const raw = publicMode ? quiz.publicExpiryDate : quiz.expiryDate;
-  if (!raw) return null;
-  const end = new Date(raw);
-  return Number.isNaN(end.getTime()) ? null : end;
+  const ends = [];
+  const pushEnd = (raw) => {
+    if (!raw) return;
+    const end = new Date(raw);
+    if (!Number.isNaN(end.getTime())) ends.push(end);
+  };
+  if (publicMode) {
+    // Strict window semantics for guests: earliest of link + internal ends.
+    pushEnd(quiz.publicExpiryDate);
+    pushEnd(quiz.expiryDate);
+  } else {
+    pushEnd(quiz.expiryDate);
+  }
+  if (ends.length === 0) return null;
+  return ends.reduce((earliest, current) => (current.getTime() < earliest.getTime() ? current : earliest));
 };
 
 /**

@@ -160,7 +160,7 @@ describe('effective deadline — min(durationDeadline, participation window)', (
       .toBe(durationDeadline.getTime());
   });
 
-  it('getEffectiveDeadline uses publicExpiryDate only in publicMode (guests)', () => {
+  it('getEffectiveDeadline uses the EARLIEST of link + internal end in publicMode (strict windows)', () => {
     const quiz = { expiryDate: new Date('2026-10-10T09:00:00Z'), publicExpiryDate: new Date('2026-10-10T19:00:00Z') };
     const attempt = { status: 'in_progress', durationDeadline };
 
@@ -168,9 +168,23 @@ describe('effective deadline — min(durationDeadline, participation window)', (
     // the min() still yields the earlier — here the 09:00 window.
     expect(getEffectiveDeadline(attempt, quiz).getTime())
       .toBe(new Date('2026-10-10T09:00:00Z').getTime());
-    // Guest: ONLY the link expiry participates.
+    // Guest (strict window semantics, owner decision 2026-11-15): the
+    // EARLIER of the link expiry and the internal end participates — here
+    // the internal 09:00 end beats both the link (19:00) and the attempt's
+    // own deadline.
     expect(getEffectiveDeadline(attempt, quiz, { publicMode: true }).getTime())
-      .toBe(durationDeadline.getTime());
+      .toBe(new Date('2026-10-10T09:00:00Z').getTime());
+
+    // Link earlier than the internal end: the link wins for guests.
+    const linkFirstQuiz = { expiryDate: new Date('2026-10-10T23:00:00Z'), publicExpiryDate: new Date('2026-10-10T10:30:00Z') };
+    expect(getEffectiveDeadline(attempt, linkFirstQuiz, { publicMode: true }).getTime())
+      .toBe(new Date('2026-10-10T10:30:00Z').getTime());
+
+    // No link expiry at all: the internal end still caps guests (the
+    // production violation shape — daily shared quizzes with windows).
+    const internalOnlyQuiz = { expiryDate: new Date('2026-10-10T09:00:00Z') };
+    expect(getEffectiveDeadline(attempt, internalOnlyQuiz, { publicMode: true }).getTime())
+      .toBe(new Date('2026-10-10T09:00:00Z').getTime());
   });
 
   it('getEffectiveDeadline tolerates missing caps (legacy attempts, window-less quizzes)', () => {

@@ -88,8 +88,17 @@ const sweepRegisteredAttempts = async ({ now = new Date(), enforce = getRegister
 
 const sweepGuestAttempts = async ({ now = new Date(), enforce = getGuestEnforcer() } = {}) => {
   const cutoff = new Date(now.getTime() - DURATION_GRACE_MS);
-  // Public links are governed by publicExpiryDate (utils/publicQuizAccess.js).
-  const closedQuizIds = (await Quiz.find({ publicExpiryDate: { $lt: cutoff } }).distinct('_id'))
+  // Public participation closes at the EARLIER of the link's own expiry
+  // (publicExpiryDate) and the quiz's internal window end (expiryDate) —
+  // strict window semantics (owner decision 2026-11-15). Either closing
+  // makes the quiz a sweep candidate; the precise gate lives inside the
+  // orchestrator (isPastQuizWindow publicMode).
+  const closedQuizIds = (await Quiz.find({
+    $or: [
+      { publicExpiryDate: { $lt: cutoff } },
+      { expiryDate: { $lt: cutoff } },
+    ],
+  }).distinct('_id'))
     .map((id) => id.toString());
 
   // Full documents — same reason as the registered sweep (graders read the
@@ -102,7 +111,7 @@ const sweepGuestAttempts = async ({ now = new Date(), enforce = getGuestEnforcer
   const errors = [];
   for (const candidate of candidates) {
     try {
-      const quiz = await Quiz.findById(candidate.quiz).select('publicExpiryDate');
+      const quiz = await Quiz.findById(candidate.quiz).select('publicExpiryDate expiryDate');
       if (!quiz) continue;
       const result = await enforce(candidate, quiz, { now });
       if (result.finalized) finalized += 1;

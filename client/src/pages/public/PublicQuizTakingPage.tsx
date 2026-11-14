@@ -252,6 +252,14 @@ export default function PublicQuizTakingPage() {
           }
           return;
         }
+        // Strict window gate (owner decision 2026-11-15): the quiz has not
+        // opened yet (or its Start/End window has closed). Retrying /start
+        // cannot fix this — the entry page renders the opens-at countdown /
+        // closed notice from the same server state, so route there.
+        if (extracted?.code === 'QUIZ_NOT_STARTED' || extracted?.code === 'QUIZ_WINDOW_CLOSED') {
+          navigate(`/public-quiz/${token}`, { replace: true });
+          return;
+        }
         setLoadError(extracted?.message || 'Unable to start this quiz.');
       } finally {
         if (!cancelled) setLoading(false);
@@ -367,16 +375,22 @@ export default function PublicQuizTakingPage() {
     // All deadlines are SERVER timestamps; serverClockOffset (client - server
     // at response time) converts the ticking client clock to server time so
     // device clock skew cannot extend or shrink either timer shape.
-    // The link's own expiry caps every shape — the same min() the backend
-    // enforces server-side.
+    // The participation window caps every shape: the EARLIER of the link's
+    // own expiry and the quiz's internal End Date & Time (strict window
+    // semantics, owner decision 2026-11-15) — the same min() the backend
+    // enforces server-side on every write.
     const serverNowMs = nowMs - serverClockOffset;
-    const linkEndMs = quiz.publicExpiryDate ? new Date(quiz.publicExpiryDate).getTime() : null;
+    const windowEndsMs = [quiz.publicExpiryDate, quiz.expiryDate]
+      .filter(Boolean)
+      .map((value) => new Date(value as string).getTime())
+      .filter(Number.isFinite);
+    const windowEndMs = windowEndsMs.length > 0 ? Math.min(...windowEndsMs) : null;
     if (sectionLockEnabled) {
       const endsAt = activeSectionState?.endsAt;
       if (!endsAt) return 0;
       let deadline = new Date(endsAt).getTime();
-      if (linkEndMs !== null && Number.isFinite(linkEndMs)) {
-        deadline = Math.min(deadline, linkEndMs);
+      if (windowEndMs !== null) {
+        deadline = Math.min(deadline, windowEndMs);
       }
       return (deadline - serverNowMs) / 1000;
     }
@@ -388,8 +402,8 @@ export default function PublicQuizTakingPage() {
         ? new Date(attempt.startTime).getTime() + quiz.duration * 60 * 1000
         : null;
     if (attemptDeadlineMs === null || !Number.isFinite(attemptDeadlineMs)) return 0;
-    const effective = linkEndMs !== null && Number.isFinite(linkEndMs)
-      ? Math.min(attemptDeadlineMs, linkEndMs)
+    const effective = windowEndMs !== null
+      ? Math.min(attemptDeadlineMs, windowEndMs)
       : attemptDeadlineMs;
     return (effective - serverNowMs) / 1000;
   }, [quiz, sectionLockEnabled, activeSectionState, attempt?.startTime, attempt?.durationDeadline, nowMs, serverClockOffset]);

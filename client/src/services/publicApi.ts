@@ -167,8 +167,17 @@ export interface PublicQuizSummary {
   instructions: string[];
   totalMarks: number;
   questionCount: number;
-  // The link's own expiry — the participation cutoff for guest attempts.
+  // The link's own expiry — one participation cutoff for guest attempts.
   publicExpiryDate?: string;
+  // Strict window semantics (owner decision 2026-11-15): the quiz's internal
+  // Start/End governs guests exactly like in-app students. scheduleState is
+  // server-computed with the SAME rule /start enforces; scheduledDate /
+  // expiryDate drive the opens-at countdown and closed notice. serverNow
+  // lets the page correct a drifted device clock for the countdown.
+  scheduleState?: 'scheduled' | 'open' | 'ended';
+  scheduledDate?: string;
+  expiryDate?: string;
+  serverNow?: string;
   lockSectionsAfterSubmission: boolean;
   sections: { name: string; duration: number; questionCount: number }[];
   // AI proctoring disclosure (public-quiz proctoring): server-computed
@@ -265,7 +274,9 @@ export interface StartAttemptResponse {
     sectionStates?: SectionState[];
     // Server-authoritative flat-attempt deadline (startTime + duration,
     // computed at /start). Display-only: the server enforces the effective
-    // deadline min(this, quiz.publicExpiryDate) on every write.
+    // deadline min(this, participation window end) on every write, where the
+    // window end is the EARLIER of the link expiry and the quiz's internal
+    // End Date & Time (strict window semantics, owner decision 2026-11-15).
     durationDeadline?: string;
     serverNow?: string;
   };
@@ -276,6 +287,9 @@ export interface StartAttemptResponse {
     questions: PublicQuestion[];
     totalMarks: number;
     publicExpiryDate?: string;
+    // The quiz's internal End Date & Time — caps the guest countdown exactly
+    // like the link expiry (same min() the backend enforces).
+    expiryDate?: string;
   };
   // ---- AI proctoring (public-quiz proctoring Phase 2) ----
   // Present only on PROCTORED starts (armed + gates on): the session to

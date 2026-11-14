@@ -334,4 +334,83 @@ describe('PUT /api/quizzes/:id — edit flow', () => {
     expect(res.status).toBe(400);
     expect(res.body.message).toMatch(/duration/);
   });
+
+  // ---- Window CLEARING (owner decision 2026-11-15): tri-state semantics ----
+  // An EXPLICIT null in the payload removes that end of the stored window
+  // (an admin clearing the End Date makes the quiz open-ended again); an
+  // ABSENT key preserves the stored value. Before this contract a null was
+  // silently treated as absent, so a cleared date could never take effect
+  // and the quiz kept closing at the old time.
+  describe('window clearing — explicit null removes, absent key preserves', () => {
+    beforeEach(async () => {
+      await putQuiz({
+        duration: 30,
+        scheduledDate: new Date('2026-09-05T09:00:00').toISOString(),
+        expiryDate: new Date('2026-09-05T10:00:00').toISOString(),
+      });
+    });
+
+    it('clears the end date with an explicit null (quiz becomes open-ended)', async () => {
+      const res = await putQuiz({ duration: 30, expiryDate: null });
+      expect(res.status).toBe(200);
+      const stored = await Quiz.findById(legacyQuiz._id);
+      expect(stored.expiryDate).toBeUndefined();
+      // Start preserved — only the keyed-null end was cleared.
+      expect(new Date(stored.scheduledDate).getTime()).toBe(
+        new Date('2026-09-05T09:00:00').getTime()
+      );
+    });
+
+    it('clears the start date with an explicit empty string', async () => {
+      const res = await putQuiz({ duration: 30, scheduledDate: '' });
+      expect(res.status).toBe(200);
+      const stored = await Quiz.findById(legacyQuiz._id);
+      expect(stored.scheduledDate).toBeUndefined();
+      expect(new Date(stored.expiryDate).getTime()).toBe(
+        new Date('2026-09-05T10:00:00').getTime()
+      );
+    });
+
+    it('clears both ends in one edit (quiz becomes always-open)', async () => {
+      const res = await putQuiz({ duration: 30, scheduledDate: null, expiryDate: null });
+      expect(res.status).toBe(200);
+      const stored = await Quiz.findById(legacyQuiz._id);
+      expect(stored.scheduledDate).toBeUndefined();
+      expect(stored.expiryDate).toBeUndefined();
+    });
+
+    it('an absent key still preserves the stored value (JSON-dropped undefined)', async () => {
+      const res = await putQuiz({ duration: 45 });
+      expect(res.status).toBe(200);
+      const stored = await Quiz.findById(legacyQuiz._id);
+      expect(new Date(stored.scheduledDate).getTime()).toBe(
+        new Date('2026-09-05T09:00:00').getTime()
+      );
+      expect(new Date(stored.expiryDate).getTime()).toBe(
+        new Date('2026-09-05T10:00:00').getTime()
+      );
+    });
+
+    it('clearing the start cannot strand an end earlier than a NEW start', async () => {
+      // Set start far in the future first, then clear the end and set a new
+      // start AFTER the previously stored end — the effective final state
+      // (new start + cleared end) is valid, so this must succeed.
+      await putQuiz({
+        duration: 30,
+        scheduledDate: new Date('2026-10-01T09:00:00').toISOString(),
+        expiryDate: new Date('2026-10-01T10:00:00').toISOString(),
+      });
+      const res = await putQuiz({
+        duration: 30,
+        scheduledDate: new Date('2026-10-02T09:00:00').toISOString(),
+        expiryDate: null,
+      });
+      expect(res.status).toBe(200);
+      const stored = await Quiz.findById(legacyQuiz._id);
+      expect(stored.expiryDate).toBeUndefined();
+      expect(new Date(stored.scheduledDate).getTime()).toBe(
+        new Date('2026-10-02T09:00:00').getTime()
+      );
+    });
+  });
 });

@@ -35,6 +35,36 @@ const formatDuration = (minutes: number) => {
   return mins > 0 ? `${hours} hr ${mins} min` : `${hours} hr`;
 };
 
+// IST display — same format the mobile app uses (utils/date.ts formatToIST),
+// so guests and admins always read identical times.
+const formatIST = (iso?: string) => {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return (
+    new Intl.DateTimeFormat('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: true,
+    }).format(d) + ' IST'
+  );
+};
+
+const formatCountdown = (ms: number) => {
+  if (!Number.isFinite(ms) || ms <= 60 * 1000) return 'less than a minute';
+  const minutes = Math.floor(ms / 60000);
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor((minutes % 1440) / 60);
+  const mins = minutes % 60;
+  if (days > 0) return hours > 0 ? `${days}d ${hours}h` : `${days}d`;
+  if (hours > 0) return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+  return `${mins}m`;
+};
+
 export default function PublicQuizEntryPage() {
   const { token = '' } = useParams<{ token: string }>();
   const [searchParams] = useSearchParams();
@@ -87,6 +117,44 @@ export default function PublicQuizEntryPage() {
   const emailValid = useMemo(() => isValidEmail(email), [email]);
   const nameValid = name.trim().length >= 2;
   const otpValid = /^\d{6}$/.test(otp);
+
+  // ===== Strict quiz window gate (owner decision 2026-11-15) =====
+  // Public links obey the quiz's Start/End exactly like the mobile app.
+  // The server's scheduleState + serverNow seed the state; between refetches
+  // a 1s tick recomputes it from the stored dates with the server-corrected
+  // clock, so the page flips on time in BOTH directions (scheduled → open →
+  // ended) and a drifted device clock can neither extend nor shrink the
+  // truth. /start independently 403s — this is display/routing only.
+  const serverClockOffsetMs = useMemo(() => {
+    const serverMs = quiz?.serverNow ? new Date(quiz.serverNow).getTime() : NaN;
+    return Number.isFinite(serverMs) ? serverMs - Date.now() : 0;
+  }, [quiz?.serverNow]);
+
+  const [scheduleNowTick, setScheduleNowTick] = useState(() => Date.now());
+  const hasTimeWindow = Boolean(quiz?.scheduledDate || quiz?.expiryDate || quiz?.publicExpiryDate);
+  useEffect(() => {
+    if (!hasTimeWindow) return;
+    const timer = setInterval(() => setScheduleNowTick(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [hasTimeWindow]);
+
+  const { state: scheduleState, msUntilOpen } = useMemo(() => {
+    if (!quiz) return { state: 'open' as const, msUntilOpen: 0 };
+    const nowMs = scheduleNowTick + serverClockOffsetMs;
+    const startsAtMs = quiz.scheduledDate ? new Date(quiz.scheduledDate).getTime() : NaN;
+    const endMs = [quiz.expiryDate, quiz.publicExpiryDate]
+      .filter(Boolean)
+      .map((value) => new Date(value as string).getTime())
+      .filter(Number.isFinite);
+    if (Number.isFinite(startsAtMs) && nowMs < startsAtMs) {
+      return { state: 'scheduled' as const, msUntilOpen: startsAtMs - nowMs };
+    }
+    if (endMs.length > 0 && nowMs >= Math.min(...endMs)) {
+      return { state: 'ended' as const, msUntilOpen: 0 };
+    }
+    return { state: 'open' as const, msUntilOpen: 0 };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quiz?.scheduledDate, quiz?.expiryDate, quiz?.publicExpiryDate, scheduleNowTick, serverClockOffsetMs]);
 
   const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -168,6 +236,21 @@ export default function PublicQuizEntryPage() {
         } else {
           setError({ code: attempted.code, message: attempted.message });
         }
+        return;
+      }
+
+      // Strict window gate (belt & braces — /start independently 403s
+      // outside the window, so a stale landing payload or a direct submit
+      // can never start early or late).
+      if (scheduleState === 'scheduled') {
+        setError({
+          code: 'QUIZ_NOT_STARTED',
+          message: `This test has not started yet. It opens on ${formatIST(quiz?.scheduledDate)}. Please come back then.`,
+        });
+        return;
+      }
+      if (scheduleState === 'ended') {
+        setError({ code: 'QUIZ_WINDOW_CLOSED', message: 'The scheduled window for this test has closed.' });
         return;
       }
 
@@ -331,8 +414,54 @@ export default function PublicQuizEntryPage() {
           )}
         </div>
 
-        {/* Returning verified guest */}
-        {hasGuestSession && lead && step === 'form' && (
+        {/* Strict window state (owner decision 2026-11-15): outside the
+            quiz's Start/End the lead form is replaced by a clear status
+            card — guests are told exactly when the test opens (or that it
+            has closed) instead of hitting the /start 403 later. */}
+        {scheduleState === 'scheduled' && (
+          <div className="bg-white rounded-3xl p-6 shadow-2xl mb-4 text-center">
+            <div className="w-14 h-14 rounded-full bg-amber-50 flex items-center justify-center mx-auto mb-3">
+              <Clock className="w-7 h-7 text-amber-500" />
+            </div>
+            <h3 className="text-base font-bold text-gray-900">This test hasn't started yet</h3>
+            <p className="text-sm text-gray-600 mt-1">
+              It opens on <span className="font-semibold text-gray-900">{formatIST(quiz.scheduledDate)}</span>
+            </p>
+            <p className="text-xs text-amber-600 font-semibold mt-1.5">
+              Opens in {formatCountdown(msUntilOpen)}
+            </p>
+            <p className="text-[11px] text-gray-400 mt-2.5">
+              Bookmark this page and come back then — your verification code will work once the test is live.
+            </p>
+          </div>
+        )}
+
+        {scheduleState === 'ended' && (
+          <div className="bg-white rounded-3xl p-6 shadow-2xl mb-4 text-center">
+            <div className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center mx-auto mb-3">
+              <Clock className="w-7 h-7 text-gray-400" />
+            </div>
+            <h3 className="text-base font-bold text-gray-900">This test has ended</h3>
+            <p className="text-sm text-gray-600 mt-1">
+              It closed on{' '}
+              <span className="font-semibold text-gray-900">
+                {formatIST(
+                  [quiz.expiryDate, quiz.publicExpiryDate]
+                    .filter(Boolean)
+                    .sort((a, b) => new Date(a as string).getTime() - new Date(b as string).getTime())[0]
+                )}
+              </span>
+            </p>
+            <p className="text-[11px] text-gray-400 mt-2.5">
+              Please ask your teacher about the next test.
+            </p>
+          </div>
+        )}
+
+        {/* Returning verified guest — only while the window is open (the
+            Continue button starts an attempt, which /start would 403
+            otherwise). */}
+        {hasGuestSession && lead && step === 'form' && scheduleState === 'open' && (
           <div className="bg-white rounded-3xl p-5 shadow-2xl mb-4">
             <div className="flex items-center gap-3">
               <ShieldCheck className="w-8 h-8 text-[#01b4ae] shrink-0" />
@@ -372,8 +501,10 @@ export default function PublicQuizEntryPage() {
         {/* Lead form / OTP card — hidden entirely while a verified session
             exists (the welcome-back card above owns the screen), so a
             back-navigation never asks a verified participant to re-enter
-            their details. "Not you?" clears the session deliberately. */}
-        {hasGuestSession && lead && step === 'form' ? (
+            their details. "Not you?" clears the session deliberately.
+            Also hidden outside the quiz window: the schedule card above
+            owns the screen until the test actually opens. */}
+        {hasGuestSession && lead && step === 'form' && scheduleState === 'open' ? (
           <div className="bg-white/10 border border-white/20 rounded-2xl p-4 text-center">
             <p className="text-xs text-white/80">
               Signed in as <span className="font-semibold text-white">{lead.name}</span>.
@@ -388,7 +519,7 @@ export default function PublicQuizEntryPage() {
               Not you? Verify with a different email
             </button>
           </div>
-        ) : (
+        ) : scheduleState !== 'open' ? null : (
         <div className="bg-white rounded-3xl p-6 shadow-2xl">
           {step === 'form' ? (
             <form onSubmit={handleSendOtp} className="space-y-4">

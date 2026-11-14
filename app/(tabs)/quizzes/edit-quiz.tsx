@@ -466,8 +466,11 @@ export default function EditQuiz() {
         sections: sectionPayload,
         shareSolution,
         lockSectionsAfterSubmission,
-        scheduledDate: scheduledDate?.toISOString(),
-        expiryDate: expiryDate?.toISOString(),
+        // Explicit null (never a dropped key) so a CLEARED date reaches the
+        // PUT tri-state semantics as "remove this window end" — dropping the
+        // key would silently KEEP the previously stored schedule.
+        scheduledDate: scheduledDate?.toISOString() ?? null,
+        expiryDate: expiryDate?.toISOString() ?? null,
         // Phase 9 toggle: ON sends the complete silent-record payload (never
         // a bare enabled:true — schema defaults include warn-then-submit);
         // OFF explicitly disables for future attempts.
@@ -698,15 +701,17 @@ export default function EditQuiz() {
             <DateTimeField
               label="Start Date & Time"
               value={scheduledDate}
-              placeholder="Select start date & time"
+              placeholder="Select start date & time (Optional)"
               onCommit={setScheduledDate}
+              onClear={() => setScheduledDate(null)}
             />
 
             <DateTimeField
               label="End Date & Time"
               value={expiryDate}
-              placeholder="Select end date & time"
+              placeholder="Select end date & time (Optional)"
               onCommit={setExpiryDate}
+              onClear={() => setExpiryDate(null)}
             />
 
             {scheduledDate && expiryDate && expiryDate <= scheduledDate && (

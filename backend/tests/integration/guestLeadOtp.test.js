@@ -167,9 +167,11 @@ describe('Guest lead OTP flow', () => {
     expect(mailer.sendGuestQuizOtpMail).not.toHaveBeenCalled();
   });
 
-  it('serves public links even when the quiz\'s internal student window has closed (past tests)', async () => {
-    // Admins share public links precisely so outsiders can attempt the quiz
-    // NOW — including past tests. Only the link's own expiry applies.
+  it('serves public links even when the quiz\'s internal student window has closed (lead capture stays open)', async () => {
+    // Strict window semantics (owner decision 2026-11-15) gate ATTEMPTS, not
+    // lead capture: the landing page still loads (rendering scheduleState
+    // 'ended' + the closed notice) and OTP capture keeps working — the owner
+    // still wants the lead. /start is what 403s (see publicQuizWindow.test.js).
     await Quiz.updateOne(
       { _id: quiz._id },
       {

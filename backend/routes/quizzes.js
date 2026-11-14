@@ -772,6 +772,7 @@ const areValidObjectIds = (ids) => Array.isArray(ids) && ids.every((id) => mongo
 // validate differently.
 const {
   parseQuizTimeWindow,
+  applyQuizTimeWindowUpdate,
   computeScheduleState,
 } = require('../utils/quizSchedule');
 
@@ -956,8 +957,12 @@ router.get('/', auth, async (req, res) => {
         qObj.questions = (qObj.questions || []).map(qu => qu._id);
 
         // Server-computed availability (matches the /start gate) so badges and
-        // countdowns never depend on the device clock.
+        // countdowns never depend on the device clock. serverNow (per item —
+        // the response is a bare array) lets clients correct a drifted device
+        // clock for the "(in 2h)" hints; the badge itself is already
+        // server-truth.
         qObj.scheduleState = computeScheduleState(quiz);
+        qObj.serverNow = new Date().toISOString();
 
         const attempt = attempts.find(a => a.quiz.toString() === quiz._id.toString());
         qObj.attemptStatus = attempt ? {
@@ -1920,19 +1925,15 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
       }
     }
 
-    const timeWindowResult = parseQuizTimeWindow({ scheduledDate, expiryDate });
-    if (timeWindowResult.error) {
-      return res.status(400).json({ message: timeWindowResult.error });
+    // Tri-state window semantics (owner decision 2026-11-15): a key present
+    // with null/'' CLEARS that end of the window (an admin removing the End
+    // Date makes the quiz open-ended again — previously the old value was
+    // silently kept); an absent key preserves the stored value; a value sets
+    // it. The effective final state still validates end > start.
+    const timeWindowUpdate = applyQuizTimeWindowUpdate(quiz, { scheduledDate, expiryDate });
+    if (timeWindowUpdate.error) {
+      return res.status(400).json({ message: timeWindowUpdate.error });
     }
-    // Enforce the window invariant on the effective final state, so a new
-    // expiry cannot be set before the quiz's existing scheduled start.
-    const effectiveStart = timeWindowResult.value.scheduledDate || quiz.scheduledDate;
-    const effectiveEnd = timeWindowResult.value.expiryDate || quiz.expiryDate;
-    if (effectiveStart && effectiveEnd && effectiveEnd <= effectiveStart) {
-      return res.status(400).json({ message: 'End date must be after start date' });
-    }
-    if (timeWindowResult.value.scheduledDate) quiz.scheduledDate = timeWindowResult.value.scheduledDate;
-    if (timeWindowResult.value.expiryDate) quiz.expiryDate = timeWindowResult.value.expiryDate;
 
     if (positiveMarks !== undefined) quiz.positiveMarks = positiveMarks;
     if (negativeMarks !== undefined) quiz.negativeMarks = negativeMarks;
