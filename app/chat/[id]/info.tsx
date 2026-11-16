@@ -11,7 +11,7 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
-import { ArrowLeft, Users, UserPlus } from 'lucide-react-native';
+import { ArrowLeft, Users, UserPlus, GraduationCap } from 'lucide-react-native';
 import { FullScreenContainer } from '@/components/layout';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
@@ -248,6 +248,20 @@ function GroupInfoScreen() {
                 {group?.createdBy?._id === member._id && (
                   <Text style={styles.adminBadge}>Group Admin</Text>
                 )}
+                {/* Intern Mode: admins (Users tab stays frozen) and mentors can
+                    reach the toggle from any student in any group. */}
+                {member.role === 'student' && (user?.role === 'admin' || user?.role === 'mentor') && (
+                  <TouchableOpacity
+                    style={styles.internPill}
+                    onPress={() => {
+                      router.push(`/intern-manage/${member._id}` as any);
+                    }}
+                    accessibilityLabel={`Manage intern mode for ${member.name}`}
+                  >
+                    <GraduationCap color="#01b4ae" size={13} />
+                    <Text style={styles.internPillText}>Intern Mode</Text>
+                  </TouchableOpacity>
+                )}
                 {user?.role === 'admin' && member._id !== group?.createdBy?._id && (
                   <TouchableOpacity
                     style={styles.removeButton}
@@ -415,6 +429,24 @@ const styles = StyleSheet.create({
   },
   removeButton: {
     marginTop: 4,
+  },
+  // Intern Mode entry on student member rows (admins + mentors).
+  internPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderWidth: 1.5,
+    borderColor: '#01b4ae',
+    borderStyle: 'dashed',
+    borderRadius: 12,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    marginTop: 2,
+  },
+  internPillText: {
+    color: '#01b4ae',
+    fontSize: 10,
+    fontWeight: '700',
   },
   removeText: {
     color: '#EF4444',
