@@ -16,6 +16,7 @@ import { FullScreenContainer } from '@/components/layout';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
 import UserAvatar from '@/components/UserAvatar';
+import InternTimeSlicer from '@/components/intern/InternTimeSlicer';
 
 interface User {
   _id: string;
@@ -204,6 +205,10 @@ function GroupInfoScreen() {
                       Created by {group?.createdBy?.name} • {new Date(group?.createdAt || '').toLocaleDateString()}
                     </Text>
                   </View>
+
+                  {/* Intern Mode: time slicer under the group description —
+                      renders nothing for non-intern students. */}
+                  {user?.role === 'student' && <InternTimeSlicer />}
 
                   <View style={styles.sectionHeader}>
                     <Text style={styles.sectionTitle}>{group?.members?.length || 0} participants</Text>

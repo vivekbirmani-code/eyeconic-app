@@ -28,6 +28,7 @@ import {
   Search,
   CheckSquare,
   Square,
+  GraduationCap,
 } from 'lucide-react-native';
 import { BlurView } from 'expo-blur';
 import * as Haptics from '@/utils/haptics';
@@ -585,6 +586,25 @@ function UserDetailsScreen() {
                         <Text style={styles.tierButtonText}>
                           {selectedUser.isFreeUser ? 'Make Paid' : 'Make Free'}
                         </Text>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+
+                  {/* Intern Mode: toggle + study scope + progress. */}
+                  {selectedUser.role === 'student' && (
+                    <View style={styles.infoRow}>
+                      <GraduationCap color="#6B7280" size={20} />
+                      <View style={styles.infoContent}>
+                        <Text style={styles.infoLabel}>Intern Mode</Text>
+                        <Text style={styles.infoValue}>Daily video study plan</Text>
+                      </View>
+                      <TouchableOpacity
+                        style={styles.tierButton}
+                        onPress={() => router.push(`/intern-manage/${selectedUser._id}` as any)}
+                        activeOpacity={0.85}
+                        accessibilityLabel={`Manage intern mode for ${selectedUser.name}`}
+                      >
+                        <Text style={[styles.tierButtonText, { color: '#01b4ae' }]}>Manage</Text>
                       </TouchableOpacity>
                     </View>
                   )}

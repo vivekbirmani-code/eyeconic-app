@@ -18,7 +18,8 @@ import {
   CheckCircle,
   Clock,
   BookOpen,
-  TrendingUp
+  TrendingUp,
+  GraduationCap
 } from 'lucide-react-native';
 import * as Haptics from '@/utils/haptics';
 import { useAuth } from '@/context/AuthContext';
@@ -297,6 +298,19 @@ export default function MentorDashboard() {
           <Text style={styles.statLabel} numberOfLines={1} maxFontSizeMultiplier={1.4}>Completion</Text>
         </View>
       </View>
+
+      {/* Intern Mode: toggle + study-scope + progress for this student. */}
+      <TouchableOpacity
+        style={styles.internButton}
+        onPress={() => {
+          Haptics.selectionAsync();
+          router.push(`/intern-manage/${item._id}` as any);
+        }}
+        accessibilityLabel={`Manage intern mode for ${item.name}`}
+      >
+        <GraduationCap color="#01b4ae" size={16} />
+        <Text style={styles.internButtonText}>Intern Mode</Text>
+      </TouchableOpacity>
     </TouchableOpacity>
   );
 
@@ -686,6 +700,24 @@ export default function MentorDashboard() {
 }
 
 const styles = StyleSheet.create({
+  // Intern Mode entry on each student card.
+  internButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderWidth: 1.5,
+    borderColor: '#01b4ae',
+    borderStyle: 'dashed',
+    borderRadius: 10,
+    paddingVertical: 9,
+    marginTop: 12,
+  },
+  internButtonText: {
+    color: '#01b4ae',
+    fontWeight: '700',
+    fontSize: 13,
+  },
   container: {
     flex: 1,
     backgroundColor: '#FAFCFC',

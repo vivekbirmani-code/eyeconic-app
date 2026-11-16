@@ -20,11 +20,21 @@ import {
   Clock,
   TrendingUp,
   Check,
-  X
+  X,
+  Video,
+  PlayCircle,
+  ListChecks
 } from 'lucide-react-native';
 import * as Haptics from '@/utils/haptics';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
+import {
+  getInternStatus,
+  getInternTasks,
+  markInternTaskWatched,
+  type InternTask
+} from '@/services/intern';
+import { formatMinutes } from '@/components/intern/InternTimeSlicer';
 
 interface Subject {
   _id: string;
@@ -53,8 +63,14 @@ interface Assignment {
   createdAt: string;
 }
 
-type TabType = 'all' | 'thisWeek' | 'completed';
+type TabType = 'all' | 'thisWeek' | 'completed' | 'studyVideos';
 type GroupBy = 'week' | 'subject';
+
+interface InternToday {
+  date: string;
+  minutes: number;
+  videoIds: string[];
+}
 
 const STAT_CARD_GAP = 12;
 const STAT_HORIZONTAL_PADDING = 16;
@@ -69,12 +85,70 @@ function StudentAssignments() {
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isCompleting, setIsCompleting] = useState<string | null>(null);
+  // Intern Mode: video tasks live beside mentor assignments in this screen.
+  const [isIntern, setIsIntern] = useState(false);
+  const [internTasks, setInternTasks] = useState<InternTask[]>([]);
+  const [internToday, setInternToday] = useState<InternToday | null>(null);
+  const [internLoading, setInternLoading] = useState(false);
+  const [watchingTaskId, setWatchingTaskId] = useState<string | null>(null);
 
   useEffect(() => {
     if (user?.role === 'student') {
       fetchAssignments();
+      fetchInternStatus();
     }
   }, [user]);
+
+  const fetchInternStatus = async () => {
+    try {
+      const me = await getInternStatus();
+      if (me.isIntern) {
+        setIsIntern(true);
+        loadInternTasks();
+      }
+    } catch {
+      // Non-intern or unreachable: the Study Videos tab simply stays hidden.
+    }
+  };
+
+  const loadInternTasks = async () => {
+    setInternLoading(true);
+    try {
+      const data = await getInternTasks();
+      setInternTasks(data.tasks || []);
+      setInternToday(data.today || null);
+    } catch (error) {
+      console.error('Error fetching intern tasks:', error);
+    } finally {
+      setInternLoading(false);
+    }
+  };
+
+  const completeInternTask = (taskId: string) => {
+    Alert.alert(
+      'Mark as Watched',
+      'Have you finished watching this video?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Yes, Watched',
+          onPress: async () => {
+            setWatchingTaskId(taskId);
+            try {
+              await markInternTaskWatched(taskId);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              loadInternTasks();
+            } catch (error: any) {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+              Alert.alert('Error', error?.response?.data?.message || 'Failed to mark watched');
+            } finally {
+              setWatchingTaskId(null);
+            }
+          }
+        }
+      ]
+    );
+  };
 
   const fetchAssignments = async () => {
     setIsLoading(true);
@@ -295,6 +369,114 @@ function StudentAssignments() {
     );
   };
 
+  // ---- Intern Mode: Study Videos tab ----
+
+  const todayVideoIds = new Set(internToday?.videoIds || []);
+  const internTodayTasks = internTasks.filter((t) => todayVideoIds.has(t.video));
+  const internPendingCount = internTasks.filter((t) => t.status === 'pending').length;
+  const internWatchedCount = internTasks.filter((t) => t.status === 'watched').length;
+  const internTodayWatched = internTodayTasks.filter((t) => t.status === 'watched').length;
+
+  const renderInternTaskCard = ({ item }: { item: InternTask }) => {
+    const isToday = todayVideoIds.has(item.video);
+    const isWatched = item.status === 'watched';
+
+    return (
+      <View style={styles.assignmentCard}>
+        <View style={styles.assignmentHeader}>
+          <View style={styles.subjectBadge}>
+            <Video color="#01b4ae" size={14} />
+            <Text style={styles.subjectText} numberOfLines={1}>{item.subject}</Text>
+          </View>
+          {isToday ? (
+            <View style={[styles.statusBadge, { backgroundColor: '#E0F7F6' }]}>
+              <ListChecks color="#01b4ae" size={16} />
+              <Text style={[styles.statusText, { color: '#0d9488', fontWeight: '700' }]}>TODAY</Text>
+            </View>
+          ) : (
+            <View style={[styles.statusBadge, { backgroundColor: isWatched ? '#D1FAE5' : '#F3F4F6' }]}>
+              {isWatched
+                ? <CheckCircle color="#10B981" size={16} />
+                : <Clock color="#6B7280" size={16} />}
+              <Text style={[styles.statusText, { color: isWatched ? '#059669' : '#6B7280' }]}>
+                {isWatched ? 'WATCHED' : 'CARRY OVER'}
+              </Text>
+            </View>
+          )}
+        </View>
+
+        <View style={styles.assignmentBody}>
+          <Text style={styles.assignmentTitle}>{item.title}</Text>
+          <View style={styles.metaRow}>
+            <View style={styles.metaItem}>
+              <Text style={styles.metaLabel}>Source:</Text>
+              <Text style={styles.metaValue}>{item.source}</Text>
+            </View>
+            <View style={styles.metaItem}>
+              <Text style={styles.metaLabel}>Type:</Text>
+              <Text style={styles.metaValue}>{item.type}</Text>
+            </View>
+            <View style={styles.metaItem}>
+              <Text style={styles.metaLabel}>Duration:</Text>
+              <Text style={styles.metaValue}>{item.durationMin} min</Text>
+            </View>
+          </View>
+          {isWatched && item.watchedAt && (
+            <View style={[styles.infoBox, { backgroundColor: '#D1FAE5', borderColor: '#10B981' }]}>
+              <Text style={[styles.infoText, { color: '#047857' }]}>
+                ✓ Watched on {new Date(item.watchedAt).toLocaleDateString()}
+              </Text>
+            </View>
+          )}
+        </View>
+
+        {!isWatched && (
+          <TouchableOpacity
+            style={styles.completeButton}
+            onPress={() => completeInternTask(item._id)}
+            disabled={watchingTaskId === item._id}
+          >
+            {watchingTaskId === item._id ? (
+              <ActivityIndicator color="#FFFFFF" size="small" />
+            ) : (
+              <>
+                <PlayCircle color="#FFFFFF" size={18} />
+                <Text style={styles.completeButtonText}>Mark as Watched</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        )}
+      </View>
+    );
+  };
+
+  const internListHeader = () => (
+    <View style={styles.internTodaySummary}>
+      {internToday ? (
+        <>
+          <Clock color="#0d9488" size={18} />
+          <Text style={styles.internTodayText}>
+            Today: <Text style={styles.internTodayBold}>{formatMinutes(internToday.minutes)}</Text>{' '}
+            chosen • {internTodayTasks.length} {internTodayTasks.length === 1 ? 'video' : 'videos'} planned •{' '}
+            {internTodayWatched} watched
+          </Text>
+        </>
+      ) : (
+        <Text style={styles.internTodayHint}>
+          No time set for today yet — open any of your groups, tap the group name, and set today's
+          study time.
+        </Text>
+      )}
+    </View>
+  );
+
+  // Today's plan first (playlist order), then carry-over pending, then watched.
+  const orderedInternTasks = [
+    ...internTodayTasks,
+    ...internTasks.filter((t) => t.status === 'pending' && !todayVideoIds.has(t.video)),
+    ...internTasks.filter((t) => t.status === 'watched' && !todayVideoIds.has(t.video)),
+  ];
+
   if (user?.role !== 'student') {
     return (
       <ScreenContainer style={styles.container}>
@@ -316,48 +498,96 @@ function StudentAssignments() {
     )
   );
 
-  const kpiCards = [
-    {
-      key: 'total',
-      icon: BookOpen,
-      value: stats.total,
-      label: 'Total',
-      backgroundColor: '#DBEAFE',
-      iconColor: '#2563EB',
-      valueColor: '#1E40AF',
-      labelColor: '#1E3A8A',
-    },
-    {
-      key: 'pending',
-      icon: Clock,
-      value: stats.pending,
-      label: 'Pending',
-      backgroundColor: '#FEF3C7',
-      iconColor: '#F59E0B',
-      valueColor: '#D97706',
-      labelColor: '#92400E',
-    },
-    {
-      key: 'verified',
-      icon: CheckCircle,
-      value: stats.verified,
-      label: 'Verified',
-      backgroundColor: '#D1FAE5',
-      iconColor: '#10B981',
-      valueColor: '#059669',
-      labelColor: '#047857',
-    },
-    {
-      key: 'completion',
-      icon: TrendingUp,
-      value: `${stats.completionRate}%`,
-      label: 'Completion',
-      backgroundColor: '#E0F7F6',
-      iconColor: '#01b4ae',
-      valueColor: '#01b4ae',
-      labelColor: '#0d9488',
-    },
-  ] as const;
+  const internWatchedMinutes = internTasks
+    .filter((t) => t.status === 'watched')
+    .reduce((sum, t) => sum + t.durationMin, 0);
+
+  const kpiCards =
+    activeTab === 'studyVideos'
+      ? ([
+          {
+            key: 'today',
+            icon: ListChecks,
+            value: `${internTodayWatched}/${internTodayTasks.length}`,
+            label: 'Today',
+            backgroundColor: '#E0F7F6',
+            iconColor: '#01b4ae',
+            valueColor: '#01b4ae',
+            labelColor: '#0d9488',
+          },
+          {
+            key: 'toWatch',
+            icon: Video,
+            value: internPendingCount,
+            label: 'To Watch',
+            backgroundColor: '#FEF3C7',
+            iconColor: '#F59E0B',
+            valueColor: '#D97706',
+            labelColor: '#92400E',
+          },
+          {
+            key: 'watched',
+            icon: CheckCircle,
+            value: internWatchedCount,
+            label: 'Watched',
+            backgroundColor: '#D1FAE5',
+            iconColor: '#10B981',
+            valueColor: '#059669',
+            labelColor: '#047857',
+          },
+          {
+            key: 'watchedMinutes',
+            icon: TrendingUp,
+            value: formatMinutes(internWatchedMinutes),
+            label: 'Studied',
+            backgroundColor: '#DBEAFE',
+            iconColor: '#2563EB',
+            valueColor: '#1E40AF',
+            labelColor: '#1E3A8A',
+          },
+        ] as const)
+      : ([
+          {
+            key: 'total',
+            icon: BookOpen,
+            value: stats.total,
+            label: 'Total',
+            backgroundColor: '#DBEAFE',
+            iconColor: '#2563EB',
+            valueColor: '#1E40AF',
+            labelColor: '#1E3A8A',
+          },
+          {
+            key: 'pending',
+            icon: Clock,
+            value: stats.pending,
+            label: 'Pending',
+            backgroundColor: '#FEF3C7',
+            iconColor: '#F59E0B',
+            valueColor: '#D97706',
+            labelColor: '#92400E',
+          },
+          {
+            key: 'verified',
+            icon: CheckCircle,
+            value: stats.verified,
+            label: 'Verified',
+            backgroundColor: '#D1FAE5',
+            iconColor: '#10B981',
+            valueColor: '#059669',
+            labelColor: '#047857',
+          },
+          {
+            key: 'completion',
+            icon: TrendingUp,
+            value: `${stats.completionRate}%`,
+            label: 'Completion',
+            backgroundColor: '#E0F7F6',
+            iconColor: '#01b4ae',
+            valueColor: '#01b4ae',
+            labelColor: '#0d9488',
+          },
+        ] as const);
 
   return (
     <ScreenContainer style={styles.container}>
@@ -435,11 +665,55 @@ function StudentAssignments() {
             Completed
           </Text>
         </TouchableOpacity>
+
+        {isIntern && (
+          <TouchableOpacity
+            style={[styles.tab, activeTab === 'studyVideos' && styles.tabActive]}
+            onPress={() => {
+              setActiveTab('studyVideos');
+              Haptics.selectionAsync();
+              loadInternTasks();
+            }}
+          >
+            <Video color={activeTab === 'studyVideos' ? '#01b4ae' : '#6B7280'} size={16} />
+            <Text style={[styles.tabText, activeTab === 'studyVideos' && styles.tabTextActive]} numberOfLines={1}>
+              Study Videos
+            </Text>
+          </TouchableOpacity>
+        )}
       </ScrollView>
 
       {/* Content */}
       <View style={styles.content}>
-        {isLoading ? (
+        {activeTab === 'studyVideos' ? (
+          internLoading ? (
+            <View style={styles.loadingContainer}>
+              <ActivityIndicator size="large" color="#01b4ae" />
+              <Text style={styles.loadingText}>Loading study videos...</Text>
+            </View>
+          ) : (
+            <FlatList
+              data={orderedInternTasks}
+              renderItem={renderInternTaskCard}
+              keyExtractor={(item) => item._id}
+              contentContainerStyle={styles.listContent}
+              ListHeaderComponent={internListHeader}
+              ListEmptyComponent={
+                <View style={styles.emptyState}>
+                  <Video color="#9CA3AF" size={48} />
+                  <Text style={styles.emptyText}>
+                    {internToday ? 'All caught up for now' : 'No study time set today'}
+                  </Text>
+                  <Text style={styles.emptyHint}>
+                    {internToday
+                      ? 'Videos you have not watched yet will appear here as soon as they fit your daily time'
+                      : 'Open any of your groups, tap the group name, and set how much time you can give today'}
+                  </Text>
+                </View>
+              }
+            />
+          )
+        ) : isLoading ? (
           <View style={styles.loadingContainer}>
             <ActivityIndicator size="large" color="#01b4ae" />
             <Text style={styles.loadingText}>Loading assignments...</Text>
@@ -702,6 +976,33 @@ const styles = StyleSheet.create({
     color: '#EF4444',
     textAlign: 'center',
     marginTop: 50,
+  },
+  // Intern Mode — Study Videos summary strip above the task list.
+  internTodaySummary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    backgroundColor: '#F0FDFA',
+    borderWidth: 1,
+    borderColor: '#CCFBF1',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 4,
+  },
+  internTodayText: {
+    flex: 1,
+    fontSize: 13,
+    color: '#0F766E',
+  },
+  internTodayBold: {
+    fontWeight: '800',
+    color: '#0d9488',
+  },
+  internTodayHint: {
+    flex: 1,
+    fontSize: 13,
+    color: '#0F766E',
+    fontStyle: 'italic',
   },
 });
 // TEMPORARY FEATURE FREEZE — quiz-only availability (utils/featureAvailability.ts).
