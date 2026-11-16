@@ -12,6 +12,7 @@ const adminOverviewRoutes = require('../../routes/admin-overview');
 const mentorStudentRoutes = require('../../routes/mentor-students');
 const studentSubjectRoutes = require('../../routes/student-subjects');
 const groupRoutes = require('../../routes/groups');
+const internRoutes = require('../../routes/intern');
 const userRoutes = require('../../routes/users');
 const publicQuizRoutes = require('../../routes/public-quiz');
 const publicLeadRoutes = require('../../routes/public-lead');
@@ -38,6 +39,7 @@ function buildApp() {
   app.use('/api/mentor-students', mentorStudentRoutes);
   app.use('/api/student-subjects', studentSubjectRoutes);
   app.use('/api/groups', groupRoutes);
+  app.use('/api/intern', internRoutes);
   app.use('/api/users', userRoutes);
   app.use('/api/public', publicQuizRoutes);
   app.use('/api/public', publicLeadRoutes);

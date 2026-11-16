@@ -90,7 +90,22 @@ const userSchema = new mongoose.Schema({
   profilePicturePublicId: {
     type: String,
     default: null
-  }
+  },
+  // Intern Mode (2026-11): a mentor/admin toggles a student into intern mode
+  // and defines the study scope — each video source the student owns, each
+  // with its own subject list (multiple sources allowed). Allocation walks
+  // VideoCatalogItem in sheetRow order across the combined slice. While
+  // isIntern is false the scope is ignored (and kept, so a re-toggle restores
+  // the previous selection).
+  isIntern: {
+    type: Boolean,
+    default: false
+  },
+  internScope: [{
+    source: { type: String, required: true, trim: true }, // catalog display spelling
+    sourceKey: { type: String, required: true, trim: true }, // normalized match key
+    subjects: [{ type: String, required: true, trim: true }] // catalog subject spellings
+  }]
 }, {
   timestamps: true
 });
