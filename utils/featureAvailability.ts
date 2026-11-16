@@ -40,8 +40,10 @@ export const FEATURE_AVAILABILITY: Record<FeatureKey, boolean> = {
   rankPredictor: true,
 
   // Temporarily disabled features — flip to true to re-enable.
-  chat: false, // groups, chat screens, calls, group management modals
-  mentorship: false, // mentor "My Students" assignments, student tasks
+  // chat + mentorship re-enabled 2026-11-17 for Intern Mode (time slicer in
+  // group description; intern video tasks in My Tasks / mentor My Students).
+  chat: true, // groups, chat screens, calls, group management modals
+  mentorship: true, // mentor "My Students" assignments, student tasks
   userManagement: false, // admin Users screen, create/edit user modals
   adminOverview: false, // admin Overview dashboard
   freeUserContent: false, // free-user Transformations, Graphs, learning tools

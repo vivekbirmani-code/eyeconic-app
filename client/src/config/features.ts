@@ -31,8 +31,9 @@ export const FEATURE_AVAILABILITY: Record<FeatureKey, boolean> = {
   quizzes: true,
 
   // Temporarily disabled features — flip to true to re-enable.
+  // chat re-enabled 2026-11-17 for Intern Mode (groups module returns).
   dashboard: false, // admin dashboard overview page
-  chat: false, // groups list, group chat
+  chat: true, // groups list, group chat
   userManagement: false, // admin Users page
 
   // AI proctoring rollout flag — mirrors backend/config/featureAvailability.js

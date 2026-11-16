@@ -29,8 +29,10 @@ const FEATURE_AVAILABILITY = {
   integration: true,
 
   // Temporarily disabled features — flip to true to re-enable.
-  chat: false, // groups management, group chat, messages, calls, chat uploads
-  mentorship: false, // assignments, mentor "My Students" CRUD, student tasks
+  // Re-enabled 2026-11-17 for Intern Mode (time slicer lives in the group
+  // description; intern video tasks surface in student tasks / My Students).
+  chat: true, // groups management, group chat, messages, calls, chat uploads
+  mentorship: true, // assignments, mentor "My Students" CRUD, student tasks
   userManagement: false, // admin user CRUD, admin settings screen
   adminOverview: false, // admin mentorship overview dashboard
 

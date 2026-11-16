@@ -126,6 +126,26 @@ describe('Temporary feature freeze gate', () => {
     });
   });
 
+  describe('chat endpoints are re-enabled (flag flipped 2026-11-17 for Intern Mode)', () => {
+    // The chat flag went back to true — these now assert reachability so the
+    // file keeps documenting the live freeze state. The 503 mechanism itself
+    // is still covered below via the still-frozen userManagement router.
+    it('POST /api/groups (create group) is reachable', async () => {
+      const response = await request(app).post('/api/groups').send({});
+      expect(response.status).toBe(201);
+    });
+
+    it('GET /api/groups/:id (group detail) is reachable', async () => {
+      const response = await request(app).get('/api/groups/group-1');
+      expect(response.status).toBe(200);
+    });
+
+    it('chat messages are reachable', async () => {
+      const response = await request(app).get('/api/messages/group/group-1');
+      expect(response.status).toBe(200);
+    });
+  });
+
   describe('frozen endpoints answer 503 FEATURE_DISABLED', () => {
     const expectDisabled = (response, feature) => {
       expect(response.status).toBe(503);
@@ -136,21 +156,6 @@ describe('Temporary feature freeze gate', () => {
       expect(response.body.message).toMatch(/temporarily unavailable/i);
       expect(response.body.requestId).toBeDefined();
     };
-
-    it('POST /api/groups (create group) is blocked', async () => {
-      const response = await request(app).post('/api/groups').send({});
-      expectDisabled(response, 'chat');
-    });
-
-    it('GET /api/groups/:id (group detail) is blocked', async () => {
-      const response = await request(app).get('/api/groups/group-1');
-      expectDisabled(response, 'chat');
-    });
-
-    it('chat messages are blocked entirely (no quiz dependencies)', async () => {
-      const response = await request(app).get('/api/messages/group/group-1');
-      expectDisabled(response, 'chat');
-    });
 
     it('POST /api/users (create user) is blocked', async () => {
       const response = await request(app).post('/api/users').send({});
