@@ -14,20 +14,25 @@ import {
   ScrollView,
   Pressable,
   Keyboard,
+  RefreshControl,
+  Animated,
+  Easing,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ScreenContainer } from '@/components/layout';
 
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
-import { Send, X, Check, CheckCheck, Edit2, Trash2, Info, Phone, PhoneOff, Ban, Users } from 'lucide-react-native';
+import { Send, X, Check, CheckCheck, Edit2, Trash2, Info, Phone, PhoneOff, Ban, Users, ChevronDown, Clock, AlertCircle } from 'lucide-react-native';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
 import { getSocketURL } from '@/services/config';
 import { colors } from '@/utils/theme';
+import * as Haptics from '@/utils/haptics';
 import { io, Socket } from 'socket.io-client';
 import { KeyboardAvoidingDialog } from '@/components/KeyboardAvoidingDialog';
 import ScreenHeader from '@/components/ScreenHeader';
+import TouchableScale from '@/components/TouchableScale';
 
 import { useNotifications } from '@/context/NotificationContext';
 import * as DocumentPicker from 'expo-document-picker';
@@ -41,7 +46,8 @@ interface Message {
   content: string;
   sender: { _id: string; name: string; profilePicture?: string | null };
   createdAt: string;
-  status?: 'sent' | 'delivered' | 'read';
+  // 'sending'/'failed' are client-only optimistic-send states.
+  status?: 'sent' | 'delivered' | 'read' | 'sending' | 'failed';
   isEdited?: boolean;
   editedAt?: string;
 
@@ -83,6 +89,97 @@ interface ReadByUser {
   readAt: string;
 }
 
+/**
+ * Soft fade+rise entrance for messages that arrive AFTER the initial history
+ * load (sent or received live). The registry dedupes so a recycled list item
+ * never replays the animation, and history items skip it entirely.
+ */
+function MessageEntrance({
+  messageId,
+  shouldAnimate,
+  onRegister,
+  children,
+}: {
+  messageId: string;
+  shouldAnimate: boolean;
+  onRegister: (id: string) => void;
+  children: React.ReactNode;
+}) {
+  const opacity = useRef(new Animated.Value(shouldAnimate ? 0 : 1)).current;
+  const translateY = useRef(new Animated.Value(shouldAnimate ? 8 : 0)).current;
+
+  useEffect(() => {
+    if (!shouldAnimate) return;
+    onRegister(messageId);
+    Animated.parallel([
+      Animated.timing(opacity, {
+        toValue: 1,
+        duration: 170,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+      Animated.timing(translateY, {
+        toValue: 0,
+        duration: 170,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
+    ]).start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (!shouldAnimate) return <>{children}</>;
+
+  return (
+    <Animated.View style={{ opacity, transform: [{ translateY }] }}>
+      {children}
+    </Animated.View>
+  );
+}
+
+/**
+ * Message-shaped loading placeholders — alternating sides with a gentle
+ * pulse, replacing the old "Loading messages..." text.
+ */
+function ChatLoadingSkeleton() {
+  const pulse = useRef(new Animated.Value(0.45)).current;
+
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulse, { toValue: 0.85, duration: 650, useNativeDriver: true }),
+        Animated.timing(pulse, { toValue: 0.45, duration: 650, useNativeDriver: true }),
+      ])
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [pulse]);
+
+  const rows: Array<{ own: boolean; width: `${number}%`; height: number }> = [
+    { own: false, width: '58%', height: 42 },
+    { own: false, width: '42%', height: 42 },
+    { own: true, width: '50%', height: 42 },
+    { own: false, width: '64%', height: 58 },
+    { own: true, width: '38%', height: 42 },
+    { own: false, width: '52%', height: 42 },
+  ];
+
+  return (
+    <View style={styles.skeletonContainer}>
+      {rows.map((row, i) => (
+        <Animated.View
+          key={i}
+          style={[
+            styles.skeletonBubble,
+            row.own ? styles.ownMessage : styles.otherMessage,
+            { width: row.width, height: row.height, opacity: pulse },
+          ]}
+        />
+      ))}
+    </View>
+  );
+}
+
 function ChatScreen() {
   const { id: groupId } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuth();
@@ -98,6 +195,24 @@ function ChatScreen() {
   const [headerHeight, setHeaderHeight] = useState(0);
   const flatListRef = useRef<FlatList>(null);
   const socketRef = useRef<Socket | null>(null);
+  // ---- Keep-my-place scrolling ---------------------------------------
+  // The user stays put while reading history; a pill counts unseen new
+  // messages instead of yanking them to the bottom (old behavior).
+  const isNearBottomRef = useRef(true);
+  const [newMessagesCount, setNewMessagesCount] = useState(0);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  // Entrance animations apply only to messages that arrive after the initial
+  // history load; ids already shown never replay.
+  const initialLoadDoneRef = useRef(false);
+  const animatedMessageIdsRef = useRef<Set<string>>(new Set());
+  const registerAnimatedMessage = useCallback((id: string) => {
+    animatedMessageIdsRef.current.add(id);
+  }, []);
+  const shouldAnimateMessage = useCallback(
+    (id: string) =>
+      initialLoadDoneRef.current && !animatedMessageIdsRef.current.has(id),
+    []
+  );
   // Whether this screen is the focused (topmost) route. The 'group_deleted'
   // handler must only navigate when it is — when Group Info is pushed on top,
   // that screen owns the post-delete navigation (dismissTo back to the Groups
@@ -117,6 +232,18 @@ function ChatScreen() {
   // Message action states
   const [selectedMessage, setSelectedMessage] = useState<Message | null>(null);
   const [isMessageMenuVisible, setIsMessageMenuVisible] = useState(false);
+  // The long-press menu grows in from 92% instead of a bare fade.
+  const menuScale = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (!isMessageMenuVisible) return;
+    menuScale.setValue(0.92);
+    Animated.spring(menuScale, {
+      toValue: 1,
+      friction: 6,
+      tension: 220,
+      useNativeDriver: true,
+    }).start();
+  }, [isMessageMenuVisible, menuScale]);
   const [isMessageInfoVisible, setIsMessageInfoVisible] = useState(false);
   const [isEditModalVisible, setIsEditModalVisible] = useState(false);
   const [editContent, setEditContent] = useState('');
@@ -126,6 +253,18 @@ function ChatScreen() {
 
   // Attachment states
   const [isAttachmentMenuVisible, setIsAttachmentMenuVisible] = useState(false);
+  // Attachment menu gets the same grow-in as the message menu.
+  const attachmentMenuScale = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    if (!isAttachmentMenuVisible) return;
+    attachmentMenuScale.setValue(0.92);
+    Animated.spring(attachmentMenuScale, {
+      toValue: 1,
+      friction: 6,
+      tension: 220,
+      useNativeDriver: true,
+    }).start();
+  }, [isAttachmentMenuVisible, attachmentMenuScale]);
   const [isUploading, setIsUploading] = useState(false);
   const [viewingAttachment, setViewingAttachment] = useState<any>(null);
   const [isViewerVisible, setIsViewerVisible] = useState(false);
@@ -182,12 +321,16 @@ function ChatScreen() {
 
     socketRef.current.on('receive_message', (data: Message) => {
       setMessages(prev => [...prev, data]);
-      scrollToBottom();
-      // Mark messages as read when chat is open
-      if (groupId) {
-        markAsRead(groupId);
-        // Mark the received message as read
-        api.post(`/messages/${data._id}/read`).catch(() => { });
+      if (isNearBottomRef.current) {
+        // Reading at the bottom: stay pinned and keep read-state accurate.
+        scrollToBottom();
+        if (groupId) {
+          markAsRead(groupId);
+          api.post(`/messages/${data._id}/read`).catch(() => { });
+        }
+      } else {
+        // Reading history: don't move; surface the pill instead.
+        setNewMessagesCount(count => count + 1);
       }
     });
 
@@ -228,12 +371,20 @@ function ChatScreen() {
     }
   };
 
-  const fetchMessages = async () => {
+  // showLoading=false keeps the message list on screen during pull-to-refresh.
+  const fetchMessages = async (showLoading = true) => {
     try {
+      if (showLoading) setIsLoading(true);
       const response = await api.get(`/messages/group/${groupId}`);
       setMessages(response.data);
       setIsLoading(false);
-      setTimeout(scrollToBottom, 100);
+      // Flip the entrance gate only AFTER the first history batch has
+      // rendered (rAF runs post-paint) — history items must not animate in,
+      // only messages that arrive live from here on.
+      requestAnimationFrame(() => {
+        scrollToBottom(false);
+        initialLoadDoneRef.current = true;
+      });
 
       // Mark all messages as read
       const messageIds = response.data
@@ -248,35 +399,102 @@ function ChatScreen() {
     }
   };
 
-  const scrollToBottom = () => {
-    if (flatListRef.current && messages.length > 0) {
-      flatListRef.current.scrollToEnd({ animated: true });
+  const refreshChat = async () => {
+    setIsRefreshing(true);
+    await Promise.all([fetchMessages(false), fetchGroup()]);
+    setIsRefreshing(false);
+  };
+
+  // Animated defaults true; the content-size pin uses the non-animated form.
+  const scrollToBottom = (animated = true) => {
+    flatListRef.current?.scrollToEnd({ animated });
+  };
+
+  // Track whether the user is reading at the bottom; clearing the pill when
+  // they arrive there themselves.
+  const handleMessagesScroll = (event: any) => {
+    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+    if (!contentSize || contentSize.height === 0) return;
+    const nearBottom =
+      contentOffset.y + layoutMeasurement.height >= contentSize.height - 140;
+    isNearBottomRef.current = nearBottom;
+    if (nearBottom) {
+      setNewMessagesCount(prev => (prev > 0 ? 0 : prev));
     }
   };
 
+  const jumpToNewMessages = () => {
+    setNewMessagesCount(0);
+    isNearBottomRef.current = true;
+    scrollToBottom(true);
+    if (groupId) markAsRead(groupId);
+  };
+
+  // Optimistic send: the bubble appears instantly with a clock, swaps to the
+  // server message on success, or turns red with tap-to-retry on failure.
   const sendMessage = async () => {
     if (!newMessage.trim()) return;
 
     const messageContent = newMessage.trim();
     setNewMessage('');
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    const tempId = `temp_${Date.now()}`;
+    const tempMessage: Message = {
+      _id: tempId,
+      content: messageContent,
+      sender: { _id: user?._id || '', name: user?.name || '' },
+      createdAt: new Date().toISOString(),
+      status: 'sending',
+    };
+    setMessages(prev => [...prev, tempMessage]);
+    isNearBottomRef.current = true;
+    scrollToBottom();
 
     try {
       const response = await api.post('/messages', {
         content: messageContent,
         groupId,
       });
-
-      setMessages(prev => [...prev, response.data]);
-
+      setMessages(prev => prev.map(msg =>
+        msg._id === tempId ? response.data : msg
+      ));
       socketRef.current?.emit('send_message', {
         ...response.data,
         groupId,
       });
-
-      scrollToBottom();
     } catch (error) {
-      Alert.alert('Error', 'Failed to send message');
-      setNewMessage(messageContent);
+      setMessages(prev => prev.map(msg =>
+        msg._id === tempId ? { ...msg, status: 'failed' } : msg
+      ));
+      Haptics.errorNotification();
+    }
+  };
+
+  const retrySendMessage = async (failedMessage: Message) => {
+    if (!failedMessage.content?.trim()) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+    setMessages(prev => prev.map(msg =>
+      msg._id === failedMessage._id ? { ...msg, status: 'sending' } : msg
+    ));
+
+    try {
+      const response = await api.post('/messages', {
+        content: failedMessage.content,
+        groupId,
+      });
+      setMessages(prev => prev.map(msg =>
+        msg._id === failedMessage._id ? response.data : msg
+      ));
+      socketRef.current?.emit('send_message', {
+        ...response.data,
+        groupId,
+      });
+    } catch (error) {
+      setMessages(prev => prev.map(msg =>
+        msg._id === failedMessage._id ? { ...msg, status: 'failed' } : msg
+      ));
     }
   };
 
@@ -488,6 +706,7 @@ function ChatScreen() {
 
   // Message action handlers
   const handleMessageLongPress = (message: Message) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setSelectedMessage(message);
     setIsMessageMenuVisible(true);
   };
@@ -656,6 +875,12 @@ function ChatScreen() {
 
     const status = message.status || 'sent';
 
+    if (status === 'sending') {
+      return <Clock color="rgba(255,255,255,0.7)" size={13} />;
+    }
+    if (status === 'failed') {
+      return <AlertCircle color="#FECACA" size={13} />;
+    }
     if (status === 'read') {
       return <CheckCheck color="#34B7F1" size={14} />;
     } else if (status === 'delivered') {
@@ -665,7 +890,17 @@ function ChatScreen() {
     }
   };
 
-  const renderMessage = ({ item, index }: { item: Message; index: number }) => {
+  const renderMessage = ({ item, index }: { item: Message; index: number }) => (
+    <MessageEntrance
+      messageId={item._id}
+      shouldAnimate={shouldAnimateMessage(item._id)}
+      onRegister={registerAnimatedMessage}
+    >
+      {renderMessageContent({ item, index })}
+    </MessageEntrance>
+  );
+
+  const renderMessageContent = ({ item, index }: { item: Message; index: number }) => {
     const isOwnMessage = item.sender._id === user?._id;
     const prev = index > 0 ? messages[index - 1] : null;
 
@@ -754,10 +989,13 @@ function ChatScreen() {
         {dayChip}
         <Pressable
           onLongPress={() => handleMessageLongPress(item)}
+          // A failed optimistic send comes back to life on tap.
+          onPress={item.status === 'failed' ? () => retrySendMessage(item) : undefined}
           delayLongPress={300}
           style={[
             styles.messageContainer,
-            isOwnMessage ? styles.ownMessage : styles.otherMessage
+            isOwnMessage ? styles.ownMessage : styles.otherMessage,
+            item.status === 'failed' && styles.failedMessage
           ]}
         >
           {showSenderName && (
@@ -844,9 +1082,7 @@ function ChatScreen() {
         keyboardVerticalOffset={Platform.OS === 'ios' ? insets.top + headerHeight : 0}
       >
         {isLoading ? (
-          <View style={styles.loadingContainer}>
-            <Text style={styles.loadingText}>Loading messages...</Text>
-          </View>
+          <ChatLoadingSkeleton />
         ) : (
           <FlatList
             ref={flatListRef}
@@ -855,8 +1091,22 @@ function ChatScreen() {
             keyExtractor={(item) => item._id}
             contentContainerStyle={styles.messagesList}
             showsVerticalScrollIndicator={false}
-            onContentSizeChange={scrollToBottom}
+            onScroll={handleMessagesScroll}
+            scrollEventThrottle={16}
+            // Stay pinned only when the user is already at the bottom —
+            // reading history stays put (the pill counts what's new).
+            onContentSizeChange={() => {
+              if (isNearBottomRef.current) scrollToBottom(false);
+            }}
             keyboardShouldPersistTaps="handled"
+            refreshControl={
+              <RefreshControl
+                refreshing={isRefreshing}
+                onRefresh={refreshChat}
+                tintColor={colors.primary}
+                colors={[colors.primary]}
+              />
+            }
             ListEmptyComponent={
               <View style={styles.emptyContainer}>
                 <Text style={styles.emptyText}>No messages yet</Text>
@@ -867,6 +1117,21 @@ function ChatScreen() {
         )}
 
 
+
+        {/* New-messages pill — shown while reading history and messages land */}
+        {newMessagesCount > 0 && (
+          <TouchableOpacity
+            style={styles.newMessagesPill}
+            onPress={jumpToNewMessages}
+            accessibilityRole="button"
+            accessibilityLabel={`${newMessagesCount} new message${newMessagesCount === 1 ? '' : 's'}. Jump to latest.`}
+          >
+            <ChevronDown color="#FFFFFF" size={14} />
+            <Text style={styles.newMessagesPillText}>
+              {newMessagesCount === 1 ? '1 new message' : `${newMessagesCount} new messages`}
+            </Text>
+          </TouchableOpacity>
+        )}
 
         <View
           style={[
@@ -897,13 +1162,16 @@ function ChatScreen() {
             multiline
             maxLength={500}
           />
-          <TouchableOpacity
+          <TouchableScale
             style={[styles.sendButton, !newMessage.trim() && styles.sendButtonDisabled]}
             onPress={sendMessage}
             disabled={!newMessage.trim()}
+            scaleTo={0.9}
+            accessibilityRole="button"
+            accessibilityLabel="Send message"
           >
             <Send color="#FFFFFF" size={20} />
-          </TouchableOpacity>
+          </TouchableScale>
         </View>
       </KeyboardAvoidingView>
 
@@ -913,7 +1181,7 @@ function ChatScreen() {
           style={styles.menuOverlay}
           onPress={() => setIsMessageMenuVisible(false)}
         >
-          <View style={styles.menuContainer}>
+          <Animated.View style={[styles.menuContainer, { transform: [{ scale: menuScale }] }]}>
             {/* Info - Admin can see on any message, others only on own messages */}
             {(user?.role === 'admin' || selectedMessage?.sender._id === user?._id) && (
               <TouchableOpacity style={styles.menuItem} onPress={openMessageInfo}>
@@ -945,7 +1213,7 @@ function ChatScreen() {
                 <Text style={styles.menuItemTextDanger}>Delete for everyone</Text>
               </TouchableOpacity>
             )}
-          </View>
+          </Animated.View>
         </Pressable>
       </Modal>
 
@@ -1046,12 +1314,12 @@ function ChatScreen() {
             style={StyleSheet.absoluteFill}
             onPress={() => setIsAttachmentMenuVisible(false)}
           />
-          <View
+          <Animated.View
             style={[
               styles.menuContainer,
               styles.attachmentMenuContainer,
               // Anchor above the input row, which now includes the bottom inset.
-              { bottom: 100 + insets.bottom },
+              { bottom: 100 + insets.bottom, transform: [{ scale: attachmentMenuScale }] },
             ]}
           >
             <TouchableOpacity style={styles.menuItem} onPress={handlePickDocument}>
@@ -1062,7 +1330,7 @@ function ChatScreen() {
               <ImageIcon color={colors.textBody} size={20} />
               <Text style={styles.menuItemText}>Gallery</Text>
             </TouchableOpacity>
-          </View>
+          </Animated.View>
         </View>
       </Modal>
 
@@ -1541,6 +1809,46 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
     marginTop: 4,
+  },
+  // Floating pill above the input row while new messages land off-screen.
+  newMessagesPill: {
+    position: 'absolute',
+    alignSelf: 'center',
+    bottom: 84,
+    zIndex: 5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: colors.primary,
+    borderRadius: 999,
+    paddingVertical: 7,
+    paddingHorizontal: 14,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.18,
+    shadowRadius: 6,
+    elevation: 6,
+  },
+  newMessagesPillText: {
+    color: '#FFFFFF',
+    fontSize: 12.5,
+    fontWeight: '700',
+  },
+  // Failed optimistic send: a soft red edge + lighter bubble.
+  failedMessage: {
+    borderWidth: 1.5,
+    borderColor: colors.danger,
+    opacity: 0.85,
+  },
+  // Loading placeholders (ChatLoadingSkeleton).
+  skeletonContainer: {
+    flex: 1,
+    padding: 15,
+    gap: 10,
+  },
+  skeletonBubble: {
+    borderRadius: 16,
+    backgroundColor: colors.bg,
   },
 
 });

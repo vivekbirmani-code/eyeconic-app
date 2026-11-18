@@ -11,15 +11,18 @@ import {
   Animated,
   Easing,
   Pressable,
+  RefreshControl,
 } from 'react-native';
 import { ScreenContainer } from '@/components/layout';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
-import { Plus, MessageCircle, Users, ChevronDown, ChevronUp, Pencil, Folder } from 'lucide-react-native';
+import { Plus, MessageCircle, Users, ChevronDown, Pencil, Folder } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from '@/utils/haptics';
 import { colors } from '@/utils/theme';
 import SearchBar from '@/components/SearchBar';
+import TouchableScale from '@/components/TouchableScale';
+import Collapsible from '@/components/Collapsible';
 import { useAuth } from '@/context/AuthContext';
 import { useNotifications } from '@/context/NotificationContext';
 import { api } from '@/services/api';
@@ -49,6 +52,217 @@ interface MentorFolder {
   groups: Group[];
 }
 
+// ---- Motion constants ------------------------------------------------
+// Cards cascade in one-by-one on first load; the gate flag (see Groups)
+// turns entrance off afterwards so refetches/focus returns never replay it.
+const CARD_STAGGER_MS = 35;
+const MAX_STAGGERED_CARDS = 12;
+
+/**
+ * One group card: springy press feedback, one-shot staggered entrance, and a
+ * tiny pop on the unread badge when a new message lands.
+ */
+function GroupCard({
+  group,
+  index,
+  animateEntrance,
+  unreadCount,
+  isAdmin,
+  onOpen,
+  onEdit,
+}: {
+  group: Group;
+  index: number;
+  animateEntrance: boolean;
+  unreadCount: number;
+  isAdmin: boolean;
+  onOpen: (groupId: string) => void;
+  onEdit: (group: Group) => void;
+}) {
+  const entrance = useRef(new Animated.Value(animateEntrance ? 0 : 1)).current;
+  const badgeScale = useRef(new Animated.Value(1)).current;
+  const prevUnreadRef = useRef(unreadCount);
+
+  useEffect(() => {
+    if (!animateEntrance) return;
+    Animated.parallel([
+      Animated.timing(entrance, {
+        toValue: 1,
+        duration: 280,
+        delay: 60 + Math.min(index, MAX_STAGGERED_CARDS) * CARD_STAGGER_MS,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: true,
+      }),
+    ]).start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Badge pops only when the count GROWS (new message), not on refetches that
+  // reset it to zero.
+  useEffect(() => {
+    const grew = unreadCount > prevUnreadRef.current;
+    prevUnreadRef.current = unreadCount;
+    if (!grew) return;
+    Animated.sequence([
+      Animated.spring(badgeScale, { toValue: 1.35, speed: 40, bounciness: 6, useNativeDriver: true }),
+      Animated.spring(badgeScale, { toValue: 1, friction: 4, tension: 220, useNativeDriver: true }),
+    ]).start();
+  }, [unreadCount, badgeScale]);
+
+  return (
+    <Animated.View
+      style={{
+        opacity: entrance,
+        transform: [{
+          translateY: entrance.interpolate({
+            inputRange: [0, 1],
+            outputRange: [14, 0],
+          }),
+        }],
+      }}
+    >
+      <TouchableScale
+        style={styles.groupCard}
+        onPress={() => onOpen(group._id)}
+        // No accessibilityRole here on purpose: the edit-pencil inside is a
+        // button, and two nested role=button elements render as an invalid
+        // <button> inside <button> on web. The card keeps its label; the
+        // pencil keeps full button semantics.
+        accessibilityLabel={`Open group ${group.name}`}
+      >
+        <View style={styles.groupIconTile}>
+          <MessageCircle color={colors.primary} size={22} />
+        </View>
+        <View style={styles.groupInfo}>
+          <View style={styles.groupHeaderRow}>
+            <Text style={styles.groupName} numberOfLines={1}>{group.name}</Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              {isAdmin && (
+                <TouchableOpacity
+                  onPress={(e) => {
+                    e.stopPropagation?.();
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    onEdit(group);
+                  }}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Edit ${group.name}`}
+                >
+                  <Pencil color={colors.textSecondary} size={16} />
+                </TouchableOpacity>
+              )}
+              {unreadCount > 0 && (
+                <Animated.View style={[styles.unreadBadge, { transform: [{ scale: badgeScale }] }]}>
+                  <Text style={styles.unreadBadgeText}>{unreadCount}</Text>
+                </Animated.View>
+              )}
+            </View>
+          </View>
+          {group.description ? (
+            <Text style={styles.groupDescription} numberOfLines={1}>{group.description}</Text>
+          ) : null}
+          <View style={styles.memberCount}>
+            <Users color={colors.textMuted} size={14} />
+            <Text style={styles.memberText}>{group.members.length} members</Text>
+          </View>
+        </View>
+      </TouchableScale>
+    </Animated.View>
+  );
+}
+
+/**
+ * One mentor folder: staggered block entrance, spring chevron rotation, and a
+ * height-animated expand/collapse (content unmounts when fully collapsed).
+ */
+function MentorFolderCard({
+  folder,
+  index,
+  animateEntrance,
+  isCollapsed,
+  onToggle,
+  renderGroupItem,
+}: {
+  folder: MentorFolder;
+  index: number;
+  animateEntrance: boolean;
+  isCollapsed: boolean;
+  onToggle: (folderKey: string) => void;
+  renderGroupItem: (group: Group) => React.ReactNode;
+}) {
+  const entrance = useRef(new Animated.Value(animateEntrance ? 0 : 1)).current;
+  const chevronSpin = useRef(new Animated.Value(isCollapsed ? 0 : 1)).current;
+
+  useEffect(() => {
+    if (!animateEntrance) return;
+    Animated.timing(entrance, {
+      toValue: 1,
+      duration: 280,
+      delay: 60 + Math.min(index, MAX_STAGGERED_CARDS) * CARD_STAGGER_MS,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    Animated.spring(chevronSpin, {
+      toValue: isCollapsed ? 0 : 1,
+      friction: 6,
+      tension: 180,
+      useNativeDriver: true,
+    }).start();
+  }, [isCollapsed, chevronSpin]);
+
+  return (
+    <Animated.View style={{ opacity: entrance }}>
+      <View style={styles.mentorFolderCard}>
+        <TouchableScale
+          style={styles.mentorFolderHeader}
+          onPress={() => onToggle(folder.key)}
+          accessibilityRole="button"
+          accessibilityLabel={`${folder.title} folder, ${folder.groups.length} student groups. ${isCollapsed ? 'Collapsed' : 'Expanded'}`}
+          accessibilityState={{ expanded: !isCollapsed }}
+        >
+          <View style={styles.mentorFolderHeaderLeft}>
+            <View style={styles.mentorFolderIcon}>
+              <Folder color={colors.primary} size={18} />
+            </View>
+            <View>
+              <Text style={styles.mentorFolderTitle}>{folder.title}</Text>
+              <Text style={styles.mentorFolderSubtitle}>
+                {folder.groups.length} student group{folder.groups.length === 1 ? '' : 's'}
+              </Text>
+            </View>
+          </View>
+          <Animated.View
+            style={{
+              transform: [{
+                rotate: chevronSpin.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: ['0deg', '180deg'],
+                }),
+              }],
+            }}
+          >
+            <ChevronDown color={colors.textSecondary} size={18} />
+          </Animated.View>
+        </TouchableScale>
+
+        <Collapsible visible={!isCollapsed}>
+          <View style={styles.mentorFolderContent}>
+            {folder.groups.map((group) => (
+              <View key={group._id} style={styles.mentorFolderGroupItem}>
+                {renderGroupItem(group)}
+              </View>
+            ))}
+          </View>
+        </Collapsible>
+      </View>
+    </Animated.View>
+  );
+}
+
 function Groups() {
   const { user } = useAuth();
   const { unreadCounts, socket } = useNotifications();
@@ -62,10 +276,12 @@ function Groups() {
   // Animation values for premium UI
   const headerOpacity = useRef(new Animated.Value(0)).current;
   const headerScale = useRef(new Animated.Value(0.95)).current;
-  const cardsOpacity = useRef(new Animated.Value(0)).current;
-  const cardsSlideY = useRef(new Animated.Value(20)).current;
+  // Cards stagger in only on the screen's first load; later refetches /
+  // focus returns render instantly (cards read this ref at mount time).
+  const entranceEnabledRef = useRef(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-  // Premium page entry animation
+  // Premium page entry animation (header) + entrance gate expiry.
   useEffect(() => {
     Animated.parallel([
       Animated.timing(headerOpacity, {
@@ -80,26 +296,18 @@ function Groups() {
         tension: 40,
         useNativeDriver: true,
       }),
-      Animated.timing(cardsOpacity, {
-        toValue: 1,
-        duration: 500,
-        delay: 200,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
-      Animated.timing(cardsSlideY, {
-        toValue: 0,
-        duration: 500,
-        delay: 200,
-        easing: Easing.out(Easing.cubic),
-        useNativeDriver: true,
-      }),
     ]).start();
+    const gateTimer = setTimeout(() => {
+      entranceEnabledRef.current = false;
+    }, 60 + MAX_STAGGERED_CARDS * CARD_STAGGER_MS + 500);
+    return () => clearTimeout(gateTimer);
   }, []);
 
-  // Declare fetchGroups first so hooks below can reference it
-  const fetchGroups = useCallback(async () => {
-    setIsLoading(true);
+  // Declare fetchGroups first so hooks below can reference it.
+  // showLoading=false keeps the current list on screen during pull-to-refresh
+  // (skeletons are only for a cold start).
+  const fetchGroups = useCallback(async (showLoading = true) => {
+    if (showLoading) setIsLoading(true);
     try {
       const response = await api.get('/groups');
       setGroups(response.data);
@@ -109,6 +317,12 @@ function Groups() {
       setIsLoading(false);
     }
   }, []);
+
+  const refreshGroups = useCallback(async () => {
+    setIsRefreshing(true);
+    await fetchGroups(false);
+    setIsRefreshing(false);
+  }, [fetchGroups]);
 
   // Refresh on tab focus (every time user navigates to this tab)
   useFocusEffect(
@@ -270,6 +484,7 @@ function Groups() {
   }, [mentorFolders, activeFolderKey]);
 
   const openChat = (groupId: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     router.push({ pathname: '/chat/[id]', params: { id: groupId } });
   };
 
@@ -357,97 +572,25 @@ function Groups() {
     );
   };
 
-  const renderGroup = ({ item }: { item: Group }) => {
-    const unreadCount = unreadCounts[item._id] || 0;
-
-    return (
-      <TouchableOpacity
-        style={styles.groupCard}
-        onPress={() => openChat(item._id)}
-        activeOpacity={0.75}
-      >
-        <View style={styles.groupIconTile}>
-          <MessageCircle color={colors.primary} size={22} />
-        </View>
-        <View style={styles.groupInfo}>
-          <View style={styles.groupHeaderRow}>
-            <Text style={styles.groupName} numberOfLines={1}>{item.name}</Text>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              {user?.role === 'admin' && (
-                <TouchableOpacity
-                  onPress={(e) => {
-                    e.stopPropagation?.();
-                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    openEditModal(item);
-                  }}
-                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-                  accessibilityRole="button"
-                  accessibilityLabel={`Edit ${item.name}`}
-                >
-                  <Pencil color={colors.textSecondary} size={16} />
-                </TouchableOpacity>
-              )}
-              {unreadCount > 0 && (
-                <View style={styles.unreadBadge}>
-                  <Text style={styles.unreadBadgeText}>{unreadCount}</Text>
-                </View>
-              )}
-            </View>
-          </View>
-          {item.description ? (
-            <Text style={styles.groupDescription} numberOfLines={1}>{item.description}</Text>
-          ) : null}
-          <View style={styles.memberCount}>
-            <Users color={colors.textMuted} size={14} />
-            <Text style={styles.memberText}>{item.members.length} members</Text>
-          </View>
-        </View>
-      </TouchableOpacity>
-    );
-  };
+  // Inner (folder) items never stagger — only top-level cards do.
+  const renderGroupItem = (group: Group) => (
+    <GroupCard
+      group={group}
+      index={0}
+      animateEntrance={false}
+      unreadCount={unreadCounts[group._id] || 0}
+      isAdmin={user?.role === 'admin'}
+      onOpen={openChat}
+      onEdit={openEditModal}
+    />
+  );
 
   const toggleFolder = (folderKey: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setCollapsedFolders((prev) => ({
       ...prev,
       [folderKey]: !prev[folderKey],
     }));
-  };
-
-  const renderMentorFolder = ({ item }: { item: MentorFolder }) => {
-    const isCollapsed = !!collapsedFolders[item.key];
-
-    return (
-      <View style={styles.mentorFolderCard}>
-        <TouchableOpacity
-          style={styles.mentorFolderHeader}
-          onPress={() => toggleFolder(item.key)}
-          activeOpacity={0.85}
-        >
-          <View style={styles.mentorFolderHeaderLeft}>
-            <View style={styles.mentorFolderIcon}>
-              <Folder color={colors.primary} size={18} />
-            </View>
-            <View>
-              <Text style={styles.mentorFolderTitle}>{item.title}</Text>
-              <Text style={styles.mentorFolderSubtitle}>
-                {item.groups.length} student group{item.groups.length === 1 ? '' : 's'}
-              </Text>
-            </View>
-          </View>
-          {isCollapsed ? <ChevronDown color={colors.textSecondary} size={18} /> : <ChevronUp color={colors.textSecondary} size={18} />}
-        </TouchableOpacity>
-
-        {!isCollapsed && (
-          <View style={styles.mentorFolderContent}>
-            {item.groups.map((group) => (
-              <View key={group._id} style={styles.mentorFolderGroupItem}>
-                {renderGroup({ item: group })}
-              </View>
-            ))}
-          </View>
-        )}
-      </View>
-    );
   };
 
   return (
@@ -555,46 +698,53 @@ function Groups() {
 
       {/* Groups List with Skeleton Loading */}
       {isLoading ? (
-        <Animated.View
-          style={[
-            styles.list,
-            {
-              opacity: cardsOpacity,
-              transform: [{ translateY: cardsSlideY }],
-            }
-          ]}
-        >
+        <View style={styles.list}>
           {[1, 2, 3, 4, 5].map((key) => (
             <SkeletonGroupCard key={key} />
           ))}
-        </Animated.View>
+        </View>
       ) : (
-        <Animated.View
-          style={{
-            flex: 1,
-            opacity: cardsOpacity,
-            transform: [{ translateY: cardsSlideY }],
-          }}
-        >
+        <View style={{ flex: 1 }}>
           {user?.role === 'admin' ? (
             <ScrollView
               contentContainerStyle={[styles.list, styles.adminScrollContent]}
               showsVerticalScrollIndicator={false}
               scrollIndicatorInsets={{ bottom: 120 }}
+              refreshControl={
+                <RefreshControl
+                  refreshing={isRefreshing}
+                  onRefresh={refreshGroups}
+                  tintColor={colors.primary}
+                  colors={[colors.primary]}
+                />
+              }
             >
-              {visibleMentorFolders.map((folder) => (
-                <View key={folder.key}>
-                  {renderMentorFolder({ item: folder })}
-                </View>
+              {visibleMentorFolders.map((folder, index) => (
+                <MentorFolderCard
+                  key={folder.key}
+                  folder={folder}
+                  index={index}
+                  animateEntrance={entranceEnabledRef.current}
+                  isCollapsed={!!collapsedFolders[folder.key]}
+                  onToggle={toggleFolder}
+                  renderGroupItem={renderGroupItem}
+                />
               ))}
 
               {activeFolderKey === 'all' && otherGroups.length > 0 && (
                 <View style={styles.otherGroupsSection}>
                   <Text style={styles.otherGroupsTitle}>Other Groups</Text>
-                  {otherGroups.map((group) => (
-                    <View key={group._id}>
-                      {renderGroup({ item: group })}
-                    </View>
+                  {otherGroups.map((group, index) => (
+                    <GroupCard
+                      key={group._id}
+                      group={group}
+                      index={visibleMentorFolders.length + index}
+                      animateEntrance={entranceEnabledRef.current}
+                      unreadCount={unreadCounts[group._id] || 0}
+                      isAdmin
+                      onOpen={openChat}
+                      onEdit={openEditModal}
+                    />
                   ))}
                 </View>
               )}
@@ -625,10 +775,28 @@ function Groups() {
           ) : (
             <FlatList
               data={filteredAndSortedGroups}
-              renderItem={renderGroup}
+              renderItem={({ item, index }) => (
+                <GroupCard
+                  group={item}
+                  index={index}
+                  animateEntrance={entranceEnabledRef.current}
+                  unreadCount={unreadCounts[item._id] || 0}
+                  isAdmin={false}
+                  onOpen={openChat}
+                  onEdit={openEditModal}
+                />
+              )}
               keyExtractor={(item) => item._id}
               contentContainerStyle={[styles.list, styles.studentScrollContent]}
               showsVerticalScrollIndicator={false}
+              refreshControl={
+                <RefreshControl
+                  refreshing={isRefreshing}
+                  onRefresh={refreshGroups}
+                  tintColor={colors.primary}
+                  colors={[colors.primary]}
+                />
+              }
               ListEmptyComponent={
                 <View style={styles.emptyContainer}>
                   <View style={styles.emptyIconContainer}>
@@ -642,7 +810,7 @@ function Groups() {
               }
             />
           )}
-        </Animated.View>
+        </View>
       )}
 
     </ScreenContainer>

@@ -12,6 +12,7 @@ import {
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { KeyboardAvoidingDialog } from '@/components/KeyboardAvoidingDialog';
 import { colors } from '@/utils/theme';
+import { Toast } from '@/components/Toast';
 import { api } from '@/services/api';
 
 /**
@@ -68,7 +69,7 @@ function EditGroupScreen() {
       });
       // Groups list refreshes via useFocusEffect when this screen closes.
       close();
-      Alert.alert('Success', 'Group updated successfully');
+      Toast.show('Group updated');
     } catch (error: any) {
       Alert.alert('Error', error?.response?.data?.message || 'Failed to update group');
     } finally {

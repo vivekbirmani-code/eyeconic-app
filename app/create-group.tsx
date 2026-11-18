@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { withFeatureGate } from '@/components/withFeatureGate';
 import {
   View,
@@ -9,6 +9,7 @@ import {
   Alert,
   ScrollView,
   KeyboardAvoidingView,
+  Animated,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { FullScreenContainer } from '@/components/layout';
@@ -17,7 +18,10 @@ import { api } from '@/services/api';
 import * as Haptics from '@/utils/haptics';
 import { colors } from '@/utils/theme';
 import SearchBar from '@/components/SearchBar';
-import { X, Check, ChevronDown, ChevronUp } from 'lucide-react-native';
+import Collapsible from '@/components/Collapsible';
+import TouchableScale from '@/components/TouchableScale';
+import { Toast } from '@/components/Toast';
+import { X, Check, ChevronDown } from 'lucide-react-native';
 
 interface User {
   _id: string;
@@ -59,6 +63,16 @@ function CreateGroup() {
   const [isSearching, setIsSearching] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+  // Chevron spins with the dropdown's expand/collapse.
+  const chevronSpin = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.spring(chevronSpin, {
+      toValue: isDropdownOpen ? 1 : 0,
+      friction: 6,
+      tension: 180,
+      useNativeDriver: true,
+    }).start();
+  }, [isDropdownOpen, chevronSpin]);
 
   // Only admins may create groups; bounce everyone else out immediately.
   useEffect(() => {
@@ -164,7 +178,7 @@ function CreateGroup() {
 
       // Groups list refreshes via useFocusEffect when this screen closes.
       router.back();
-      Alert.alert('Success', 'Group created successfully with ' + (memberIds.length + 1) + ' members');
+      Toast.show(`Group created with ${memberIds.length + 1} member${memberIds.length ? 's' : ''}`);
     } catch (error: any) {
       const message = error?.response?.data?.message || 'Failed to create group';
       Alert.alert('Error', message);
@@ -229,17 +243,34 @@ function CreateGroup() {
 
             <TouchableOpacity
               style={styles.dropdownButton}
-              onPress={() => setIsDropdownOpen(!isDropdownOpen)}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setIsDropdownOpen(!isDropdownOpen);
+              }}
               activeOpacity={0.7}
               disabled={isCreating}
+              accessibilityRole="button"
+              accessibilityLabel={`Group type: ${newGroup.type}. ${isDropdownOpen ? 'Close' : 'Open'} type options`}
+              accessibilityState={{ expanded: isDropdownOpen }}
             >
               <Text style={styles.dropdownButtonText}>
                 {newGroup.type.charAt(0).toUpperCase() + newGroup.type.slice(1)}
               </Text>
-              {isDropdownOpen ? <ChevronUp size={20} color={colors.textSecondary} /> : <ChevronDown size={20} color={colors.textSecondary} />}
+              <Animated.View
+                style={{
+                  transform: [{
+                    rotate: chevronSpin.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: ['0deg', '180deg'],
+                    }),
+                  }],
+                }}
+              >
+                <ChevronDown size={20} color={colors.textSecondary} />
+              </Animated.View>
             </TouchableOpacity>
 
-            {isDropdownOpen && (
+            <Collapsible visible={isDropdownOpen}>
               <View style={styles.dropdownContainer}>
                 {(['general', 'mentors', 'admin'] as const).map((type) => (
                   <TouchableOpacity
@@ -275,7 +306,7 @@ function CreateGroup() {
                   </TouchableOpacity>
                 ))}
               </View>
-            )}
+            </Collapsible>
 
             <Text style={styles.typeDescription}>
               {newGroup.type === 'general' ? 'Allows Mentors & 1 Student' :
@@ -375,13 +406,18 @@ function CreateGroup() {
             </View>
           )}
 
-          <TouchableOpacity
+          <TouchableScale
             style={[styles.createButton, isCreating && styles.createButtonDisabled]}
-            onPress={createGroup}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              createGroup();
+            }}
             disabled={isCreating}
+            accessibilityRole="button"
+            accessibilityLabel="Create group"
           >
             <Text style={styles.createButtonText}>Create Group</Text>
-          </TouchableOpacity>
+          </TouchableScale>
         </ScrollView>
       </KeyboardAvoidingView>
     </FullScreenContainer>

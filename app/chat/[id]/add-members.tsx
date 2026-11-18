@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import { withFeatureGate } from '@/components/withFeatureGate';
 import {
   View,
@@ -8,6 +8,7 @@ import {
   FlatList,
   Alert,
   ActivityIndicator,
+  Animated,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Check, UserPlus } from 'lucide-react-native';
@@ -15,8 +16,36 @@ import { FullScreenContainer } from '@/components/layout';
 import { colors } from '@/utils/theme';
 import ScreenHeader from '@/components/ScreenHeader';
 import SearchBar from '@/components/SearchBar';
+import { Toast } from '@/components/Toast';
 import { api } from '@/services/api';
 import UserAvatar from '@/components/UserAvatar';
+
+/**
+ * Selection circle with a springy check pop when it turns on.
+ */
+function SpringCheckbox({ selected }: { selected: boolean }) {
+  const scale = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (!selected) return;
+    Animated.sequence([
+      Animated.spring(scale, { toValue: 1.3, speed: 40, bounciness: 7, useNativeDriver: true }),
+      Animated.spring(scale, { toValue: 1, friction: 4, tension: 220, useNativeDriver: true }),
+    ]).start();
+  }, [selected, scale]);
+
+  return (
+    <Animated.View
+      style={[
+        styles.checkbox,
+        selected && styles.checkboxSelected,
+        { transform: [{ scale: selected ? scale : 1 }] },
+      ]}
+    >
+      {selected && <Check color="#FFFFFF" size={15} />}
+    </Animated.View>
+  );
+}
 
 interface User {
   _id: string;
@@ -93,7 +122,11 @@ function AddMembersScreen() {
 
     try {
       await api.post(`/groups/${groupId}/members`, { userIds: selectedNewMembers });
-      Alert.alert('Success', 'Members added successfully');
+      Toast.show(
+        selectedNewMembers.length === 1
+          ? 'Member added'
+          : `${selectedNewMembers.length} members added`
+      );
       router.back();
     } catch (error: any) {
       Alert.alert('Error', error?.response?.data?.message || 'Failed to add members');
@@ -166,14 +199,7 @@ function AddMembersScreen() {
                 <Text style={styles.memberName}>{item.name}</Text>
                 <Text style={styles.memberEmail} numberOfLines={1}>{item.email} • {item.role}</Text>
               </View>
-              <View style={[
-                styles.checkbox,
-                selectedNewMembers.includes(item._id) && styles.checkboxSelected
-              ]}>
-                {selectedNewMembers.includes(item._id) && (
-                  <Check color="#FFFFFF" size={15} />
-                )}
-              </View>
+              <SpringCheckbox selected={selectedNewMembers.includes(item._id)} />
             </TouchableOpacity>
           )}
           ListEmptyComponent={

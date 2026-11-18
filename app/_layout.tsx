@@ -15,6 +15,7 @@ import { GuestQuizProvider } from '@/context/GuestQuizContext';
 import FloatingCallBar from '@/components/FloatingCallBar';
 import IncomingCallScreen from '@/components/IncomingCallScreen';
 import DisclaimerScreen from '@/components/DisclaimerScreen';
+import { ToastHost } from '@/components/Toast';
 import { usePushNotifications } from '@/hooks/usePushNotifications';
 import { requestBatteryOptimizationExemption } from '@/utils/notificationService';
 import { useRouter } from 'expo-router';
@@ -229,6 +230,9 @@ function AppContent() {
     <View style={{ flex: 1 }}>
       {/* RTCView audio streams - positioned off-screen but NOT in hidden container */}
       {renderAudioStreams()}
+
+      {/* Self-dismissing toasts (Group module successes etc.) */}
+      <ToastHost />
 
       {/* Floating call bar when minimized */}
       <FloatingCallBar />

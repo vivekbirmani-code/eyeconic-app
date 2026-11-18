@@ -8,6 +8,7 @@ import {
   FlatList,
   Alert,
   ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
@@ -18,6 +19,7 @@ import { api } from '@/services/api';
 import * as Haptics from '@/utils/haptics';
 import { colors } from '@/utils/theme';
 import ScreenHeader from '@/components/ScreenHeader';
+import { Toast } from '@/components/Toast';
 import UserAvatar, { getRoleColors } from '@/components/UserAvatar';
 import InternTimeSlicer from '@/components/intern/InternTimeSlicer';
 
@@ -59,6 +61,7 @@ function GroupInfoScreen() {
   const [subjectsByStudent, setSubjectsByStudent] = useState<Record<string, Subject[]>>({});
   const [subjectsStatus, setSubjectsStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [isDeletingGroup, setIsDeletingGroup] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const fetchGroup = useCallback(async () => {
     if (!groupId) return;
@@ -84,6 +87,13 @@ function GroupInfoScreen() {
       setSubjectsStatus('error');
     }
   }, [groupId]);
+
+  // Pull-to-refresh: refetch without flashing the full-screen loader.
+  const refreshInfo = useCallback(async () => {
+    setIsRefreshing(true);
+    await Promise.all([fetchGroup(), fetchMemberSubjects()]);
+    setIsRefreshing(false);
+  }, [fetchGroup, fetchMemberSubjects]);
 
   // Refetch every time the screen comes into focus (initial open and when
   // returning from Add Participants) so member/subject changes are reflected
@@ -150,8 +160,10 @@ function GroupInfoScreen() {
       // event when it is the focused screen — while Group Info is on top it
       // stays quiet, so this screen owns the navigation. dismissTo pops the
       // whole chat stack and lands on the Groups tab, which refetches on
-      // focus so the deleted group is gone immediately.
+      // focus so the deleted group is gone immediately. The toast (global
+      // host) confirms the deletion on arrival.
       router.dismissTo('/(tabs)/groups' as any);
+      Toast.show('Group deleted');
     } catch (error: any) {
       setIsDeletingGroup(false);
       Haptics.errorNotification();
@@ -231,6 +243,14 @@ function GroupInfoScreen() {
           style={{ flex: 1 }}
           contentContainerStyle={group ? { paddingBottom: 40 } : styles.loadingContainer}
           showsVerticalScrollIndicator={true}
+          refreshControl={
+            <RefreshControl
+              refreshing={isRefreshing}
+              onRefresh={refreshInfo}
+              tintColor={colors.primary}
+              colors={[colors.primary]}
+            />
+          }
           removeClippedSubviews={false}
           nestedScrollEnabled={true}
           scrollEnabled={true}
