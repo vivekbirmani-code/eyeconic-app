@@ -3,7 +3,6 @@ import { withFeatureGate } from '@/components/withFeatureGate';
 import {
   View,
   Text,
-  TextInput,
   TouchableOpacity,
   StyleSheet,
   FlatList,
@@ -11,8 +10,11 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { X, Search, Check } from 'lucide-react-native';
+import { Check, UserPlus } from 'lucide-react-native';
 import { FullScreenContainer } from '@/components/layout';
+import { colors } from '@/utils/theme';
+import ScreenHeader from '@/components/ScreenHeader';
+import SearchBar from '@/components/SearchBar';
 import { api } from '@/services/api';
 import UserAvatar from '@/components/UserAvatar';
 
@@ -101,40 +103,44 @@ function AddMembersScreen() {
 
   return (
     <FullScreenContainer style={styles.container}>
-      <View style={styles.modalHeader}>
-        <TouchableOpacity
-          onPress={() => router.back()}
-          style={styles.backButton}
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          accessibilityRole="button"
-          accessibilityLabel="Close add participants"
-        >
-          <X color="#000000" size={24} />
-        </TouchableOpacity>
-        <Text style={styles.modalTitle}>Add Participants</Text>
-        {selectedNewMembers.length > 0 ? (
-          <TouchableOpacity onPress={addMembers} disabled={isAdding}>
-            <Text style={styles.doneButtonText}>Add ({selectedNewMembers.length})</Text>
-          </TouchableOpacity>
-        ) : (
-          <View style={{ width: 24 }} />
-        )}
-      </View>
+      <ScreenHeader
+        title="Add Participants"
+        onBack={() => router.back()}
+        backIcon="x"
+        backAccessibilityLabel="Close add participants"
+        right={
+          selectedNewMembers.length > 0 ? (
+            <TouchableOpacity
+              onPress={addMembers}
+              disabled={isAdding}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+              accessibilityRole="button"
+              accessibilityLabel={`Add ${selectedNewMembers.length} participants`}
+            >
+              <View style={styles.addButtonRow}>
+                {isAdding ? (
+                  <ActivityIndicator size="small" color={colors.primary} />
+                ) : null}
+                <Text style={styles.doneButtonText}>
+                  {isAdding ? 'Adding…' : `Add (${selectedNewMembers.length})`}
+                </Text>
+              </View>
+            </TouchableOpacity>
+          ) : undefined
+        }
+      />
 
       <View style={styles.searchContainer}>
-        <Search color="#6B7280" size={20} />
-        <TextInput
-          style={styles.searchInput}
-          placeholder="Search users..."
-          placeholderTextColor="#9CA3AF"
+        <SearchBar
           value={memberSearchQuery}
           onChangeText={setMemberSearchQuery}
+          placeholder="Search users..."
         />
       </View>
 
       {isLoading ? (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#01b4ae" />
+          <ActivityIndicator size="large" color={colors.primary} />
         </View>
       ) : (
         <FlatList
@@ -146,29 +152,38 @@ function AddMembersScreen() {
             <TouchableOpacity
               style={styles.userSelectRow}
               onPress={() => toggleUserSelection(item._id)}
+              activeOpacity={0.75}
+              accessibilityRole="button"
+              accessibilityLabel={`Select ${item.name}`}
             >
               <UserAvatar
                 name={item.name}
                 role={item.role}
                 imageUrl={item.profilePicture}
-                size={40}
+                size={42}
               />
               <View style={styles.memberInfo}>
                 <Text style={styles.memberName}>{item.name}</Text>
-                <Text style={styles.memberEmail}>{item.email} • {item.role}</Text>
+                <Text style={styles.memberEmail} numberOfLines={1}>{item.email} • {item.role}</Text>
               </View>
               <View style={[
                 styles.checkbox,
                 selectedNewMembers.includes(item._id) && styles.checkboxSelected
               ]}>
                 {selectedNewMembers.includes(item._id) && (
-                  <Check color="#FFFFFF" size={16} />
+                  <Check color="#FFFFFF" size={15} />
                 )}
               </View>
             </TouchableOpacity>
           )}
           ListEmptyComponent={
-            <Text style={styles.emptyText}>No users found</Text>
+            <View style={styles.emptyContainer}>
+              <View style={styles.emptyIconContainer}>
+                <UserPlus color={colors.textMuted} size={34} />
+              </View>
+              <Text style={styles.emptyTitle}>No users found</Text>
+              <Text style={styles.emptySubtext}>Try a different name or email</Text>
+            </View>
           }
         />
       )}
@@ -179,37 +194,20 @@ function AddMembersScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surface,
   },
-  backButton: {
-    padding: 5,
-  },
-  modalHeader: {
+  addButtonRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    gap: 6,
   },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#000000',
+  doneButtonText: {
+    color: colors.primary,
+    fontSize: 16,
+    fontWeight: '700',
   },
   searchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
     padding: 10,
-    backgroundColor: '#F3F4F6',
-    margin: 10,
-    borderRadius: 8,
-  },
-  searchInput: {
-    flex: 1,
-    marginLeft: 10,
-    fontSize: 16,
-    color: '#000000',
   },
   userList: {
     paddingBottom: 20,
@@ -219,49 +217,64 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 15,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: colors.surfaceMuted,
   },
   memberInfo: {
     flex: 1,
+    marginLeft: 12,
+    minWidth: 0,
   },
   memberName: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#000000',
+    fontSize: 15.5,
+    fontWeight: '600',
+    color: colors.text,
   },
   memberEmail: {
-    fontSize: 13,
-    color: '#6B7280',
+    fontSize: 12.5,
+    color: colors.textMuted,
+    marginTop: 1,
   },
   checkbox: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     borderWidth: 2,
-    borderColor: '#D1D5DB',
+    borderColor: colors.borderStrong,
     justifyContent: 'center',
     alignItems: 'center',
   },
   checkboxSelected: {
-    backgroundColor: '#01b4ae',
-    borderColor: '#01b4ae',
-  },
-  doneButtonText: {
-    color: '#01b4ae',
-    fontSize: 16,
-    fontWeight: '700',
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
   },
-  emptyText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#6B7280',
-    textAlign: 'center',
-    padding: 20,
+  emptyContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 40,
+  },
+  emptyIconContainer: {
+    width: 72,
+    height: 72,
+    borderRadius: 36,
+    backgroundColor: colors.bg,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  emptyTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: colors.textSecondary,
+  },
+  emptySubtext: {
+    fontSize: 13.5,
+    color: colors.textMuted,
+    marginTop: 4,
   },
 });
 // TEMPORARY FEATURE FREEZE — quiz-only availability (utils/featureAvailability.ts).

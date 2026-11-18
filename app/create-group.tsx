@@ -15,7 +15,9 @@ import { FullScreenContainer } from '@/components/layout';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
 import * as Haptics from '@/utils/haptics';
-import { Search, X, Check, ChevronDown, ChevronUp } from 'lucide-react-native';
+import { colors } from '@/utils/theme';
+import SearchBar from '@/components/SearchBar';
+import { X, Check, ChevronDown, ChevronUp } from 'lucide-react-native';
 
 interface User {
   _id: string;
@@ -175,7 +177,7 @@ function CreateGroup() {
     <View key={userItem._id} style={styles.selectedChip}>
       <Text style={styles.chipText}>{userItem.name} ({userItem.role})</Text>
       <TouchableOpacity onPress={onRemove}>
-        <X color="#6B7280" size={16} />
+        <X color={colors.textSecondary} size={16} />
       </TouchableOpacity>
     </View>
   );
@@ -205,7 +207,7 @@ function CreateGroup() {
           <TextInput
             style={styles.input}
             placeholder="Group Name"
-            placeholderTextColor="#9CA3AF"
+            placeholderTextColor={colors.textMuted}
             value={newGroup.name}
             onChangeText={(text) => setNewGroup({ ...newGroup, name: text })}
             editable={!isCreating}
@@ -213,7 +215,7 @@ function CreateGroup() {
           <TextInput
             style={styles.textArea}
             placeholder="Description (optional)"
-            placeholderTextColor="#9CA3AF"
+            placeholderTextColor={colors.textMuted}
             value={newGroup.description}
             onChangeText={(text) => setNewGroup({ ...newGroup, description: text })}
             multiline
@@ -234,7 +236,7 @@ function CreateGroup() {
               <Text style={styles.dropdownButtonText}>
                 {newGroup.type.charAt(0).toUpperCase() + newGroup.type.slice(1)}
               </Text>
-              {isDropdownOpen ? <ChevronUp size={20} color="#6B7280" /> : <ChevronDown size={20} color="#6B7280" />}
+              {isDropdownOpen ? <ChevronUp size={20} color={colors.textSecondary} /> : <ChevronDown size={20} color={colors.textSecondary} />}
             </TouchableOpacity>
 
             {isDropdownOpen && (
@@ -269,7 +271,7 @@ function CreateGroup() {
                     }}
                   >
                     <Text style={styles.dropdownItemText}>{type.charAt(0).toUpperCase() + type.slice(1)}</Text>
-                    {newGroup.type === type && <Check size={16} color="#01b4ae" />}
+                    {newGroup.type === type && <Check size={16} color={colors.primary} />}
                   </TouchableOpacity>
                 ))}
               </View>
@@ -315,16 +317,13 @@ function CreateGroup() {
 
           {/* Search Input */}
           <View style={styles.searchContainer}>
-            <Search color="#6B7280" size={20} />
-            <TextInput
-              style={styles.searchInput}
-              placeholder={`Search ${searchRole}s by name...`}
-              placeholderTextColor="#9CA3AF"
+            <SearchBar
               value={searchQuery}
               onChangeText={setSearchQuery}
+              placeholder={`Search ${searchRole}s by name...`}
+              isSearching={isSearching}
               returnKeyType="search"
             />
-            {isSearching && <Text style={styles.searchingText}>...</Text>}
           </View>
 
           {/* Search Results */}
@@ -340,7 +339,7 @@ function CreateGroup() {
                     <Text style={styles.resultName}>{result.name}</Text>
                     <Text style={styles.resultEmail}>{result.email}</Text>
                   </View>
-                  <Check color="#22C55E" size={20} />
+                  <Check color={colors.success} size={20} />
                 </TouchableOpacity>
               ))}
             </View>
@@ -392,11 +391,11 @@ function CreateGroup() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surface,
   },
   blankContainer: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surface,
   },
   keyboardArea: {
     flex: 1,
@@ -407,15 +406,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: colors.border,
   },
   title: {
     fontSize: 20,
-    fontWeight: 'bold',
-    color: '#1F2937',
+    fontWeight: '700',
+    color: colors.text,
   },
+  // Cancel is a neutral action — gray, not danger-red (approved change #2).
   cancelText: {
-    color: '#EF4444',
+    color: colors.textSecondary,
     fontSize: 16,
     fontWeight: '600',
   },
@@ -427,64 +427,64 @@ const styles = StyleSheet.create({
   },
   input: {
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     borderRadius: 12,
     padding: 16,
     fontSize: 16,
-    backgroundColor: '#F9FAFB',
-    color: '#1F2937',
+    backgroundColor: colors.surfaceMuted,
+    color: colors.text,
     marginBottom: 16,
   },
   textArea: {
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     borderRadius: 12,
     padding: 16,
     fontSize: 16,
-    backgroundColor: '#F9FAFB',
-    color: '#1F2937',
+    backgroundColor: colors.surfaceMuted,
+    color: colors.text,
     textAlignVertical: 'top',
     height: 100,
     marginBottom: 20,
   },
   typeContainer: {
     marginBottom: 20,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surface,
     borderRadius: 12,
   },
   sectionLabel: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#374151',
+    color: colors.textBody,
     marginBottom: 12,
   },
   dropdownButton: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    backgroundColor: '#F9FAFB',
+    backgroundColor: colors.surfaceMuted,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     borderRadius: 12,
     padding: 16,
     marginBottom: 4,
   },
   dropdownButtonText: {
     fontSize: 16,
-    color: '#1F2937',
+    color: colors.text,
     fontWeight: '500',
   },
   dropdownContainer: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     borderRadius: 12,
     marginBottom: 8,
-    shadowColor: '#000',
+    shadowColor: '#000000',
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
+    shadowOpacity: 0.08,
     shadowRadius: 12,
-    elevation: 4,
+    elevation: 3,
     overflow: 'hidden',
   },
   dropdownItem: {
@@ -493,87 +493,73 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: colors.surfaceMuted,
   },
   dropdownItemActive: {
-    backgroundColor: '#F0FDFA',
+    backgroundColor: colors.primaryTint,
   },
   dropdownItemText: {
     fontSize: 16,
-    color: '#374151',
+    color: colors.textBody,
   },
   typeDescription: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
     marginTop: 6,
     fontStyle: 'italic',
     textAlign: 'center',
   },
+  // Segment control — flat track, active segment lifts onto the surface.
   roleToggle: {
     flexDirection: 'row',
-    backgroundColor: '#F3F4F6',
-    borderRadius: 8,
-    padding: 4,
+    backgroundColor: colors.bg,
+    borderRadius: 12,
+    padding: 3,
     marginBottom: 20,
   },
   roleButton: {
     flex: 1,
-    paddingVertical: 14,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#E5E7EB',
+    paddingVertical: 12,
+    borderRadius: 9,
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: 'transparent',
   },
   roleButtonActive: {
-    backgroundColor: '#01b4ae',
-    borderColor: '#01b4ae',
+    backgroundColor: colors.surface,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
   },
   roleButtonText: {
-    fontSize: 15,
+    fontSize: 14.5,
     fontWeight: '600',
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   roleButtonTextActive: {
-    color: '#FFFFFF',
+    color: colors.primaryText,
     fontWeight: '700',
   },
   fixedRoleContainer: {
     marginBottom: 16,
     alignItems: 'center',
     padding: 10,
-    backgroundColor: '#F3F4F6',
-    borderRadius: 8,
+    backgroundColor: colors.bg,
+    borderRadius: 10,
   },
   fixedRoleText: {
     fontSize: 14,
-    color: '#4B5563',
+    color: colors.textBody,
   },
   searchContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    backgroundColor: '#F9FAFB',
     marginBottom: 12,
   },
-  searchInput: {
-    flex: 1,
-    padding: 14,
-    fontSize: 16,
-    color: '#1F2937',
-  },
-  searchingText: {
-    color: '#6B7280',
-    fontSize: 16,
-  },
   searchResults: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surface,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     marginBottom: 16,
     overflow: 'hidden',
   },
@@ -583,16 +569,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 14,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: colors.surfaceMuted,
   },
   resultName: {
     fontSize: 15,
     fontWeight: '600',
-    color: '#1F2937',
+    color: colors.text,
   },
   resultEmail: {
     fontSize: 13,
-    color: '#6B7280',
+    color: colors.textSecondary,
     marginTop: 2,
   },
   selectedSection: {
@@ -606,31 +592,31 @@ const styles = StyleSheet.create({
   selectedChip: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#E0F7F6',
+    backgroundColor: colors.primaryTint,
     paddingVertical: 8,
     paddingHorizontal: 14,
     borderRadius: 20,
     gap: 8,
     borderWidth: 1,
-    borderColor: '#01b4ae',
+    borderColor: colors.primaryTintBorder,
   },
   chipText: {
     fontSize: 14,
-    color: '#01b4ae',
+    color: colors.primaryText,
     fontWeight: '600',
   },
   createButton: {
-    backgroundColor: '#01b4ae',
+    backgroundColor: colors.primary,
     borderRadius: 12,
     padding: 16,
     alignItems: 'center',
     marginTop: 24,
     marginBottom: 40,
-    shadowColor: '#01b4ae',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    elevation: 3,
   },
   createButtonDisabled: {
     opacity: 0.7,

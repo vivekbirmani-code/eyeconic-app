@@ -20,12 +20,14 @@ import { ScreenContainer } from '@/components/layout';
 
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
-import { ArrowLeft, Send, X, Check, CheckCheck, Edit2, Trash2, Info, Phone, PhoneOff } from 'lucide-react-native';
+import { Send, X, Check, CheckCheck, Edit2, Trash2, Info, Phone, PhoneOff, Ban, Users } from 'lucide-react-native';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
 import { getSocketURL } from '@/services/config';
+import { colors } from '@/utils/theme';
 import { io, Socket } from 'socket.io-client';
 import { KeyboardAvoidingDialog } from '@/components/KeyboardAvoidingDialog';
+import ScreenHeader from '@/components/ScreenHeader';
 
 import { useNotifications } from '@/context/NotificationContext';
 import * as DocumentPicker from 'expo-document-picker';
@@ -454,6 +456,29 @@ function ChatScreen() {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  // ---- Day separators + sender grouping -------------------------------
+  // A centered "Today / Yesterday / date" chip starts each new day, and a
+  // sender's name shows only when the sender (or the day) changes — so a run
+  // of messages from one person reads as one block.
+  const isSameDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate();
+
+  const formatDayLabel = (date: Date) => {
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startOfYesterday = new Date(startOfToday);
+    startOfYesterday.setDate(startOfToday.getDate() - 1);
+    if (date >= startOfToday) return 'Today';
+    if (date >= startOfYesterday) return 'Yesterday';
+    return date.toLocaleDateString(undefined, {
+      day: 'numeric',
+      month: 'short',
+      year: date.getFullYear() === now.getFullYear() ? undefined : 'numeric',
+    });
+  };
+
   const formatCallDuration = (seconds?: number) => {
     const duration = seconds ?? 0;
     const mins = Math.floor(duration / 60);
@@ -480,7 +505,7 @@ function ChatScreen() {
         : callType === 'call_declined'
           ? 'Declined'
           : 'Calling...';
-    const iconBackground = (callType === 'call_missed' || callType === 'call_declined') ? '#DC2626' : '#10B981';
+    const iconBackground = (callType === 'call_missed' || callType === 'call_declined') ? colors.dangerDark : colors.success;
     const title = callType === 'call_missed' ? 'Missed call' : callType === 'call_declined' ? 'Declined call' : 'Voice call';
     const containerStyle = [
       styles.callMessageContainer,
@@ -640,11 +665,29 @@ function ChatScreen() {
     }
   };
 
-  const renderMessage = ({ item }: { item: Message }) => {
+  const renderMessage = ({ item, index }: { item: Message; index: number }) => {
     const isOwnMessage = item.sender._id === user?._id;
+    const prev = index > 0 ? messages[index - 1] : null;
+
+    const startsNewDay =
+      !prev || !isSameDay(new Date(prev.createdAt), new Date(item.createdAt));
+    // Names repeat only when the sender (or the day) changes.
+    const showSenderName =
+      !isOwnMessage && (startsNewDay || !prev || prev.sender._id !== item.sender._id);
+
+    const dayChip = startsNewDay ? (
+      <View style={styles.dayChip}>
+        <Text style={styles.dayChipText}>{formatDayLabel(new Date(item.createdAt))}</Text>
+      </View>
+    ) : null;
 
     if (isCallEvent(item)) {
-      return renderCallMessage(item, isOwnMessage);
+      return (
+        <>
+          {dayChip}
+          {renderCallMessage(item, isOwnMessage)}
+        </>
+      );
     }
 
     // Deleted message placeholder
@@ -654,140 +697,145 @@ function ChatScreen() {
       // Admin sees the original content in a red box
       if (isAdmin && item.content) {
         return (
-          <Pressable
-            onLongPress={() => handleMessageLongPress(item)}
-            delayLongPress={300}
-            style={[
-              styles.messageContainer,
-              isOwnMessage ? styles.ownMessage : styles.otherMessage,
-              styles.adminDeletedMessage
-            ]}
-          >
-            <View style={styles.deletedBadge}>
-              <Text style={styles.deletedBadgeText}>Deleted Message</Text>
-            </View>
-            {!isOwnMessage && (
-              <Text style={styles.senderName}>{item.sender.name}</Text>
-            )}
-            <Text style={[
-              styles.messageText,
-              styles.adminDeletedMessageText
-            ]}>
-              {item.content}
-            </Text>
-            <Text style={styles.adminDeletedTime}>
-              {formatTime(item.createdAt)}
-            </Text>
-          </Pressable>
+          <>
+            {dayChip}
+            <Pressable
+              onLongPress={() => handleMessageLongPress(item)}
+              delayLongPress={300}
+              style={[
+                styles.messageContainer,
+                isOwnMessage ? styles.ownMessage : styles.otherMessage,
+                styles.adminDeletedMessage
+              ]}
+            >
+              <View style={styles.deletedBadge}>
+                <Text style={styles.deletedBadgeText}>Deleted Message</Text>
+              </View>
+              {showSenderName && (
+                <Text style={styles.senderName}>{item.sender.name}</Text>
+              )}
+              <Text style={[
+                styles.messageText,
+                styles.adminDeletedMessageText
+              ]}>
+                {item.content}
+              </Text>
+              <Text style={styles.adminDeletedTime}>
+                {formatTime(item.createdAt)}
+              </Text>
+            </Pressable>
+          </>
         );
       }
 
-      // Students/Mentors see "This message was deleted"
+      // Students/Mentors see a quiet "deleted" bubble with the same line-icon
+      // language as the rest of the app (was a 🚫 emoji).
       return (
-        <View style={[
-          styles.messageContainer,
-          isOwnMessage ? styles.ownMessage : styles.otherMessage,
-          styles.deletedMessage
-        ]}>
-          <Text style={styles.deletedMessageText}>
-            🚫 This message was deleted
-          </Text>
-        </View>
+        <>
+          {dayChip}
+          <View style={[
+            styles.messageContainer,
+            isOwnMessage ? styles.ownMessage : styles.otherMessage,
+            styles.deletedMessage
+          ]}>
+            <View style={styles.deletedMessageRow}>
+              <Ban color={colors.textSecondary} size={13} />
+              <Text style={styles.deletedMessageText}>
+                This message was deleted
+              </Text>
+            </View>
+          </View>
+        </>
       );
     }
 
     return (
-      <Pressable
-        onLongPress={() => handleMessageLongPress(item)}
-        delayLongPress={300}
-        style={[
-          styles.messageContainer,
-          isOwnMessage ? styles.ownMessage : styles.otherMessage
-        ]}
-      >
-        {!isOwnMessage && (
-          <Text style={styles.senderName}>{item.sender.name}</Text>
-        )}
-        <Text style={[
-          styles.messageText,
-          isOwnMessage ? styles.ownMessageText : styles.otherMessageText
-        ]}>
-          {item.content}
-        </Text>
-
-        {item.attachments && item.attachments.length > 0 && (
-          <View style={styles.attachmentsContainer}>
-            {item.attachments.map((att, index) => (
-              <AttachmentThumbnail
-                key={index}
-                attachment={att as any}
-                isUploading={item.isUploading}
-                onPress={() => {
-                  if (!item.isUploading) {
-                    setViewingAttachment(att);
-                    setIsViewerVisible(true);
-                  }
-                }}
-              />
-            ))}
-          </View>
-        )}
-
-        <View style={styles.messageFooter}>
-          {item.isEdited && (
-            <Text style={[
-              styles.editedLabel,
-              isOwnMessage ? styles.ownEditedLabel : styles.otherEditedLabel
-            ]}>
-              edited
-            </Text>
+      <>
+        {dayChip}
+        <Pressable
+          onLongPress={() => handleMessageLongPress(item)}
+          delayLongPress={300}
+          style={[
+            styles.messageContainer,
+            isOwnMessage ? styles.ownMessage : styles.otherMessage
+          ]}
+        >
+          {showSenderName && (
+            <Text style={styles.senderName}>{item.sender.name}</Text>
           )}
           <Text style={[
-            styles.messageTime,
-            isOwnMessage ? styles.ownMessageTime : styles.otherMessageTime
+            styles.messageText,
+            isOwnMessage ? styles.ownMessageText : styles.otherMessageText
           ]}>
-            {formatTime(item.createdAt)}
+            {item.content}
           </Text>
-          {renderTickIcon(item)}
-        </View>
-      </Pressable>
+
+          {item.attachments && item.attachments.length > 0 && (
+            <View style={styles.attachmentsContainer}>
+              {item.attachments.map((att, attIndex) => (
+                <AttachmentThumbnail
+                  key={attIndex}
+                  attachment={att as any}
+                  isUploading={item.isUploading}
+                  onPress={() => {
+                    if (!item.isUploading) {
+                      setViewingAttachment(att);
+                      setIsViewerVisible(true);
+                    }
+                  }}
+                />
+              ))}
+            </View>
+          )}
+
+          <View style={styles.messageFooter}>
+            {item.isEdited && (
+              <Text style={[
+                styles.editedLabel,
+                isOwnMessage ? styles.ownEditedLabel : styles.otherEditedLabel
+              ]}>
+                edited
+              </Text>
+            )}
+            <Text style={[
+              styles.messageTime,
+              isOwnMessage ? styles.ownMessageTime : styles.otherMessageTime
+            ]}>
+              {formatTime(item.createdAt)}
+            </Text>
+            {renderTickIcon(item)}
+          </View>
+        </Pressable>
+      </>
     );
   };
 
   return (
     <ScreenContainer style={styles.container}>
       <View
-        style={styles.header}
         onLayout={(event) => setHeaderHeight(event.nativeEvent.layout.height)}
       >
-        <TouchableOpacity
-          onPress={() => router.back()}
-          style={styles.backButton}
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <ArrowLeft color="#000000" size={24} />
-        </TouchableOpacity>
-        <TouchableOpacity
-          style={styles.headerInfo}
-          onPress={() => router.push(`/chat/${groupId}/info` as any)}
-        >
-          <Text style={styles.headerTitle}>{group?.name || 'Chat'}</Text>
-          {group?.description && (
-            <Text style={styles.headerSubtitle} numberOfLines={1}>
-              {group.description}
-            </Text>
-          )}
-        </TouchableOpacity>
-        {user?.role !== 'student' && (
-          <TouchableOpacity
-            style={styles.callButton}
-            onPress={() => router.push(`/call/${groupId}` as any)}
-          >
-            <Phone color="#10B981" size={22} />
-          </TouchableOpacity>
-        )}
+        <ScreenHeader
+          title={group?.name || 'Chat'}
+          subtitle={group?.description}
+          onBack={() => router.back()}
+          leading={<View style={styles.headerGroupAvatar}><Users color={colors.primary} size={18} /></View>}
+          onTitlePress={() => router.push(`/chat/${groupId}/info` as any)}
+          titleAccessibilityLabel={`Open info for ${group?.name || 'this group'}`}
+          right={
+            user?.role !== 'student' ? (
+              <TouchableOpacity
+                style={styles.callButton}
+                onPress={() => router.push(`/call/${groupId}` as any)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                accessibilityRole="button"
+                accessibilityLabel="Start voice call"
+              >
+                <Phone color={colors.success} size={22} />
+              </TouchableOpacity>
+            ) : undefined
+          }
+        />
       </View>
 
       <KeyboardAvoidingView
@@ -835,15 +883,15 @@ function ChatScreen() {
             disabled={isUploading}
           >
             {isUploading ? (
-              <View style={{ width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: '#6B7280', borderTopColor: 'transparent', opacity: 0.5 }} />
+              <View style={{ width: 24, height: 24, borderRadius: 12, borderWidth: 2, borderColor: colors.textSecondary, borderTopColor: 'transparent', opacity: 0.5 }} />
             ) : (
-              <Paperclip color="#6B7280" size={20} />
+              <Paperclip color={colors.textSecondary} size={20} />
             )}
           </TouchableOpacity>
           <TextInput
             style={styles.input}
             placeholder="Type a message..."
-            placeholderTextColor="#9CA3AF"
+            placeholderTextColor={colors.textMuted}
             value={newMessage}
             onChangeText={setNewMessage}
             multiline
@@ -869,7 +917,7 @@ function ChatScreen() {
             {/* Info - Admin can see on any message, others only on own messages */}
             {(user?.role === 'admin' || selectedMessage?.sender._id === user?._id) && (
               <TouchableOpacity style={styles.menuItem} onPress={openMessageInfo}>
-                <Info color="#374151" size={20} />
+                <Info color={colors.textBody} size={20} />
                 <Text style={styles.menuItemText}>Info</Text>
               </TouchableOpacity>
             )}
@@ -877,7 +925,7 @@ function ChatScreen() {
             {/* Edit - Only sender can edit their own non-deleted messages */}
             {selectedMessage?.sender._id === user?._id && !selectedMessage?.deletedForEveryone && (
               <TouchableOpacity style={styles.menuItem} onPress={openEditModal}>
-                <Edit2 color="#374151" size={20} />
+                <Edit2 color={colors.textBody} size={20} />
                 <Text style={styles.menuItemText}>Edit</Text>
               </TouchableOpacity>
             )}
@@ -886,14 +934,14 @@ function ChatScreen() {
 
             {/* Delete for me - Available to everyone */}
             <TouchableOpacity style={styles.menuItem} onPress={deleteForMe}>
-              <Trash2 color="#374151" size={20} />
+              <Trash2 color={colors.textBody} size={20} />
               <Text style={styles.menuItemText}>Delete for me</Text>
             </TouchableOpacity>
 
             {/* Delete for everyone - Sender OR Admin can delete, not if already deleted */}
             {(selectedMessage?.sender._id === user?._id || user?.role === 'admin') && !selectedMessage?.deletedForEveryone && (
               <TouchableOpacity style={[styles.menuItem, styles.menuItemDanger]} onPress={deleteForEveryone}>
-                <Trash2 color="#EF4444" size={20} />
+                <Trash2 color={colors.danger} size={20} />
                 <Text style={styles.menuItemTextDanger}>Delete for everyone</Text>
               </TouchableOpacity>
             )}
@@ -908,7 +956,7 @@ function ChatScreen() {
             <View style={styles.infoHeader}>
               <Text style={styles.infoTitle}>Message Info</Text>
               <TouchableOpacity onPress={() => setIsMessageInfoVisible(false)}>
-                <X color="#6B7280" size={24} />
+                <X color={colors.textSecondary} size={24} />
               </TouchableOpacity>
             </View>
 
@@ -956,7 +1004,7 @@ function ChatScreen() {
         <View style={styles.editHeader}>
           <Text style={styles.editTitle}>Edit Message</Text>
           <TouchableOpacity onPress={() => setIsEditModalVisible(false)}>
-            <X color="#6B7280" size={24} />
+            <X color={colors.textSecondary} size={24} />
           </TouchableOpacity>
         </View>
 
@@ -1007,11 +1055,11 @@ function ChatScreen() {
             ]}
           >
             <TouchableOpacity style={styles.menuItem} onPress={handlePickDocument}>
-              <FileText color="#374151" size={20} />
+              <FileText color={colors.textBody} size={20} />
               <Text style={styles.menuItemText}>Document</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.menuItem} onPress={handlePickImage}>
-              <ImageIcon color="#374151" size={20} />
+              <ImageIcon color={colors.textBody} size={20} />
               <Text style={styles.menuItemText}>Gallery</Text>
             </TouchableOpacity>
           </View>
@@ -1036,32 +1084,17 @@ function ChatScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surface,
   },
-  header: {
-    flexDirection: 'row',
+  // Small group avatar in the header — same tile language as the group icon
+  // everywhere else in the module.
+  headerGroupAvatar: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: colors.primaryTint,
+    justifyContent: 'center',
     alignItems: 'center',
-    padding: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
-  },
-  backButton: {
-    padding: 5,
-    marginRight: 10,
-  },
-  headerInfo: {
-    flex: 1,
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#000000',
-  },
-  headerSubtitle: {
-    fontSize: 12,
-    color: '#6B7280',
-    marginTop: 2,
   },
   callButton: {
     padding: 8,
@@ -1076,19 +1109,36 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   loadingText: {
-    color: '#6B7280',
+    color: colors.textSecondary,
     fontSize: 16,
   },
   messagesList: {
     padding: 15,
     flexGrow: 1,
   },
+  // Centered day separator ("Today" / "Yesterday" / date).
+  dayChip: {
+    alignSelf: 'center',
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: 999,
+    paddingVertical: 3,
+    paddingHorizontal: 12,
+    marginTop: 6,
+    marginBottom: 10,
+  },
+  dayChipText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.textSecondary,
+  },
   messageContainer: {
     maxWidth: '80%',
-    marginBottom: 10,
+    marginBottom: 8,
     padding: 12,
     borderRadius: 16,
   },
+  // Chat bubble blue is deliberate (chat convention) — kept per the
+  // no-color-change constraint; it is not part of the teal token set.
   ownMessage: {
     alignSelf: 'flex-end',
     backgroundColor: '#2563EB',
@@ -1096,29 +1146,34 @@ const styles = StyleSheet.create({
   },
   otherMessage: {
     alignSelf: 'flex-start',
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
     borderBottomLeftRadius: 4,
   },
   deletedMessage: {
-    backgroundColor: '#F3F4F6',
-    opacity: 0.7,
+    backgroundColor: colors.bg,
+    opacity: 0.75,
+  },
+  deletedMessageRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   deletedMessageText: {
-    color: '#6B7280',
+    color: colors.textSecondary,
     fontStyle: 'italic',
-    fontSize: 14,
+    fontSize: 13.5,
   },
   // Admin deleted message styles
   adminDeletedMessage: {
-    backgroundColor: '#FEF2F2',
-    borderWidth: 2,
-    borderColor: '#EF4444',
+    backgroundColor: colors.dangerTint,
+    borderWidth: 1.5,
+    borderColor: colors.danger,
   },
   deletedBadge: {
-    backgroundColor: '#EF4444',
+    backgroundColor: colors.danger,
     paddingHorizontal: 8,
     paddingVertical: 3,
-    borderRadius: 4,
+    borderRadius: 6,
     alignSelf: 'flex-start',
     marginBottom: 6,
   },
@@ -1128,11 +1183,11 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   adminDeletedMessageText: {
-    color: '#991B1B',
+    color: colors.dangerDark,
   },
   adminDeletedTime: {
     fontSize: 10,
-    color: '#EF4444',
+    color: colors.danger,
     marginTop: 4,
     textAlign: 'right',
   },
@@ -1150,7 +1205,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   otherMessageText: {
-    color: '#000000',
+    color: colors.text,
   },
   messageFooter: {
     flexDirection: 'row',
@@ -1168,7 +1223,7 @@ const styles = StyleSheet.create({
     color: 'rgba(255, 255, 255, 0.7)',
   },
   otherEditedLabel: {
-    color: '#9CA3AF',
+    color: colors.textMuted,
   },
   messageTime: {
     fontSize: 10,
@@ -1177,7 +1232,7 @@ const styles = StyleSheet.create({
     color: 'rgba(255, 255, 255, 0.7)',
   },
   otherMessageTime: {
-    color: '#9CA3AF',
+    color: colors.textMuted,
   },
   callMessageContainer: {
     maxWidth: '78%',
@@ -1254,11 +1309,11 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   emptySubtext: {
     fontSize: 14,
-    color: '#9CA3AF',
+    color: colors.textMuted,
     marginTop: 5,
   },
   inputContainer: {
@@ -1266,34 +1321,34 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     padding: 10,
     borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
-    backgroundColor: '#FFFFFF',
+    borderTopColor: colors.border,
+    backgroundColor: colors.surface,
   },
   input: {
     flex: 1,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     borderRadius: 24,
     paddingHorizontal: 18,
     paddingVertical: 12,
     fontSize: 16,
-    backgroundColor: '#F9FAFB',
-    color: '#1F2937',
+    backgroundColor: colors.surfaceMuted,
+    color: colors.text,
     maxHeight: 100,
     marginRight: 12,
   },
   sendButton: {
-    backgroundColor: '#01b4ae',
+    backgroundColor: colors.primary,
     width: 46,
     height: 46,
     borderRadius: 23,
     justifyContent: 'center',
     alignItems: 'center',
-    shadowColor: '#01b4ae',
+    shadowColor: '#000000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.12,
     shadowRadius: 4,
-    elevation: 4,
+    elevation: 2,
   },
   sendButtonDisabled: {
     backgroundColor: '#A0D8D6',
@@ -1307,15 +1362,15 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   menuContainer: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 12,
+    backgroundColor: colors.surface,
+    borderRadius: 14,
     padding: 8,
     minWidth: 200,
     elevation: 5,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
   },
   attachmentMenuContainer: {
     position: 'absolute',
@@ -1331,17 +1386,17 @@ const styles = StyleSheet.create({
   },
   menuItemText: {
     fontSize: 16,
-    color: '#374151',
+    color: colors.textBody,
   },
   menuItemDanger: {
     borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
+    borderTopColor: colors.border,
     marginTop: 4,
     paddingTop: 16,
   },
   menuItemTextDanger: {
     fontSize: 16,
-    color: '#EF4444',
+    color: colors.danger,
   },
   // Message info modal styles
   infoOverlay: {
@@ -1350,7 +1405,7 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
   infoContainer: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surface,
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: '60%',
@@ -1361,12 +1416,12 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: colors.border,
   },
   infoTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#000000',
+    color: colors.text,
   },
   infoSection: {
     padding: 16,
@@ -1374,12 +1429,12 @@ const styles = StyleSheet.create({
   infoSectionTitle: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#6B7280',
+    color: colors.textSecondary,
     marginBottom: 12,
   },
   noReadsText: {
     fontSize: 14,
-    color: '#9CA3AF',
+    color: colors.textMuted,
     fontStyle: 'italic',
   },
   readByList: {
@@ -1390,13 +1445,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: colors.border,
   },
   readByAvatar: {
     width: 36,
     height: 36,
     borderRadius: 18,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: colors.border,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
@@ -1404,7 +1459,7 @@ const styles = StyleSheet.create({
   readByAvatarText: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   readByInfo: {
     flex: 1,
@@ -1412,15 +1467,15 @@ const styles = StyleSheet.create({
   readByName: {
     fontSize: 15,
     fontWeight: '500',
-    color: '#000000',
+    color: colors.text,
   },
   readByTime: {
     fontSize: 12,
-    color: '#9CA3AF',
+    color: colors.textMuted,
   },
   // Edit dialog card styles (the overlay/scrim comes from KeyboardAvoidingDialog)
   editContainer: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surface,
     borderRadius: 16,
     padding: 16,
     width: '100%',
@@ -1435,15 +1490,15 @@ const styles = StyleSheet.create({
   editTitle: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#000000',
+    color: colors.text,
   },
   editInput: {
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 8,
+    borderColor: colors.border,
+    borderRadius: 10,
     padding: 12,
     fontSize: 16,
-    color: '#000000',
+    color: colors.text,
     minHeight: 80,
     textAlignVertical: 'top',
   },
@@ -1459,13 +1514,13 @@ const styles = StyleSheet.create({
   },
   editCancelText: {
     fontSize: 16,
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   editSaveButton: {
-    backgroundColor: '#01b4ae',
+    backgroundColor: colors.primary,
     paddingVertical: 10,
     paddingHorizontal: 20,
-    borderRadius: 8,
+    borderRadius: 10,
   },
   editSaveButtonDisabled: {
     backgroundColor: '#A0D8D6',

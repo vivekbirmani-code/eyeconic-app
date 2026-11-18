@@ -7,9 +7,11 @@ import {
   StyleSheet,
   TextInput,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { KeyboardAvoidingDialog } from '@/components/KeyboardAvoidingDialog';
+import { colors } from '@/utils/theme';
 import { api } from '@/services/api';
 
 /**
@@ -93,7 +95,7 @@ function EditGroupScreen() {
         <TextInput
           style={styles.input}
           placeholder="Group Name"
-          placeholderTextColor="#9CA3AF"
+          placeholderTextColor={colors.textMuted}
           value={editName}
           onChangeText={setEditName}
           editable={!isSaving}
@@ -101,7 +103,7 @@ function EditGroupScreen() {
         <TextInput
           style={styles.textArea}
           placeholder="Description (optional)"
-          placeholderTextColor="#9CA3AF"
+          placeholderTextColor={colors.textMuted}
           value={editDescription}
           onChangeText={setEditDescription}
           multiline
@@ -121,7 +123,14 @@ function EditGroupScreen() {
             onPress={handleEditGroup}
             disabled={isSaving}
           >
-            <Text style={styles.saveButtonText}>Save</Text>
+            {isSaving ? (
+              <View style={styles.savingRow}>
+                <ActivityIndicator size="small" color="#FFFFFF" />
+                <Text style={styles.saveButtonText}>Saving…</Text>
+              </View>
+            ) : (
+              <Text style={styles.saveButtonText}>Save</Text>
+            )}
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingDialog>
@@ -135,7 +144,7 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   card: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surface,
     borderRadius: 16,
     padding: 20,
     width: '100%',
@@ -144,27 +153,27 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 18,
     fontWeight: '700',
-    color: '#1F2937',
+    color: colors.text,
     marginBottom: 16,
   },
   input: {
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     borderRadius: 10,
     padding: 14,
     fontSize: 15,
-    backgroundColor: '#F9FAFB',
-    color: '#1F2937',
+    backgroundColor: colors.surfaceMuted,
+    color: colors.text,
     marginBottom: 12,
   },
   textArea: {
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     borderRadius: 10,
     padding: 14,
     fontSize: 15,
-    backgroundColor: '#F9FAFB',
-    color: '#1F2937',
+    backgroundColor: colors.surfaceMuted,
+    color: colors.text,
     textAlignVertical: 'top',
     height: 90,
   },
@@ -175,24 +184,29 @@ const styles = StyleSheet.create({
   },
   cancelButton: {
     flex: 1,
-    backgroundColor: '#F3F4F6',
+    backgroundColor: colors.bg,
     padding: 14,
     borderRadius: 10,
     alignItems: 'center',
   },
   cancelButtonText: {
-    color: '#6B7280',
+    color: colors.textSecondary,
     fontWeight: '600',
   },
   saveButton: {
     flex: 1,
-    backgroundColor: '#01b4ae',
+    backgroundColor: colors.primary,
     padding: 14,
     borderRadius: 10,
     alignItems: 'center',
   },
   saveButtonDisabled: {
     opacity: 0.6,
+  },
+  savingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
   },
   saveButtonText: {
     color: '#FFFFFF',

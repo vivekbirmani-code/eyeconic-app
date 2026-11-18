@@ -11,12 +11,14 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
-import { ArrowLeft, Users, UserPlus, GraduationCap, Trash2, AlertTriangle } from 'lucide-react-native';
+import { Users, UserPlus, GraduationCap, Trash2, AlertTriangle, Pencil } from 'lucide-react-native';
 import { FullScreenContainer } from '@/components/layout';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
 import * as Haptics from '@/utils/haptics';
-import UserAvatar from '@/components/UserAvatar';
+import { colors } from '@/utils/theme';
+import ScreenHeader from '@/components/ScreenHeader';
+import UserAvatar, { getRoleColors } from '@/components/UserAvatar';
 import InternTimeSlicer from '@/components/intern/InternTimeSlicer';
 
 interface User {
@@ -164,7 +166,7 @@ function GroupInfoScreen() {
     if (subjectsStatus === 'loading') {
       return (
         <View style={styles.memberSubjectsLoading}>
-          <ActivityIndicator size="small" color="#01b4ae" />
+          <ActivityIndicator size="small" color={colors.primary} />
         </View>
       );
     }
@@ -195,19 +197,32 @@ function GroupInfoScreen() {
 
   return (
     <FullScreenContainer style={styles.container}>
-      <View style={styles.modalHeader}>
-        <TouchableOpacity
-          onPress={() => router.back()}
-          style={styles.backButton}
-          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-          accessibilityRole="button"
-          accessibilityLabel="Go back"
-        >
-          <ArrowLeft color="#000000" size={24} />
-        </TouchableOpacity>
-        <Text style={styles.modalTitle}>Group Info</Text>
-        <View style={{ width: 24 }} />
-      </View>
+      <ScreenHeader
+        title="Group Info"
+        onBack={() => router.back()}
+        right={
+          user?.role === 'admin' && group ? (
+            <TouchableOpacity
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                router.push({
+                  pathname: '/edit-group',
+                  params: {
+                    groupId: group._id,
+                    name: group.name,
+                    description: group.description || '',
+                  },
+                } as any);
+              }}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              accessibilityRole="button"
+              accessibilityLabel={`Edit ${group.name}`}
+            >
+              <Pencil color={colors.primary} size={20} />
+            </TouchableOpacity>
+          ) : undefined
+        }
+      />
 
       <View style={{ flex: 1 }}>
         <FlatList
@@ -222,7 +237,7 @@ function GroupInfoScreen() {
           ListEmptyComponent={
             isLoading ? (
               <View style={styles.loadingContainer}>
-                <ActivityIndicator size="large" color="#01b4ae" />
+                <ActivityIndicator size="large" color={colors.primary} />
               </View>
             ) : (
               <View style={styles.loadingContainer}>
@@ -246,16 +261,16 @@ function GroupInfoScreen() {
                   accessibilityHint="Permanently deletes this group and its chat history for all members"
                 >
                   {isDeletingGroup ? (
-                    <ActivityIndicator size="small" color="#DC2626" />
+                    <ActivityIndicator size="small" color={colors.dangerDark} />
                   ) : (
-                    <Trash2 color="#DC2626" size={18} />
+                    <Trash2 color={colors.dangerDark} size={18} />
                   )}
                   <Text style={styles.deleteGroupButtonText}>
                     {isDeletingGroup ? 'Deleting…' : 'Delete Group'}
                   </Text>
                 </TouchableOpacity>
                 <View style={styles.deleteGroupHintRow}>
-                  <AlertTriangle color="#F59E0B" size={13} />
+                  <AlertTriangle color={colors.warning} size={13} />
                   <Text style={styles.deleteGroupHintText}>
                     Permanently deletes this group and its entire chat history for all members.
                   </Text>
@@ -294,7 +309,7 @@ function GroupInfoScreen() {
                       onPress={() => router.push(`/chat/${groupId}/add-members` as any)}
                     >
                       <View style={styles.addMemberIcon}>
-                        <UserPlus color="#2563EB" size={20} />
+                        <UserPlus color={colors.primary} size={20} />
                       </View>
                       <Text style={styles.addMemberText}>Add Participants</Text>
                     </TouchableOpacity>
@@ -303,50 +318,62 @@ function GroupInfoScreen() {
               )}
             </>
           )}
-          renderItem={({ item: member }) => (
-            <View key={member._id} style={styles.memberRow}>
-              <UserAvatar
-                name={member.name}
-                role={member.role}
-                imageUrl={member.profilePicture}
-                size={40}
-              />
-              <View style={styles.memberInfo}>
-                <Text style={styles.memberName}>
-                  {member._id === user?._id ? 'You' : member.name}
-                </Text>
-                <Text style={styles.memberEmail}>{member.role}</Text>
-                {member.role === 'student' && renderMemberSubjects(member)}
+          renderItem={({ item: member }) => {
+            const roleColors = getRoleColors(member.role);
+            return (
+              <View key={member._id} style={styles.memberRow}>
+                <UserAvatar
+                  name={member.name}
+                  role={member.role}
+                  imageUrl={member.profilePicture}
+                  size={42}
+                />
+                <View style={styles.memberInfo}>
+                  <Text style={styles.memberName}>
+                    {member._id === user?._id ? 'You' : member.name}
+                  </Text>
+                  <View style={styles.roleChipRow}>
+                    <View style={[styles.roleChip, { backgroundColor: roleColors.background }]}>
+                      <Text style={[styles.roleChipText, { color: roleColors.text }]}>
+                        {member.role}
+                      </Text>
+                    </View>
+                  </View>
+                  {member.role === 'student' && renderMemberSubjects(member)}
+                </View>
+                <View style={{ alignItems: 'flex-end' }}>
+                  {group?.createdBy?._id === member._id && (
+                    <Text style={styles.adminBadge}>Group Admin</Text>
+                  )}
+                  {/* Intern Mode: admins (Users tab stays frozen) and mentors can
+                      reach the toggle from any student in any group. */}
+                  {member.role === 'student' && (user?.role === 'admin' || user?.role === 'mentor') && (
+                    <TouchableOpacity
+                      style={styles.internPill}
+                      onPress={() => {
+                        router.push(`/intern-manage/${member._id}` as any);
+                      }}
+                      accessibilityLabel={`Manage intern mode for ${member.name}`}
+                    >
+                      <GraduationCap color={colors.primary} size={13} />
+                      <Text style={styles.internPillText}>Intern Mode</Text>
+                    </TouchableOpacity>
+                  )}
+                  {user?.role === 'admin' && member._id !== group?.createdBy?._id && (
+                    <TouchableOpacity
+                      style={styles.removeButton}
+                      onPress={() => removeMember(member._id)}
+                      hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Remove ${member.name} from group`}
+                    >
+                      <Text style={styles.removeText}>Remove</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
               </View>
-              <View style={{ alignItems: 'flex-end' }}>
-                {group?.createdBy?._id === member._id && (
-                  <Text style={styles.adminBadge}>Group Admin</Text>
-                )}
-                {/* Intern Mode: admins (Users tab stays frozen) and mentors can
-                    reach the toggle from any student in any group. */}
-                {member.role === 'student' && (user?.role === 'admin' || user?.role === 'mentor') && (
-                  <TouchableOpacity
-                    style={styles.internPill}
-                    onPress={() => {
-                      router.push(`/intern-manage/${member._id}` as any);
-                    }}
-                    accessibilityLabel={`Manage intern mode for ${member.name}`}
-                  >
-                    <GraduationCap color="#01b4ae" size={13} />
-                    <Text style={styles.internPillText}>Intern Mode</Text>
-                  </TouchableOpacity>
-                )}
-                {user?.role === 'admin' && member._id !== group?.createdBy?._id && (
-                  <TouchableOpacity
-                    style={styles.removeButton}
-                    onPress={() => removeMember(member._id)}
-                  >
-                    <Text style={styles.removeText}>Remove</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
-            </View>
-          )}
+            );
+          }}
         />
       </View>
     </FullScreenContainer>
@@ -356,89 +383,73 @@ function GroupInfoScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
-  },
-  backButton: {
-    padding: 5,
-  },
-  modalHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 15,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
-  },
-  modalTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#000000',
+    backgroundColor: colors.surface,
   },
   groupProfileSection: {
     alignItems: 'center',
     padding: 20,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: colors.border,
   },
   largeGroupIcon: {
     width: 84,
     height: 84,
     borderRadius: 42,
-    backgroundColor: '#01b4ae',
+    backgroundColor: colors.primary,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 16,
-    shadowColor: '#01b4ae',
+    shadowColor: '#000000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.2,
+    shadowOpacity: 0.12,
     shadowRadius: 8,
-    elevation: 4,
+    elevation: 3,
   },
   largeGroupName: {
     fontSize: 22,
-    fontWeight: 'bold',
-    color: '#000000',
+    fontWeight: '700',
+    color: colors.text,
     marginBottom: 5,
     textAlign: 'center',
   },
   groupDescription: {
     fontSize: 14,
-    color: '#6B7280',
+    color: colors.textSecondary,
     textAlign: 'center',
     marginBottom: 5,
   },
   groupMeta: {
     fontSize: 12,
-    color: '#9CA3AF',
+    color: colors.textMuted,
   },
   sectionHeader: {
     padding: 15,
-    backgroundColor: '#F9FAFB',
+    backgroundColor: colors.surfaceMuted,
   },
   sectionTitle: {
     fontSize: 14,
     fontWeight: '600',
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
   addMemberRow: {
     flexDirection: 'row',
     alignItems: 'center',
     padding: 15,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: colors.border,
   },
   addMemberIcon: {
     width: 42,
     height: 42,
     borderRadius: 21,
-    backgroundColor: '#E0F7F6',
+    backgroundColor: colors.primaryTint,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
   },
   addMemberText: {
     fontSize: 16,
-    color: '#01b4ae',
+    color: colors.primary,
     fontWeight: '600',
   },
   memberRow: {
@@ -446,7 +457,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     padding: 15,
     borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+    borderBottomColor: colors.surfaceMuted,
   },
   memberInfo: {
     flex: 1,
@@ -454,11 +465,22 @@ const styles = StyleSheet.create({
   memberName: {
     fontSize: 16,
     fontWeight: '500',
-    color: '#000000',
+    color: colors.text,
   },
-  memberEmail: {
-    fontSize: 13,
-    color: '#6B7280',
+  // Role chip — same tint pair as the avatar initials beside it.
+  roleChipRow: {
+    marginTop: 3,
+  },
+  roleChip: {
+    alignSelf: 'flex-start',
+    borderRadius: 999,
+    paddingVertical: 2,
+    paddingHorizontal: 9,
+  },
+  roleChipText: {
+    fontSize: 10.5,
+    fontWeight: '700',
+    textTransform: 'capitalize',
   },
   // Student subject chips — same palette as the Assigned Subjects chips in
   // User Details, scaled down to fit the member row.
@@ -469,21 +491,21 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   memberSubjectChip: {
-    backgroundColor: '#E0F7F6',
+    backgroundColor: colors.primaryTint,
     paddingVertical: 4,
     paddingHorizontal: 10,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: '#B2F5EA',
+    borderColor: colors.primaryTintBorder,
   },
   memberSubjectChipText: {
-    color: '#00796B',
+    color: colors.primaryText,
     fontSize: 11,
     fontWeight: '600',
   },
   memberSubjectsHint: {
     fontSize: 12,
-    color: '#9CA3AF',
+    color: colors.textMuted,
     fontStyle: 'italic',
     marginTop: 4,
   },
@@ -492,8 +514,8 @@ const styles = StyleSheet.create({
   },
   adminBadge: {
     fontSize: 11,
-    color: '#01b4ae',
-    backgroundColor: '#E0F7F6',
+    color: colors.primaryText,
+    backgroundColor: colors.primaryTint,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 12,
@@ -501,8 +523,16 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontWeight: '700',
   },
+  // Proper outlined danger pill — a comfortable tap target instead of the
+  // old 12px text link.
   removeButton: {
-    marginTop: 4,
+    marginTop: 6,
+    borderWidth: 1,
+    borderColor: colors.danger + '59',
+    borderRadius: 999,
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    backgroundColor: colors.surface,
   },
   // Intern Mode entry on student member rows (admins + mentors).
   internPill: {
@@ -510,7 +540,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
     borderWidth: 1.5,
-    borderColor: '#01b4ae',
+    borderColor: colors.primary,
     borderStyle: 'dashed',
     borderRadius: 12,
     paddingVertical: 4,
@@ -518,14 +548,14 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   internPillText: {
-    color: '#01b4ae',
+    color: colors.primary,
     fontSize: 10,
     fontWeight: '700',
   },
   removeText: {
-    color: '#EF4444',
+    color: colors.danger,
     fontSize: 12,
-    fontWeight: '500',
+    fontWeight: '600',
   },
   // Danger zone at the bottom of the member list (admin only).
   deleteGroupSection: {
@@ -538,13 +568,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
     borderWidth: 1.5,
-    borderColor: '#FCA5A5',
+    borderColor: colors.danger + '59',
     borderRadius: 12,
     paddingVertical: 14,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surface,
   },
   deleteGroupButtonText: {
-    color: '#DC2626',
+    color: colors.dangerDark,
     fontSize: 15,
     fontWeight: '700',
   },
@@ -557,7 +587,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   deleteGroupHintText: {
-    color: '#9CA3AF',
+    color: colors.textMuted,
     fontSize: 12,
     textAlign: 'center',
     flexShrink: 1,
@@ -571,7 +601,7 @@ const styles = StyleSheet.create({
   emptyText: {
     fontSize: 18,
     fontWeight: '600',
-    color: '#6B7280',
+    color: colors.textSecondary,
   },
 });
 // TEMPORARY FEATURE FREEZE — quiz-only availability (utils/featureAvailability.ts).

@@ -6,7 +6,6 @@ import {
   TouchableOpacity,
   StyleSheet,
   FlatList,
-  TextInput,
   Alert,
   ScrollView,
   Animated,
@@ -16,9 +15,11 @@ import {
 import { ScreenContainer } from '@/components/layout';
 import { useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
-import { Plus, MessageCircle, Users, Search, X, ChevronDown, ChevronUp, Pencil, Folder } from 'lucide-react-native';
+import { Plus, MessageCircle, Users, ChevronDown, ChevronUp, Pencil, Folder } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from '@/utils/haptics';
+import { colors } from '@/utils/theme';
+import SearchBar from '@/components/SearchBar';
 import { useAuth } from '@/context/AuthContext';
 import { useNotifications } from '@/context/NotificationContext';
 import { api } from '@/services/api';
@@ -363,11 +364,14 @@ function Groups() {
       <TouchableOpacity
         style={styles.groupCard}
         onPress={() => openChat(item._id)}
+        activeOpacity={0.75}
       >
-        <MessageCircle color="#2563EB" size={24} />
+        <View style={styles.groupIconTile}>
+          <MessageCircle color={colors.primary} size={22} />
+        </View>
         <View style={styles.groupInfo}>
           <View style={styles.groupHeaderRow}>
-            <Text style={styles.groupName}>{item.name}</Text>
+            <Text style={styles.groupName} numberOfLines={1}>{item.name}</Text>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
               {user?.role === 'admin' && (
                 <TouchableOpacity
@@ -377,8 +381,10 @@ function Groups() {
                     openEditModal(item);
                   }}
                   hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Edit ${item.name}`}
                 >
-                  <Pencil color="#6B7280" size={16} />
+                  <Pencil color={colors.textSecondary} size={16} />
                 </TouchableOpacity>
               )}
               {unreadCount > 0 && (
@@ -388,9 +394,11 @@ function Groups() {
               )}
             </View>
           </View>
-          <Text style={styles.groupDescription}>{item.description}</Text>
+          {item.description ? (
+            <Text style={styles.groupDescription} numberOfLines={1}>{item.description}</Text>
+          ) : null}
           <View style={styles.memberCount}>
-            <Users color="#6B7280" size={16} />
+            <Users color={colors.textMuted} size={14} />
             <Text style={styles.memberText}>{item.members.length} members</Text>
           </View>
         </View>
@@ -417,7 +425,7 @@ function Groups() {
         >
           <View style={styles.mentorFolderHeaderLeft}>
             <View style={styles.mentorFolderIcon}>
-              <Folder color="#01b4ae" size={18} />
+              <Folder color={colors.primary} size={18} />
             </View>
             <View>
               <Text style={styles.mentorFolderTitle}>{item.title}</Text>
@@ -426,7 +434,7 @@ function Groups() {
               </Text>
             </View>
           </View>
-          {isCollapsed ? <ChevronDown color="#6B7280" size={18} /> : <ChevronUp color="#6B7280" size={18} />}
+          {isCollapsed ? <ChevronDown color={colors.textSecondary} size={18} /> : <ChevronUp color={colors.textSecondary} size={18} />}
         </TouchableOpacity>
 
         {!isCollapsed && (
@@ -491,21 +499,11 @@ function Groups() {
 
       {/* Group Search Bar */}
       <View style={styles.groupSearchContainer}>
-        <View style={styles.groupSearchInner}>
-          <Search color="#6B7280" size={18} />
-          <TextInput
-            style={styles.groupSearchInput}
-            placeholder={user?.role === 'admin' ? 'Search groups or mentors...' : 'Search groups...'}
-            placeholderTextColor="#9CA3AF"
-            value={groupSearchQuery}
-            onChangeText={setGroupSearchQuery}
-          />
-          {groupSearchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => setGroupSearchQuery('')}>
-              <X color="#6B7280" size={18} />
-            </TouchableOpacity>
-          )}
-        </View>
+        <SearchBar
+          value={groupSearchQuery}
+          onChangeText={setGroupSearchQuery}
+          placeholder={user?.role === 'admin' ? 'Search groups or mentors...' : 'Search groups...'}
+        />
       </View>
 
       {user?.role === 'admin' && mentorFolders.length > 0 && (
@@ -604,7 +602,7 @@ function Groups() {
               {visibleMentorFolders.length === 0 && otherGroups.length === 0 && (
                 <View style={styles.emptyContainer}>
                   <View style={styles.emptyIconContainer}>
-                    <MessageCircle color="#01b4ae" size={48} />
+                    <MessageCircle color={colors.primary} size={44} />
                   </View>
                   <Text style={styles.emptyTitle}>
                     {groupSearchQuery.trim() ? 'No matching groups' : 'No groups yet'}
@@ -634,7 +632,7 @@ function Groups() {
               ListEmptyComponent={
                 <View style={styles.emptyContainer}>
                   <View style={styles.emptyIconContainer}>
-                    <MessageCircle color="#01b4ae" size={48} />
+                    <MessageCircle color={colors.primary} size={44} />
                   </View>
                   <Text style={styles.emptyTitle}>No groups yet</Text>
                   <Text style={styles.emptySubtext}>
@@ -655,15 +653,15 @@ function Groups() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surface,
   },
   // Premium header with gradient
   headerContainer: {
-    shadowColor: '#01b4ae',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.15,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.06,
     shadowRadius: 8,
-    elevation: 6,
+    elevation: 3,
   },
   headerGradient: {
     flexDirection: 'row',
@@ -702,9 +700,9 @@ const styles = StyleSheet.create({
     paddingBottom: 120, // Enough to clear the tab bar for students/mentors
   },
   folderTopStrip: {
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surface,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: colors.border,
     paddingVertical: 10,
   },
   folderTopStripContent: {
@@ -716,26 +714,26 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     borderRadius: 20,
     borderWidth: 1,
-    borderColor: '#D1D5DB',
-    backgroundColor: '#F9FAFB',
+    borderColor: colors.borderStrong,
+    backgroundColor: colors.surfaceMuted,
   },
   folderTopChipActive: {
-    borderColor: '#01b4ae',
-    backgroundColor: '#E6FFFB',
+    borderColor: colors.primary,
+    backgroundColor: colors.primaryTint,
   },
   folderTopChipText: {
     fontSize: 13,
-    color: '#4B5563',
+    color: colors.textBody,
     fontWeight: '600',
   },
   folderTopChipTextActive: {
-    color: '#0f766e',
+    color: colors.primaryText,
   },
   mentorFolderCard: {
-    backgroundColor: '#F8FAFC',
+    backgroundColor: colors.surfaceMuted,
     borderRadius: 16,
     borderWidth: 1,
-    borderColor: '#E2E8F0',
+    borderColor: colors.border,
     padding: 12,
     marginBottom: 12,
   },
@@ -756,18 +754,18 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: '#E0F7F6',
+    backgroundColor: colors.primaryTint,
     alignItems: 'center',
     justifyContent: 'center',
   },
   mentorFolderTitle: {
     fontSize: 15,
     fontWeight: '700',
-    color: '#1F2937',
+    color: colors.text,
   },
   mentorFolderSubtitle: {
     fontSize: 12,
-    color: '#6B7280',
+    color: colors.textSecondary,
     marginTop: 2,
   },
   mentorFolderContent: {
@@ -782,25 +780,25 @@ const styles = StyleSheet.create({
   otherGroupsTitle: {
     fontSize: 16,
     fontWeight: '700',
-    color: '#374151',
+    color: colors.textBody,
     marginBottom: 10,
   },
   // Skeleton loading styles
   skeletonCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surface,
     borderRadius: 16,
     padding: 16,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     marginBottom: 12,
   },
   skeletonAvatar: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#E0F7F6',
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.primaryTint,
     overflow: 'hidden',
   },
   shimmer: {
@@ -810,125 +808,109 @@ const styles = StyleSheet.create({
   groupSearchContainer: {
     paddingHorizontal: 20,
     paddingVertical: 12,
-    backgroundColor: '#FFFFFF',
-  },
-  groupSearchInner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: '#F3F4F6',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    // Grows with the user's font scale instead of clipping the input's text
-    // at a hard 44dp.
-    minHeight: 44,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  groupSearchInput: {
-    flex: 1,
-    marginLeft: 8,
-    fontSize: 15,
-    color: '#1F2937',
-    paddingVertical: 8,
+    backgroundColor: colors.surface,
   },
   skeletonContent: {
     flex: 1,
-    marginLeft: 16,
+    marginLeft: 14,
   },
   skeletonTitle: {
-    height: 18,
+    height: 16,
     width: '60%',
-    backgroundColor: '#E5E7EB',
+    backgroundColor: colors.border,
     borderRadius: 8,
     marginBottom: 8,
     overflow: 'hidden',
   },
   skeletonDescription: {
-    height: 14,
+    height: 13,
     width: '80%',
-    backgroundColor: '#E5E7EB',
+    backgroundColor: colors.border,
     borderRadius: 6,
     marginBottom: 10,
     overflow: 'hidden',
   },
   skeletonMemberCount: {
-    height: 12,
+    height: 11,
     width: 80,
-    backgroundColor: '#E5E7EB',
+    backgroundColor: colors.border,
     borderRadius: 6,
     overflow: 'hidden',
   },
-  // Premium group card
+  // Group card — one soft neutral shadow; the icon tile carries the identity.
   groupCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#FFFFFF',
+    backgroundColor: colors.surface,
     borderRadius: 16,
-    padding: 16,
+    padding: 14,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: colors.border,
     marginBottom: 12,
-    shadowColor: '#01b4ae',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.08,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.04,
+    shadowRadius: 6,
+    elevation: 1,
   },
-  groupIconContainer: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
-    backgroundColor: '#E0F7F6',
+  // Teal-tinted icon tile (approved change #1) — same language as the folder
+  // icons beside it, replacing the lone blue bare icon.
+  groupIconTile: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.primaryTint,
     justifyContent: 'center',
     alignItems: 'center',
   },
   groupInfo: {
-    marginLeft: 16,
+    marginLeft: 14,
     flex: 1,
   },
   groupName: {
-    fontSize: 17,
+    fontSize: 16,
     fontWeight: '700',
-    color: '#1F2937',
+    color: colors.text,
     flex: 1,
   },
   groupHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 4,
+    marginBottom: 3,
   },
   unreadBadge: {
-    backgroundColor: '#01b4ae',
-    borderRadius: 12,
-    minWidth: 24,
-    height: 24,
-    paddingHorizontal: 8,
+    backgroundColor: colors.primary,
+    borderRadius: 999,
+    minWidth: 22,
+    height: 20,
+    paddingHorizontal: 7,
     justifyContent: 'center',
     alignItems: 'center',
     marginLeft: 8,
   },
   unreadBadgeText: {
     color: '#FFFFFF',
-    fontSize: 12,
-    fontWeight: 'bold',
+    fontSize: 11,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
   },
   groupDescription: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginBottom: 8,
+    fontSize: 13,
+    color: colors.textSecondary,
+    marginBottom: 4,
   },
   memberCount: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 5,
   },
   memberText: {
-    fontSize: 13,
-    color: '#9CA3AF',
+    fontSize: 12.5,
+    color: colors.textMuted,
     fontWeight: '500',
   },
-  // Premium empty state
+  // Empty state
   emptyContainer: {
     flex: 1,
     alignItems: 'center',
@@ -937,46 +919,45 @@ const styles = StyleSheet.create({
     paddingHorizontal: 40,
   },
   emptyIconContainer: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    backgroundColor: '#E0F7F6',
+    width: 88,
+    height: 88,
+    borderRadius: 44,
+    backgroundColor: colors.primaryTint,
     justifyContent: 'center',
     alignItems: 'center',
     marginBottom: 24,
   },
   emptyTitle: {
-    fontSize: 22,
-    fontWeight: 'bold',
-    color: '#1F2937',
+    fontSize: 21,
+    fontWeight: '700',
+    color: colors.text,
     marginBottom: 8,
   },
   emptySubtext: {
     fontSize: 15,
-    color: '#6B7280',
+    color: colors.textSecondary,
     textAlign: 'center',
     marginBottom: 32,
   },
   emptyCreateButton: {
     flexDirection: 'row',
-    backgroundColor: '#01b4ae',
+    backgroundColor: colors.primary,
     borderRadius: 12,
     paddingVertical: 14,
     paddingHorizontal: 24,
     alignItems: 'center',
     gap: 8,
-    shadowColor: '#01b4ae',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 6,
+    shadowColor: '#000000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 6,
+    elevation: 2,
   },
   emptyCreateButtonText: {
     color: '#FFFFFF',
     fontSize: 16,
     fontWeight: '700',
   },
-  // Edit Group modal styles
 });
 // TEMPORARY FEATURE FREEZE — quiz-only availability (utils/featureAvailability.ts).
 export default withFeatureGate('chat')(Groups);

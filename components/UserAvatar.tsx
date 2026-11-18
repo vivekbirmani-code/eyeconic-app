@@ -11,7 +11,11 @@ interface UserAvatarProps {
   accessibilityLabel?: string;
 }
 
-function getRoleColors(role?: UserRole) {
+/**
+ * Role → tint pair used for avatar initials. Exported so role chips and other
+ * small role markers reuse the exact same colors as the avatar beside them.
+ */
+export function getRoleColors(role?: UserRole) {
   switch (role) {
     case 'admin':
       return { background: '#FEE2E2', text: '#F43F5E' };
