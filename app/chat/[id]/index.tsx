@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { withFeatureGate } from '@/components/withFeatureGate';
 import {
   View,
@@ -19,6 +19,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ScreenContainer } from '@/components/layout';
 
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useFocusEffect } from '@react-navigation/native';
 import { ArrowLeft, Send, X, Check, CheckCheck, Edit2, Trash2, Info, Phone, PhoneOff } from 'lucide-react-native';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
@@ -95,6 +96,19 @@ function ChatScreen() {
   const [headerHeight, setHeaderHeight] = useState(0);
   const flatListRef = useRef<FlatList>(null);
   const socketRef = useRef<Socket | null>(null);
+  // Whether this screen is the focused (topmost) route. The 'group_deleted'
+  // handler must only navigate when it is — when Group Info is pushed on top,
+  // that screen owns the post-delete navigation (dismissTo back to the Groups
+  // tab) and a back() from here would fight it.
+  const isFocusedRef = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      isFocusedRef.current = true;
+      return () => {
+        isFocusedRef.current = false;
+      };
+    }, [])
+  );
   const pendingAttachmentActionRef = useRef<(() => void) | null>(null);
   const pendingAttachmentTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -189,6 +203,16 @@ function ChatScreen() {
           msg._id === data.messageId ? { ...msg, deletedForEveryone: true } : msg
         ));
       }
+    });
+
+    // The group was deleted while this chat was open (admin deleted it from
+    // Group Info or elsewhere). Leave gracefully instead of leaving the user
+    // typing into a dead chat — but only when this screen is the focused
+    // route (see isFocusedRef).
+    socketRef.current.on('group_deleted', (data: { groupId: string }) => {
+      if (data.groupId !== groupId || !isFocusedRef.current) return;
+      Alert.alert('Group deleted', 'This group has been deleted.');
+      router.back();
     });
   };
 

@@ -668,6 +668,7 @@ Legend: 🔓 public · 👤 any logged-in user · 🎓 student · 🧑‍🏫 me
 |---|---|---|
 | GET `/api/groups` | 👤 | My groups + unread counts (admins: all) |
 | POST `/api/groups` · PUT `/:id` · POST `/:id/members` · DELETE `/:id/members/:userId` | 🔧 | Create/edit/manage membership |
+| DELETE `/api/groups/:id` | 🔧 | Delete group: removes messages + read receipts, per-group read statuses, calls, `User.groups` refs (all members socket-notified `group_removed`; live chat screens get `group_deleted`); Cloudinary attachment assets purged best-effort |
 | GET `/api/groups/:id` · GET `/:id/student-subjects` · POST `/:id/read` | 👤 | Group detail / member subjects / mark read |
 | GET `/api/groups/mentor/:mentorId/assignments` · POST `/api/groups/bulk-mentor-assignment` | 🔧 | Mentor↔group bulk assignment |
 | GET `/api/messages/group/:groupId` | 👤 | Fetch messages |

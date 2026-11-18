@@ -7,7 +7,9 @@ const { emitToUser, emitToAdmins } = require('../utils/socket-helpers');
 const router = express.Router();
 
 const Message = require('../models/Message');
+const MessageReadStatus = require('../models/MessageReadStatus');
 const ReadStatus = require('../models/ReadStatus');
+const Call = require('../models/Call');
 const StudentSubjectAssignment = require('../models/StudentSubjectAssignment');
 
 // Get all groups with unread counts
@@ -172,6 +174,84 @@ router.put('/:id', auth, authorize('admin'), async (req, res) => {
     emitToAdmins('data_updated', { type: 'group' });
 
     res.json(group);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Delete group (Admin only)
+//
+// Permanently removes the group together with everything that hangs off it:
+// messages (+ their read receipts), per-group read statuses, call records and
+// the group reference on every member's User.groups array. Chat attachments
+// live on Cloudinary — the scheduled media-cleanup job can no longer see them
+// once the messages are gone, so their assets are purged too (best-effort,
+// off the response path: a Cloudinary hiccup must never block the deletion).
+router.delete('/:id', auth, authorize('admin'), async (req, res) => {
+  try {
+    const group = await Group.findById(req.params.id);
+    if (!group) {
+      return res.status(404).json({ message: 'Group not found' });
+    }
+
+    // Unique ids of everyone the group touches (members + tracked mentors),
+    // collected before the document is deleted.
+    const memberIds = [...new Set([
+      ...group.members.map(m => m.toString()),
+      ...(group.mentors || []).map(m => m.toString())
+    ])];
+
+    // Snapshot the messages first: their ids are needed to clean read
+    // receipts, and their attachment publicIds drive the Cloudinary purge.
+    const groupMessages = await Message.find({ group: group._id }).select('_id attachments');
+
+    const purgeAttachmentAssets = async () => {
+      const cloudinary = require('cloudinary').v2;
+      for (const msg of groupMessages) {
+        for (const att of msg.attachments || []) {
+          if (!att.publicId) continue;
+          try {
+            await cloudinary.uploader.destroy(att.publicId);
+          } catch (err) {
+            console.error(`Failed to delete Cloudinary asset ${att.publicId}:`, err.message);
+          }
+        }
+      }
+    };
+
+    const messageIds = groupMessages.map(m => m._id);
+    if (messageIds.length > 0) {
+      await MessageReadStatus.deleteMany({ messageId: { $in: messageIds } });
+    }
+    await Message.deleteMany({ group: group._id });
+    await ReadStatus.deleteMany({ groupId: group._id });
+    await Call.deleteMany({ groupId: group._id });
+    await User.updateMany(
+      { groups: group._id },
+      { $pull: { groups: group._id } }
+    );
+    await Group.deleteOne({ _id: group._id });
+
+    // DB is consistent from here on — the asset purge is cosmetic.
+    purgeAttachmentAssets().catch(err =>
+      console.error('Group attachment purge failed:', err.message)
+    );
+
+    // Kick anyone still inside the group's chat screen (they listen for
+    // 'group_deleted' on the group room), then tell every member's client to
+    // drop the group (NotificationContext leaves the socket room and the
+    // groups lists refetch).
+    const io = req.app && typeof req.app.get === 'function' ? req.app.get('io') : null;
+    if (io) {
+      io.to(group._id.toString()).emit('group_deleted', { groupId: group._id.toString() });
+    }
+    memberIds.forEach(memberId => {
+      emitToUser(memberId, 'group_removed', { groupId: group._id.toString() });
+    });
+    emitToAdmins('data_updated', { type: 'group' });
+
+    res.json({ message: 'Group deleted successfully' });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error' });

@@ -209,6 +209,7 @@ After setting up the backend, you'll need to create an admin account manually in
 - `POST /api/groups` - Create group (Admin)
 - `POST /api/groups/:id/members` - Add members (Admin)
 - `DELETE /api/groups/:id/members/:userId` - Remove member (Admin)
+- `DELETE /api/groups/:id` - Delete group with messages, read statuses, calls and member references (Admin)
 
 ### Messages
 - `GET /api/messages/group/:groupId` - Get group messages

@@ -11,10 +11,11 @@ import {
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useFocusEffect } from '@react-navigation/native';
-import { ArrowLeft, Users, UserPlus, GraduationCap } from 'lucide-react-native';
+import { ArrowLeft, Users, UserPlus, GraduationCap, Trash2, AlertTriangle } from 'lucide-react-native';
 import { FullScreenContainer } from '@/components/layout';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
+import * as Haptics from '@/utils/haptics';
 import UserAvatar from '@/components/UserAvatar';
 import InternTimeSlicer from '@/components/intern/InternTimeSlicer';
 
@@ -55,6 +56,7 @@ function GroupInfoScreen() {
   // the existing per-student assignments.
   const [subjectsByStudent, setSubjectsByStudent] = useState<Record<string, Subject[]>>({});
   const [subjectsStatus, setSubjectsStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [isDeletingGroup, setIsDeletingGroup] = useState(false);
 
   const fetchGroup = useCallback(async () => {
     if (!groupId) return;
@@ -114,6 +116,45 @@ function GroupInfoScreen() {
         }
       ]
     );
+  };
+
+  // Delete Group (Admin only). Destructive and irreversible, so it always
+  // confirms first: the alert names the group and spells out the blast radius
+  // (entire chat history, removed for every member). The destructive button
+  // style keeps it visually distinct from Cancel.
+  const confirmDeleteGroup = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Alert.alert(
+      'Delete Group',
+      `Delete "${group?.name}" and its entire chat history? The group will be removed for all ${group?.members?.length ?? 0} members. This action cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete Group',
+          style: 'destructive',
+          onPress: performDeleteGroup,
+        },
+      ]
+    );
+  };
+
+  const performDeleteGroup = async () => {
+    if (isDeletingGroup) return;
+    try {
+      setIsDeletingGroup(true);
+      await api.delete(`/groups/${groupId}`);
+      Haptics.successNotification();
+      // The chat screen below only reacts to the live 'group_deleted' socket
+      // event when it is the focused screen — while Group Info is on top it
+      // stays quiet, so this screen owns the navigation. dismissTo pops the
+      // whole chat stack and lands on the Groups tab, which refetches on
+      // focus so the deleted group is gone immediately.
+      router.dismissTo('/(tabs)/groups' as any);
+    } catch (error: any) {
+      setIsDeletingGroup(false);
+      Haptics.errorNotification();
+      Alert.alert('Error', error?.response?.data?.message || 'Failed to delete group');
+    }
   };
 
   // Renders a student member's own assigned subjects under their row.
@@ -188,6 +229,39 @@ function GroupInfoScreen() {
                 <Text style={styles.emptyText}>No members found</Text>
               </View>
             )
+          }
+          ListFooterComponent={() =>
+            // Danger zone for admins — kept at the very bottom of the list,
+            // well away from the per-member actions, with a caption that
+            // states the consequence before the tap.
+            user?.role === 'admin' && group ? (
+              <View style={styles.deleteGroupSection}>
+                <TouchableOpacity
+                  style={styles.deleteGroupButton}
+                  onPress={confirmDeleteGroup}
+                  disabled={isDeletingGroup}
+                  activeOpacity={0.7}
+                  accessibilityRole="button"
+                  accessibilityLabel="Delete group"
+                  accessibilityHint="Permanently deletes this group and its chat history for all members"
+                >
+                  {isDeletingGroup ? (
+                    <ActivityIndicator size="small" color="#DC2626" />
+                  ) : (
+                    <Trash2 color="#DC2626" size={18} />
+                  )}
+                  <Text style={styles.deleteGroupButtonText}>
+                    {isDeletingGroup ? 'Deleting…' : 'Delete Group'}
+                  </Text>
+                </TouchableOpacity>
+                <View style={styles.deleteGroupHintRow}>
+                  <AlertTriangle color="#F59E0B" size={13} />
+                  <Text style={styles.deleteGroupHintText}>
+                    Permanently deletes this group and its entire chat history for all members.
+                  </Text>
+                </View>
+              </View>
+            ) : null
           }
           ListHeaderComponent={() => (
             <>
@@ -452,6 +526,41 @@ const styles = StyleSheet.create({
     color: '#EF4444',
     fontSize: 12,
     fontWeight: '500',
+  },
+  // Danger zone at the bottom of the member list (admin only).
+  deleteGroupSection: {
+    marginTop: 28,
+    marginHorizontal: 15,
+  },
+  deleteGroupButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderWidth: 1.5,
+    borderColor: '#FCA5A5',
+    borderRadius: 12,
+    paddingVertical: 14,
+    backgroundColor: '#FFFFFF',
+  },
+  deleteGroupButtonText: {
+    color: '#DC2626',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  deleteGroupHintRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 10,
+    paddingHorizontal: 8,
+  },
+  deleteGroupHintText: {
+    color: '#9CA3AF',
+    fontSize: 12,
+    textAlign: 'center',
+    flexShrink: 1,
   },
   loadingContainer: {
     flex: 1,

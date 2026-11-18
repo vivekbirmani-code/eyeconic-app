@@ -60,6 +60,7 @@ export default function Chat() {
   // surfaces the existing per-student assignments.
   const [subjectsByStudent, setSubjectsByStudent] = useState<Record<string, Subject[]>>({});
   const [subjectsStatus, setSubjectsStatus] = useState<SubjectsStatus>('loading');
+  const [isDeletingGroup, setIsDeletingGroup] = useState(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -200,6 +201,31 @@ export default function Chat() {
     } catch (error) {
       console.error('Error removing member:', error);
       alert('Failed to remove member');
+    }
+  };
+
+  // Delete Group (Admin only). Irreversible, so it always confirms first —
+  // the confirm spells out the blast radius (whole chat history, removed for
+  // every member) before the request goes out.
+  const handleDeleteGroup = async () => {
+    if (!group || isDeletingGroup) return;
+    const memberCount = group.members.length;
+    if (
+      !window.confirm(
+        `Delete "${group.name}" and its entire chat history? The group will be removed for all ${memberCount} members. This action cannot be undone.`
+      )
+    ) {
+      return;
+    }
+    try {
+      setIsDeletingGroup(true);
+      await api.delete(`/groups/${groupId}`);
+      setIsInfoModalOpen(false);
+      navigate('/groups');
+    } catch (error: any) {
+      console.error('Error deleting group:', error);
+      alert(error?.response?.data?.message || 'Failed to delete group');
+      setIsDeletingGroup(false);
     }
   };
 
@@ -443,6 +469,24 @@ export default function Chat() {
                     Created on {new Date(group?.createdAt || '').toLocaleDateString()} by {group?.createdBy?.name}
                   </p>
                 </div>
+
+                {/* Danger zone (Admin only) — separated at the very bottom,
+                    away from the per-member actions. */}
+                {user?.role === 'admin' && (
+                  <div className="pt-4 mt-2 border-t border-gray-100">
+                    <button
+                      onClick={handleDeleteGroup}
+                      disabled={isDeletingGroup}
+                      className="w-full flex items-center justify-center gap-2 py-3 rounded-xl border-[1.5px] border-red-200 text-red-600 text-sm font-bold hover:bg-red-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      <Trash2 size={16} />
+                      {isDeletingGroup ? 'Deleting…' : 'Delete Group'}
+                    </button>
+                    <p className="text-[10px] text-gray-400 text-center mt-2">
+                      Permanently deletes this group and its entire chat history for all members.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
