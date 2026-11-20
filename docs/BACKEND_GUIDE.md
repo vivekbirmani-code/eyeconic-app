@@ -673,6 +673,7 @@ Legend: 🔓 public · 👤 any logged-in user · 🎓 student · 🧑‍🏫 me
 | GET `/api/groups/mentor/:mentorId/assignments` · POST `/api/groups/bulk-mentor-assignment` | 🔧 | Mentor↔group bulk assignment |
 | GET `/api/messages/group/:groupId` | 👤 | Fetch messages |
 | POST `/api/messages` | 👤 | Send message (+push to others) |
+| socket `typing_start`/`typing_stop` `{groupId}` | 👤 (registered sockets) | Typing presence relay to the room — userId comes from the VERIFIED socket registration, never the payload; receivers resolve names from their group members and self-expire after ~3s |
 | PUT `/api/messages/:id` | 👤 (sender) | Edit |
 | POST `/api/messages/:id/read` · POST `/read-batch` · GET `/:id/read-status` | 👤 | Read receipts |
 | DELETE `/api/messages/:id/me` · DELETE `/:id/everyone` · DELETE `/:id` | 👤 | Delete for me / everyone / legacy |

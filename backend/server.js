@@ -779,6 +779,33 @@ io.on('connection', (socket) => {
     socket.to(data.groupId).emit('message_deleted', data);
   });
 
+  // ============ TYPING INDICATORS ============
+  // Presence-only relays: the sender's identity comes from the VERIFIED socket
+  // registration (socket.userId), never from the payload — same doctrine as
+  // calls. Receivers resolve the display name from their group's member list,
+  // so no name is trusted from the wire. Receivers auto-expire the indicator
+  // after a few seconds, so a missed typing_stop (member went offline) heals
+  // itself.
+  const typingRoomOk = (id) => typeof id === 'string' && /^[a-f\d]{24}$/i.test(id);
+
+  socket.on('typing_start', (data) => {
+    if (chatFeatureDisabled()) return;
+    if (!socket.userId || !data || !typingRoomOk(data.groupId)) return;
+    socket.to(data.groupId).emit('typing', {
+      groupId: data.groupId,
+      userId: socket.userId,
+    });
+  });
+
+  socket.on('typing_stop', (data) => {
+    if (chatFeatureDisabled()) return;
+    if (!socket.userId || !data || !typingRoomOk(data.groupId)) return;
+    socket.to(data.groupId).emit('typing_stop', {
+      groupId: data.groupId,
+      userId: socket.userId,
+    });
+  });
+
   // ============ CALL SIGNALING EVENTS ============
 
   // Initiate a call

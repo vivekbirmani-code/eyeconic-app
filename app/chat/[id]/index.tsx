@@ -26,10 +26,8 @@ import { useFocusEffect } from '@react-navigation/native';
 import { Send, X, Check, CheckCheck, Edit2, Trash2, Info, Phone, PhoneOff, Ban, Users, ChevronDown, Clock, AlertCircle } from 'lucide-react-native';
 import { useAuth } from '@/context/AuthContext';
 import { api } from '@/services/api';
-import { getSocketURL } from '@/services/config';
 import { colors } from '@/utils/theme';
 import * as Haptics from '@/utils/haptics';
-import { io, Socket } from 'socket.io-client';
 import { KeyboardAvoidingDialog } from '@/components/KeyboardAvoidingDialog';
 import ScreenHeader from '@/components/ScreenHeader';
 import TouchableScale from '@/components/TouchableScale';
@@ -46,6 +44,8 @@ interface Message {
   content: string;
   sender: { _id: string; name: string; profilePicture?: string | null };
   createdAt: string;
+  /** Group id this message belongs to (socket payloads carry it). */
+  group?: string;
   // 'sending'/'failed' are client-only optimistic-send states.
   status?: 'sent' | 'delivered' | 'read' | 'sending' | 'failed';
   isEdited?: boolean;
@@ -183,7 +183,7 @@ function ChatLoadingSkeleton() {
 function ChatScreen() {
   const { id: groupId } = useLocalSearchParams<{ id: string }>();
   const { user } = useAuth();
-  const { markAsRead } = useNotifications();
+  const { markAsRead, socket } = useNotifications();
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const [messages, setMessages] = useState<Message[]>([]);
@@ -194,7 +194,60 @@ function ChatScreen() {
   // avoiding offset adapts to every device instead of a hardcoded value.
   const [headerHeight, setHeaderHeight] = useState(0);
   const flatListRef = useRef<FlatList>(null);
-  const socketRef = useRef<Socket | null>(null);
+  // Typing indicators: userId → last-seen timestamp. Entries older than
+  // TYPING_EXPIRE_MS are pruned, so a member going offline mid-typing (missed
+  // typing_stop) heals itself.
+  const [typingUsers, setTypingUsers] = useState<Record<string, number>>({});
+  const lastTypingEmitRef = useRef(0);
+  const TYPING_EMIT_THROTTLE_MS = 1200;
+  const TYPING_EXPIRE_MS = 3000;
+
+  // Prune stale typing entries while any are shown.
+  useEffect(() => {
+    const typingIds = Object.keys(typingUsers);
+    if (typingIds.length === 0) return;
+    const timer = setInterval(() => {
+      const now = Date.now();
+      setTypingUsers(prev => {
+        const next: Record<string, number> = {};
+        let changed = false;
+        Object.entries(prev).forEach(([uid, at]) => {
+          if (now - at < TYPING_EXPIRE_MS) next[uid] = at;
+          else changed = true;
+        });
+        return changed ? next : prev;
+      });
+    }, 800);
+    return () => clearInterval(timer);
+  }, [typingUsers]);
+
+  // Tell the room this user is typing (throttled — one signal per burst, the
+  // receiver refreshes its expiry on every signal).
+  const emitTypingStart = () => {
+    if (!socket || !groupId) return;
+    const now = Date.now();
+    if (now - lastTypingEmitRef.current < TYPING_EMIT_THROTTLE_MS) return;
+    lastTypingEmitRef.current = now;
+    socket.emit('typing_start', { groupId });
+  };
+
+  const emitTypingStop = () => {
+    if (!socket || !groupId) return;
+    lastTypingEmitRef.current = 0;
+    socket.emit('typing_stop', { groupId });
+  };
+
+  // Resolve typing user ids to names from THIS group's member list (the wire
+  // carries only the server-verified id).
+  const typingLabel = (() => {
+    const ids = Object.keys(typingUsers);
+    if (ids.length === 0) return null;
+    const nameOf = (uid: string) =>
+      group?.members?.find(m => m._id === uid)?.name || 'Someone';
+    if (ids.length === 1) return `${nameOf(ids[0])} is typing…`;
+    if (ids.length === 2) return `${nameOf(ids[0])} and ${nameOf(ids[1])} are typing…`;
+    return 'Several people are typing…';
+  })();
   // ---- Keep-my-place scrolling ---------------------------------------
   // The user stays put while reading history; a pill counts unseen new
   // messages instead of yanking them to the bottom (old behavior).
@@ -299,67 +352,97 @@ function ChatScreen() {
     if (groupId) {
       fetchGroup();
       fetchMessages();
-      setupSocket();
       markAsRead(groupId);
     }
-
-    return () => {
-      if (socketRef.current) {
-        socketRef.current.emit('leave_room', groupId);
-        socketRef.current.disconnect();
-      }
-    };
   }, [groupId]);
 
-  const setupSocket = () => {
-    socketRef.current = io(getSocketURL());
+  // Live events ride the app's ALWAYS-ON socket (NotificationContext) — the
+  // old per-screen connection paid a full connect/authenticate/join handshake
+  // on every chat open. The shared socket is already in all of the user's
+  // group rooms (auto-joined at registration, re-joined on reconnect), so
+  // every handler FILTERS to this group. The socket intentionally stays
+  // connected when this screen closes (unread badges + calls depend on it).
+  useEffect(() => {
+    if (!socket || !groupId) return;
 
-    socketRef.current.on('connect', () => {
-      console.log('Socket connected');
-      socketRef.current?.emit('join_room', groupId);
-    });
-
-    socketRef.current.on('receive_message', (data: Message) => {
+    const onReceiveMessage = (data: Message) => {
+      if (data.group !== groupId) return;
       setMessages(prev => [...prev, data]);
       if (isNearBottomRef.current) {
         // Reading at the bottom: stay pinned and keep read-state accurate.
         scrollToBottom();
-        if (groupId) {
-          markAsRead(groupId);
-          api.post(`/messages/${data._id}/read`).catch(() => { });
-        }
+        markAsRead(groupId);
+        api.post(`/messages/${data._id}/read`).catch(() => { });
       } else {
         // Reading history: don't move; surface the pill instead.
         setNewMessagesCount(count => count + 1);
       }
-    });
+    };
 
     // Listen for message updates (edit, delete)
-    socketRef.current.on('message_updated', (data: Message) => {
+    const onMessageUpdated = (data: Message & { groupId?: string }) => {
+      const eventGroupId = data.groupId || data.group;
+      if (eventGroupId && eventGroupId !== groupId) return;
       setMessages(prev => prev.map(msg =>
         msg._id === data._id ? { ...msg, ...data } : msg
       ));
-    });
+    };
 
     // Listen for message deletion
-    socketRef.current.on('message_deleted', (data: { messageId: string, deletedForEveryone: boolean }) => {
+    const onMessageDeleted = (data: { messageId: string, deletedForEveryone: boolean, groupId?: string }) => {
+      if (data.groupId && data.groupId !== groupId) return;
       if (data.deletedForEveryone) {
         setMessages(prev => prev.map(msg =>
           msg._id === data.messageId ? { ...msg, deletedForEveryone: true } : msg
         ));
       }
-    });
+    };
 
     // The group was deleted while this chat was open (admin deleted it from
     // Group Info or elsewhere). Leave gracefully instead of leaving the user
     // typing into a dead chat — but only when this screen is the focused
     // route (see isFocusedRef).
-    socketRef.current.on('group_deleted', (data: { groupId: string }) => {
+    const onGroupDeleted = (data: { groupId: string }) => {
       if (data.groupId !== groupId || !isFocusedRef.current) return;
       Alert.alert('Group deleted', 'This group has been deleted.');
       router.back();
-    });
-  };
+    };
+
+    // Typing indicators: userId comes from the server's VERIFIED socket
+    // registration (never the wire), the display name resolves from this
+    // group's member list. Stale entries self-expire (see pruning effect).
+    const onTyping = (data: { groupId: string; userId: string }) => {
+      if (data.groupId !== groupId || data.userId === user?._id) return;
+      setTypingUsers(prev => ({ ...prev, [data.userId]: Date.now() }));
+    };
+    const onTypingStop = (data: { groupId: string; userId: string }) => {
+      if (data.groupId !== groupId) return;
+      setTypingUsers(prev => {
+        if (!(data.userId in prev)) return prev;
+        const next = { ...prev };
+        delete next[data.userId];
+        return next;
+      });
+    };
+
+    socket.on('receive_message', onReceiveMessage);
+    socket.on('message_updated', onMessageUpdated);
+    socket.on('message_deleted', onMessageDeleted);
+    socket.on('group_deleted', onGroupDeleted);
+    socket.on('typing', onTyping);
+    socket.on('typing_stop', onTypingStop);
+
+    return () => {
+      socket.off('receive_message', onReceiveMessage);
+      socket.off('message_updated', onMessageUpdated);
+      socket.off('message_deleted', onMessageDeleted);
+      socket.off('group_deleted', onGroupDeleted);
+      socket.off('typing', onTyping);
+      socket.off('typing_stop', onTypingStop);
+      // If the user leaves mid-composition, clear the indicator for others.
+      socket.emit('typing_stop', { groupId });
+    };
+  }, [socket, groupId]);
 
   const fetchGroup = async () => {
     try {
@@ -437,6 +520,7 @@ function ChatScreen() {
 
     const messageContent = newMessage.trim();
     setNewMessage('');
+    emitTypingStop();
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
 
     const tempId = `temp_${Date.now()}`;
@@ -459,7 +543,7 @@ function ChatScreen() {
       setMessages(prev => prev.map(msg =>
         msg._id === tempId ? response.data : msg
       ));
-      socketRef.current?.emit('send_message', {
+      socket?.emit('send_message', {
         ...response.data,
         groupId,
       });
@@ -487,7 +571,7 @@ function ChatScreen() {
       setMessages(prev => prev.map(msg =>
         msg._id === failedMessage._id ? response.data : msg
       ));
-      socketRef.current?.emit('send_message', {
+      socket?.emit('send_message', {
         ...response.data,
         groupId,
       });
@@ -654,7 +738,7 @@ function ChatScreen() {
         ));
 
         // 3. Emit the persisted message to other clients
-        socketRef.current?.emit('send_message', {
+        socket?.emit('send_message', {
           ...msgResponse.data,
           groupId,
         });
@@ -806,7 +890,7 @@ function ChatScreen() {
       ));
 
       // Emit socket event for real-time update
-      socketRef.current?.emit('message_updated', {
+      socket?.emit('message_updated', {
         ...response.data,
         groupId,
       });
@@ -853,7 +937,7 @@ function ChatScreen() {
               ));
 
               // Emit socket event
-              socketRef.current?.emit('message_deleted', {
+              socket?.emit('message_deleted', {
                 messageId: selectedMessage._id,
                 deletedForEveryone: true,
                 groupId,
@@ -1118,6 +1202,16 @@ function ChatScreen() {
 
 
 
+        {/* Typing indicator — presence relay; stale entries self-expire */}
+        {typingLabel && (
+          <View style={styles.typingRow} accessibilityLabel={typingLabel}>
+            <View style={styles.typingDot} />
+            <View style={[styles.typingDot, styles.typingDotMiddle]} />
+            <View style={[styles.typingDot, styles.typingDotLast]} />
+            <Text style={styles.typingText} numberOfLines={1}>{typingLabel}</Text>
+          </View>
+        )}
+
         {/* New-messages pill — shown while reading history and messages land */}
         {newMessagesCount > 0 && (
           <TouchableOpacity
@@ -1158,7 +1252,11 @@ function ChatScreen() {
             placeholder="Type a message..."
             placeholderTextColor={colors.textMuted}
             value={newMessage}
-            onChangeText={setNewMessage}
+            onChangeText={(text) => {
+              setNewMessage(text);
+              if (text.trim()) emitTypingStart();
+              else emitTypingStop();
+            }}
             multiline
             maxLength={500}
           />
@@ -1809,6 +1907,35 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: 8,
     marginTop: 4,
+  },
+  // Typing indicator above the input row (plain views — no resting Animated
+  // props, per the bridgeless-Android rule).
+  typingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    paddingHorizontal: 22,
+    marginBottom: 2,
+    minHeight: 16,
+  },
+  typingDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 2.5,
+    backgroundColor: colors.primary,
+  },
+  typingDotMiddle: {
+    opacity: 0.66,
+  },
+  typingDotLast: {
+    opacity: 0.4,
+    marginRight: 6,
+  },
+  typingText: {
+    fontSize: 12,
+    color: colors.textSecondary,
+    fontStyle: 'italic',
+    flexShrink: 1,
   },
   // Floating pill above the input row while new messages land off-screen.
   newMessagesPill: {
