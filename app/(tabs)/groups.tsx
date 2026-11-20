@@ -109,27 +109,20 @@ function GroupCard({
     ]).start();
   }, [unreadCount, badgeScale]);
 
-  return (
-    <Animated.View
-      style={{
-        opacity: entrance,
-        transform: [{
-          translateY: entrance.interpolate({
-            inputRange: [0, 1],
-            outputRange: [14, 0],
-          }),
-        }],
-      }}
+  // The entrance wrapper exists ONLY when the entrance animates. A resting
+  // native-driven Animated style (value parked at 1, never driven) paints as
+  // NOTHING when the card is remounted on bridgeless Android (folder
+  // collapse/reopen) — plain children at rest are immune.
+  const card = (
+    <TouchableScale
+      style={styles.groupCard}
+      onPress={() => onOpen(group._id)}
+      // No accessibilityRole here on purpose: the edit-pencil inside is a
+      // button, and two nested role=button elements render as an invalid
+      // <button> inside <button> on web. The card keeps its label; the
+      // pencil keeps full button semantics.
+      accessibilityLabel={`Open group ${group.name}`}
     >
-      <TouchableScale
-        style={styles.groupCard}
-        onPress={() => onOpen(group._id)}
-        // No accessibilityRole here on purpose: the edit-pencil inside is a
-        // button, and two nested role=button elements render as an invalid
-        // <button> inside <button> on web. The card keeps its label; the
-        // pencil keeps full button semantics.
-        accessibilityLabel={`Open group ${group.name}`}
-      >
         <View style={styles.groupIconTile}>
           <MessageCircle color={colors.primary} size={22} />
         </View>
@@ -167,6 +160,23 @@ function GroupCard({
           </View>
         </View>
       </TouchableScale>
+  );
+
+  if (!animateEntrance) return card;
+
+  return (
+    <Animated.View
+      style={{
+        opacity: entrance,
+        transform: [{
+          translateY: entrance.interpolate({
+            inputRange: [0, 1],
+            outputRange: [14, 0],
+          }),
+        }],
+      }}
+    >
+      {card}
     </Animated.View>
   );
 }
@@ -214,9 +224,9 @@ function MentorFolderCard({
     }).start();
   }, [isCollapsed, chevronSpin]);
 
-  return (
-    <Animated.View style={{ opacity: entrance }}>
-      <View style={styles.mentorFolderCard}>
+  // Same remount rule as GroupCard: animated wrapper only while animating.
+  const folderBody = (
+    <View style={styles.mentorFolderCard}>
         <TouchableScale
           style={styles.mentorFolderHeader}
           onPress={() => onToggle(folder.key)}
@@ -259,8 +269,11 @@ function MentorFolderCard({
           </View>
         </Collapsible>
       </View>
-    </Animated.View>
   );
+
+  if (!animateEntrance) return folderBody;
+
+  return <Animated.View style={{ opacity: entrance }}>{folderBody}</Animated.View>;
 }
 
 function Groups() {
