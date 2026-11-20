@@ -11,11 +11,22 @@ interface CollapsibleProps {
 
 /**
  * Height-animated expand/collapse used by the Groups module (mentor folders,
- * the Create Group type dropdown). Content measures itself with onLayout;
- * the wrapper animates height 0 ↔ measured and fades alongside. Height can't
- * use the native driver, so this runs on JS — folder contents are small, and
- * the content unmounts once fully collapsed so collapsed folders cost
- * nothing to keep around.
+ * the Create Group type dropdown).
+ *
+ * Robustness rules learned the hard way (folder stayed empty on Android
+ * while working on web):
+ *  1. The animated height is ONE stable Animated.Value. Never an
+ *     interpolation recreated per render — on Android, swapping animated
+ *     style nodes mid-lifecycle doesn't re-sync the native view until the
+ *     source value changes, so a recreated node can leave the view stuck at
+ *     its first-applied height (0).
+ *  2. Until the content has been measured once, an OPEN collapsible renders
+ *     with auto height — the content is visible immediately, with no
+ *     dependency on onLayout having fired.
+ *  3. The measuring view is explicitly non-collapsable so the Android view
+ *     flattener can never fold it (and its onLayout) away.
+ *
+ * Content unmounts once fully collapsed, so closed folders cost nothing.
  */
 export default function Collapsible({
   visible,
@@ -23,21 +34,30 @@ export default function Collapsible({
   openDuration = 220,
   closeDuration = 180,
 }: CollapsibleProps) {
-  const progress = useRef(new Animated.Value(visible ? 1 : 0)).current;
-  const [contentHeight, setContentHeight] = useState(0);
+  // Stable height driver. Meaningful only once measured (measuredHeight > 0).
+  const heightAnim = useRef(new Animated.Value(0)).current;
+  const [measuredHeight, setMeasuredHeight] = useState(0);
   // Render content whenever open, or while a close animation is running.
   const [shouldRender, setShouldRender] = useState(visible);
+  const hasMeasured = measuredHeight > 0;
 
   useEffect(() => {
+    if (!hasMeasured) {
+      // No height to animate yet: plain show/hide. Measurement upgrades us
+      // to the animated path (and while open+unmeasured we render auto
+      // height, so this only ever covers a pre-measure toggle).
+      setShouldRender(visible);
+      return;
+    }
     if (visible) {
       setShouldRender(true);
-      Animated.timing(progress, {
-        toValue: 1,
+      Animated.timing(heightAnim, {
+        toValue: measuredHeight,
         duration: openDuration,
         useNativeDriver: false,
       }).start();
     } else {
-      Animated.timing(progress, {
+      Animated.timing(heightAnim, {
         toValue: 0,
         duration: closeDuration,
         useNativeDriver: false,
@@ -46,29 +66,43 @@ export default function Collapsible({
         if (finished) setShouldRender(false);
       });
     }
-  }, [visible, progress, openDuration, closeDuration]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, hasMeasured]);
 
   if (!shouldRender) return null;
 
-  const animatedHeight =
-    contentHeight > 0
-      ? progress.interpolate({
-          inputRange: [0, 1],
-          outputRange: [0, contentHeight],
-        })
-      : 0;
+  // Unmeasured + open → auto height (content shows immediately). Everything
+  // else runs through the stable animated height.
+  const heightStyle = hasMeasured ? { height: heightAnim } : visible ? undefined : { height: 0 };
 
   return (
     <Animated.View
-      style={[styles.container, { height: animatedHeight, opacity: progress }]}
+      style={[styles.container, heightStyle]}
       // Hide from a11y while collapsed so folders don't read out hidden rows.
       accessibilityElementsHidden={!visible}
       importantForAccessibility={visible ? 'auto' : 'no-hide-descendants'}
     >
       <View
+        collapsable={false}
         onLayout={(e) => {
           const h = e.nativeEvent.layout.height;
-          if (h > 0) setContentHeight(h);
+          // Never adopt a measurement while collapsed/closing: a shrinking
+          // parent can re-measure its child smaller, and adopting that would
+          // clip every subsequent open to a fraction of the real height
+          // (the "dropdown won't fully reopen" bug). Measurements only count
+          // from a full, open layout.
+          if (h <= 0 || !visible) return;
+          if (h === measuredHeight) return;
+          if (!hasMeasured) {
+            // First measurement: adopt instantly — while open+unmeasured we
+            // render auto height (exactly h), so this is not a jump.
+            heightAnim.setValue(h);
+          } else {
+            // Content genuinely resized while open (e.g. a group refetched
+            // in): follow the new size so nothing gets clipped.
+            heightAnim.setValue(h);
+          }
+          setMeasuredHeight(h);
         }}
       >
         {children}
